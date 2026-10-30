@@ -160,3 +160,55 @@ def test_financial_years():
     assert main.fy_start_year("2026-03-31") == 2025
     assert main.fy_start_year(date(2026, 4, 1)) == 2026
     assert main.fy_start_year("2026-28") is None
+
+
+# --- who may take an asset out of the books, and when ------------------------------------------------------------
+
+def test_the_plain_disposal_is_accounts_and_takes_its_date(tenant):
+    from test_payment_approval import person
+    a = asset(tenant)
+    book(tenant, a)
+    store = person(tenant, "stores")
+    try:
+        assert store.post("/api/assets/%d/dispose" % a["id"], json={"reason": "sold"}).status_code == 403
+    finally:
+        store.__exit__(None, None, None)
+    assert tenant.post("/api/assets/%d/dispose" % a["id"], json={"reason": "sold", "value": -5}).status_code == 400
+    assert tenant.post("/api/assets/%d/dispose" % a["id"], json={"reason": "sold", "disposed_on": "2024-01-01"}).status_code == 400
+    assert tenant.post("/api/assets/%d/dispose" % a["id"], json={"reason": "sold", "disposed_on": "2999-01-01"}).status_code == 400
+    res = tenant.post("/api/assets/%d/dispose" % a["id"], json={"reason": "sold", "disposed_on": "2025-09-30", "value": 3500000})
+    assert res.status_code == 200, res.text
+    y = tenant.get("/api/fixed-assets?fy=2025-26").json()["assets"][0]["year"]
+    assert y["disposed"] and y["disposal_value"] == 3500000 and y["days"] == 183
+
+
+def test_a_book_with_a_closed_year_is_changed_only_by_the_master(tenant):
+    from test_payment_approval import person
+    a = asset(tenant)
+    assert book(tenant, a).status_code == 200
+    clerk = person(tenant, "accounts")
+    try:
+        res = clerk.put("/api/fixed-assets/%d/book" % a["id"], json={"method": "SLM", "life_years": 9, "residual_percent": 5,
+                                                                    "put_to_use_on": "2024-10-01", "cost": 4000000})
+        assert res.status_code == 409 and "closed year" in res.json()["detail"]
+        # Saving it as it stands changes nothing and is fine.
+        same = clerk.put("/api/fixed-assets/%d/book" % a["id"], json={"method": "WDV", "life_years": 9, "residual_percent": 5,
+                                                                     "put_to_use_on": "2024-10-01", "cost": 4000000})
+        assert same.status_code == 200, same.text
+    finally:
+        clerk.__exit__(None, None, None)
+    assert book(tenant, a, method="SLM").status_code == 200
+
+
+def test_the_store_cannot_turn_a_booked_asset_into_a_hired_one(tenant):
+    from test_payment_approval import person
+    a = asset(tenant)
+    book(tenant, a)
+    body = {"name": a["name"], "category": "Earthmoving", "ownership": "Hired", "hire_rate": 5000,
+            "purchase_date": "2024-10-01", "purchase_value": 4000000}
+    store = person(tenant, "stores")
+    try:
+        assert store.put("/api/assets/%d" % a["id"], json=body).status_code == 403
+    finally:
+        store.__exit__(None, None, None)
+    assert tenant.get("/api/assets/%d" % a["id"]).json()["ownership"] == "Owned"

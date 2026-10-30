@@ -16,6 +16,9 @@ export interface Deducted extends TdsRow {
   deductee: string
   pan: string
   missing_pan: boolean
+  /** What the law asks: 20% under 206AA with no valid PAN, else 1% or 2% under 194C. */
+  rate_due?: number
+  short_deducted?: boolean
   paid_on: string
 }
 
@@ -29,7 +32,7 @@ export interface TdsRegister {
   deducted_by_quarter: { period: string; bills: number; amount_credited: number; tds: number }[]
   deducted: Deducted[]
   suffered: Suffered[]
-  summary: { deducted: number; suffered: number; deductees_without_pan: number }
+  summary: { deducted: number; suffered: number; deductees_without_pan: number; short_deducted?: number }
 }
 
 export interface Guarantee {
@@ -42,6 +45,9 @@ export interface Guarantee {
   completion_date: string
   defect_liability_months: number
   state: string
+  /** When the defects period ends (completion + DLP), and whether the guarantee lapses before it. */
+  defects_period_ends?: string
+  short_of_defects_period?: boolean
   number?: string
   bank?: string
   order_status?: string
@@ -57,6 +63,10 @@ export interface Advance {
   percent_recovered: number
   outstanding: number
   secured_by_bg: boolean
+  /** secured | partly secured | unsecured | nothing out - by a guarantee in force that covers what is out. */
+  security?: string
+  bg_cover?: number
+  order_status?: string
 }
 
 export const useTdsRegister = (year: string, quarter: string) =>

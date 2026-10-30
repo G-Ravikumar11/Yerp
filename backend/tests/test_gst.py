@@ -10,7 +10,7 @@ from test_subcontractor_bills import (live_order, book as sub_book,
                                       measure as sub_measure, raise_bill)
 
 
-def registered(tenant, gstin="36AABCY1234H1ZX"):
+def registered(tenant, gstin="36AABCY1234H1ZI"):
     res = tenant.put("/api/gst/settings", json={"gstin": gstin})
     assert res.status_code == 200, res.text
     return res.json()
@@ -33,14 +33,14 @@ def certified_client_bill(tenant):
 # --- Who we are ---------------------------------------------------------------
 
 def test_the_state_falls_out_of_the_gstin(tenant):
-    out = registered(tenant, "36AABCY1234H1ZX")
+    out = registered(tenant, "36AABCY1234H1ZI")
     assert out["state_code"] == "36"
     assert out["state"] == "Telangana"
 
 
 def test_a_malformed_gstin_is_refused(tenant):
     assert tenant.put("/api/gst/settings", json={"gstin": "ABC123"}).status_code == 400
-    assert tenant.put("/api/gst/settings", json={"gstin": "99AABCY1234H1ZX"}).status_code == 400
+    assert tenant.put("/api/gst/settings", json={"gstin": "99AABCY1234H1Z6"}).status_code == 400
 
 
 def test_a_site_takes_a_state(tenant):
@@ -56,7 +56,7 @@ def test_a_site_takes_a_state(tenant):
 
 def test_a_site_in_our_own_state_is_cgst_plus_sgst(tenant):
     """Telangana company, Telangana site: half and half."""
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     wo = placed_order(tenant, qty=1000, rate=100)
     job_id = tenant.get("/api/erp/work-orders/%d" % wo["id"]).json()["job_id"]
     site_in(tenant, job_id, "36")
@@ -73,7 +73,7 @@ def test_a_site_in_our_own_state_is_cgst_plus_sgst(tenant):
 
 def test_a_site_across_the_border_is_all_igst(tenant):
     """Telangana company, Andhra site: every rupee of tax is IGST."""
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     wo = placed_order(tenant, qty=1000, rate=100)
     job_id = tenant.get("/api/erp/work-orders/%d" % wo["id"]).json()["job_id"]
     site_in(tenant, job_id, "37")
@@ -88,14 +88,14 @@ def test_a_site_across_the_border_is_all_igst(tenant):
 def test_an_unknown_place_of_supply_defaults_to_igst(tenant):
     """A wrong IGST is a reconciliation; a wrong CGST across a border is a
     penalty. When in doubt, the safer of the two."""
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     wo, b = certified_client_bill(tenant)          # site has no state set
     assert b["igst_amount"] == b["tax_amount"] > 0
     assert b["cgst_amount"] == 0
 
 
 def test_the_split_always_adds_up_to_the_tax(tenant):
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     wo = placed_order(tenant, qty=1000, rate=33.33)
     job_id = tenant.get("/api/erp/work-orders/%d" % wo["id"]).json()["job_id"]
     site_in(tenant, job_id, "36")
@@ -106,7 +106,7 @@ def test_the_split_always_adds_up_to_the_tax(tenant):
 
 def test_the_net_payable_is_unchanged_by_the_split(tenant):
     """Splitting the tax must not change what the client owes."""
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     wo, b = certified_client_bill(tenant)
     taxable = (b["this_bill"] - b["retention_amount"] - b["advance_recovery"]
                - b["other_deductions"])
@@ -114,7 +114,7 @@ def test_the_net_payable_is_unchanged_by_the_split(tenant):
 
 
 def test_the_contractors_bill_is_split_the_same_way(tenant):
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     order = live_order(tenant, retention_percent=5)
     site_in(tenant, order["job_id"], "36")
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]
@@ -128,7 +128,7 @@ def test_the_contractors_bill_is_split_the_same_way(tenant):
 # --- The summaries -------------------------------------------------------------
 
 def test_outward_supplies_group_by_month_and_rate(tenant):
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     certified_client_bill(tenant)
     certified_client_bill(tenant)
     out = tenant.get("/api/gst/outward").json()
@@ -141,13 +141,13 @@ def test_outward_supplies_group_by_month_and_rate(tenant):
 
 def test_outward_flags_bills_with_no_place_of_supply(tenant):
     """A return cannot be filed against a blank."""
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     certified_client_bill(tenant)
     assert tenant.get("/api/gst/outward").json()["summary"]["missing_place_of_supply"] == 1
 
 
 def test_a_draft_bill_is_not_an_outward_supply(tenant):
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     wo = placed_order(tenant, qty=1000, rate=100)
     measure(tenant, wo["id"], book(tenant, wo["id"])["lines"][0]["line_id"], 100)
     tenant.post("/api/ra-bills", json={"work_order_id": wo["id"]})
@@ -155,7 +155,7 @@ def test_a_draft_bill_is_not_an_outward_supply(tenant):
 
 
 def test_inward_lists_the_contractors_bills_with_their_gstin(tenant):
-    registered(tenant, "36AABCY1234H1ZX")
+    registered(tenant, "36AABCY1234H1ZI")
     order = live_order(tenant)
     item = sub_book(tenant, order["id"])["lines"][0]["item_id"]
     sub_measure(tenant, order["id"], item, 100)
@@ -184,14 +184,14 @@ def test_another_tenant_sees_none_of_it(tenant, second_tenant):
 
 
 def test_a_supplier_bill_carries_the_suppliers_gstin_and_split(tenant):
-    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZX"})
-    tenant.post("/api/suppliers", json={"name": "UltraTech Cement Ltd", "gstin": "36AAACU1234H1Z5"})
-    tenant.post("/api/suppliers", json={"name": "Jindal Steel", "gstin": "27AAACJ1234H1Z5"})
+    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZI"})
+    tenant.post("/api/suppliers", json={"name": "UltraTech Cement Ltd", "gstin": "36AAACU1234H1ZN"})
+    tenant.post("/api/suppliers", json={"name": "Jindal Steel", "gstin": "27AAACJ1234H1ZX"})
     for vendor, number in (("Ultratech cement ltd.", "UT-1"), ("Jindal Steel", "JS-1")):
         tenant.post("/api/bills", json={"number": number, "vendor_name": vendor, "amount": 1000,
                                         "tax_amount": 180, "total": 1180, "status": "Awaiting Payment"})
     rows = {r["number"]: r for r in tenant.get("/api/gst/inward").json()["supplies"]
             if r["kind"] == "Supplier bill"}
-    assert rows["UT-1"]["party_gstin"] == "36AAACU1234H1Z5"
+    assert rows["UT-1"]["party_gstin"] == "36AAACU1234H1ZN"
     assert rows["UT-1"]["cgst"] == 90 and rows["UT-1"]["sgst"] == 90 and rows["UT-1"]["igst"] == 0
     assert rows["JS-1"]["igst"] == 180 and rows["JS-1"]["rate"] == 18

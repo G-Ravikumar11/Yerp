@@ -37,10 +37,10 @@ def masters(tenant):
     _seq[0] += 1
     unit = tenant.post("/api/wo/business-units", json={
         "name": "Yalavarti Projects Pvt Ltd", "code": "YPPL",
-        "gstin": "36AABCY1234H1ZX", "pan": "AABCY1234H"}).json()
+        "gstin": "36AABCY1234H1ZI", "pan": "AABCY1234H"}).json()
     con = tenant.post("/api/wo/contractors", json={
         "company_name": "Sri Balaji Civil Works %d" % _seq[0], "pan": "AAAPB1234C",
-        "gst_number": "36AAAPB1234C1Z5"}).json()
+        "gst_number": "36AAAPB1234C1ZP"}).json()
     job = tenant.post("/api/jobs", json={"name": "295 KLD STP",
                                          "customer_name": "L&T"}).json()
     return unit, con, job

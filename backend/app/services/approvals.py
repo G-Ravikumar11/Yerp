@@ -169,7 +169,15 @@ def bill_exceeds_its_order(db, doc, entity_type):
         models.DBPurchaseOrder.id == order_id).first()
     if not order:
         return False
-    return money(doc.total or 0) > money(order.total or 0) + 0.005
+    # Every live bill on the order, not this one alone: three bills each under the order's value added up to well
+    # over it, and none of them was ever looked at. Drafts are not yet claims; cancelled and rejected ones never were.
+    others = db.query(models.DBBill.total).filter(
+        models.DBBill.purchase_order_id == order_id,
+        models.DBBill.id != (doc.id or 0),
+        or_(models.DBBill.status.is_(None),
+            ~models.DBBill.status.in_(("Cancelled", "Rejected", "Draft")))).all()
+    billed = money(sum((t or 0) for (t,) in others)) + money(doc.total or 0)
+    return billed > money(order.total or 0) + 0.005
 
 
 def finance_approver_for(db, client_id, exclude_ids):

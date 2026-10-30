@@ -9,7 +9,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
 
-const STATE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = { 'in force': 'success', 'lapses within 30 days': 'warning', lapsed: 'danger', 'no expiry recorded': 'neutral' }
+const STATE: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = { 'in force': 'success', 'lapses within 30 days': 'warning', 'expires before defects period ends': 'warning', lapsed: 'danger', 'no expiry recorded': 'neutral' }
 const order = (id: number, no: string) => <Link className="font-mono text-[13px] text-primary underline-offset-2 hover:underline" to={`/subcontractors/work-orders/${id}`}>{no}</Link>
 
 /** Bank guarantees held against live orders, and when they lapse. */
@@ -26,7 +26,7 @@ export function GuaranteesTab() {
     { id: 'a', header: 'Amount', align: 'right', cell: (r) => formatINR(r.amount) },
     { id: 'v', header: 'Valid until', hideBelow: 'md', cell: (r) => formatDate(r.valid_until) || '-' },
     { id: 'd', header: 'Days left', hideBelow: 'md', align: 'right', cell: (r) => (r.days_left === null ? '-' : r.days_left) },
-    { id: 'w', header: 'Work ends', hideBelow: 'lg', cell: (r) => `${formatDate(r.completion_date) || '-'}${r.defect_liability_months ? ` + ${r.defect_liability_months} mo DLP` : ''}` },
+    { id: 'w', header: 'Work ends', hideBelow: 'lg', cell: (r) => <div>{`${formatDate(r.completion_date) || '-'}${r.defect_liability_months ? ` + ${r.defect_liability_months} mo DLP` : ''}`}{r.short_of_defects_period && <div className="text-[11px] text-danger">expires before defects period ends ({formatDate(r.defects_period_ends ?? '')})</div>}</div> },
     { id: 's', header: 'State', cell: (r) => <Badge tone={STATE[r.state] ?? 'neutral'}>{r.state}</Badge> },
     // Handed back to the contractor: it stops being watched.
     { id: 'act', header: '', align: 'right', cell: (r) => (can('subcontracts.approve') ? <Button size="sm" variant="outline" onClick={() => setReturning(r)}>Returned</Button> : null) },
@@ -62,12 +62,12 @@ export function AdvancesTab() {
   const s = q.data?.summary
   const columns: TableColumn<Advance>[] = [
     { id: 'c', header: 'Contractor', cell: (r) => r.contractor },
-    { id: 'o', header: 'Order', cell: (r) => order(r.order_id, r.order) },
+    { id: 'o', header: 'Order', cell: (r) => <div>{order(r.order_id, r.order)}{r.order_status === 'CLOSED' && <div className="text-[11px] text-muted-foreground">closed</div>}</div> },
     { id: 'a', header: 'Advance', align: 'right', cell: (r) => formatINR(r.advance) },
     { id: 'p', header: 'Recovery', hideBelow: 'md', align: 'right', cell: (r) => `${r.recovery_percent}%` },
     { id: 'r', header: 'Recovered', align: 'right', cell: (r) => <div className="flex flex-col items-end">{formatINR(r.recovered)}<div className="mt-1 h-1.5 w-24 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round(r.percent_recovered)} aria-valuemin={0} aria-valuemax={100}><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, r.percent_recovered))}%` }} /></div></div> },
     { id: 'out', header: 'Still out', align: 'right', cell: (r) => <span className="font-semibold">{formatINR(r.outstanding)}</span> },
-    { id: 's', header: 'Security', cell: (r) => <Badge tone={r.secured_by_bg ? 'success' : 'warning'}>{r.secured_by_bg ? 'BG held' : 'unsecured'}</Badge> },
+    { id: 's', header: 'Security', cell: (r) => { const sec = r.security ?? (r.secured_by_bg ? 'secured' : 'unsecured'); return <Badge tone={sec === 'secured' || sec === 'nothing out' ? 'success' : sec === 'partly secured' ? 'warning' : 'danger'}>{sec === 'secured' ? 'BG held' : sec}</Badge> } },
   ]
   return (
     <>

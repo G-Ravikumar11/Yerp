@@ -200,7 +200,7 @@ def test_a_cash_box_takes_cash(tenant):
 # --- Suppliers ----------------------------------------------------------------------------
 
 def test_a_supplier_takes_its_state_and_pan_from_the_gstin(tenant):
-    s = tenant.post("/api/suppliers", json={"name": "ACC Ltd", "gstin": "36AAACA1234C1Z5"}).json()
+    s = tenant.post("/api/suppliers", json={"name": "ACC Ltd", "gstin": "36AAACA1234C1ZH"}).json()
     assert s["code"] == "SUP-0001"
     assert s["state"] == "Telangana" and s["pan"] == "AAACA1234C"
 

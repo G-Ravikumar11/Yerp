@@ -9,7 +9,7 @@ the order. These cover that run, including the points where it must refuse.
 def make_customer(tenant, name="Fairview Homes", **extra):
     body = {"name": name, "contact_person": "R. Menon",
             "email": "accounts@fairview.in", "phone_number": "9876500000",
-            "gstin": "36aabcf1234h1zx", "city": "Hyderabad", "state": "Telangana"}
+            "gstin": "36aabcf1234h1z1", "city": "Hyderabad", "state": "Telangana"}
     body.update(extra)
     return tenant.post("/api/customers", json=body)
 
@@ -46,7 +46,7 @@ def test_a_customer_is_added_with_the_detail_a_contract_needs(tenant):
     row = res.json()
     assert row["code"] == "CUST-0001"
     assert row["contact_person"] == "R. Menon"
-    assert row["gstin"] == "36AABCF1234H1ZX", "a GST number is stored as it is printed"
+    assert row["gstin"] == "36AABCF1234H1Z1", "a GST number is stored as it is printed"
     assert row["city"] == "Hyderabad"
 
 

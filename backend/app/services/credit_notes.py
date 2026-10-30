@@ -15,6 +15,8 @@ from fastapi import HTTPException
 
 from app import models
 from app.core.currency import inr, money, rupees
+from app.core.dates import financial_year_label
+from app.core.serials import allocate_series_number
 
 CLIENT, CONTRACTOR = "client", "contractor"
 
@@ -162,6 +164,25 @@ def bill_credit_summary(db, side, bill):
     }
 
 
+def retention_still_held(db, side, client_id, bill):
+    """Retention held on the bill's order and not yet released: what certified bills held, less what credit notes
+    took back, less what releases (not cancelled) gave back. Not floored at nought: a negative figure is an
+    over-release, and the caller says so rather than hiding it."""
+    from app.services.subcontract_billing import released_retention
+    if side == CLIENT:
+        order_id = bill.work_order_id
+        bills = db.query(models.DBRABill).filter(
+            models.DBRABill.work_order_id == order_id, models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all()
+    else:
+        order_id = bill.order_id
+        bills = db.query(models.DBSubBill).filter(
+            models.DBSubBill.order_id == order_id, models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()
+    held = sum(b.retention_amount or 0 for b in bills)
+    credited = credited_retention_by_order(db, client_id, side).get(order_id, 0.0)
+    released = released_retention(db, client_id, side).get(order_id, 0.0)
+    return money(held - credited - released)
+
+
 def _bill_lines(db, side, bill):
     if side == CLIENT:
         return db.query(models.DBRABillLine).filter(models.DBRABillLine.ra_bill_id == bill.id).all()
@@ -234,9 +255,22 @@ def raise_credit_note(db, side, client_id, bill, lines, reason, note_date="", ac
     cess = cut(taxable * cess_rate / 100.0)
     net = cut(taxable + gst_total - retention - tds - cess)
 
-    seq = db.query(models.DBCreditNote).filter(
-        models.DBCreditNote.side == side,
-        (models.DBCreditNote.ra_bill_id if side == CLIENT else models.DBCreditNote.sub_bill_id) == bill.id).count() + 1
+    # Retention taken back has to still be held: what was already released (claimed from the client, or paid to the
+    # contractor) cannot be reversed by a credit note as well.
+    if retention > 0:
+        room = retention_still_held(db, side, client_id, bill)
+        if retention > room + 0.009:
+            raise HTTPException(
+                409, "This credit note would take back %s of retention, but only %s is still held on %s - the rest "
+                     "has been released. Cancel the release first, or take back less." % (
+                         inr(retention), inr(room), bill.number))
+
+    on = (note_date or date.today().isoformat())[:10]
+    stem = "CN" if side == CLIENT else "SCN"
+    year = financial_year_label(on)
+    number = allocate_series_number(db, models.DBCreditNote, client_id, "credit_note:%s:%s" % (side, year),
+                                    "%s/%s/" % (stem, year))
+    seq = int(number.rsplit("/", 1)[-1])
     note = models.DBCreditNote(
         client_id=client_id, side=side,
         ra_bill_id=bill.id if side == CLIENT else None,
@@ -244,8 +278,8 @@ def raise_credit_note(db, side, client_id, bill, lines, reason, note_date="", ac
         work_order_id=bill.work_order_id if side == CLIENT else None,
         sub_order_id=bill.order_id if side == CONTRACTOR else None,
         job_id=bill.job_id, contractor_id=getattr(bill, "contractor_id", None) if side == CONTRACTOR else None,
-        number="%s/CN-%02d" % (bill.number, seq), sequence=seq,
-        note_date=(note_date or date.today().isoformat())[:10], reason=reason[:500],
+        number=number, sequence=seq,
+        note_date=on, reason=reason[:500],
         taxable=taxable, gst_percent=gst_rate, gst_amount=gst_total, cgst_amount=cgst, sgst_amount=sgst,
         igst_amount=igst, place_of_supply=bill.place_of_supply or "", retention_amount=retention,
         tds_percent=tds_rate, tds_amount=tds, cess_amount=cess, net_amount=net,

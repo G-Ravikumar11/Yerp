@@ -8,15 +8,26 @@ of Tally > Import > Masters, then Transactions.
 What goes across
     Receipts and payments (against a bill, on account), expense vouchers and sundry receipts, transfers between our own
     accounts (contra), client RA bills (sales, with output GST, TDS deducted by the client, retention held and advance
-    recovered), supplier bills (purchases with input GST) and contractor RA bills (a journal: their work and its GST
-    against what is owed them, the TDS and labour cess we deduct, retention we hold and advance we recover). Every line
-    of income or cost carries its project as a cost centre, so Tally can show each site's P&L too.
+    recovered), tax invoices (sales), supplier bills (purchases with input GST, split CGST/SGST or IGST by the
+    supplier's state; a bill still waiting for approval is left out), contractor RA bills (a journal: their work and its
+    GST against what is owed them, the TDS and labour cess we deduct, retention we hold and advance we recover), credit
+    notes (to a client, a Credit Note; from a contractor's bill, a Debit Note), and the fixed assets' depreciation for
+    each closed year and their sale (journals). Every line of income or cost carries its project as a cost centre, so
+    Tally can show each site's P&L too.
+
+    An asset's purchase is not sent: it reaches Tally through the supplier's bill, which is not linked to the asset,
+    and a second voucher would double it. The CA books that bill to the asset's ledger.
+
+Voided entries
+    An entry voided before any export took it is simply left out. One voided after an export took it goes across as a
+    cancellation of the voucher already in Tally (ACTION="Cancel", found by its voucher number), so the books there
+    follow.
 
 How the sums are kept honest
     A bill's own deductions are each put on their own ledger; whatever else came off it - back-charges, debit notes,
     LD, material recovered - is one line, worked out as what makes the voucher balance to the rupee, so a voucher that
-    Tally refuses for not balancing cannot be written. Each voucher carries a REMOTEID, so the same one imported twice
-    is recognised by Tally rather than doubled.
+    Tally refuses for not balancing cannot be written. Each voucher carries a REMOTEID and GUID made from our own
+    record's id, so the same one imported twice is recognised by Tally rather than doubled.
 
 The ledger names are the company's to set (Settings, Tally), to match the ledgers already in their Tally company.
 """
@@ -26,6 +37,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 from app import models
 from app.core.currency import money
+from app.core.gst import GST_STATES, our_state, state_from_gstin, supply_state_for_job
 from app.core.tenant_settings import tenant_setting
 
 SETTING = "tally_ledgers"
@@ -45,6 +57,10 @@ LEDGERS = {
     "input_cgst": ("Input CGST", "Duties & Taxes", False),
     "input_sgst": ("Input SGST", "Duties & Taxes", False),
     "input_igst": ("Input IGST", "Duties & Taxes", False),
+    "fixed_assets": ("Fixed Assets", "Fixed Assets", False),
+    "depreciation": ("Depreciation", "Indirect Expenses", False),
+    "asset_sale_gain": ("Profit or Loss on Sale of Fixed Assets", "Indirect Incomes", False),
+    "asset_sale_proceeds": ("Fixed Assets Sold - Proceeds Receivable", "Current Assets", False),
     "subcontract": ("Subcontract Charges", "Direct Expenses", True),
     "tds_payable": ("TDS Payable - Contractors", "Duties & Taxes", False),
     "labour_cess": ("Labour Cess Payable", "Duties & Taxes", False),
@@ -58,12 +74,17 @@ LABELS = {
     "sales": "Work billed to clients (RA bills)", "output_cgst": "Output CGST", "output_sgst": "Output SGST",
     "output_igst": "Output IGST", "tds_receivable": "TDS deducted by clients", "retention_receivable": "Retention held by clients",
     "client_advance": "Mobilisation advance from clients", "client_deductions": "Other deductions by clients",
-    "purchases": "Supplier bills", "input_gst": "GST on supplier bills", "input_cgst": "Input CGST (contractors)",
-    "input_sgst": "Input SGST (contractors)", "input_igst": "Input IGST (contractors)", "subcontract": "Contractors' work",
+    "purchases": "Supplier bills", "input_gst": "GST on supplier bills (supplier's state not known)",
+    "input_cgst": "Input CGST", "input_sgst": "Input SGST", "input_igst": "Input IGST", "subcontract": "Contractors' work",
     "tds_payable": "TDS deducted from contractors", "labour_cess": "Labour cess deducted", "retention_payable": "Retention held from contractors",
     "contractor_advance": "Mobilisation advance to contractors", "contractor_recoveries": "Other recoveries from contractors",
     "unassigned_bank": "Payments with no bank account recorded", "cash": "Cash paid with no cash box recorded",
+    "fixed_assets": "Fixed assets (book value)", "depreciation": "Depreciation on fixed assets",
+    "asset_sale_gain": "Profit or loss on selling an asset", "asset_sale_proceeds": "What a sold asset fetched",
 }
+# GST ledgers carry their duty head in Tally, so its GST reports pick them up.
+GST_HEADS = {"output_cgst": "Central Tax", "output_sgst": "State Tax", "output_igst": "Integrated Tax",
+             "input_cgst": "Central Tax", "input_sgst": "State Tax", "input_igst": "Integrated Tax", "input_gst": ""}
 # Heads that are the site's own cost (Direct Expenses in Tally); the rest are overheads.
 DIRECT_HEADS = {"Site expenses", "Diesel & fuel", "Machinery hire", "Transport & freight", "Repairs & maintenance"}
 PARTY_GROUP = {"client": "Sundry Debtors", "supplier": "Sundry Creditors", "contractor": "Sundry Creditors", "other": "Sundry Creditors"}
@@ -106,14 +127,21 @@ class Books:
         self.names = ledger_names(db, client.id)
         self.vouchers = []
         self.ledgers = {}               # name -> (group, takes cost centre)
+        self.gst_ledgers = {}           # name -> GST duty head ("" for an unsplit GST ledger)
+        self.party_info = {}            # name -> {"gstin", "state"}
         self.cost_centres = set()
         self.warnings = []
+        self.our_state = our_state(db, client.id)
         self.jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
         self.accounts = {a.id: a for a in db.query(models.DBBankAccount).filter(models.DBBankAccount.client_id == client.id).all()}
+        self.contractors = {c.id: c for c in db.query(models.DBContractor).filter(models.DBContractor.client_id == client.id).all()}
         self._money()
         self._client_bills()
+        self._invoices()
         self._supplier_bills()
         self._contractor_bills()
+        self._credit_notes()
+        self._fixed_assets()
         self.vouchers.sort(key=lambda v: (v["date"], v["type"], v["number"]))
 
     # --- naming ---
@@ -121,11 +149,19 @@ class Books:
         name = self.names[key]
         _, group, cc = LEDGERS[key]
         self.ledgers.setdefault(name, (group, cc))
+        if key in GST_HEADS:
+            self.gst_ledgers.setdefault(name, GST_HEADS[key])
         return name
 
-    def party(self, name, kind):
+    def party(self, name, kind, gstin="", state=""):
         name = (name or "").strip() or "Unnamed party"
         self.ledgers.setdefault(name, (PARTY_GROUP.get(kind, "Sundry Creditors"), False))
+        gstin = (gstin or "").strip().upper()
+        code = (state or "").strip() or state_from_gstin(gstin)
+        if gstin or code:
+            info = self.party_info.setdefault(name, {"gstin": "", "state": ""})
+            info["gstin"] = info["gstin"] or gstin
+            info["state"] = info["state"] or GST_STATES.get(code, "")
         return name
 
     def account(self, account_id, mode):
@@ -158,20 +194,61 @@ class Books:
             self.warnings.append("%s %s did not balance by %s and was left out." % (vtype, number, total))
             return
         self.vouchers.append({"type": vtype, "number": number, "date": on[:10], "narration": narration,
-                              "lines": lines, "remote": remote, "centre": self.centre(job_id)})
+                              "lines": lines, "remote": remote, "centre": self.centre(job_id), "action": "Create"})
+
+    def cancel(self, vtype, number, on, narration, remote):
+        """A voucher already sent to Tally, cancelled there: found by its type, date and number."""
+        self.vouchers.append({"type": vtype, "number": number, "date": on[:10], "narration": narration,
+                              "lines": [], "remote": remote, "centre": "", "action": "Cancel"})
+
+    # --- what has already gone across ---
+    def _exports(self):
+        """Every earlier export of vouchers: (when, period from, period to)."""
+        if not hasattr(self, "_export_log"):
+            self._export_log = []
+            for at, details in self.db.query(models.DBAuditLog.created_at, models.DBAuditLog.details).filter(
+                    models.DBAuditLog.client_id == self.client.id, models.DBAuditLog.action == "tally_export",
+                    models.DBAuditLog.entity_name == "vouchers").all():
+                m = re.search(r"(\S+) to (\S+)\s*$", details or "")
+                f, t = (m.group(1), m.group(2)) if m else ("start", "today")
+                at = at or ""
+                self._export_log.append((at, "0000-00-00" if f == "start" else f, at[:10] if t == "today" else t))
+        return self._export_log
+
+    def _voided_at(self, numbers):
+        rows = [at for (at,) in self.db.query(models.DBAuditLog.created_at).filter(
+            models.DBAuditLog.client_id == self.client.id, models.DBAuditLog.action == "money_voided",
+            models.DBAuditLog.entity_name.in_([n for n in numbers if n])).all() if at]
+        return min(rows) if rows else "9999-12-31 23:59:59"
+
+    def was_exported(self, e, numbers):
+        """Did an export of vouchers take this entry before it was voided?"""
+        if not self._exports():
+            return False
+        gone = self._voided_at(numbers)
+        made = e.created_at or ""
+        return any(made <= at < gone and f <= (e.paid_on or "")[:10] <= t for at, f, t in self._exports())
 
     # --- what goes across ---
     def _money(self):
         legs = {e.id: e for e in self.db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.client_id == self.client.id, models.DBMoneyEntry.doc_type == "contra").all()}
         q = self.db.query(models.DBMoneyEntry).filter(
-            models.DBMoneyEntry.client_id == self.client.id, models.DBMoneyEntry.voided.isnot(True),
+            models.DBMoneyEntry.client_id == self.client.id,
             models.DBMoneyEntry.paid_on >= self.date_from, models.DBMoneyEntry.paid_on <= self.date_to)
         for e in q.order_by(models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all():
+            remote = "yerp-%d-money-%d" % (self.client.id, e.id)
+            if e.voided:
+                if e.doc_type == "contra" and e.direction != "OUT":
+                    continue
+                other = legs.get(e.pair_id) if e.doc_type == "contra" else None
+                if self.was_exported(e, [e.number, other.number if other else ""]):
+                    vtype = ("Contra" if e.doc_type == "contra" else "Receipt" if e.direction == "IN" else "Payment")
+                    self.cancel(vtype, e.number, e.paid_on, "Voided: %s" % (e.void_reason or ""), remote)
+                continue
             amt = money(e.amount)
             here = self.account(e.account_id, e.mode)
             ref = " (%s %s)" % (e.mode, e.reference) if e.reference else (" (%s)" % e.mode if e.mode else "")
-            remote = "yerp-%d-money-%d" % (self.client.id, e.id)
             if e.doc_type == "contra":
                 if e.direction != "OUT":
                     continue                                  # one voucher for the two entries
@@ -215,24 +292,63 @@ class Books:
                      lines, "yerp-%d-rabill-%d" % (self.client.id, b.id), b.job_id)
 
     def _supplier_bills(self):
+        suppliers = {}
+        for sup in self.db.query(models.DBSupplier).filter(models.DBSupplier.client_id == self.client.id).all():
+            suppliers.setdefault((sup.name or "").strip().lower(), sup)
         q = self.db.query(models.DBBill).filter(models.DBBill.client_id == self.client.id)
         for b in q.all():
-            if (b.status or "") in ("Draft", "Cancelled", "Rejected") or (b.approval_status or "none") == "rejected":
-                continue
+            if (b.status or "") in ("Draft", "Cancelled", "Rejected", "Awaiting Approval") \
+                    or (b.approval_status or "none") in ("rejected", "pending"):
+                continue                                   # not the company's debt until it is approved
             on = (b.issue_date or b.created_at or "")[:10]
             if not (self.date_from <= on <= self.date_to):
                 continue
             total = money(b.total or b.amount or 0)
             tax = money(b.tax_amount or 0)
-            party = self.party(b.vendor_name, "supplier")
+            sup = suppliers.get((b.vendor_name or "").strip().lower())
+            gstin = (sup.gstin or "") if sup else ""
+            theirs = ((sup.state_code or "").strip() if sup else "") or state_from_gstin(gstin)
+            party = self.party(b.vendor_name, "supplier", gstin, theirs)
+            if theirs and self.our_state and tax:
+                if theirs == self.our_state:
+                    half = money(tax / 2.0)
+                    gst = [(self.std("input_cgst"), half), (self.std("input_sgst"), money(tax - half))]
+                else:
+                    gst = [(self.std("input_igst"), tax)]
+            else:
+                gst = [(self.std("input_gst"), tax)]       # whose state it is is not known: left for the CA to split
             self.add("Purchase", b.number or "Bill %d" % b.id, on,
                      "Bill %s from %s%s" % (b.number or "", b.vendor_name or "", (" - " + b.notes) if b.notes else ""),
-                     [(self.std("purchases"), money(total - tax)), (self.std("input_gst"), tax),
-                      (party, -total, b.number or "", "New Ref")],
+                     [(self.std("purchases"), money(total - tax))] + gst + [(party, -total, b.number or "", "New Ref")],
                      "yerp-%d-bill-%d" % (self.client.id, b.id), b.job_id)
 
+    def _invoices(self):
+        """Tax invoices raised outside the RA bills: sales, with output GST split by where the work is."""
+        from app.core.currency import compute_invoice_totals
+        q = self.db.query(models.DBInvoice).filter(models.DBInvoice.client_id == self.client.id)
+        for inv in q.all():
+            if (inv.status or "Draft") in ("Draft", "Void") or (inv.approval_status or "none") in ("pending", "rejected"):
+                continue
+            on = (inv.issue_date or "")[:10]
+            if not (self.date_from <= on <= self.date_to):
+                continue
+            taxable, tax, total = compute_invoice_totals(inv.line_items, inv.tax_type)
+            if total <= 0:
+                continue
+            party = self.party(inv.to_contact, "client")
+            where = supply_state_for_job(self.db, inv.job_id)
+            if where and self.our_state and where == self.our_state:
+                half = money(tax / 2.0)
+                gst = [(self.std("output_cgst"), -half), (self.std("output_sgst"), -money(tax - half))]
+            else:
+                gst = [(self.std("output_igst"), -tax)]
+            self.add("Sales", inv.number or "Invoice %d" % inv.id, on,
+                     "Invoice %s to %s" % (inv.number or "", inv.to_contact or ""),
+                     [(party, total, inv.number or "", "New Ref"), (self.std("sales"), -taxable)] + gst,
+                     "yerp-%d-invoice-%d" % (self.client.id, inv.id), inv.job_id)
+
     def _contractor_bills(self):
-        contractors = {c.id: c for c in self.db.query(models.DBContractor).filter(models.DBContractor.client_id == self.client.id).all()}
+        contractors = self.contractors
         q = self.db.query(models.DBSubBill).filter(models.DBSubBill.client_id == self.client.id,
                                                    models.DBSubBill.status.in_(("CERTIFIED", "PAID")))
         for b in q.all():
@@ -240,7 +356,7 @@ class Books:
             if not (self.date_from <= on <= self.date_to):
                 continue
             con = contractors.get(b.contractor_id)
-            party = self.party(con.company_name if con else "", "contractor")
+            party = self.party(con.company_name if con else "", "contractor", con.gst_number if con else "")
             taxable, net = money(b.this_bill), money(b.net_payable)
             cgst, sgst, igst = money(b.cgst_amount), money(b.sgst_amount), money(b.igst_amount)
             ret, adv, tds, cess = (money(b.retention_amount), money(b.advance_recovery), money(b.tds_amount),
@@ -253,10 +369,79 @@ class Books:
             self.add("Journal", b.number, on, "Contractor's RA bill %s certified%s" % (b.number, (" - " + b.deduction_notes) if b.deduction_notes else ""),
                      lines, "yerp-%d-subbill-%d" % (self.client.id, b.id), b.job_id)
 
+    def _credit_notes(self):
+        """Work taken back off a certified bill. To a client it is a Credit Note against our sale; on a contractor's
+        bill it is a Debit Note against what we owe them. Each undoes its bill's lines."""
+        ra = {b.id: b for b in self.db.query(models.DBRABill).filter(models.DBRABill.client_id == self.client.id).all()}
+        sub = {b.id: b for b in self.db.query(models.DBSubBill).filter(models.DBSubBill.client_id == self.client.id).all()}
+        for n in self.db.query(models.DBCreditNote).filter(models.DBCreditNote.client_id == self.client.id,
+                                                           models.DBCreditNote.status == "ISSUED").all():
+            on = (n.note_date or n.created_at or "")[:10]
+            if not (self.date_from <= on <= self.date_to):
+                continue
+            taxable, net = money(n.taxable), money(n.net_amount)
+            cgst, sgst, igst = money(n.cgst_amount), money(n.sgst_amount), money(n.igst_amount)
+            ret, tds, cess = money(n.retention_amount), money(n.tds_amount), money(n.cess_amount)
+            remote = "yerp-%d-creditnote-%d" % (self.client.id, n.id)
+            why = (" - " + n.reason) if n.reason else ""
+            if (n.side or "client") == "client":
+                bill = ra.get(n.ra_bill_id)
+                job = self.jobs.get(n.job_id)
+                party = self.party(job.customer_name if job else "", "client")
+                other = money(taxable + cgst + sgst + igst - net - ret - tds)
+                lines = [(self.std("sales"), taxable), (self.std("output_cgst"), cgst), (self.std("output_sgst"), sgst),
+                         (self.std("output_igst"), igst), (party, -net, bill.number if bill else n.number, "Agst Ref"),
+                         (self.std("tds_receivable"), -tds), (self.std("retention_receivable"), -ret),
+                         (self.std("client_deductions"), -other)]
+                self.add("Credit Note", n.number, on, "Credit note %s%s" % (n.number, why), lines, remote, n.job_id)
+            else:
+                bill = sub.get(n.sub_bill_id)
+                con = self.contractors.get(n.contractor_id)
+                party = self.party(con.company_name if con else "", "contractor", con.gst_number if con else "")
+                other = money(taxable + cgst + sgst + igst - net - ret - tds - cess)
+                lines = [(self.std("subcontract"), -taxable), (self.std("input_cgst"), -cgst), (self.std("input_sgst"), -sgst),
+                         (self.std("input_igst"), -igst), (party, net, bill.number if bill else n.number, "Agst Ref"),
+                         (self.std("tds_payable"), tds), (self.std("labour_cess"), cess),
+                         (self.std("retention_payable"), ret), (self.std("contractor_recoveries"), other)]
+                self.add("Debit Note", n.number, on, "Debit note %s on the contractor's bill%s" % (n.number, why), lines,
+                         remote, n.job_id)
+
+    def _fixed_assets(self):
+        """Each owned asset's depreciation for every financial year that has ended (booked on 31 March), and its sale.
+        The year still running is booked when it closes."""
+        from datetime import date
+        from app.services.assets import book_schedule, fy_start_year
+        today = date.today().isoformat()
+        assets = {a.id: a for a in self.db.query(models.DBAsset).filter(models.DBAsset.client_id == self.client.id).all()}
+        for b in self.db.query(models.DBAssetBook).filter(models.DBAssetBook.client_id == self.client.id).all():
+            a = assets.get(b.asset_id)
+            if a is None or (a.ownership or "Owned") != "Owned":
+                continue
+            label = ("%s %s" % (a.code or "", a.name or "")).strip()
+            for row in book_schedule(b, fy_start_year(today)):
+                y = int(row["fy"][:4])
+                on = (b.disposed_on or "")[:10] if row["disposed"] else "%d-03-31" % (y + 1)
+                if on > today or not (self.date_from <= on <= self.date_to):
+                    continue
+                dep = money(row["depreciation"])
+                self.add("Journal", "DEP/%s/%s" % (row["fy"], a.code or a.id), on,
+                         "Depreciation on %s for %s (%s)" % (label, row["fy"], b.method or "WDV"),
+                         [(self.std("depreciation"), dep), (self.std("fixed_assets"), -dep)],
+                         "yerp-%d-assetdep-%d-%d" % (self.client.id, b.id, y))
+                if row["disposed"]:
+                    value, book = money(row["disposal_value"]), money(row.get("book_value_at_sale", 0))
+                    self.add("Journal", "SALE/%s" % (a.code or a.id), on,
+                             "%s sold or scrapped for %s against a book value of %s%s" % (
+                                 label, value, book, (" - " + b.disposal_note) if b.disposal_note else ""),
+                             [(self.std("asset_sale_proceeds"), value), (self.std("fixed_assets"), -book),
+                              (self.std("asset_sale_gain"), money(book - value))],
+                             "yerp-%d-assetsale-%d" % (self.client.id, b.id))
+
     def summary(self):
         by = {}
         for v in self.vouchers:
-            s = by.setdefault(v["type"], {"type": v["type"], "count": 0, "amount": 0.0})
+            kind = v["type"] if v.get("action") != "Cancel" else "%s (cancelled)" % v["type"]
+            s = by.setdefault(kind, {"type": kind, "count": 0, "amount": 0.0})
             s["count"] += 1
             s["amount"] = money(s["amount"] + sum(a for _, a, *_ in v["lines"] if a > 0))
         return {"vouchers": sorted(by.values(), key=lambda s: s["type"]), "ledgers": len(self.ledgers),
@@ -277,15 +462,36 @@ def masters_xml(books, company=""):
                     '<CATEGORY>%s</CATEGORY><PARENT/></COSTCENTRE></TALLYMESSAGE>\n' % (quoteattr(name), _x(name), COST_CATEGORY))
     for name, (group, cc) in sorted(books.ledgers.items()):
         billwise = "Yes" if group in ("Sundry Debtors", "Sundry Creditors") else "No"
+        extra = ""
+        if name in books.gst_ledgers:
+            head = books.gst_ledgers[name]
+            extra = "<TAXTYPE>GST</TAXTYPE>" + ("<GSTDUTYHEAD>%s</GSTDUTYHEAD>" % head if head else "")
+        info = books.party_info.get(name)
+        if info:
+            if info["state"]:
+                extra += "<LEDSTATENAME>%s</LEDSTATENAME><COUNTRYNAME>India</COUNTRYNAME>" % _x(info["state"])
+            if info["gstin"]:
+                extra += ("<GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE><PARTYGSTIN>%s</PARTYGSTIN>"
+                          % _x(info["gstin"]))
+            else:
+                extra += "<GSTREGISTRATIONTYPE>Unregistered</GSTREGISTRATIONTYPE>"
         msgs.append('<TALLYMESSAGE xmlns:UDF="TallyUDF"><LEDGER NAME=%s ACTION="Create"><NAME.LIST><NAME>%s</NAME></NAME.LIST>'
-                    '<PARENT>%s</PARENT><ISBILLWISEON>%s</ISBILLWISEON><ISCOSTCENTRESON>%s</ISCOSTCENTRESON></LEDGER></TALLYMESSAGE>\n'
-                    % (quoteattr(name), _x(name), _x(group), billwise, "Yes" if cc and books.cost_centres else "No"))
+                    '<PARENT>%s</PARENT><ISBILLWISEON>%s</ISBILLWISEON><ISCOSTCENTRESON>%s</ISCOSTCENTRESON>%s</LEDGER></TALLYMESSAGE>\n'
+                    % (quoteattr(name), _x(name), _x(group), billwise, "Yes" if cc and books.cost_centres else "No", extra))
     return _envelope("All Masters", company, msgs)
 
 
 def vouchers_xml(books, company=""):
     msgs = []
     for v in books.vouchers:
+        if v.get("action") == "Cancel":
+            # Tally finds the voucher to cancel by its date, type and number.
+            msgs.append('<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER REMOTEID=%s DATE=%s TAGNAME="Voucher Number" TAGVALUE=%s '
+                        'VCHTYPE=%s ACTION="Cancel"><DATE>%s</DATE><GUID>%s</GUID><VOUCHERTYPENAME>%s</VOUCHERTYPENAME>'
+                        "<VOUCHERNUMBER>%s</VOUCHERNUMBER><NARRATION>%s</NARRATION></VOUCHER></TALLYMESSAGE>\n"
+                        % (quoteattr(v["remote"]), quoteattr(_tdate(v["date"])), quoteattr(v["number"]), quoteattr(v["type"]),
+                           _tdate(v["date"]), _x(v["remote"]), _x(v["type"]), _x(v["number"]), _x(v["narration"][:500])))
+            continue
         rows = []
         for line in v["lines"]:
             ledger, amt = line[0], line[1]
@@ -304,8 +510,8 @@ def vouchers_xml(books, company=""):
                         "<AMOUNT>%s</AMOUNT>%s%s</ALLLEDGERENTRIES.LIST>"
                         % (_x(ledger), "Yes" if amt > 0 else "No", tally_amt, alloc, centre))
         msgs.append('<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER REMOTEID=%s VCHTYPE=%s ACTION="Create">'
-                    "<DATE>%s</DATE><VOUCHERTYPENAME>%s</VOUCHERTYPENAME><VOUCHERNUMBER>%s</VOUCHERNUMBER>"
+                    "<DATE>%s</DATE><GUID>%s</GUID><VOUCHERTYPENAME>%s</VOUCHERTYPENAME><VOUCHERNUMBER>%s</VOUCHERNUMBER>"
                     "<NARRATION>%s</NARRATION>%s</VOUCHER></TALLYMESSAGE>\n"
-                    % (quoteattr(v["remote"]), quoteattr(v["type"]), _tdate(v["date"]), _x(v["type"]), _x(v["number"]),
-                       _x(v["narration"])[:500], "".join(rows)))
+                    % (quoteattr(v["remote"]), quoteattr(v["type"]), _tdate(v["date"]), _x(v["remote"]), _x(v["type"]),
+                       _x(v["number"]), _x(v["narration"][:500]), "".join(rows)))
     return _envelope("Vouchers", company, msgs)

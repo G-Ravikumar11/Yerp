@@ -13,7 +13,7 @@ from app.constants.subcontract_orders import WO_RICH_TAGS, _WO_TAG
 from app.constants.wallet_ai import TOPUP_MAX_MAJOR, TOPUP_MIN_MAJOR
 from app.core.currency import currency_symbol, money, to_minor, unit_rate
 from app.core.dates import _parse_date, parse_working_days
-from app.core.gst import state_from_gstin
+from app.core.gst import gstin_valid, state_from_gstin
 from app.core.units import CATEGORY_BY_KIND, ITEM_TYPES
 
 
@@ -409,6 +409,19 @@ def clean_rich_text(value):
     return cleaned.strip()
 
 
+def validate_gstin(gstin):
+    """Refuse a GSTIN the portal would refuse: the wrong shape, a state that is not one, or a check character that
+    does not match - which is what a single mistyped letter looks like. Returns it cleaned (upper case, no spaces)."""
+    g = re.sub(r"\s", "", gstin or "").upper()
+    if len(g) != 15 or not state_from_gstin(g) or not re.match(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$", g):
+        raise HTTPException(400, "A GSTIN is fifteen characters: a state code, the PAN, then three more "
+                                 "(for example 36AABCY1234H1ZI).")
+    if not gstin_valid(g):
+        raise HTTPException(400, "%s does not pass the GSTIN check - one of its characters is mistyped. "
+                                 "Copy it from the supplier's or customer's GST certificate." % g)
+    return g
+
+
 def clean_tax_ids(gstin, pan):
     """A GSTIN and a PAN as the forms want them, or a plain reason why not.
     The PAN is inside the GSTIN, so one given without the other is filled in,
@@ -416,10 +429,8 @@ def clean_tax_ids(gstin, pan):
     businesses on one document."""
     gstin = re.sub(r"\s", "", gstin or "").upper()
     pan = re.sub(r"\s", "", pan or "").upper()
-    if gstin and (len(gstin) != 15 or not state_from_gstin(gstin)
-                  or not re.match(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$", gstin)):
-        raise HTTPException(400, "A GSTIN is fifteen characters: a state code, the PAN, then three more "
-                                 "(for example 36AABCY1234H1ZX).")
+    if gstin:
+        validate_gstin(gstin)
     if pan and not re.match(r"^[A-Z]{5}[0-9]{4}[A-Z]$", pan):
         raise HTTPException(400, "A PAN is five letters, four digits and a letter (for example AABCY1234H).")
     if gstin and not pan:

@@ -30,7 +30,7 @@ def test_without_gst_an_order_within_the_limit_goes_through(tenant):
 
 
 def test_with_gst_any_order_goes_through(tenant):
-    con = contractor(tenant, "Registered Works", gst="36AAAPB1234C1Z5")
+    con = contractor(tenant, "Registered Works", gst="36AAAPB1234C1ZP")
     order = priced(tenant, contractor_id=con["id"])
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
     assert tenant.post("/api/wo/orders/%d/approve" % order["id"], json={}).status_code == 200
@@ -41,7 +41,7 @@ def test_the_cap_is_met_the_moment_gst_is_added(tenant):
     order = priced(tenant, contractor_id=con["id"])
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 409
     assert tenant.put("/api/wo/contractors/%d" % con["id"], json={
-        "company_name": "Later Registered Works", "pan": "AAAPB1234C", "gst_number": "36AAAPB1234C1Z5"}).status_code == 200
+        "company_name": "Later Registered Works", "pan": "AAAPB1234C", "gst_number": "36AAAPB1234C1ZP"}).status_code == 200
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
 
 
@@ -59,6 +59,6 @@ def test_without_gst_the_budget_set_from_their_order_is_capped_too(tenant):
 
 
 def test_with_gst_the_budget_set_from_their_order_has_no_cap(tenant):
-    con = contractor(tenant, "Budget Registered Works", gst="36AAAPB1234C1Z5")
+    con = contractor(tenant, "Budget Registered Works", gst="36AAAPB1234C1ZP")
     order = draft(tenant, contractor_id=con["id"])
     assert tenant.post("/api/wo/projects/%d/budgets" % order["job_id"], json={"name": "Shuttering", "code": "FBN", "allocated_amount": 1966666, "order_id": order["id"]}).status_code == 200

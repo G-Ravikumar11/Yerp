@@ -31,6 +31,7 @@ from app.core.auth import (
 )
 from app.core.currency import format_money_plain, inr, money, qty_text, sheet_number, unit_rate
 from app.core.dates import _parse_date
+from app.core.serials import allocate_series_number
 from app.core.files import _file_or_404, drop_files_of, file_bytes, file_headers, served_type, store_file
 from app.core.gst import WORKS_CONTRACT_SAC, supply_state_for_job
 from app.core.lifecycle import convert_legacy_holds
@@ -40,7 +41,8 @@ from app.core.sheets import sheet_response
 from app.documents.forms import form_pdf_response, sub_bill_certificate, sub_bill_form_spec
 from app.documents.pdf_twins import SHEET_AS_PDF
 from app.schemas.client_billing import CreditNoteIn
-from app.services.credit_notes import credit_note_dict, credit_totals_by_bill, raise_credit_note
+from app.services.credit_notes import (credit_note_dict, credit_totals_by_bill,
+                                       credited_retention_by_order, raise_credit_note)
 from app.schemas.subcontract_billing import (
     DimensionIn,
     MeasurementIn,
@@ -1411,6 +1413,33 @@ def retention_overview(request: Request, db: Session = Depends(get_read_db)):
     }
 
 
+def client_release_gate(db, client_id, pos, stage, amount, on, body, actor_id):
+    """The client's retention is security for defects: the last of it - the release at the end of the defects
+    period, or any release that would leave nothing held (other than one against a bank guarantee) - is claimed only
+    once the defects period has run out. The client's work order has no completion date, so the end of the period
+    is stated on the release (or carried from an earlier one). Before then only the Master releases it, saying why.
+    Returns (override note, defects period end to keep on the release)."""
+    ends = (body.dlp_ends or "").strip()[:10] or pos.get("dlp_ends") or ""
+    if ends and not _parse_date(ends):
+        raise HTTPException(400, "The end of the defects period should be YYYY-MM-DD.")
+    final = stage == "End of defects period" or (
+        stage != "Against a bank guarantee" and amount >= money(pos["balance"]) - 0.009)
+    if not final:
+        return "", ends
+    if ends and ends <= on:
+        return "", ends
+    why = ("The defects period on %s runs to %s." % (pos["order_number"] or "that order", ends)) if ends else \
+        "When does the defects period on %s end? Give its date." % (pos["order_number"] or "that order")
+    if not body.override:
+        raise HTTPException(409, "Not yet: %s The last of the retention is claimed once it is over; only the Master "
+                                 "can release it earlier, with a reason." % why)
+    if actor_id is not None:
+        raise HTTPException(403, "%s Only the Master can release the last of the retention before then." % why)
+    if not (body.notes or "").strip():
+        raise HTTPException(400, "Say why it is being released before the defects period is over.")
+    return ("Released before the defects period ended. %s Reason: %s" % (why, body.notes.strip()))[:1000], ends
+
+
 @router.post("/api/retention/releases")
 def create_release(body: RetentionReleaseIn, request: Request, db: Session = Depends(get_db)):
     """Release retention: claim it from the client, or owe it to a contractor.
@@ -1451,6 +1480,9 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
             if not (body.notes or "").strip():
                 raise HTTPException(400, "Say why it is being released regardless: " + " ".join(blockers))
             override_note = "Released regardless of: " + " ".join(blockers) + " Reason: " + body.notes.strip()
+    dlp_ends = ""
+    if side == "client":
+        override_note, dlp_ends = client_release_gate(db, client.id, pos, stage, amount, on, body, actor_id)
     # GST was charged on the whole of every bill, retention included (recost_ra_bill / recost_sub_bill), and
     # returned for the month of that bill. Giving the retention back is not a second supply: a release carries no
     # tax, whatever rate the form sends, or the registers count the same work twice.
@@ -1459,15 +1491,14 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
     gst = {"total": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0}
 
     stem = "RET" if side == "client" else "RETG"
-    n = db.query(models.DBRetentionRelease).filter(
-        models.DBRetentionRelease.client_id == client.id,
-        models.DBRetentionRelease.side == side).count() + 1
+    number = allocate_series_number(db, models.DBRetentionRelease, client.id, "retention_release:%s" % side,
+                                    stem + "-")
     r = models.DBRetentionRelease(
         client_id=client.id, side=side,
         work_order_id=body.order_id if side == "client" else None,
         sub_order_id=body.order_id if side == "contractor" else None,
         job_id=pos["job_id"], contractor_id=pos.get("contractor_id"),
-        number="%s-%04d" % (stem, n), stage=stage, release_on=on, amount=amount,
+        number=number, stage=stage, release_on=on, amount=amount, dlp_ends=dlp_ends,
         gst_percent=rate, gst_amount=gst["total"], cgst_amount=gst["cgst"],
         sgst_amount=gst["sgst"], igst_amount=gst["igst"], place_of_supply=supply,
         net_amount=money(amount + gst["total"]),
@@ -1578,7 +1609,10 @@ def export_release(release_id: int, request: Request, db: Session = Depends(get_
         bills = db.query(models.DBSubBill).filter(
             models.DBSubBill.order_id == r.sub_order_id,
             models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).order_by(models.DBSubBill.id).all()
-    held = money(sum(b.retention_amount or 0 for b in bills))
+    retained = money(sum(b.retention_amount or 0 for b in bills))
+    credited = credited_retention_by_order(db, client.id, r.side).get(
+        r.work_order_id if r.side == "client" else r.sub_order_id, 0.0)
+    held = money(retained - credited)
     before = money(sum(x.amount or 0 for x in _live_releases(db, client.id, r.side)
                        if x.id < r.id and (x.work_order_id, x.sub_order_id) == (r.work_order_id, r.sub_order_id)))
     rows = [(b.number or "", (b.certified_at or "")[:10], money(b.this_bill),
@@ -1600,8 +1634,10 @@ def export_release(release_id: int, request: Request, db: Session = Depends(get_
                   ("Stage", d["stage"]),
                   ("Place of supply", d["place_of_supply"]), ("SAC", WORKS_CONTRACT_SAC),
                   ()],
-        closing=[(), ("Retention held on these bills", "", "", "", held),
-                 ("Released before", "", "", "", -before),
+        closing=[(), ("Retention held on these bills", "", "", "", retained)] +
+                ([("Taken back by credit notes", "", "", "", -credited),
+                  ("Retention held", "", "", "", held)] if credited else []) +
+                [("Released before", "", "", "", -before),
                  ("Released now", "", "", "", d["amount"])] + tax +
                 [("Total %s" % ("claimed" if r.side == "client" else "payable"), "", "", "", d["net_amount"])] +
                 ([(), ("Note", d["notes"])] if d["notes"] else []))

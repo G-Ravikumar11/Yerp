@@ -289,6 +289,7 @@ def create_job(body: JobIn, request: Request, db: Session = Depends(get_db)):
         quoted_value=validate_job_money("Quoted value", body.quoted_value),
         budget=validate_job_money("Budget", body.budget),
         retention_percent=clamp_percent(body.retention_percent),
+        retention_stated=body.retention_percent is not None,
         currency=(body.currency or client.currency or "").upper(),
         reference=(body.reference or "").strip(),
         manager_id=owned_or_404(db, models.DBEmployee, client.id, body.manager_id, "Project manager"),
@@ -340,7 +341,9 @@ def update_job(job_id: int, body: JobIn, request: Request, db: Session = Depends
     job.target_end_date = body.target_end_date or ""
     job.quoted_value = validate_job_money("Quoted value", body.quoted_value)
     job.budget = validate_job_money("Budget", body.budget)
-    job.retention_percent = clamp_percent(body.retention_percent)
+    if body.retention_percent is not None:      # left out, the project keeps what it states (or does not)
+        job.retention_percent = clamp_percent(body.retention_percent)
+        job.retention_stated = True
     job.reference = (body.reference or "").strip()
     job.manager_id = owned_or_404(db, models.DBEmployee, client.id, body.manager_id, "Project manager")
     if was_open and job.status == "complete" and not job.completed_at:

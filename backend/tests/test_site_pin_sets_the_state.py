@@ -4,7 +4,7 @@ from test_measurement_and_ra_bills import book, measure
 
 
 def certified_bill(tenant, site):
-    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZX"})
+    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZI"})
     job = tenant.post("/api/jobs", json={"name": "Vanya City STP", "customer_name": "Arabtec",
                                          "site_address": site}).json()
     fg, rm = tenant.post("/api/erp/items/bulk", json={"items": [

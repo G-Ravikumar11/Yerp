@@ -83,6 +83,7 @@ export interface Account {
   ifsc: string
   opening_balance: number
   opening_date: string
+  is_active: boolean
   balance: number
 }
 
@@ -99,6 +100,10 @@ export interface Book {
 export const useBook = (accountId: number) => useQuery({ queryKey: k('book', accountId), queryFn: () => get<Book>(`/api/money/book?account_id=${accountId}`), enabled: accountId > 0 })
 
 export const createAccount = (b: { name: string; kind: string; bank_name: string; account_no: string; ifsc: string; opening_balance: number; opening_date: string }) => post<{ id: number; name: string }>('/api/bank-accounts', b)
+
+/** Correct an account's details or opening balance, or close it. */
+export const updateAccount = (id: number, b: { name: string; bank_name: string; account_no: string; ifsc: string; opening_balance: number; opening_date: string; is_active: boolean }) =>
+  put<{ id: number; name: string }>(`/api/bank-accounts/${id}`, b)
 
 /* --- Suppliers ------------------------------------------------------------------------------------ */
 

@@ -59,14 +59,14 @@ def an_order(tenant):
 def test_the_letterhead_can_be_corrected_and_prints(tenant):
     order, unit, _ = an_order(tenant)
     res = tenant.put("/api/wo/business-units/%d" % unit["id"], json={
-        "name": "Yalavarti Projects Pvt Ltd", "code": "YPPL", "gstin": "36aabcy1234h1zx",
+        "name": "Yalavarti Projects Pvt Ltd", "code": "YPPL", "gstin": "36aabcy1234h1zi",
         "address": "Plot 12, Madhapur\nHyderabad 500081", "logo_url": png()})
     assert res.status_code == 200, res.text
     saved = [u for u in tenant.get("/api/wo/business-units").json()["business_units"] if u["id"] == unit["id"]][0]
-    assert saved["gstin"] == "36AABCY1234H1ZX" and saved["pan"] == "AABCY1234H"    # the PAN is inside the GSTIN
+    assert saved["gstin"] == "36AABCY1234H1ZI" and saved["pan"] == "AABCY1234H"    # the PAN is inside the GSTIN
     reader = pdf_of(tenant.get("/api/wo/orders/%d/document.pdf" % order["id"]))
     body = text(reader)
-    assert "AABCY1234H" in body and "36AABCY1234H1ZX" in body and "Madhapur" in body
+    assert "AABCY1234H" in body and "36AABCY1234H1ZI" in body and "Madhapur" in body
     assert pictures(reader) >= 1                                                   # the logo
 
 
@@ -75,7 +75,7 @@ def test_a_bad_gstin_or_a_pan_that_does_not_match_is_refused(tenant):
     bad = tenant.put("/api/wo/business-units/%d" % unit["id"], json={"name": "Y", "gstin": "36ABC"})
     assert bad.status_code == 400 and "fifteen" in bad.json()["detail"]
     clash = tenant.put("/api/wo/contractors/%d" % con["id"], json={
-        "company_name": "Rani Labour Contractors", "gst_number": "36AAAPR1234C1Z5", "pan": "AAAPX9999Z"})
+        "company_name": "Rani Labour Contractors", "gst_number": "36AAAPR1234C1Z9", "pan": "AAAPX9999Z"})
     assert clash.status_code == 400 and "inside the GSTIN" in clash.json()["detail"]
     notpic = tenant.put("/api/wo/business-units/%d" % unit["id"], json={"name": "Y", "logo_url": "data:text/html;base64,PGI+"})
     assert notpic.status_code == 400
@@ -85,11 +85,11 @@ def test_the_contractors_particulars_can_be_filled_in_later(tenant):
     order, _, con = an_order(tenant)
     res = tenant.put("/api/wo/contractors/%d" % con["id"], json={
         "company_name": "Rani Labour Contractors", "contact_person": "K. Rani", "phone_number": "9848012345",
-        "gst_number": "36AAAPR1234C1Z5", "address": "Kukatpally, Hyderabad",
+        "gst_number": "36AAAPR1234C1Z9", "address": "Kukatpally, Hyderabad",
         "bank_name": "SBI", "bank_account": "3012 3456 789", "bank_ifsc": "sbin0001234"})
     assert res.status_code == 200, res.text
     body = text(pdf_of(tenant.get("/api/wo/orders/%d/document.pdf" % order["id"])))
-    assert "36AAAPR1234C1Z5" in body and "AAAPR1234C" in body and "9848012345" in body and "Kukatpally" in body
+    assert "36AAAPR1234C1Z9" in body and "AAAPR1234C" in body and "9848012345" in body and "Kukatpally" in body
 
 
 # --- The company's own terms -----------------------------------------------------
@@ -185,7 +185,7 @@ def test_another_company_cannot_edit_our_letterhead_or_contractors(tenant, secon
 # --- The other party's particulars, on every document ------------------------------
 
 def test_a_customer_has_a_pan_and_a_checked_gstin(tenant):
-    res = tenant.post("/api/customers", json={"name": "Aparna Constructions", "gstin": "36aaeca1234k1z2"})
+    res = tenant.post("/api/customers", json={"name": "Aparna Constructions", "gstin": "36aaeca1234k1zW"})
     assert res.status_code == 200, res.text
     assert res.json()["pan"] == "AAECA1234K" and res.json()["state"] == "Telangana"
     bad = tenant.post("/api/customers", json={"name": "Bad One", "gstin": "36XYZ"})
@@ -199,23 +199,23 @@ def test_the_client_bill_names_the_client_with_pan_gstin_and_contact(tenant):
     # their particulars are filled in on that entry.
     cust = [c for c in tenant.get("/api/customers").json()["customers"] if c["name"] == "L&T"][0]
     res = tenant.put("/api/customers/%d" % cust["id"], json={
-        "name": "L&T", "gstin": "36AAACL1234H1Z5", "contact_person": "R. Menon", "phone_number": "9876500000",
+        "name": "L&T", "gstin": "36AAACL1234H1ZW", "contact_person": "R. Menon", "phone_number": "9876500000",
         "address": "Manapakkam", "city": "Chennai", "pincode": "600089"})
     assert res.status_code == 200, res.text
     measure(tenant, wo["id"], line_of(tenant, wo["id"]), 100)
     bill = raise_bill(tenant, wo["id"]).json()["bill"]
     body = text(pdf_of(tenant.get("/api/ra-bills/%d/document.pdf" % bill["id"])))
-    for words in ("AAACL1234H", "36AAACL1234H1Z5", "R. Menon", "9876500000", "Manapakkam", "Telangana"):
+    for words in ("AAACL1234H", "36AAACL1234H1ZW", "R. Menon", "9876500000", "Manapakkam", "Telangana"):
         assert words in body, words
 
 
 def test_the_purchase_order_names_the_supplier_with_pan_gstin_and_state(tenant):
-    tenant.post("/api/suppliers", json={"name": "Sri Sai Steels", "gstin": "37AABCS1234E1Z9",
+    tenant.post("/api/suppliers", json={"name": "Sri Sai Steels", "gstin": "37AABCS1234E1ZS",
                                         "contact_person": "M. Rao", "phone": "9440012345", "address": "Autonagar, Vijayawada"})
     order = tenant.post("/api/purchase-orders", json={"supplier_name": "Sri Sai Steels", "amount": 50000.0,
                                                       "tax_amount": 9000.0}).json()
     body = text(pdf_of(tenant.get("/api/purchase-orders/%d/document.pdf" % order["id"])))
-    for words in ("AABCS1234E", "37AABCS1234E1Z9", "Andhra Pradesh", "M. Rao", "9440012345", "Autonagar"):
+    for words in ("AABCS1234E", "37AABCS1234E1ZS", "Andhra Pradesh", "M. Rao", "9440012345", "Autonagar"):
         assert words in body, words
     assert "50,000" in body                     # a lump-sum order prints its figure, not a nought
 
@@ -223,10 +223,10 @@ def test_the_purchase_order_names_the_supplier_with_pan_gstin_and_state(tenant):
 def test_a_statement_names_the_party_with_its_particulars(tenant):
     order, _, con = an_order(tenant)
     tenant.put("/api/wo/contractors/%d" % con["id"], json={
-        "company_name": "Rani Labour Contractors", "gst_number": "36AAAPR1234C1Z5", "address": "Kukatpally"})
+        "company_name": "Rani Labour Contractors", "gst_number": "36AAAPR1234C1Z9", "address": "Kukatpally"})
     res = tenant.get("/api/ledger/statement.pdf?party_type=contractor&party=Rani%20Labour%20Contractors")
     body = text(pdf_of(res))
-    assert "AAAPR1234C" in body and "36AAAPR1234C1Z5" in body and "Kukatpally" in body
+    assert "AAAPR1234C" in body and "36AAAPR1234C1Z9" in body and "Kukatpally" in body
 
 
 # --- The work order, as the sample reads ----------------------------------------------
@@ -234,7 +234,7 @@ def test_a_statement_names_the_party_with_its_particulars(tenant):
 def test_the_general_conditions_are_written_for_this_company(tenant):
     order, unit, _ = an_order(tenant)
     tenant.put("/api/wo/business-units/%d" % unit["id"], json={
-        "name": "Yalavarti Projects Pvt Ltd", "code": "YPPL", "gstin": "36AABCY1234H1ZX",
+        "name": "Yalavarti Projects Pvt Ltd", "code": "YPPL", "gstin": "36AABCY1234H1ZI",
         "address": "Plot 12, Madhapur\nHyderabad, Telangana 500081"})
     body = text(pdf_of(tenant.get("/api/wo/orders/%d/document.pdf" % order["id"])))
     assert "{company}" not in body and "{city}" not in body
@@ -250,4 +250,4 @@ def test_the_town_for_the_courts_is_read_off_the_letterhead():
     assert main.jurisdiction_city("31-15-29, Katuri vari Street,\nMachavaram Down,\nVijayawada - 520004.") == "Vijayawada"
     assert main.jurisdiction_city("Plot 12, Madhapur, Hyderabad 500081") == "Hyderabad"
     assert main.jurisdiction_city("Plot 12, Madhapur\nHyderabad, Telangana 500081") == "Hyderabad"
-    assert main.jurisdiction_city("", "36AABCY1234H1ZX") == "Telangana"
+    assert main.jurisdiction_city("", "36AABCY1234H1ZI") == "Telangana"

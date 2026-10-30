@@ -37,6 +37,11 @@ def setup(tenant):
     return box, job, se
 
 
+def photo(client, x):
+    return client.post("/api/site-cash/expenses/%d/photo" % x["id"],
+                       files={"file": ("bill.jpg", b"\xff\xd8\xff\xe0" + b"0" * 200, "image/jpeg")})
+
+
 def spend(client, box, amount=4500, head="Diesel & fuel", paid_to="HP pump, Gajuwaka", **more):
     return client.post("/api/site-cash/expenses", json={"account_id": box["id"], "amount": amount, "head": head,
                                                         "paid_to": paid_to, **more})
@@ -128,9 +133,89 @@ def test_accounts_staff_check_site_cash_but_not_their_own(tenant):
     clerk = person(tenant)                                            # accounts: pays bills, so manages cash boxes
     try:
         x = spend(se, box).json()["expense"]
+        assert photo(se, x).status_code == 200                       # over 500: approved only with its bill
         assert clerk.post("/api/site-cash/expenses/%d/decide" % x["id"], json={"decision": "approve"}).status_code == 200
         own = spend(clerk, box, amount=300, head="Site expenses", paid_to="Tea stall").json()["expense"]
         assert clerk.post("/api/site-cash/expenses/%d/decide" % own["id"], json={"decision": "approve"}).status_code == 403
     finally:
         se.__exit__(None, None, None)
         clerk.__exit__(None, None, None)
+
+
+# --- the controls on the box ---------------------------------------------------------------------------------------
+
+def test_the_box_cannot_pay_out_more_than_it_holds(tenant):
+    box, _, se = setup(tenant)
+    try:
+        res = spend(se, box, amount=50001)
+        assert res.status_code == 409, res.text
+        assert spend(se, box, amount=30000, bill_no="A1").status_code == 200
+        # 50,000 in the books, 30,000 already waiting: 25,000 more is more than is left.
+        assert spend(se, box, amount=25000, bill_no="A2").status_code == 409
+        assert spend(se, box, amount=20000, bill_no="A3").status_code == 200
+    finally:
+        se.__exit__(None, None, None)
+
+
+def test_the_same_bill_is_not_entered_twice(tenant):
+    box, _, se = setup(tenant)
+    try:
+        assert spend(se, box, bill_no="HP/1").status_code == 200
+        assert spend(se, box, bill_no="hp/1", amount=100).status_code == 409
+        # No bill number: the same payee, amount and day is the same payment.
+        first = spend(se, box, amount=250, paid_to="Tea stall").json()["expense"]
+        assert spend(se, box, amount=250, paid_to="tea stall").status_code == 409
+        # Once rejected, it may be entered again properly.
+        tenant.post("/api/site-cash/expenses/%d/decide" % first["id"], json={"decision": "reject", "note": "No details"})
+        assert spend(se, box, amount=250, paid_to="Tea stall").status_code == 200
+    finally:
+        se.__exit__(None, None, None)
+
+
+def test_an_expense_over_500_is_approved_only_with_its_bill(tenant):
+    box, _, se = setup(tenant)
+    try:
+        x = spend(se, box, amount=600).json()["expense"]
+        assert x["bill_needed"] is True
+        res = tenant.post("/api/site-cash/expenses/%d/decide" % x["id"], json={"decision": "approve"})
+        assert res.status_code == 409 and "bill" in res.json()["detail"]
+        assert photo(se, x).status_code == 200
+        assert tenant.post("/api/site-cash/expenses/%d/decide" % x["id"], json={"decision": "approve"}).status_code == 200
+        small = spend(se, box, amount=200, paid_to="Tea stall").json()["expense"]
+        assert tenant.post("/api/site-cash/expenses/%d/decide" % small["id"], json={"decision": "approve"}).status_code == 200
+    finally:
+        se.__exit__(None, None, None)
+
+
+def test_the_master_does_not_approve_their_own_expense(tenant):
+    box, _, se = setup(tenant)
+    clerk = person(tenant)
+    try:
+        own = spend(tenant, box, amount=300, paid_to="Tea stall").json()["expense"]
+        assert own["submitted_by_master"] is True
+        assert tenant.post("/api/site-cash/expenses/%d/decide" % own["id"], json={"decision": "approve"}).status_code == 403
+        assert clerk.post("/api/site-cash/expenses/%d/decide" % own["id"], json={"decision": "approve"}).status_code == 200
+    finally:
+        se.__exit__(None, None, None)
+        clerk.__exit__(None, None, None)
+
+
+def test_cash_over_10000_to_one_payee_in_a_day_is_warned(tenant):
+    box, _, se = setup(tenant)
+    try:
+        a = spend(se, box, amount=8000, paid_to="Ravi Transport", bill_no="RT-1", spent_on="2026-01-10").json()
+        assert not a["warning"]
+        b = spend(se, box, amount=3000, paid_to="ravi transport", bill_no="RT-2", spent_on="2026-01-10").json()
+        assert "40A(3)" in b["warning"]
+    finally:
+        se.__exit__(None, None, None)
+
+
+def test_an_expense_belongs_to_the_box_s_own_site(tenant):
+    box, job, se = setup(tenant)
+    other = tenant.post("/api/jobs", json={"name": "Kakinada site"}).json()
+    try:
+        assert spend(se, box, job_id=other["id"]).status_code == 400
+        assert spend(se, box, job_id=job["id"]).status_code == 200
+    finally:
+        se.__exit__(None, None, None)

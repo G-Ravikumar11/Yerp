@@ -892,6 +892,17 @@ def released_retention(db, client_id, side):
     return out
 
 
+def client_dlp_ends(db, client_id, work_order_id):
+    """The end of the defects period on a client's work order, as last stated on a release against it ("" if never)."""
+    for r in db.query(models.DBRetentionRelease).filter(
+            models.DBRetentionRelease.client_id == client_id, models.DBRetentionRelease.side == "client",
+            models.DBRetentionRelease.work_order_id == work_order_id,
+            models.DBRetentionRelease.status != "CANCELLED").order_by(models.DBRetentionRelease.id.desc()).all():
+        if (r.dlp_ends or "").strip():
+            return r.dlp_ends.strip()[:10]
+    return ""
+
+
 def released_by_job(db, client_id, side="client"):
     out = {}
     for r in _live_releases(db, client_id, side):
@@ -952,6 +963,7 @@ def release_dict(db, r, settled=None):
         "created_by_name": r.created_by_name or "", "paid_at": r.paid_at or "",
         "certified_by_name": r.certified_by_name or "", "certified_at": r.certified_at or "",
         "override_note": r.override_note or "",
+        "dlp_ends": r.dlp_ends or "",
         "can_certify": (r.status or "") == "SUBMITTED",
         "created_at": r.created_at or "",
     }
@@ -973,12 +985,13 @@ def retention_positions(db, client_id, today=None):
                 "contractor": credited_retention_by_order(db, client_id, "contractor")}
 
     def position(side, order_id, order_number, job, party, bills, rate_of, released, extra):
-        # Retention on work a credit note took back is no longer held.
-        held = money(max(0.0, sum(b.retention_amount or 0 for b in bills) - credited[side].get(order_id, 0.0)))
-        if held <= 0:
-            return
+        # Retention on work a credit note took back is no longer held. Neither figure is floored at nought: more
+        # released (or credited) than was held is an error somebody has to see, not a balance of nil.
+        held = money(sum(b.retention_amount or 0 for b in bills) - credited[side].get(order_id, 0.0))
         gone = money(released.get(order_id, 0.0))
-        balance = money(max(0.0, held - gone))
+        if held <= 0 and gone <= 0:
+            return
+        balance = money(held - gone)
         latest = max(bills, key=lambda b: (b.sequence or 0, b.id))
         if gone <= 0:
             stage, suggest = "Practical completion", money(held / 2.0)
@@ -994,6 +1007,8 @@ def retention_positions(db, client_id, today=None):
             "party": party or "",
             "bills": len(bills), "claimed": money(sum(b.this_bill or 0 for b in bills)),
             "held": held, "released": gone, "balance": balance,
+            # Released (or taken back by credit notes) past what was held: shown, so it can be put right.
+            "over_released": money(-balance) if balance < 0 else 0.0,
             "gst_percent": rate_of(latest) or 0,
             "suggest": {"stage": stage, "amount": min(suggest, balance)} if balance > 0 else None,
             "dlp_ends": "", "dlp_over": False,
@@ -1013,9 +1028,13 @@ def retention_positions(db, client_id, today=None):
     for wo_id, bills in ra_by_wo.items():
         wo = wos.get(wo_id)
         job = jobs.get(wo.job_id if wo else bills[0].job_id)
+        # A client's work order has no completion date or defects period of its own: the end of the defects period
+        # is what was stated on a release against it.
+        ends = client_dlp_ends(db, client_id, wo_id)
         position("client", wo_id, wo.number if wo else "", job,
                  job.customer_name if job else "", bills,
-                 lambda b: b.tax_percent, released, {})
+                 lambda b: b.tax_percent, released,
+                 {"dlp_ends": ends, "dlp_over": bool(ends and ends <= today.isoformat())})
 
     # The contractors' side: retention we held on their bills, per subcontract order.
     sub_by_order = {}

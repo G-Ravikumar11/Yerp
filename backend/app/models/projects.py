@@ -55,6 +55,9 @@ class DBJob(Base):
     # this contract rather than a company setting, because it is negotiated
     # per job and forgetting it overstates what the job will actually collect.
     retention_percent = Column(Float, default=0.0)
+    # Whether somebody actually stated the retention. An empty field holds 0 too, and a project that states none is
+    # billed at the usual 5%; one whose contract says no retention at all states 0 and is billed at 0.
+    retention_stated = Column(Boolean, default=False)
 
     manager_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     reference = Column(String, default="")

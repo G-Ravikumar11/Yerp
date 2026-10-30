@@ -141,7 +141,7 @@ def test_one_email_one_login(tenant):
 
 
 def supplier_setup(tenant):
-    s = tenant.post("/api/suppliers", json={"name": "ACC Ltd", "gstin": "36AAACA1234C1Z5",
+    s = tenant.post("/api/suppliers", json={"name": "ACC Ltd", "gstin": "36AAACA1234C1ZH",
                                             "payment_days": 45}).json()
     s = s.get("supplier") or s
     job = tenant.post("/api/jobs", json={"name": "Vanya City STP", "customer_name": "Arabtec"}).json()

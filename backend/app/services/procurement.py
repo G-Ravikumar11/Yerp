@@ -10,7 +10,7 @@ from app.constants.common import GRN_EDITABLE, GRN_TRANSITIONS
 from app.core.audit import log_audit
 from app.core.auth import wo_actor
 from app.core.currency import lines_money, money, unit_rate
-from app.core.gst import state_from_gstin
+from app.core.gst import gstin_valid, state_from_gstin
 from app.core.units import canonical_unit
 from app.services.store_integration import hub_debit_notes, hub_received_on_orders
 from app.services.stores import stock_movement
@@ -420,6 +420,9 @@ def _apply_supplier(db, client_id, s, body):
     gstin = (body.gstin or "").strip().upper()
     if gstin and (len(gstin) != 15 or not state_from_gstin(gstin)):
         raise HTTPException(400, "A GSTIN is fifteen characters and starts with a state code.")
+    if gstin and not gstin_valid(gstin):
+        # The input credit on every bill from them rests on it: a mistyped one is a credit the portal will not match.
+        raise HTTPException(400, "%s does not pass the GSTIN check - one of its characters is mistyped." % gstin)
     pan = (body.pan or "").strip().upper()
     if not pan and gstin:
         pan = gstin[2:12]           # the PAN is inside the GSTIN

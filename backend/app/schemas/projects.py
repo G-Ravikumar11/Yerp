@@ -17,7 +17,8 @@ class JobIn(BaseModel):
     target_end_date: Optional[str] = ""
     quoted_value: Optional[float] = 0.0
     budget: Optional[float] = 0.0
-    retention_percent: Optional[float] = 0.0
+    # Left out (or null), the project states no retention and its bills take the usual 5%; 0 means none at all.
+    retention_percent: Optional[float] = None
     currency: Optional[str] = ""
     reference: Optional[str] = ""
     manager_id: Optional[int] = None

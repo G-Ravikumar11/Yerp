@@ -492,9 +492,19 @@ def _ledger_rows(db, client_id):
                      + ((" - " + e.mode) if e.mode else ""),
                      "number": e.number, "doc_type": e.doc_type, "doc_id": e.doc_id,
                      "against": e.doc_number or ("on account" if e.doc_type == "on_account" else ""),
-                     "billed": 0.0, "moved": money(e.amount), "job_id": e.job_id,
+                     "billed": 0.0, "moved": _moved(e), "job_id": e.job_id,
                      "reference": e.reference or ""})
     return rows
+
+
+def _moved(e):
+    """What an entry takes off a party's balance. A client pays us and we pay suppliers and contractors; money the
+    other way - a refund received from a supplier, money paid back to a client - adds to the balance instead. Every
+    entry used to come off it, so a 10,000 refund from a supplier showed us owing them 20,000 less than we do."""
+    natural = {"client": "IN", "supplier": "OUT", "contractor": "OUT"}.get(e.party_type or "")
+    if natural and (e.direction or "") != natural:
+        return -money(e.amount)
+    return money(e.amount)
 
 
 def lead_or_404(db, client_id, lead_id):

@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db, get_read_db
 
-from app.constants.client_billing import RA_CREDIT_DAYS
 from app.constants.money import COST_CATEGORIES, EXPENSE_HEADS, INCOME_HEADS, MONEY_MODES, PARTY_TYPES
 from app.constants.projects import JOB_FINISHED
 from app.core.audit import log_audit
@@ -21,36 +20,44 @@ from app.core.currency import amount_in_words, inr, money
 from app.core.dates import ageing_bucket, days_after
 from app.core.notifications import notify
 from app.core.sheets import sheet_response
-from app.core.tenant_settings import tenant_setting
+from app.core.tenant_settings import put_setting, tenant_setting
 from app.documents.forms import _pre, form_pdf_response, money_voucher_spec, statement_form_spec
 from app.documents.letterhead import our_party
-from app.schemas.money import (BankAccountIn, CashBoxIn, ClearIn, LineBookIn, LineMatchIn, MoneyIn, PaymentDecisionIn,
+from app.schemas.money import (BankAccountEditIn, BankAccountIn, CashBoxIn, MoneyLockIn, ClearIn, LineBookIn, LineMatchIn, MoneyIn, PaymentDecisionIn,
                                PaymentRulesIn, RequestPayIn, SiteCashExpenseIn, TallySettingsIn, TransferIn)
 from app.services import bank_reco, site_cash, tally
 from app.services import payment_requests as preq
 from app.services.credit_notes import credit_totals_by_bill, credits_by_job
 from app.services.crm import (
     _ledger_rows,
-    invoice_overdue_days,
     norm_name,
     settled_amounts,
-    settled_on,
     supplier_dict,
 )
 from app.services.money import (
+    MONEY_LOCK_KEY,
     _doc_for,
     _doc_for_any,
     _empty_buckets,
     _settle_doc,
     account_balance,
+    already_settled,
     account_dict,
+    balance_sheet,
     base_currency,
+    entry_date,
     invoices_by_currency,
     job_money,
     money_entry_dict,
+    money_locked_upto,
     next_money_number,
+    opening_day,
+    owed_to_us_rows,
+    profit_and_loss,
+    refuse_duplicate_cheque,
+    refuse_if_locked,
 )
-from app.services.projects import invoice_total, job_or_404, preload_pnl
+from app.services.projects import job_or_404, preload_pnl
 from app.services.subcontract_billing import released_by_job
 
 
@@ -58,73 +65,19 @@ router = APIRouter()
 
 
 @router.get("/api/reports/profit-loss")
-def profit_loss_report(request: Request, db: Session = Depends(get_read_db)):
+def profit_loss_report(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
+    """Accrual profit and loss: billed and certified work in, bills and expense vouchers out (see
+    services.money.profit_and_loss)."""
     client = require_items_access(request, db, "reports.view")
-    base = base_currency(client)
-    invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
-    bills = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).all()
-    groups = invoices_by_currency(invoices, base)
-
-    def figures(inv_list, bill_list):
-        monthly_revenue = {}
-        monthly_expenses = {}
-        for inv in inv_list:
-            m = inv.issue_date[:7] if inv.issue_date and len(inv.issue_date) >= 7 else "Unknown"
-            monthly_revenue[m] = monthly_revenue.get(m, 0) + (inv.paid or 0)
-        for b in bill_list:
-            m = b.issue_date[:7] if b.issue_date and len(b.issue_date) >= 7 else "Unknown"
-            monthly_expenses[m] = monthly_expenses.get(m, 0) + (b.total or 0)
-        all_months = sorted(set(list(monthly_revenue.keys()) + list(monthly_expenses.keys())))
-        total_revenue = money(sum(monthly_revenue.values()))
-        total_expenses = money(sum(monthly_expenses.values()))
-        return {
-            "months": all_months,
-            "revenue": [money(monthly_revenue.get(m, 0)) for m in all_months],
-            "expenses": [money(monthly_expenses.get(m, 0)) for m in all_months],
-            "profit": [money(monthly_revenue.get(m, 0) - monthly_expenses.get(m, 0)) for m in all_months],
-            "total_revenue": total_revenue,
-            "total_expenses": total_expenses,
-            "net_profit": money(total_revenue - total_expenses),
-        }
-
-    report = figures(groups.get(base, []), bills)
-    report["currency"] = base
-    report["other_currencies"] = [
-        dict(figures(groups[code], []), currency=code)
-        for code in sorted(groups) if code != base
-    ]
-    return report
+    f, t = _tally_period(date_from, date_to)
+    return profit_and_loss(db, client, f, t)
 
 
 @router.get("/api/reports/balance-sheet")
 def balance_sheet_report(request: Request, db: Session = Depends(get_read_db)):
+    """Assets, liabilities and equity today. Equity is assets less liabilities, so it balances by construction."""
     client = require_items_access(request, db, "reports.view")
-    base = base_currency(client)
-    invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
-    bills = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).all()
-    groups = invoices_by_currency(invoices, base)
-
-    def figures(inv_list, bill_list):
-        collected = money(sum(inv.paid or 0 for inv in inv_list))
-        outstanding = money(sum(inv.due or 0 for inv in inv_list if inv.status != "Paid"))
-        bills_paid = money(sum(b.amount_paid or 0 for b in bill_list))
-        bills_unpaid = money(sum((b.total or 0) - (b.amount_paid or 0) for b in bill_list))
-        return {
-            "assets": {"cash_collected": collected, "accounts_receivable": outstanding},
-            "liabilities": {"accounts_payable": bills_unpaid},
-            "equity": {"retained_earnings": money(collected - bills_paid)},
-            "total_assets": money(collected + outstanding),
-            "total_liabilities": bills_unpaid,
-            "total_equity": money(collected - bills_paid),
-        }
-
-    report = figures(groups.get(base, []), bills)
-    report["currency"] = base
-    report["other_currencies"] = [
-        dict(figures(groups[code], []), currency=code)
-        for code in sorted(groups) if code != base
-    ]
-    return report
+    return balance_sheet(db, client)
 
 
 @router.get("/api/reports/cash-summary")
@@ -161,58 +114,38 @@ def cash_summary_report(request: Request, db: Session = Depends(get_read_db)):
     return report
 
 
+# The aged report's own bucket names, kept for whatever reads them; the buckets themselves are the Owed page's.
+_AGED_KEYS = {"Not due": "current", "0-30": "1_30", "31-60": "31_60", "61-90": "61_90", "90+": "over_90"}
+
+
 @router.get("/api/reports/aged-receivables")
 def aged_receivables(request: Request, db: Session = Depends(get_read_db)):
-    """Outstanding balances bucketed by how late they are - the report every
-    finance team asks for first."""
+    """Outstanding balances bucketed by how late they are - invoices, certified client RA bills and retention
+    releases, aged exactly as the Owed page ages them (a missing due date sits with the oldest)."""
     client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
-    invoices = db.query(models.DBInvoice).filter(
-        models.DBInvoice.client_id == client.id,
-        models.DBInvoice.status.notin_(["Draft", "Paid", "Void"]),
-    ).all()
-    today = datetime.now().date()
+    rows = owed_to_us_rows(db, client, date.today())
 
-    def figures(inv_list):
-        buckets = {"current": 0.0, "1_30": 0.0, "31_60": 0.0, "61_90": 0.0, "over_90": 0.0}
-        rows = []
-        for inv in inv_list:
-            outstanding = money(inv.due or 0)
-            if outstanding <= 0:
-                continue
-            days = invoice_overdue_days(inv, today)
-            if days == 0:
-                bucket = "current"
-            elif days <= 30:
-                bucket = "1_30"
-            elif days <= 60:
-                bucket = "31_60"
-            elif days <= 90:
-                bucket = "61_90"
-            else:
-                bucket = "over_90"
-            buckets[bucket] = money(buckets[bucket] + outstanding)
-            rows.append({
-                "number": inv.number, "contact": inv.to_contact, "due_date": inv.due_date,
-                "outstanding": outstanding, "days_overdue": days, "bucket": bucket,
-                # Each row carries its own currency so a mixed table can print
-                # the right symbol against every line.
-                "currency": ((inv.currency or "") or base).upper() or base,
-            })
-        rows.sort(key=lambda r: r["days_overdue"], reverse=True)
-        return {
-            "buckets": buckets,
-            "total_outstanding": money(sum(buckets.values())),
-            "invoices": rows,
-        }
+    def figures(group):
+        buckets = {k: 0.0 for k in _AGED_KEYS.values()}
+        out = []
+        for r in group:
+            bucket = _AGED_KEYS[r["bucket"]]
+            buckets[bucket] = money(buckets[bucket] + r["outstanding"])
+            out.append({"number": r["number"], "kind": r["kind"], "doc_type": r.get("doc_type", "invoice"),
+                        "contact": r["customer"], "project": r["project"], "due_date": r["due_date"],
+                        "outstanding": r["outstanding"], "days_overdue": r["days_overdue"], "bucket": bucket,
+                        # Each row carries its own currency so a mixed table prints the right symbol on every line.
+                        "currency": r["currency"]})
+        out.sort(key=lambda r: r["days_overdue"], reverse=True)
+        return {"buckets": buckets, "total_outstanding": money(sum(buckets.values())), "invoices": out}
 
-    groups = invoices_by_currency(invoices, base)
+    groups = {}
+    for r in rows:
+        groups.setdefault(r["currency"], []).append(r)
     report = figures(groups.get(base, []))
     report["currency"] = base
-    report["other_currencies"] = [
-        dict(figures(groups[code]), currency=code)
-        for code in sorted(groups) if code != base
-    ]
+    report["other_currencies"] = [dict(figures(groups[code]), currency=code) for code in sorted(groups) if code != base]
     return report
 
 
@@ -318,101 +251,100 @@ def costs_by_project_xlsx(request: Request, db: Session = Depends(get_db)):
                   ["As at " + datetime.now().strftime("%d/%m/%Y %H:%M")], []])
 
 
+def _on_account_by_party(db, client_id, party_types, incoming):
+    """{normalised party name: [name, money on account]} - receipts (incoming) or payments not against any bill, less
+    what moved the other way on account. For clients, the advance their RA bills have already recovered is used up and
+    comes off, so an advance is not counted both as on account and as a deduction from the bills."""
+    out = {}
+    for e in db.query(models.DBMoneyEntry).filter(
+            models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.doc_type == "on_account",
+            models.DBMoneyEntry.party_type.in_(party_types), models.DBMoneyEntry.voided.isnot(True)).all():
+        key = norm_name(e.party_name)
+        if not key:
+            continue
+        row = out.setdefault(key, [e.party_name or "", 0.0])
+        sign = 1 if (e.direction == "IN") == incoming else -1
+        row[1] = money(row[1] + sign * (e.amount or 0))
+    if "client" in party_types:
+        jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client_id).all()}
+        for b in db.query(models.DBRABill).filter(
+                models.DBRABill.client_id == client_id, models.DBRABill.status != "CANCELLED",
+                models.DBRABill.advance_recovery > 0).all():
+            job = jobs.get(b.job_id)
+            key = norm_name(job.customer_name if job else "")
+            if key in out:
+                out[key][1] = money(out[key][1] - (b.advance_recovery or 0))
+    return out
+
+
+def _party_positions(rows, credits, on_account, name_of):
+    """Per party: what is owed on open documents, what credit notes left in their favour, what sits on account, and
+    the net of the three. A party with only a credit balance or only money on account is listed too."""
+    out = {}
+
+    def slot(name):
+        key = norm_name(name)
+        return out.setdefault(key, {"party": name or "", "owed": 0.0, "credit": 0.0, "on_account": 0.0})
+    for r in rows:
+        p = slot(name_of(r))
+        p["owed"] = money(p["owed"] + r["outstanding"])
+    for c in credits:
+        p = slot(c["party"])
+        p["credit"] = money(p["credit"] + c["amount"])
+    for key, (name, amount) in on_account.items():
+        if amount:
+            p = out.setdefault(key, {"party": name, "owed": 0.0, "credit": 0.0, "on_account": 0.0})
+            p["on_account"] = money(p["on_account"] + amount)
+    for p in out.values():
+        # What they owe less what is in their favour. Money on account the bills already used is not counted twice
+        # (see _on_account_by_party); a negative on-account figure - more advance recovered than the ledger shows
+        # received - is shown as it is, and not netted.
+        p["net"] = money(p["owed"] - p["credit"] - max(p["on_account"], 0.0))
+    return sorted((p for p in out.values() if p["credit"] or p["on_account"]), key=lambda p: p["party"].lower())
+
+
 @router.get("/api/money/receivables")
 def receivables(request: Request, db: Session = Depends(get_read_db)):
     """What customers owe, and how long they have owed it."""
     client = require_items_access(request, db, "bills.view_all")
     today = date.today()
-    jobs = {j.id: j for j in db.query(models.DBJob).filter(
-        models.DBJob.client_id == client.id).all()}
-
-    rows, buckets = [], _empty_buckets()
-    for inv in db.query(models.DBInvoice).filter(
-            models.DBInvoice.client_id == client.id).all():
-        if (inv.status or "") in ("Draft", "Paid", "Cancelled", "Void"):
-            continue
-        outstanding = money(inv.due)
-        if outstanding <= 0:
-            continue
-        bucket, days = ageing_bucket(inv.due_date, today)
-        buckets[bucket] = money(buckets[bucket] + outstanding)
-        job = jobs.get(inv.job_id)
-        rows.append({
-            "id": inv.id, "number": inv.number or "",
-            "customer": inv.to_contact or "", "project": job.name if job else "",
-            "job_id": inv.job_id,
-            "issue_date": inv.issue_date or "", "due_date": inv.due_date or "",
-            "total": invoice_total(inv), "paid": money(inv.paid),
-            "outstanding": outstanding, "bucket": bucket,
-            "days_overdue": days if (days or 0) > 0 else 0,
-            "status": inv.status or "",
-        })
-    # A client RA bill that has been certified and not paid is owed to us
-    # just as an invoice is. Aged from certification. What has already been
-    # received against it comes off - a part-paid bill owes what is left.
+    rows, buckets = owed_to_us_rows(db, client, today), _empty_buckets()
+    # A credit note after the money came in leaves the client in credit: we owe it back, or it comes off their next
+    # bill. Shown, not dropped.
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
     settled = settled_amounts(db, client.id)
     ra_credits = credit_totals_by_bill(db, client.id, "client")
+    credits = []
     for r in db.query(models.DBRABill).filter(
             models.DBRABill.client_id == client.id,
-            models.DBRABill.status == "CERTIFIED").all():
-        received = settled.get(("ra_bill", r.id), 0.0)
-        # What a credit note took back is no longer owed.
-        outstanding = money((r.net_payable or 0) - ra_credits.get(r.id, {}).get("net", 0.0) - received)
-        if outstanding <= 0:
-            continue
-        # Due a month after the signature, as the dashboard already reads it -
-        # a bill certified this morning was being shown as overdue by noon.
-        due = days_after(r.certified_at, RA_CREDIT_DAYS)
-        bucket, days = ageing_bucket(due or r.certified_at, today)
-        buckets[bucket] = money(buckets[bucket] + outstanding)
-        job = jobs.get(r.job_id)
-        rows.append({
-            "id": r.id, "number": r.number or "", "kind": "RA bill",
-            "customer": job.customer_name if job else "",
-            "project": job.name if job else "", "job_id": r.job_id,
-            "issue_date": (r.certified_at or "")[:10], "due_date": due or (r.certified_at or "")[:10],
-            "total": money((r.net_payable or 0) - ra_credits.get(r.id, {}).get("net", 0.0)),
-            "paid": money(received), "outstanding": outstanding,
-            "doc_type": "ra_bill",
-            "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
-            "status": r.status or "",
-        })
-    # Retention released and claimed is owed like any certified bill.
-    for rel in db.query(models.DBRetentionRelease).filter(
-            models.DBRetentionRelease.client_id == client.id,
-            models.DBRetentionRelease.side == "client",
-            models.DBRetentionRelease.status == "CERTIFIED").all():
-        received = settled.get(("retention_release", rel.id), 0.0)
-        outstanding = money((rel.net_amount or 0) - received)
-        if outstanding <= 0:
-            continue
-        due = days_after(rel.release_on, RA_CREDIT_DAYS)
-        bucket, days = ageing_bucket(due or rel.release_on, today)
-        buckets[bucket] = money(buckets[bucket] + outstanding)
-        job = jobs.get(rel.job_id)
-        rows.append({
-            "id": rel.id, "number": rel.number or "", "kind": "Retention release",
-            "customer": job.customer_name if job else "",
-            "project": job.name if job else "", "job_id": rel.job_id,
-            "issue_date": rel.release_on or "", "due_date": due or rel.release_on or "",
-            "total": money(rel.net_amount), "paid": money(received), "outstanding": outstanding,
-            "doc_type": "retention_release",
-            "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
-            "status": rel.status or "",
-        })
+            models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all():
+        over = money((r.net_payable or 0) - ra_credits.get(r.id, {}).get("net", 0.0)
+                     - settled.get(("ra_bill", r.id), 0.0))
+        if over < 0:
+            job = jobs.get(r.job_id)
+            credits.append({"id": r.id, "number": r.number or "", "doc_type": "ra_bill",
+                            "party": job.customer_name if job else "", "project": job.name if job else "",
+                            "amount": money(-over)})
     for r in rows:
-        r.setdefault("kind", "Invoice")
-
+        buckets[r["bucket"]] = money(buckets[r["bucket"]] + r["outstanding"])
     rows.sort(key=lambda r: -(r["days_overdue"] or 0))
     overdue = money(sum(r["outstanding"] for r in rows if r["bucket"] != "Not due"))
+    parties = _party_positions(rows, credits, _on_account_by_party(db, client.id, ("client",), True),
+                               lambda r: r["customer"])
+    owed = money(sum(r["outstanding"] for r in rows))
+    in_credit = money(sum(c["amount"] for c in credits))
+    on_account = money(sum(max(p["on_account"], 0.0) for p in parties))
     return {
-        "invoices": rows, "buckets": buckets,
+        "invoices": rows, "buckets": buckets, "credits": credits, "parties": parties,
         "summary": {
-            "owed": money(sum(r["outstanding"] for r in rows)),
+            "owed": owed,
             "overdue": overdue,
             "invoices": len(rows),
             "worst_days": max([r["days_overdue"] for r in rows] or [0]),
             "over_90": buckets["90+"],
+            # In the clients' favour: credit notes past what was owed, and money they paid on account.
+            "credit_balances": in_credit, "on_account": on_account,
+            "net_owed": money(owed - in_credit - on_account),
         },
     }
 
@@ -466,12 +398,21 @@ def payables(request: Request, db: Session = Depends(get_read_db)):
     terms_of = dict(db.query(models.DBSubcontractOrder.id, models.DBSubcontractOrder.payment_days).filter(
         models.DBSubcontractOrder.client_id == client.id).all())
     sub_credits = credit_totals_by_bill(db, client.id, "contractor")
+    credits = []
     for r in db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client.id,
-            models.DBSubBill.status == "CERTIFIED").all():
+            models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all():
         outstanding = money((r.net_payable or 0) - sub_credits.get(r.id, {}).get("net", 0.0)
                             - settled.get(("sub_bill", r.id), 0.0))
-        if outstanding <= 0:
+        if outstanding < 0:
+            # Their credit note came after we paid: the contractor owes it back, or it comes off their next bill.
+            con = contractors.get(r.contractor_id)
+            job = jobs.get(r.job_id)
+            credits.append({"id": r.id, "number": r.number or "", "doc_type": "sub_bill",
+                            "party": con.company_name if con else "", "project": job.name if job else "",
+                            "amount": money(-outstanding)})
+            continue
+        if outstanding == 0 or r.status != "CERTIFIED":
             continue
         # The order says how many days after certification the contractor is paid.
         terms = terms_of.get(r.order_id) or 0
@@ -512,10 +453,18 @@ def payables(request: Request, db: Session = Depends(get_read_db)):
         })
 
     rows.sort(key=lambda r: -(r["days_overdue"] or 0))
+    parties = _party_positions(rows, credits, _on_account_by_party(db, client.id, ("contractor", "supplier"), False),
+                               lambda r: r["party"])
+    owed = money(sum(r["outstanding"] for r in rows))
+    in_credit = money(sum(c["amount"] for c in credits))
+    on_account = money(sum(max(p["on_account"], 0.0) for p in parties))
     return {
-        "bills": rows, "buckets": buckets,
+        "bills": rows, "buckets": buckets, "credits": credits, "parties": parties,
         "summary": {
-            "owed": money(sum(r["outstanding"] for r in rows)),
+            # In our favour: their credit notes past what we owed, and advances we paid them on account.
+            "credit_balances": in_credit, "on_account": on_account,
+            "net_owed": money(owed - in_credit - on_account),
+            "owed": owed,
             "overdue": money(sum(r["outstanding"] for r in rows
                                  if r["bucket"] != "Not due")),
             "bills": len(rows),
@@ -601,11 +550,21 @@ def receivables_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     data = receivables(request, db)
     b = data["buckets"]
-    rows = [(r["number"], r["customer"], r["project"], r["issue_date"],
+    gstin = {c.id: (c.gstin or "") for c in db.query(models.DBContact).filter(
+        models.DBContact.client_id == client.id).all()}
+    by_name = {norm_name(c.name): (c.gstin or "") for c in db.query(models.DBContact).filter(
+        models.DBContact.client_id == client.id).all() if (c.gstin or "").strip()}
+    rows = [(r["number"], r["kind"], r["customer"],
+             gstin.get(r.get("contact_id")) or by_name.get(norm_name(r["customer"]), ""),
+             r["project"], r["issue_date"],
              r["due_date"], r["total"], r["paid"], r["outstanding"],
              r["bucket"], r["days_overdue"]) for r in data["invoices"]]
+    rows += [(c["number"], "Credit balance", c["party"], by_name.get(norm_name(c["party"]), ""), c["project"],
+              "", "", "", "", -c["amount"], "", "") for c in data["credits"]]
+    rows += [("", "On account", p["party"], by_name.get(norm_name(p["party"]), ""), "", "", "", "", "",
+              -p["on_account"], "", "") for p in data["parties"] if p["on_account"]]
     return sheet_response(
-        ("Invoice", "Customer", "Project", "Issued", "Due", "Total", "Paid",
+        ("Document", "Kind", "Customer", "GSTIN", "Project", "Issued", "Due", "Total", "Paid",
          "Outstanding", "Age", "Days overdue"),
         rows, "receivables.xlsx",
         preamble=[("WHAT WE ARE OWED", client.company_name or ""),
@@ -614,8 +573,10 @@ def receivables_export(request: Request, db: Session = Depends(get_read_db)):
                   ("Not due", b["Not due"], "0-30", b["0-30"], "31-60", b["31-60"]),
                   ("61-90", b["61-90"], "90+", b["90+"]),
                   ()],
-        closing=[(), ("Total owed", "", "", "", "", "", "",
-                      data["summary"]["owed"])])
+        closing=[(), ("Total owed", "", "", "", "", "", "", "", "", data["summary"]["owed"]),
+                 ("In their favour (credit notes, on account)", "", "", "", "", "", "", "", "",
+                  -money(data["summary"]["credit_balances"] + data["summary"]["on_account"])),
+                 ("Net owed", "", "", "", "", "", "", "", "", data["summary"]["net_owed"])])
 
 
 @router.get("/api/money/retention.xlsx")
@@ -653,9 +614,14 @@ def list_bank_accounts(request: Request, db: Session = Depends(get_read_db)):
     return {"accounts": out}
 
 
+def _opening_date(raw):
+    return entry_date(raw, "The opening date") if (raw or "").strip() else date.today().isoformat()
+
+
 @router.post("/api/bank-accounts")
 def create_bank_account(body: BankAccountIn, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
+    # The same right as every other money screen: a member of staff who pays is let in, not signed out by a 401.
+    client, _, _ = wo_actor(request, db, "bills.pay")
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(400, "Name the account - \"SBI current\", \"Site cash\".")
@@ -664,11 +630,76 @@ def create_bank_account(body: BankAccountIn, request: Request, db: Session = Dep
         client_id=client.id, name=name, kind=kind, bank_name=(body.bank_name or "").strip(),
         account_no=(body.account_no or "").strip(), ifsc=(body.ifsc or "").strip().upper(),
         opening_balance=money(body.opening_balance or 0),
-        opening_date=(body.opening_date or datetime.now().strftime("%Y-%m-%d")))
+        opening_date=_opening_date(body.opening_date))
     db.add(a)
+    db.flush()
+    log_audit(db, client.id, "bank_account_added", "bank_account", a.id, a.name,
+              "%s; opening %s on %s" % (kind, inr(a.opening_balance), a.opening_date), request)
     db.commit()
     db.refresh(a)
     return account_dict(a)
+
+
+@router.put("/api/bank-accounts/{account_id}")
+def edit_bank_account(account_id: int, body: BankAccountEditIn, request: Request, db: Session = Depends(get_db)):
+    """Correct an account's name, bank details, opening balance and date, or close it. The opening balance and date
+    are the start of its book, so they cannot be moved inside a closed period."""
+    client, _, _ = wo_actor(request, db, "bills.pay")
+    a = bank_reco.bank_account_or_404(db, client.id, account_id)
+    if body.name is not None:
+        if not body.name.strip():
+            raise HTTPException(400, "The account needs a name.")
+        a.name = body.name.strip()
+    for field in ("bank_name", "account_no"):
+        if getattr(body, field) is not None:
+            setattr(a, field, getattr(body, field).strip())
+    if body.ifsc is not None:
+        a.ifsc = body.ifsc.strip().upper()
+    if body.is_active is not None:
+        a.is_active = bool(body.is_active)
+    before = (money(a.opening_balance), a.opening_date or "")
+    new_balance = money(body.opening_balance) if body.opening_balance is not None else before[0]
+    new_date = _opening_date(body.opening_date) if body.opening_date is not None else before[1]
+    if (new_balance, new_date) != before:
+        for day in {before[1], new_date}:
+            refuse_if_locked(db, client.id, day, "changed")
+        a.opening_balance, a.opening_date = new_balance, new_date
+        log_audit(db, client.id, "bank_account_opening_changed", "bank_account", a.id, a.name or "",
+                  "opening %s on %s -> %s on %s" % (inr(before[0]), before[1] or "-", inr(new_balance), new_date or "-"),
+                  request)
+    else:
+        log_audit(db, client.id, "bank_account_edited", "bank_account", a.id, a.name or "", "details", request)
+    db.commit()
+    d = account_dict(a)
+    d["balance"] = account_balance(db, client.id, a)
+    return d
+
+
+@router.get("/api/money/lock")
+def money_lock(request: Request, db: Session = Depends(get_read_db)):
+    """The day the money books are closed up to."""
+    client = require_items_access(request, db, "bills.view_all")
+    return {"locked_upto": money_locked_upto(db, client.id), "can_edit": _is_master(request, db)}
+
+
+@router.put("/api/money/lock")
+def set_money_lock(body: MoneyLockIn, request: Request, db: Session = Depends(get_db)):
+    """Close the money books up to a day, or reopen them. The Master alone."""
+    client, _ = session_person(request, db)
+    if not _is_master(request, db):
+        raise HTTPException(403, "Only the Master closes or reopens the money books.")
+    upto = (body.locked_upto or "").strip()[:10]
+    if upto:
+        upto = entry_date(upto, "The lock date")
+        if upto >= date.today().isoformat():
+            raise HTTPException(400, "The books can be closed up to yesterday at the latest.")
+    before = money_locked_upto(db, client.id)
+    put_setting(db, client.id, MONEY_LOCK_KEY, upto)
+    log_audit(db, client.id, "money_lock_changed", "settings", None, "money lock", "%s -> %s" % (before or "open", upto or "open"),
+              request)
+    db.commit()
+    return {"locked_upto": upto, "can_edit": True,
+            "message": ("Money books closed up to %s." % upto) if upto else "Money books reopened."}
 
 
 @router.post("/api/money/entries")
@@ -688,7 +719,8 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
     if amount <= 0:
         raise HTTPException(400, "How much?")
     mode = body.mode if body.mode in MONEY_MODES else "Bank transfer"
-    on = (body.paid_on or datetime.now().strftime("%Y-%m-%d"))[:10]
+    on = entry_date(body.paid_on, "The payment date")
+    refuse_if_locked(db, client.id, on)
     account = None
     if body.account_id:
         account = db.query(models.DBBankAccount).filter(
@@ -722,7 +754,7 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
             raise HTTPException(400, "Which bill is this against?")
         doc, worth, direction, party_type, party_name, party_id, job_id = _doc_for(
             db, client.id, doc_type, body.doc_id)
-        owed = money(worth - settled_on(db, client.id, doc_type, doc.id))
+        owed = money(worth - already_settled(db, client.id, doc_type, doc, worth))
         if owed <= 0:
             raise HTTPException(409, "%s is already fully settled." % doc.number)
         if direction == "OUT" and party_type == "contractor":
@@ -745,8 +777,16 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
             raise HTTPException(400, "Who is this from or to?")
         party_id, job_id, doc_number = None, owned_or_404(db, models.DBJob, client.id, body.job_id, "Project"), ""
 
+    if mode == "Cheque" and direction == "OUT":
+        refuse_duplicate_cheque(db, client.id, account.id if account else None, body.reference)
+
+    # Paid in pieces is paid all the same: what already went out against this bill, or to this party today, without a
+    # request counts with this payment against the limit.
+    so_far = preq.paid_unasked(db, client.id, party_name, on, doc_type, doc.id if doc else None) \
+        if (direction == "OUT" and not body.request_id) else 0.0
     # A colleague of the Master's signs in as the company but is not the Master: their payments are approved like anyone's.
-    if not body.request_id and direction == "OUT" and preq.needs_request(db, client.id, None, amount, member=_colleague(request, db)):
+    if not body.request_id and direction == "OUT" and preq.needs_request(db, client.id, None, amount, member=_colleague(request, db),
+                                                                         so_far=so_far):
         raise HTTPException(409, "Payments are approved before they are made: send it for approval "
                                  "(a payment request), and pay it once it is approved.")
 
@@ -754,7 +794,7 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
     if body.request_id:
         approved = preq.use_for_payment(db, client.id, body.request_id, doc_type, doc.id if doc else None, amount, party_name, job_id,
                                     head=head if doc_type == "expense" else None)
-    elif direction == "OUT" and preq.needs_request(db, client.id, session_employee(request, db), amount):
+    elif direction == "OUT" and preq.needs_request(db, client.id, session_employee(request, db), amount, so_far=so_far):
         raise HTTPException(409, "Payments are approved before they are made: send it for approval "
                                  "(a payment request), and pay it once it is approved.")
     e = models.DBMoneyEntry(
@@ -815,6 +855,11 @@ def _colleague(request, db):
     return current_member(request, db)
 
 
+def _is_master(request, db):
+    """The Master themselves: not a member of staff, and not a colleague signed in as the company."""
+    return session_employee(request, db) is None and _colleague(request, db) is None
+
+
 def _request_reader(request, db):
     """Who may see payment requests: whoever sees the money, and whoever approves it."""
     client, emp = session_person(request, db)
@@ -845,7 +890,7 @@ def save_payment_rules(body: PaymentRulesIn, request: Request, db: Session = Dep
         raise HTTPException(403, "Only the Master sets how payments are approved.")
     if body.md_above is not None and body.free_below is not None and body.md_above and body.md_above < body.free_below:
         raise HTTPException(400, "The MD's limit cannot be below the amount that needs no approval.")
-    preq.save_rules(db, client.id, body.on, body.free_below, body.md_above)
+    preq.save_rules(db, client.id, body.on, body.free_below, body.md_above, body.valid_days)
     log_audit(db, client.id, "payment_rules_changed", "settings", None, "payment approval",
               "%s; free below %s; MD above %s" % ("on" if body.on else "off", inr(body.free_below or 0), inr(body.md_above or 0)),
               request)
@@ -865,8 +910,9 @@ def list_payment_requests(request: Request, status: str = "", db: Session = Depe
     accounts = {a.id: a for a in db.query(models.DBBankAccount).filter(models.DBBankAccount.client_id == client.id).all()}
     job_ids = {r.job_id for r in rows if r.job_id}
     jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.id.in_(job_ids)).all()} if job_ids else {}
-    out = [preq.request_dict(r, accounts, jobs) for r in rows]
-    by = lambda *s: money(sum(r["amount"] for r in out if r["status"] in s))
+    days = preq.valid_days(db, client.id)
+    out = [preq.request_dict(r, accounts, jobs, days) for r in rows]
+    by = lambda *s: money(sum(r["amount"] for r in out if r["status"] in s and not r["expired"]))
     return {"requests": out, "summary": {"with_accounts": by("PENDING"), "with_md": by("AWAITING_MD"),
                                          "to_pay": by("APPROVED"), "open": len([r for r in out if r["status"] in preq.OPEN])}}
 
@@ -907,6 +953,7 @@ def pay_payment_request(request_id: int, body: RequestPayIn, request: Request, d
     r = preq.request_or_404(db, client.id, request_id)
     if r.status != "APPROVED":
         raise HTTPException(409, "%s is %s, not approved to pay." % (r.number, preq.STATUS_LABEL.get(r.status, r.status).lower()))
+    preq.refuse_if_expired(db, client.id, r)
     money_body = MoneyIn(
         doc_type=r.doc_type, doc_id=r.doc_id, amount=body.amount or r.amount, paid_on=body.paid_on or "",
         mode=body.mode or r.mode or "Bank transfer", reference=body.reference or "",
@@ -987,12 +1034,17 @@ def submit_site_expense(body: SiteCashExpenseIn, request: Request, db: Session =
     from app.services.hr import employee_name
     client, emp = session_person(request, db)
     box = site_cash.box_or_404(db, client.id, emp, body.account_id)
-    who = employee_name(emp) if emp is not None else (client.contact_name or "Master")
-    x = site_cash.submit(db, client, emp, who, box, body)
+    body.spent_on = entry_date(body.spent_on, "The day it was spent")
+    refuse_if_locked(db, client.id, body.spent_on)
+    member = _colleague(request, db) if emp is None else None
+    who = employee_name(emp) if emp is not None else (
+        (member.name or member.email) if member is not None else (client.contact_name or "Master"))
+    x = site_cash.submit(db, client, emp, who, box, body, member=member)
+    warning = site_cash.cash_warning(db, client.id, x.paid_to, x.spent_on)
     log_audit(db, client.id, "site_cash_spent", "site_cash", x.id, x.number,
               "%s %s %s" % (x.head, inr(x.amount), x.paid_to), request)
     db.commit()
-    return {"ok": True, "expense": site_cash.expense_dict(x),
+    return {"ok": True, "expense": site_cash.expense_dict(x), "warning": warning,
             "message": "%s: %s to %s entered; accounts will check it." % (x.number, inr(x.amount), x.paid_to)}
 
 
@@ -1021,13 +1073,20 @@ def decide_site_expense(expense_id: int, body: PaymentDecisionIn, request: Reque
 
 def _decide_site_expense(db, client, emp, expense_id, decision, note, request):
     from app.services.hr import employee_name
-    who = employee_name(emp) if emp is not None else (client.contact_name or "Master")
+    member = _colleague(request, db) if emp is None and request is not None else None
+    who = employee_name(emp) if emp is not None else (
+        (member.name or member.email) if member is not None else (client.contact_name or "Master"))
     x = site_cash.expense_or_404(db, client.id, expense_id)
-    message = site_cash.decide(db, client, emp, who, x, decision, note)
+    if decision == "approve":
+        refuse_if_locked(db, client.id, x.spent_on, "booked")       # approved, it is booked on the day it was spent
+    message = site_cash.decide(db, client, emp, who, x, decision, note, member=member)
+    warning = site_cash.cash_warning(db, client.id, x.paid_to, x.spent_on) if decision == "approve" else ""
+    if warning:
+        message = "%s %s" % (message, warning)
     log_audit(db, client.id, "site_cash_" + ("approved" if decision == "approve" else "rejected"), "site_cash",
               x.id, x.number, message, request)
     db.commit()
-    return {"ok": True, "expense": site_cash.expense_dict(x), "message": message}
+    return {"ok": True, "expense": site_cash.expense_dict(x), "message": message, "warning": warning}
 
 
 @router.get("/api/site-cash/boxes/{account_id}/statement.pdf")
@@ -1109,9 +1168,13 @@ def bank_line_match(line_id: int, body: LineMatchIn, request: Request, db: Sessi
             "in" if l.credit > 0 else "out", inr(l.credit or l.debit)))
     if e.statement_line_id and e.statement_line_id != l.id:
         raise HTTPException(409, "%s is already matched to another line of the statement." % e.number)
-    if l.status == "MATCHED":
-        bank_reco.unmatch(db, l)
+    if l.status == "MATCHED" and l.entry_id and l.entry_id != e.id:
+        # Re-pointing a matched line silently un-cleared the entry it was matched to: unmatch it first, on purpose.
+        was = db.query(models.DBMoneyEntry.number).filter(models.DBMoneyEntry.id == l.entry_id).scalar()
+        raise HTTPException(409, "That line is already matched to %s. Unmatch it first." % (was or "another entry"))
     bank_reco.match(l, e)
+    log_audit(db, client.id, "bank_line_matched", "bank_account", l.account_id, e.number,
+              "%s %s line of %s" % (inr(e.amount), "in" if e.direction == "IN" else "out", l.txn_date), request)
     db.commit()
     return {"ok": True, "message": "Matched to %s; cleared on %s." % (e.number, l.txn_date)}
 
@@ -1120,7 +1183,10 @@ def bank_line_match(line_id: int, body: LineMatchIn, request: Request, db: Sessi
 def bank_line_unmatch(line_id: int, request: Request, db: Session = Depends(get_db)):
     client, _, _ = wo_actor(request, db, "bills.pay")
     l = _line_or_404(db, client.id, line_id)
+    was = db.query(models.DBMoneyEntry.number).filter(models.DBMoneyEntry.id == l.entry_id).scalar() if l.entry_id else ""
     bank_reco.unmatch(db, l)
+    log_audit(db, client.id, "bank_line_unmatched", "bank_account", l.account_id, was or "",
+              "line of %s, %s" % (l.txn_date, inr(l.credit or l.debit)), request)
     db.commit()
     return {"ok": True, "message": "Line put back as not matched."}
 
@@ -1133,6 +1199,8 @@ def bank_line_ignore(line_id: int, request: Request, db: Session = Depends(get_d
     if l.status == "MATCHED":
         bank_reco.unmatch(db, l)
     l.status = "IGNORED"
+    log_audit(db, client.id, "bank_line_ignored", "bank_account", l.account_id, "",
+              "line of %s, %s: %s" % (l.txn_date, inr(l.credit or l.debit), (l.narration or "")[:120]), request)
     db.commit()
     return {"ok": True, "message": "Line set aside."}
 
@@ -1144,6 +1212,7 @@ def bank_line_book(line_id: int, body: LineBookIn, request: Request, db: Session
     l = _line_or_404(db, client.id, line_id)
     if l.status != "UNMATCHED":
         raise HTTPException(409, "That line is already %s." % l.status.lower())
+    refuse_if_locked(db, client.id, l.txn_date)
     out = l.debit > 0
     heads = EXPENSE_HEADS if out else INCOME_HEADS
     head = next((h for h in heads if h.lower() == (body.head or "").strip().lower()), "")
@@ -1170,15 +1239,24 @@ def clear_entry(entry_id: int, body: ClearIn, request: Request, db: Session = De
     e = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.id == entry_id, models.DBMoneyEntry.client_id == client.id).first()
     if e is None:
         raise HTTPException(404, "Entry not found")
+    if e.voided:
+        raise HTTPException(409, "%s is void; a void entry does not clear." % e.number)
+    account = db.query(models.DBBankAccount).filter(models.DBBankAccount.id == e.account_id).first() if e.account_id else None
+    if account is None or account.kind == "Cash":
+        raise HTTPException(409, "%s is not through a bank account; only a bank clears an entry." % e.number)
     if e.statement_line_id:
         raise HTTPException(409, "%s is matched to the bank's statement; unmatch the line instead." % e.number)
     on = (body.cleared_on or "").strip()[:10]
     if on:
+        on = entry_date(on, "The clearing date")
         if on < (e.paid_on or "")[:10]:
             raise HTTPException(400, "It cannot have cleared before it was written.")
         if on > date.today().isoformat():
             raise HTTPException(400, "It cannot have cleared on a day still to come.")
+    before = e.cleared_on or ""
     e.cleared_on = on
+    log_audit(db, client.id, "money_cleared" if on else "money_uncleared", e.doc_type or "", e.doc_id or 0, e.number,
+              "cleared %s -> %s" % (before or "-", on or "-"), request)
     db.commit()
     return {"ok": True, "message": ("%s cleared on %s." % (e.number, on)) if on else "%s marked not cleared." % e.number}
 
@@ -1276,6 +1354,7 @@ def tally_masters(request: Request, date_from: str = "", date_to: str = "", db: 
     f, t = _tally_period(date_from, date_to)
     books = tally.Books(db, client, f, t)
     log_audit(db, client.id, "tally_export", "tally", None, "masters", "%s to %s" % (f or "start", t or "today"), request)
+    db.commit()
     return _tally_file(tally.masters_xml(books, tenant_setting(db, client.id, "tally_company", "")),
                        "yerp_masters_%s_%s.xml" % (f or "start", t or "today"))
 
@@ -1288,6 +1367,8 @@ def tally_vouchers(request: Request, date_from: str = "", date_to: str = "", db:
     books = tally.Books(db, client, f, t)
     log_audit(db, client.id, "tally_export", "tally", None, "vouchers",
               "%d vouchers, %s to %s" % (len(books.vouchers), f or "start", t or "today"), request)
+    # Kept: a voided entry is sent as a cancellation only when an earlier export took it.
+    db.commit()
     return _tally_file(tally.vouchers_xml(books, tenant_setting(db, client.id, "tally_company", "")),
                        "yerp_vouchers_%s_%s.xml" % (f or "start", t or "today"))
 
@@ -1319,7 +1400,30 @@ def transfer_money(body: TransferIn, request: Request, db: Session = Depends(get
     mode = body.mode if body.mode in MONEY_MODES else ("Cash" if "Cash" in (src.kind, dst.kind) else "Bank transfer")
     if mode == "Cheque" and not (body.reference or "").strip():
         raise HTTPException(400, "A cheque needs its number.")
-    on = (body.paid_on or datetime.now().strftime("%Y-%m-%d"))[:10]
+    on = entry_date(body.paid_on, "The transfer date")
+    refuse_if_locked(db, client.id, on)
+    if mode == "Cheque":
+        refuse_duplicate_cheque(db, client.id, src.id, body.reference)
+    if src.kind == "Cash":
+        # A cash box holds what is in it; a bank account may run on an overdraft or cash credit, a cash box cannot.
+        held = account_balance(db, client.id, src)
+        if amount > held + 0.009:
+            raise HTTPException(409, "%s holds only %s; %s cannot be moved out of it." % (src.name, inr(held), inr(amount)))
+    rules = preq.approval_rules(db, client.id)
+    if rules["on"]:
+        # Where payments wait for a signature, moving money was the way round it: a clerk drew 5 lakh from the bank into
+        # a cash box with nobody's say. Over the limit (counting what else left this account today by transfer), a move
+        # is made by whoever checks payments - the accounts head or the Master.
+        emp, member = session_employee(request, db), _colleague(request, db)
+        moved_today = money(sum(e.amount or 0 for e in db.query(models.DBMoneyEntry).filter(
+            models.DBMoneyEntry.client_id == client.id, models.DBMoneyEntry.account_id == src.id,
+            models.DBMoneyEntry.doc_type == "contra", models.DBMoneyEntry.direction == "OUT",
+            models.DBMoneyEntry.voided.is_(False), models.DBMoneyEntry.paid_on == on).all()))
+        if money(amount + moved_today) > rules["free_below"] and (
+                member is not None or (emp is not None and not preq.can_check(emp))):
+            raise HTTPException(409, "Payments are approved before they are made, and %s out of %s is over the %s "
+                                     "limit: the accounts head or the Master moves it."
+                                     % (inr(amount), src.name, inr(rules["free_below"])))
     number = next_money_number(db, client.id, "OUT", stem="CON-")
     common = dict(client_id=client.id, number=number, party_type="other", doc_type="contra", amount=amount,
                   paid_on=on, mode=mode, reference=(body.reference or "").strip()[:80],
@@ -1360,6 +1464,16 @@ def void_money(entry_id: int, request: Request, body: dict = None,
         raise HTTPException(404, "Entry not found")
     if e.voided:
         raise HTTPException(409, "%s is already void." % e.number)
+    other = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.id == e.pair_id,
+                                                 models.DBMoneyEntry.client_id == client.id).first() if e.pair_id else None
+    legs = [x for x in (e, other) if x is not None]
+    for x in legs:
+        refuse_if_locked(db, client.id, x.paid_on, "voided")
+    cleared = next((x for x in legs if x.cleared_on or x.statement_line_id), None)
+    if cleared is not None and not _is_master(request, db):
+        # Money the bank has already moved does not un-move because the books say so: undoing it is the Master's call.
+        raise HTTPException(409, "%s has cleared the bank%s. Only the Master voids an entry the bank has moved, "
+                                 "saying why." % (cleared.number, (" on " + cleared.cleared_on) if cleared.cleared_on else ""))
     e.voided, e.void_reason = True, reason[:300]
     _unmatch_statement(db, e)
     booked = site_cash.expense_for_entry(db, e.id)
@@ -1370,8 +1484,6 @@ def void_money(entry_id: int, request: Request, body: dict = None,
         paid_for.status, paid_for.entry_id = "APPROVED", None     # still approved; the payment was the mistake
     if e.pair_id:
         # A transfer is undone whole: money cannot have left one account and not arrived in the other.
-        other = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.id == e.pair_id,
-                                                     models.DBMoneyEntry.client_id == client.id).first()
         if other is not None and not other.voided:
             other.voided, other.void_reason = True, reason[:300]
             _unmatch_statement(db, other)                 # the other account's statement line is open again too
@@ -1508,9 +1620,25 @@ def cash_book(db, client_id, account, date_from="", date_to=""):
     """Every movement through one account (or all of them), in date order, with the balance after each."""
     q = db.query(models.DBMoneyEntry).filter(
         models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.voided.is_(False))
-    q = q.filter(models.DBMoneyEntry.account_id == account.id) if account else q
-    entries = q.order_by(models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all()
-    balance = money(account.opening_balance) if account else 0.0
+    if account:
+        q = q.filter(models.DBMoneyEntry.account_id == account.id)
+        start = opening_day(account)
+        if start:
+            # The opening balance is the balance on the opening day; what moved before it is already inside it.
+            q = q.filter(models.DBMoneyEntry.paid_on >= start)
+        entries = q.order_by(models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all()
+        balance = money(account.opening_balance)
+    else:
+        # Every account together starts from every live account's opening balance, and leaves out what each holds
+        # inside that balance already (and what went through a closed account).
+        held = {a.id: a for a in db.query(models.DBBankAccount).filter(models.DBBankAccount.client_id == client_id).all()}
+        balance = money(sum(a.opening_balance or 0 for a in held.values() if a.is_active is not False))
+        entries = []
+        for e in q.order_by(models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all():
+            a = held.get(e.account_id) if e.account_id else None
+            if a is not None and (a.is_active is False or (opening_day(a) and (e.paid_on or "") < opening_day(a))):
+                continue
+            entries.append(e)
     rows = []
     for e in entries:
         signed = e.amount if e.direction == "IN" else -e.amount
@@ -1519,7 +1647,6 @@ def cash_book(db, client_id, account, date_from="", date_to=""):
             continue
         if date_to and (e.paid_on or "") > date_to:
             continue
-        opening_row = balance if not rows else None
         balance = money(balance + signed)
         rows.append({"id": e.id, "date": e.paid_on, "number": e.number, "party": e.party_name,
                      "against": e.doc_number or e.head or ("Transfer" if e.doc_type == "contra" else "on account"),
@@ -1541,11 +1668,7 @@ def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = 
     """What is still owed on one bill - for the payment box to open with."""
     client = require_items_access(request, db, "bills.view_all")
     doc, worth = _doc_for_any(db, client.id, doc_type, doc_id)
-    got = settled_on(db, client.id, doc_type, doc_id)
-    if doc_type in ("ra_bill", "sub_bill") and doc.status == "PAID" and not got:
-        got = worth
-    if doc_type == "supplier_bill":
-        got = max(got, money(doc.amount_paid or 0))
+    got = already_settled(db, client.id, doc_type, doc, worth)
     return {"number": doc.number, "worth": worth, "settled": got,
             "outstanding": money(max(0.0, worth - got)),
             "entries": [money_entry_dict(e) for e in db.query(models.DBMoneyEntry).filter(

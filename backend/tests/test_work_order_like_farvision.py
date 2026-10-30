@@ -138,11 +138,11 @@ def test_a_site_across_the_border_is_igst_on_the_order_and_the_bill(tenant):
 def test_it_is_the_contractors_state_that_counts_not_ours(tenant):
     """We are in Telangana, the site is in Telangana, but the contractor is
     registered in Andhra: their supply crosses a border, so it is IGST."""
-    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZX"})
+    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZI"})
     unit = tenant.post("/api/wo/business-units", json={"name": "YP", "code": "YP"}).json()
     con = tenant.post("/api/wo/contractors", json={
         "company_name": "Andhra Erectors", "pan": "AAAPA1234C",
-        "gst_number": "37AAAPA1234C1Z5"}).json()
+        "gst_number": "37AAAPA1234C1ZO"}).json()
     job = tenant.post("/api/jobs", json={"name": "TS site", "customer_name": "X"}).json()
     tenant.put("/api/jobs/%d/place-of-supply" % job["id"], json={"state_code": "36"})
     order = priced(tenant, business_unit_id=unit["id"], contractor_id=con["id"],

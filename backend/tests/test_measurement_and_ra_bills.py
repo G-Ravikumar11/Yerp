@@ -334,7 +334,7 @@ def test_the_register_totals_what_is_claimed_held_and_owed(tenant):
     s = tenant.get("/api/ra-bills").json()["summary"]
     assert s["claimed"] == 100000
     assert s["retention_held"] == 5000
-    assert s["certified_unpaid"] == 112000
+    assert s["certified_unpaid"] == 111000          # 1,00,000 + 18,000 - 5,000 - 2% TDS
 
 
 def test_one_tenant_cannot_read_anothers_bill(tenant, second_tenant):

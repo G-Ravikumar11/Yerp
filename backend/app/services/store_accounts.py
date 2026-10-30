@@ -17,7 +17,10 @@ from app.services import store_reports
 from app.services.money import next_money_number
 
 ZERO = Decimal("0")
-BILLED = ("Awaiting Approval", "Approved for payment", "Paid")        # a supplier bill that counts as billed (not a draft, not rejected)
+# A supplier bill that counts as billed: every live status a bill passes through - not a draft, not rejected or
+# cancelled. Leaving out "Awaiting Payment", "Approved" and "Partially Paid" (the statuses the Master's own bills and
+# part-payments carry) showed those orders as received and never billed, when the three-way match had them billed.
+BILLED = ("Awaiting Approval", "Approved for payment", "Approved", "Awaiting Payment", "Partially Paid", "Paid")
 SCRAP_HEAD = "Scrap sale"
 
 
