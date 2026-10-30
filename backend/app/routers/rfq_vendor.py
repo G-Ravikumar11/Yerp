@@ -5,6 +5,10 @@ For the buyer (signed in):
     POST   /api/rfqs/{id}/invites                        a link for one supplier
     DELETE /api/rfqs/{id}/invites/{invite_id}            take a link back
     POST   /api/rfqs/{id}/quotes/{quote_id}/document     keep the supplier's quotation file with his quote
+    GET    /api/quote-files                              quotation files kept on their own, to compare by eye
+    POST   /api/quote-files                              keep one, with the supplier's name
+    GET    /api/quote-files/{file_id}/text               a Word or Excel quotation as text, to read beside the others
+    DELETE /api/quote-files/{file_id}                    remove one
 
 For the supplier (the link's token is the only key):
     GET  /api/vendor-quote/{token}                       what is asked, and his answer so far
@@ -249,3 +253,67 @@ def _positive(v):
         return float(v) > 0
     except (TypeError, ValueError):
         return False
+
+
+# --- quotation files kept on their own -----------------------------------------------------------------------------
+# Quotations that came in by email or by hand, before (or without) any enquiry: kept in one place to open side by
+# side. Nothing is read into rates; the supplier's name is the file's caption.
+
+QUOTE_FILES = "rfq_compare"
+
+
+def _quote_file(db, client_id, file_id, bytes_too=False):
+    from app.core.files import _file_or_404
+    f = _file_or_404(db, client_id, file_id, bytes_too=bytes_too)
+    if f.attached_type != QUOTE_FILES:
+        raise HTTPException(404, "That is not one of the quotation files.")
+    return f
+
+
+@router.get("/api/quote-files")
+def list_quote_files(request: Request, db: Session = Depends(get_read_db)):
+    client = require_erp_read(request, db)
+    rows = db.query(models.DBFile.id, models.DBFile.name, models.DBFile.content_type, models.DBFile.size, models.DBFile.caption,
+                    models.DBFile.uploaded_by_name, models.DBFile.created_at).filter(
+        models.DBFile.client_id == client.id, models.DBFile.attached_type == QUOTE_FILES).order_by(models.DBFile.id.desc()).all()
+    return {"files": [{"id": r.id, "name": r.name or "", "content_type": r.content_type or "", "size": r.size or 0,
+                       "supplier_name": r.caption or "", "added_by": r.uploaded_by_name or "", "added_at": r.created_at or "",
+                       "url": "/api/files/%d" % r.id} for r in rows]}
+
+
+@router.post("/api/quote-files")
+def add_quote_file(request: Request, file: UploadFile = File(...), supplier_name: str = Form(""), db: Session = Depends(get_db)):
+    from app.core.files import store_file
+    client, _, actor_name = wo_actor(request, db, "purchase.manage")
+    f = store_file(db, client.id, file, file.file.read(), job_id=None, attached_type=QUOTE_FILES, attached_id=0,
+                   kind="document", caption=(supplier_name or "").strip()[:120], by=actor_name)
+    log_audit(db, client.id, "file_added", QUOTE_FILES, 0, f.name, "quotation file", request)
+    out = {"ok": True, "file": {"id": f.id, "name": f.name}, "message": "%s kept." % (f.name or "The file")}
+    db.commit()
+    return out
+
+
+@router.get("/api/quote-files/{file_id}/text")
+def quote_file_text(file_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """A Word, Excel or other file a browser cannot show, as text (a PDF or a photo is shown as it is)."""
+    from app.ai import doc_text
+    from app.core.files import file_bytes
+    client = require_erp_read(request, db)
+    f = _quote_file(db, client.id, file_id, bytes_too=True)
+    try:
+        kind, text, _picture = doc_text.to_text_or_picture(file_bytes(db, f) or b"", f.name or "", f.content_type or "")
+    except doc_text.Unreadable as exc:
+        raise HTTPException(400, str(exc))
+    return {"id": f.id, "name": f.name or "", "kind": kind, "text": text, "shown_as_is": kind in ("pdf", "picture")}
+
+
+@router.delete("/api/quote-files/{file_id}")
+def remove_quote_file(file_id: int, request: Request, db: Session = Depends(get_db)):
+    from app.core.files import hand_on_bytes
+    client, _, _ = wo_actor(request, db, "purchase.manage")
+    f = _quote_file(db, client.id, file_id)
+    log_audit(db, client.id, "file_removed", QUOTE_FILES, 0, f.name, "quotation file", request)
+    hand_on_bytes(db, f)
+    db.delete(f)
+    db.commit()
+    return {"ok": True}

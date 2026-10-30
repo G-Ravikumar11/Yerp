@@ -102,3 +102,20 @@ export const vendorSendQuote = (token: string, quote: Record<string, unknown>, f
 
 /** What a quotation file can be: shown in every file chooser for quotes. */
 export const QUOTE_FILES = '.pdf,.doc,.docx,.docm,.xls,.xlsx,.xlsm,.csv,.txt,.rtf,.odt,.ods,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,image/*'
+
+// --- quotation files kept on their own, to open side by side ------------------------------------------------------
+
+/** A supplier's quotation kept on its own, not on any enquiry: nothing is read from it, it is there to be looked at. */
+export interface QuoteFile { id: number; name: string; content_type: string; size: number; supplier_name: string; added_by: string; added_at: string; url: string }
+export const quoteFileKeys = { all: ['quote-files'] as const }
+export const useQuoteFiles = () => useQuery({ queryKey: quoteFileKeys.all, queryFn: () => get<{ files: QuoteFile[] }>('/api/quote-files') })
+export const addQuoteFile = (file: File, supplier: string) => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('supplier_name', supplier)
+  return api<{ message: string; file: { id: number; name: string } }>('/api/quote-files', { method: 'POST', body: form })
+}
+export const removeQuoteFile = (id: number) => api<{ ok: boolean }>(`/api/quote-files/${id}`, { method: 'DELETE' })
+/** A Word or Excel quotation as text, for reading beside the others (a PDF or a photo is shown as it is). */
+export const useQuoteFileText = (id: number, enabled: boolean) =>
+  useQuery({ queryKey: ['quote-files', 'text', id], enabled, staleTime: Infinity, queryFn: () => get<{ text: string; kind: string }>(`/api/quote-files/${id}/text`) })

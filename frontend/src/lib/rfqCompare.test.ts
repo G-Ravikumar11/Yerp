@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RfqLine, RfqSupplier, Statement } from '@/api/rfq'
-import { allTo, byLanded, compare, comparisonUrl, passedOver, plannedOrders, stage, supplierRows } from './rfqCompare'
+import { allTo, byLanded, compare, comparisonUrl, passedOver, plannedOrders, pooledComparison, stage, supplierRows } from './rfqCompare'
 
 const sup = (name: string, landed: number, extra: Partial<RfqSupplier> = {}): RfqSupplier => ({ quote_id: landed, supplier_name: name, quote_ref: '', quote_date: '', is_l1: false, basic: landed, tax: 0, freight: 0, landed, delivery_days: 0, payment_terms: '', valid_until: '', notes: '', complete: true, lines_quoted: 2, ...extra })
 const line = (id: number, qty: number, offers: [string, number][]): RfqLine => {
@@ -87,5 +87,53 @@ describe('the document link', () => {
   it('names each supplier chosen, commas and all, and none when everybody is in', () => {
     expect(comparisonUrl(7, 'pdf', ['A', 'Sharma, Pune'], 3)).toBe('/api/rfqs/7/comparison.pdf?supplier=A&supplier=Sharma%2C%20Pune')
     expect(comparisonUrl(7, 'xlsx', ['A', 'B', 'C'], 3)).toBe('/api/rfqs/7/comparison.xlsx')
+  })
+})
+
+describe('comparing across enquiries', () => {
+  const enquiry = (id: number, suppliers: [string, number][], lines: Partial<RfqLine>[]) =>
+    ({ rfq: { id, number: `RFQ-${id}` }, suppliers: suppliers.map(([n, d]) => sup(n, 0, { delivery_days: d })), lines: lines.map((l, i) => ({ ...line(id * 10 + i, 1, []), ...l })) }) as unknown as Statement
+  const offer = (supplier_name: string, rate: number) => ({ supplier_name, rate, amount: rate, tax_percent: 18 })
+
+  it('matches an item by its code, and names the cheapest supplier whichever enquiry the price came from', () => {
+    const p = pooledComparison([
+      enquiry(1, [['A', 5]], [{ item_code: 'CEM', description: 'Cement', offers: [offer('A', 400)] }]),
+      enquiry(2, [['B', 5]], [{ item_code: 'cem', description: 'OPC cement 53', offers: [offer('B', 380)] }]),
+    ])
+    expect(p.items).toHaveLength(1)
+    expect(p.items[0].enquiries).toEqual(['RFQ-1', 'RFQ-2'])
+    expect(p.items[0].best).toMatchObject({ supplier_name: 'B', rfq_number: 'RFQ-2', rate: 380 })
+    expect(p.items[0].next?.supplier_name).toBe('A')
+  })
+  it('matches items with no code by name and unit, and keeps different units apart', () => {
+    const p = pooledComparison([
+      enquiry(1, [], [{ description: 'Sand', uom: 'cum', offers: [offer('A', 10)] }]),
+      enquiry(2, [], [{ description: ' sand ', uom: 'CUM', offers: [offer('B', 9)] }, { description: 'Sand', uom: 'bag', offers: [offer('B', 1)] }]),
+    ])
+    expect(p.items.map((i) => i.offers.length)).toEqual([2, 1])
+  })
+  it('keeps a supplier once per item, at his lower rate', () => {
+    const p = pooledComparison([
+      enquiry(1, [], [{ item_code: 'X', offers: [offer('A', 50)] }]),
+      enquiry(2, [], [{ item_code: 'X', offers: [offer('a', 45)] }]),
+    ])
+    expect(p.items[0].offers).toHaveLength(1)
+    expect(p.items[0].best).toMatchObject({ rate: 45, rfq_number: 'RFQ-2' })
+  })
+  it('breaks a tie on rate by the quicker delivery, a known time beating none', () => {
+    const p = pooledComparison([enquiry(1, [['Slow', 10], ['Fast', 3], ['Unsaid', 0]], [{ item_code: 'X', offers: [offer('Unsaid', 5), offer('Slow', 5), offer('Fast', 5)] }])])
+    expect(p.items[0].offers.map((o) => o.supplier_name)).toEqual(['Fast', 'Slow', 'Unsaid'])
+  })
+  it('names the supplier cheapest on the most items, and counts the items nobody priced', () => {
+    const p = pooledComparison([
+      enquiry(1, [], [{ item_code: 'X', offers: [offer('A', 1), offer('B', 2)] }, { item_code: 'Y', offers: [offer('A', 3), offer('B', 4)] }, { item_code: 'Z', offers: [] }]),
+      enquiry(2, [], [{ item_code: 'W', offers: [offer('B', 1)] }]),
+    ])
+    expect(p.best).toMatchObject({ supplier_name: 'A', cheapest: 2, quoted: 2 })
+    expect(p.suppliers.map((s) => [s.supplier_name, s.cheapest])).toEqual([['A', 2], ['B', 1]])
+    expect(p.unpriced).toBe(1)
+  })
+  it('has no best supplier when nothing is priced', () => {
+    expect(pooledComparison([enquiry(1, [], [{ item_code: 'X', offers: [] }])]).best).toBeNull()
   })
 })

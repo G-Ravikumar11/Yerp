@@ -25,6 +25,7 @@ from app.core.files import (
     file_bytes,
     file_dict,
     file_headers,
+    hand_on_bytes,
     image_data_url,
     served_type,
     store_file,
@@ -424,16 +425,7 @@ def delete_file(fid: int, request: Request, db: Session = Depends(get_db)):
     if db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.file_id == f.id).first():
         raise HTTPException(409, "That file is a drawing revision on the register; it stays as issued.")
     log_audit(db, client.id, "file_removed", f.attached_type, f.attached_id or 0, f.name, "", request)
-    # Most files are read by no other record: that is found out from ids alone, before any bytes are touched.
-    reader_ids = [r[0] for r in db.query(models.DBFile.id).filter(models.DBFile.blob_of == f.id).order_by(models.DBFile.id).all()]
-    readers = (db.query(models.DBFile).options(defer(models.DBFile.data), defer(models.DBFile.thumb))
-               .filter(models.DBFile.id.in_(reader_ids)).order_by(models.DBFile.id).all()) if reader_ids else []
-    if readers:
-        # Another record keeps the same file: it becomes the stored copy.
-        heir = readers[0]
-        heir.data, heir.thumb, heir.blob_of = f.data, f.thumb, None   # (the bytes are read only now, when they have to move)
-        for r in readers[1:]:
-            r.blob_of = heir.id
+    hand_on_bytes(db, f)
     db.delete(f)
     db.commit()
     return {"ok": True}

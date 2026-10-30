@@ -120,3 +120,60 @@ export function comparisonUrl(id: number, format: DocFormat, chosen: string[], e
   const q = chosen.length && chosen.length < everyone ? '?' + chosen.map((n) => `supplier=${encodeURIComponent(n)}`).join('&') : ''
   return `/api/rfqs/${id}/comparison.${format}${q}`
 }
+
+/* --- Across enquiries ---------------------------------------------------------------------------------------------- */
+
+/** One supplier's price for an item, and the enquiry it was quoted on. */
+export interface PooledOffer { supplier_name: string; rfq_id: number; rfq_number: string; rate: number; tax_percent: number; delivery_days: number }
+
+/** An item asked for on one or more of the enquiries, with every price for it, cheapest first. */
+export interface PooledItem { key: string; item_code: string; description: string; uom: string; enquiries: string[]; offers: PooledOffer[]; best: PooledOffer | null; next: PooledOffer | null }
+
+/** Who came out cheapest on how many items. */
+export interface SupplierTally { supplier_name: string; cheapest: number; quoted: number }
+
+export interface Pooled { items: PooledItem[]; suppliers: SupplierTally[]; best: SupplierTally | null; unpriced: number }
+
+/** The same item on two enquiries: by its code from the master, or else by what it is called and its unit. */
+const itemKey = (l: RfqLine) => (l.item_code ? `code:${l.item_code.trim().toLowerCase()}` : `text:${key(l.description)}|${key(l.uom)}`)
+
+/**
+ * Every quote from the enquiries given, pooled by item: for each item the cheapest supplier whichever enquiry the
+ * price came in on. Rates are compared per unit before GST; a tie goes to the quicker delivery. A supplier who
+ * priced the item on two enquiries is listed at his lower rate only.
+ */
+export function pooledComparison(statements: Statement[]): Pooled {
+  const items = new Map<string, PooledItem>()
+  for (const d of statements) {
+    const days = new Map(d.suppliers.map((s) => [key(s.supplier_name), s.delivery_days || 0]))
+    for (const l of d.lines) {
+      const k = itemKey(l)
+      const it = items.get(k) ?? { key: k, item_code: l.item_code, description: l.description, uom: l.uom, enquiries: [], offers: [], best: null, next: null }
+      if (!it.enquiries.includes(d.rfq.number)) it.enquiries.push(d.rfq.number)
+      for (const o of l.offers) {
+        const offer = { supplier_name: o.supplier_name, rfq_id: d.rfq.id, rfq_number: d.rfq.number, rate: o.rate, tax_percent: o.tax_percent, delivery_days: days.get(key(o.supplier_name)) ?? 0 }
+        const at = it.offers.findIndex((x) => key(x.supplier_name) === key(o.supplier_name))
+        if (at < 0) it.offers.push(offer)
+        else if (o.rate < it.offers[at].rate) it.offers[at] = offer
+      }
+      items.set(k, it)
+    }
+  }
+  // An unknown delivery time does not win a tie against a known one.
+  const days = (o: PooledOffer) => o.delivery_days || Number.POSITIVE_INFINITY
+  const tally = new Map<string, SupplierTally>()
+  for (const it of items.values()) {
+    it.offers.sort((a, b) => a.rate - b.rate || days(a) - days(b))
+    it.best = it.offers[0] ?? null
+    it.next = it.offers[1] ?? null
+    for (const o of it.offers) {
+      const t = tally.get(key(o.supplier_name)) ?? { supplier_name: o.supplier_name, cheapest: 0, quoted: 0 }
+      t.quoted++
+      if (o === it.best) t.cheapest++
+      tally.set(key(o.supplier_name), t)
+    }
+  }
+  const suppliers = [...tally.values()].sort((a, b) => b.cheapest - a.cheapest || b.quoted - a.quoted)
+  const list = [...items.values()]
+  return { items: list, suppliers, best: suppliers[0]?.cheapest ? suppliers[0] : null, unpriced: list.filter((i) => !i.best).length }
+}

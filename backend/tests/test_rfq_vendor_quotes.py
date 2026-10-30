@@ -212,3 +212,34 @@ def test_their_word_or_excel_quotation_can_be_read_as_text_beside_the_quote(tena
     tenant.post("/api/rfqs/%d/quotes/%d/document" % (r["rfq"]["id"], qid), files={"file": ("ACC.xlsx", xlsx([["Cement OPC 53", 390]]), "application/octet-stream")})
     out = tenant.get("/api/rfqs/%d/quotes/%d/document-text" % (r["rfq"]["id"], qid)).json()
     assert out["kind"] == "xlsx" and "Cement OPC 53\t390" in out["text"]
+
+
+def test_quotation_files_kept_on_their_own_are_listed_read_as_text_and_removed(tenant):
+    res = tenant.post("/api/quote-files", files={"file": ("ramco.xlsx", xlsx([["OPC 53 cement", 390]]), "application/octet-stream")},
+                      data={"supplier_name": "Ramco Depot"})
+    assert res.status_code == 200, res.text
+    fid = res.json()["file"]["id"]
+    files = tenant.get("/api/quote-files").json()["files"]
+    assert [(f["id"], f["supplier_name"], f["name"]) for f in files] == [(fid, "Ramco Depot", "ramco.xlsx")]
+    assert "OPC 53 cement\t390" in tenant.get("/api/quote-files/%d/text" % fid).json()["text"]
+    assert tenant.get("/api/files/%d" % fid).status_code == 200
+    assert tenant.delete("/api/quote-files/%d" % fid).status_code == 200
+    assert tenant.get("/api/quote-files").json()["files"] == []
+
+
+def test_the_same_quotation_kept_twice_survives_removing_one_copy(tenant):
+    body = xlsx([["Sand", 55]])
+    a = tenant.post("/api/quote-files", files={"file": ("a.xlsx", body, "application/octet-stream")}).json()["file"]["id"]
+    b = tenant.post("/api/quote-files", files={"file": ("b.xlsx", body, "application/octet-stream")}).json()["file"]["id"]
+    tenant.delete("/api/quote-files/%d" % a)
+    assert "Sand\t55" in tenant.get("/api/quote-files/%d/text" % b).json()["text"]
+
+
+def test_only_quotation_files_and_only_this_companys_are_reached_through_the_quote_files_routes(tenant, second_tenant):
+    r = rfq(tenant)
+    qid = quote(tenant, r, "ACC", 390, 62000)["suppliers"][0]["quote_id"]
+    kept = tenant.post("/api/rfqs/%d/quotes/%d/document" % (r["rfq"]["id"], qid), files={"file": ("ACC.xlsx", xlsx([["x", 1]]), "application/octet-stream")}).json()
+    assert tenant.delete("/api/quote-files/%d" % kept["document"]["id"]).status_code == 404
+    mine = tenant.post("/api/quote-files", files={"file": ("m.xlsx", xlsx([["y", 2]]), "application/octet-stream")}).json()["file"]["id"]
+    assert second_tenant.get("/api/quote-files").json()["files"] == []
+    assert second_tenant.delete("/api/quote-files/%d" % mine).status_code == 404

@@ -245,6 +245,21 @@ def slim_image(data, ctype, kind):
         return data, ctype, None
 
 
+def hand_on_bytes(db, f):
+    """Before a file is deleted: if another record keeps the same file, that one becomes the stored copy."""
+    from sqlalchemy.orm import defer
+    # Most files are read by no other record: that is found out from ids alone, before any bytes are touched.
+    reader_ids = [r[0] for r in db.query(models.DBFile.id).filter(models.DBFile.blob_of == f.id).order_by(models.DBFile.id).all()]
+    if not reader_ids:
+        return
+    readers = (db.query(models.DBFile).options(defer(models.DBFile.data), defer(models.DBFile.thumb))
+               .filter(models.DBFile.id.in_(reader_ids)).order_by(models.DBFile.id).all())
+    heir = readers[0]
+    heir.data, heir.thumb, heir.blob_of = f.data, f.thumb, None   # (the bytes are read only now, when they have to move)
+    for r in readers[1:]:
+        r.blob_of = heir.id
+
+
 def file_bytes(db, f, thumb=False):
     """A file's bytes - its own, or those of the copy it shares."""
     own = f.thumb if thumb else f.data
