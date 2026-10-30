@@ -19,7 +19,7 @@ export default function LedgerPage() {
   const setTab = (t: Tab) => setParams((p) => { const n = new URLSearchParams(p); if (t === 'parties') n.delete('tab'); else n.set('tab', t); return n }, { replace: true })
   return (
     <>
-      <PageHeader eyebrow="Money" title="Payments & Ledgers" description="Receipts, payments, party ledgers, the bank book and the supplier master. Paying a bill is always the same three fields, wherever it is opened from." />
+      <PageHeader eyebrow="Accounts" title="Payments & Ledgers" description="Receipts, payments, party ledgers, the bank book and the supplier master. Paying a bill is always the same three fields, wherever it is opened from." />
       <div className="mb-5">
         <Tabs label="View" value={tab} onChange={setTab} items={[{ value: 'parties', label: 'Parties' }, { value: 'entries', label: 'Receipts & payments' }, { value: 'requests', label: 'Payment requests' }, { value: 'bank', label: 'Bank book' }, { value: 'reconcile', label: 'Reconciliation' }, { value: 'cheques', label: 'Cheques' }, { value: 'suppliers', label: 'Suppliers' }]} />
       </div>

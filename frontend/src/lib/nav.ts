@@ -129,7 +129,7 @@ const NAV: NavEntry[] = [
     kind: 'group',
     id: 'money',
     perm: 'money.view',
-    label: 'Money',
+    label: 'Accounts',
     icon: Wallet,
     items: [
       { label: 'Payments & Ledgers', path: '/money/ledgers', perm: 'bills.view_all' },

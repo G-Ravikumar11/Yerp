@@ -13,7 +13,7 @@ export default function RegistersPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Money"
+        eyebrow="Accounts"
         title="TDS, Guarantees & Advances"
         description="The three sheets the accountant kept by hand: TDS by quarter, guarantees and when they lapse, advances and what has come back."
         actions={<Button variant="outline" asChild><a href={EXCEL[tab]}><Download /> Excel</a></Button>}
