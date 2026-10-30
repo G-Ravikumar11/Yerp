@@ -15,6 +15,7 @@ def ready_bill(tenant, site_state="36", buyer_gstin="36AAACL1234H1ZW", our_pin=T
     job_id = tenant.get("/api/erp/work-orders/%d" % wo["id"]).json()["job_id"]
     job = tenant.get("/api/jobs/%d" % job_id).json()
     job["contact_id"] = contact.get("id")
+    job.pop("retention_percent", None)     # the 0 shown for a project stating none is not the contract saying 0%
     tenant.put("/api/jobs/%d" % job_id, json=job)
     if site_state:
         tenant.put("/api/jobs/%d/place-of-supply" % job_id, json={"state_code": site_state})
