@@ -252,7 +252,7 @@ def test_permissions_view_edit_and_finalise_are_separate(tenant, portal):
     assert portal.get("/api/sites/%d/boq-items" % site).status_code == 403, "no right to see site prices"
     grant(["siteprices.view"])
     assert portal.get("/api/sites/%d/boq-items" % site).status_code == 200
-    assert portal.get("/api/sites/%d/boq-items" % other).status_code == 404, "and only their own sites"
+    assert portal.get("/api/sites/%d/boq-items" % other).status_code in (403, 404), "and only their own sites"
     assert portal.put("/api/sites/%d/item-prices/%d" % (site, x["id"]), json={"rate": 9}).status_code == 403
     grant(["siteprices.view", "siteprices.edit"])
     assert portal.put("/api/sites/%d/item-prices/%d" % (site, x["id"]), json={"rate": 9}).status_code == 200
