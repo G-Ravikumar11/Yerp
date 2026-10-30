@@ -261,6 +261,7 @@ def wo_item_dict(i):
             "tolerance_percent": i.tolerance_percent or 0,
             "boq_key": i.boq_key or "",
             "boq_parts": boq_parts_of(i),
+            "material": i.material or "", "heading_level": i.heading_level or 0,
             "max_quantity": item_ceiling(i)}
 
 
@@ -800,7 +801,8 @@ def wo_copy_lines(db, source, target):
             unit_rate=i.unit_rate, total_amount=i.total_amount,
             budget_id=i.budget_id, cost_centre=i.cost_centre,
             display_order=i.display_order, is_header=bool(i.is_header),
-            tolerance_percent=i.tolerance_percent or 0, boq_key=i.boq_key or "", boq_parts=i.boq_parts or ""))
+            tolerance_percent=i.tolerance_percent or 0, boq_key=i.boq_key or "", boq_parts=i.boq_parts or "",
+            material=i.material or "", heading_level=i.heading_level or 0))
     for t in db.query(models.DBSubcontractTerm).filter(
             models.DBSubcontractTerm.order_id == source.id).all():
         db.add(models.DBSubcontractTerm(

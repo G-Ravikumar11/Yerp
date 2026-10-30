@@ -77,7 +77,16 @@ from app.schemas.subcontract_orders import (
     WorkTypeIn,
 )
 from app.services.approvals import owner_label, raised_by_owner
-from app.services.boq import boq_given_to_contractors, boq_lines_of_job, boq_over_allotments, boq_parts_of, boq_tie_subcontract_lines
+from app.services.boq import boq_given_to_contractors, boq_over_allotments, boq_parts_of, boq_tie_subcontract_lines
+from app.services.boq_outline import (
+    arrange_schedule,
+    blended_rate,
+    boq_current_lines,
+    boq_outline,
+    header_row,
+    rate_suggestions,
+    schedule_row_out,
+)
 from app.services.crm import norm_name
 from app.services.subcontract_orders import (
     _vendor_or_404,
@@ -270,10 +279,12 @@ def wo_boq_xlsx(order_id: int, request: Request, db: Session = Depends(get_db)):
     doc = wo_dict(db, order, detail=True)
     doc["company"] = client.company_name or ""
 
-    rows = [[i["activity_no"], i["item_code"], i["item_description"], i["uom"],
-             i["quantity"], i["unit_rate"], i["total_amount"]] for i in doc["items"]]
+    # Headings as the sheet has them: their text in the description column and nothing priced against them.
+    rows = [[i["activity_no"], i["item_code"], i["item_description"], i.get("material") or "", i["uom"],
+             "" if i["is_header"] else i["quantity"], "" if i["is_header"] else i["unit_rate"],
+             "" if i["is_header"] else i["total_amount"]] for i in doc["items"]]
     preamble = [
-        ["Work Order", "", "", "", "", "", doc["company"]],
+        ["Work Order", "", "", "", "", "", "", doc["company"]],
         ["No: " + doc["wo_number"] + ("  (" + doc["status"] + ")")],
         ["Contractor: " + doc["contractor"]],
         ["Project: " + doc["project"]],
@@ -282,13 +293,13 @@ def wo_boq_xlsx(order_id: int, request: Request, db: Session = Depends(get_db)):
     ]
     closing = [
         [],
-        ["", "", "", "", "", "Gross", doc["gross_amount"]],
-        ["", "", "", "", "", "GST @ %s%%" % doc["gst_rate"], doc["gst_amount"]],
-        ["", "", "", "", "", "TDS @ %s%%" % doc["tds_rate"], -doc["tds_amount"]],
-        ["", "", "", "", "", "Net order value", doc["net_order_value"]],
+        ["", "", "", "", "", "", "Gross", doc["gross_amount"]],
+        ["", "", "", "", "", "", "GST @ %s%%" % doc["gst_rate"], doc["gst_amount"]],
+        ["", "", "", "", "", "", "TDS @ %s%%" % doc["tds_rate"], -doc["tds_amount"]],
+        ["", "", "", "", "", "", "Net order value", doc["net_order_value"]],
     ]
     return sheet_response(
-        ["Activity", "Item Code", "Description", "UOM", "Quantity", "Rate", "Amount"],
+        ["Activity", "Item Code", "Description", "Material", "UOM", "Quantity", "Rate", "Amount"],
         rows, "work_order_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", doc["wo_number"]),
         preamble=preamble, closing=closing)
 
@@ -958,6 +969,7 @@ async def wo_import_boq(order_id: int, request: Request, file: UploadFile = File
             "item_code": (row.get("item_code") or "").strip(),
             "item_description": description,
             "technical_spec": (row.get("technical_spec") or "").strip(),
+            "material": (row.get("material") or "").strip(),
             "uom": (row.get("uom") or "").strip(),
             "quantity": quantity, "unit_rate": rate,
             "total_amount": money(quantity * rate),
@@ -996,7 +1008,9 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
         models.DBSubcontractItem.order_id == order.id).delete()
     kept = 0
     dropped = []
-    project_boq = {l.key: l for l in boq_lines_of_job(db, client.id, order.job_id)}
+    every = boq_current_lines(db, client.id, order.job_id)
+    project_boq = {l.key: l for l in every if l.kind in BOQ_PRICED}
+    sections = {l.key for l in every if l.kind == "section"}
     for index, line in enumerate(body.lines):
         description = (line.item_description or "").strip()
         if not description:
@@ -1022,8 +1036,10 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
             total_amount=money(qty * rate), is_header=header, tolerance_percent=tolerance,
             budget_id=None if header else wo_valid_budget_id(db, client.id, order, line.budget_id),
             cost_centre=(line.cost_centre or "").strip(), display_order=index,
-            boq_key=(line.boq_key or "").strip()[:40] if not header and not parts else "",
-            boq_parts=json.dumps(parts) if parts else ""))
+            boq_key=wo_line_key(line, header, parts, sections),
+            boq_parts=json.dumps(parts) if parts else "",
+            material=(line.material or "").strip()[:60] if not header else "",
+            heading_level=max(0, min(9, int(line.heading_level or 0))) if header else 0))
         kept += 1
 
     db.flush()
@@ -1741,6 +1757,15 @@ def wo_charge_budget(order_id: int, body: ChargeBudgetIn, request: Request,
             "message": "%d line%s charged." % (n, "" if n == 1 else "s")}
 
 
+def wo_line_key(line, header, parts, sections):
+    """The BOQ line a schedule line is: a heading keeps the BOQ heading it came from, a line for a whole heading the
+    heading it stands for (its parts carry the BOQ lines), and any other line the BOQ line it is."""
+    key = (line.boq_key or "").strip()[:40]
+    if header or parts:
+        return key if key in sections else ""
+    return key
+
+
 def wo_checked_parts(raw, quantity, project_boq):
     """The BOQ lines a heading-total line adds up, and how many of them are no longer on this project's BOQ.
 
@@ -1768,47 +1793,90 @@ def wo_checked_parts(raw, quantity, project_boq):
 
 @router.post("/api/wo/orders/{order_id}/boq-lines")
 def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
-    """Lines of the project BOQ, ready to go into a contractor order's schedule: pick them by key, give the quantity and the
-    contractor's rate. Returns them as schedule lines (nothing saved) with a warning where a line would be over-allotted."""
+    """Lines of the project BOQ, ready to go into a contractor order's schedule (nothing saved).
+
+    `lines` are BOQ lines taken one by one, `groups` headings taken as one line each (their quantities added up at one
+    rate). Each comes back with its grade and the text of its heading, at the rate asked for or, if none, the rate
+    the budget (or the last order) suggests. `headings` are the headings over them, and when `current` (the schedule
+    on screen) is sent, `rows` is the whole schedule with them in it, laid out like the sheet and numbered. A line
+    that would take more than the BOQ has left is warned of, not refused."""
     client, _, _ = wo_actor(request, db)
     order = wo_or_404(db, client.id, order_id)
     wanted = body.get("lines") or []
     groups = body.get("groups") or []
-    keys = [str(w.get("key") or "") for w in wanted] + [str(p.get("key") or "") for g in groups for p in (g.get("parts") or [])]
-    found = {l.key: l for l in boq_lines_of_job(db, client.id, order.job_id) if l.key in set(keys)}
-    given = boq_given_to_contractors(db, client.id, set(keys))
+    every = boq_current_lines(db, client.id, order.job_id)
+    heads, path, place = boq_outline(every)
+    found = {l.key: l for l in every if l.kind in BOQ_PRICED}
+    keys = {str(w.get("key") or "") for w in wanted} | {str(p.get("key") or "") for g in groups for p in (g.get("parts") or [])}
+    given = boq_given_to_contractors(db, client.id, keys)
+    suggest = rate_suggestions(db, client.id, order.job_id, keys)
     out, warn = [], []
-    # A heading taken as one line: the quantities of the lines under it added up, at one contractor rate. Lines of
-    # different units are never added together, so a heading in two units comes back as two lines.
+
+    def check(l, qty):
+        total = (given.get(l.key) or {"qty": 0.0})["qty"] + qty
+        if total > (l.quantity or 0) + 0.0001:
+            warn.append("%s: %s would be given in all against %s in the BOQ" % (l.description[:30], money(total), money(l.quantity)))
+
+    # A heading taken as one line. Lines of different units are never added together, so a heading in two units comes
+    # back as two lines; the grade is the one they share, or none when they do not.
     for g in groups:
+        heading = str(g.get("heading_key") or "")
+        heading = heading if heading in heads else ""
         by_unit = {}
         for p in g.get("parts") or []:
             l = found.get(str(p.get("key") or ""))
             qty = money(p.get("quantity") or 0)
-            if l and l.kind in BOQ_PRICED and qty > 0:
+            if l and qty > 0:
                 by_unit.setdefault((l.uom or "").strip(), []).append((l, qty))
-        rate = unit_rate(g.get("rate") or 0)
         for uom, members in by_unit.items():
             qty = money(sum(q for _, q in members))
-            out.append({"boq_key": "", "boq_parts": [{"key": l.key, "qty": q} for l, q in members],
+            if g.get("rate") is not None and str(g.get("rate")).strip() != "":
+                rate, source = unit_rate(g.get("rate") or 0), ""
+            else:
+                rate, source = blended_rate([(l.key, q) for l, q in members], suggest)
+            grades = {(l.material or "").strip() for l, _ in members}
+            out.append({"boq_key": heading, "boq_parts": [{"key": l.key, "qty": q} for l, q in members],
                         "activity_no": str(g.get("group_code") or ""), "item_code": "",
-                        "item_description": str(g.get("description") or members[0][0].description)
+                        "item_description": str(g.get("description") or (heads[heading]["description"] if heading else members[0][0].description))
                         + ((" (%s)" % uom) if len(by_unit) > 1 and uom else ""),
-                        "technical_spec": "", "uom": uom, "quantity": qty, "unit_rate": rate})
+                        # The heading's own text: what is written over it goes on the heading rows above.
+                        "technical_spec": "\n".join(heads[heading]["notes"]) if heading else "", "uom": uom,
+                        "quantity": qty, "unit_rate": rate, "rate_from": source,
+                        "material": grades.pop() if len(grades) == 1 else "", "heading_level": 0})
             for l, q in members:
-                total = (given.get(l.key) or {"qty": 0.0})["qty"] + q
-                if total > (l.quantity or 0) + 0.0001:
-                    warn.append("%s: %s would be given in all against %s in the BOQ" % (l.description[:30], money(total), money(l.quantity)))
+                check(l, q)
     for w in wanted:
         l = found.get(str(w.get("key") or ""))
-        if not l or l.kind not in BOQ_PRICED:
+        if not l:
             continue
         qty = money(w.get("quantity") if w.get("quantity") is not None else l.quantity)
-        rate = unit_rate(w.get("rate") if w.get("rate") is not None else l.rate)
-        out.append({"boq_key": l.key, "activity_no": l.group_code or "", "item_code": l.item_code or "",
+        if w.get("rate") is not None and str(w.get("rate")).strip() != "":
+            rate, source = unit_rate(w.get("rate") or 0), ""
+        else:
+            rate, source = suggest.get(l.key, (0.0, ""))
+        out.append({"boq_key": l.key, "activity_no": l.item_no or l.group_code or "", "item_code": l.item_code or "",
                     "item_description": l.description, "technical_spec": l.remarks or "", "uom": l.uom or "",
-                    "quantity": qty, "unit_rate": rate})
-        total = (given.get(l.key) or {"qty": 0.0})["qty"] + qty
-        if total > (l.quantity or 0) + 0.0001:
-            warn.append("%s: %s would be given in all against %s in the BOQ" % (l.description[:30], money(total), money(l.quantity)))
-    return {"lines": out, "warnings": warn}
+                    "quantity": qty, "unit_rate": rate, "rate_from": source, "material": l.material or "",
+                    "boq_parts": [], "heading_level": 0})
+        check(l, qty)
+
+    above = []
+    for r in out:
+        for h in (heads[r["boq_key"]]["path"] if r["boq_parts"] and r["boq_key"] in heads else path.get(r["boq_key"], [])):
+            if h not in above:
+                above.append(h)
+    reply = {"lines": out, "headings": [header_row(heads, h) for h in sorted(above, key=lambda k: place[k])], "warnings": warn}
+    if isinstance(body.get("current"), list):
+        reply["rows"] = [schedule_row_out(r) for r in arrange_schedule(list(body["current"]) + out, heads, path, place)]
+    return reply
+
+
+@router.post("/api/wo/orders/{order_id}/schedule/arrange")
+def wo_arrange_schedule(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
+    """The schedule on screen laid out like the BOQ: in the sheet's order, every line under its headings (put in where
+    they are missing), and numbered - the blank numbers, or all of them with `renumber`. Nothing is saved."""
+    client, _, _ = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    heads, path, place = boq_outline(boq_current_lines(db, client.id, order.job_id))
+    rows = arrange_schedule(list(body.get("rows") or []), heads, path, place, renumber=bool(body.get("renumber")))
+    return {"rows": [schedule_row_out(r) for r in rows]}

@@ -1840,6 +1840,8 @@ def ensure_columns():
                     ("subcontract_orders", "advance_recovery_percent", "FLOAT DEFAULT 0"),
                     ("subcontract_items", "technical_spec", "TEXT DEFAULT ''"),
                     ("subcontract_items", "boq_parts", "TEXT DEFAULT ''"),
+                    ("subcontract_items", "material", "VARCHAR DEFAULT ''"),
+                    ("subcontract_items", "heading_level", "INTEGER DEFAULT 0"),
                     ("business_units", "logo_url", "TEXT DEFAULT ''"),
                 ):
                     conn.execute(text(
@@ -2017,6 +2019,8 @@ def migrate_sqlite():
                 add_col("subcontract_orders", column, "FLOAT DEFAULT 0")
             add_col("subcontract_items", "technical_spec", "TEXT DEFAULT ''")
             add_col("subcontract_items", "boq_parts", "TEXT DEFAULT ''")
+            add_col("subcontract_items", "material", "VARCHAR DEFAULT ''")
+            add_col("subcontract_items", "heading_level", "INTEGER DEFAULT 0")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
             for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS + SITE_RATE_COLUMNS:
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
