@@ -76,3 +76,30 @@ def test_supplier_scorecard(account):
     assert card["supplier_name"] == "Shree Traders" and card["orders"] == 1
     assert card["ordered_value"] == "70000.00" and card["accepted_value"] == "35000.00" and card["fill_pct"] == "50.0"
     assert card["rejection_pct"] == "0.0" and card["on_time_pct"] == "100.0"
+
+
+def test_short_closing_is_purchasings_decision(account):
+    from fastapi.testclient import TestClient
+    import main
+    from conftest import make_employee
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    _hub(t, w, tag)
+    po_id = w["pos"][0][0]
+    people = {}
+    for role in ("store_incharge", "purchase"):
+        email = "%s-%s@example.com" % (role, tag)
+        make_employee(t, email=email, password="Crew1234", permission_role=role, status="active")
+        c = TestClient(main.app)
+        c.__enter__()
+        assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+        people[role] = c
+    try:
+        assert people["store_incharge"].post("/api/store/deliveries/%d/short-close" % po_id, json={"reason": "No more coming"}).status_code == 403
+        assert len(ok(people["purchase"].get("/api/store/deliveries/pending"))["items"]) == 1                    # purchase sees what is owed
+        assert ok(people["purchase"].post("/api/store/deliveries/%d/short-close" % po_id, json={"reason": "Supplier cannot supply"}))["po_id"] == po_id
+        assert people["store_incharge"].post("/api/store/deliveries/%d/reopen" % po_id).status_code == 403
+        ok(people["purchase"].post("/api/store/deliveries/%d/reopen" % po_id))
+    finally:
+        for c in people.values():
+            c.__exit__(None, None, None)

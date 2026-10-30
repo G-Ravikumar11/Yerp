@@ -116,3 +116,25 @@ def test_abc_classes_and_what_is_due(account):
     everything = ok(t.get("/api/store/cycle/due", params={"due_only": False}))["items"]
     x = next(r for r in everything if r["item_name"] == "Item X")
     assert x["due"] is False and x["last_counted"] == TODAY and x["every_days"] == 30
+
+
+def test_those_who_count_cannot_change_the_rules(account):
+    from fastapi.testclient import TestClient
+    import main
+    from conftest import make_employee
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    people = {}
+    for role in ("stores", "store_incharge"):
+        email = "%s-%s@example.com" % (role, tag)
+        make_employee(t, email=email, password="Crew1234", permission_role=role, status="active")
+        c = TestClient(main.app)
+        c.__enter__()
+        assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+        people[role] = c
+    try:
+        assert people["stores"].get("/api/store/cycle/settings").status_code == 200
+        assert people["stores"].put("/api/store/cycle/settings", json={"recount_value": "0"}).status_code == 403
+        assert people["store_incharge"].put("/api/store/cycle/settings", json={"recount_value": "50000"}).status_code == 200
+    finally:
+        for c in people.values():
+            c.__exit__(None, None, None)

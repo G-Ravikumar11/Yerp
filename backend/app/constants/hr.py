@@ -38,10 +38,27 @@ EMPLOYEE_MONEY_FIELDS = {
     "allowances": "Allowances", "bonus": "Bonus",
 }
 
+# What a new starter is asked to upload (a photo or a PDF). None is compulsory: the only thing onboarding insists on is an
+# emergency contact (see onboarding_snapshot). HR can make any of these mandatory in Settings.
 DEFAULT_DOCUMENT_REQUIREMENTS = [
-    ("Photo ID", "Passport or driving licence", "identity", True, 3),
-    ("Proof of right to work", "Visa, share code or citizenship document", "compliance", True, 3),
-    ("Bank details", "So payroll can pay you", "finance", True, 5),
-    ("Signed contract", "Your countersigned employment contract", "contract", True, 7),
-    ("Proof of address", "Utility bill or bank statement from the last 3 months", "identity", False, 14),
+    ("Aadhaar card", "A clear photo or PDF of your Aadhaar card", "identity", False, 7),
+    ("PAN card", "A clear photo or PDF of your PAN card", "identity", False, 7),
+    ("UAN (EPF) details", "Your UAN card, or a page of your EPF passbook that shows the number", "finance", False, 7),
+    ("Passport-size photo", "A recent photo of your face", "identity", False, 7),
+    ("Bank details", "A cancelled cheque or the first page of your passbook, so payroll can pay you", "finance", False, 7),
+    ("Signed contract", "Your countersigned employment contract", "contract", False, 7),
 ]
+
+GENDERS = ("Male", "Female", "Other", "Prefer not to say")
+
+
+def gender_required():
+    """On unless REQUIRE_GENDER=0 (the shared test setup, which creates people in bulk without one)."""
+    import os
+    return os.getenv("REQUIRE_GENDER", "1") != "0"
+
+
+def emergency_contact_required():
+    """On unless REQUIRE_EMERGENCY_CONTACT=0 (the shared test setup, which creates people in bulk without one)."""
+    import os
+    return os.getenv("REQUIRE_EMERGENCY_CONTACT", "1") != "0"

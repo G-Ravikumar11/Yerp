@@ -4,6 +4,14 @@ import pytest
 from conftest import make_employee
 
 
+@pytest.fixture(autouse=True)
+def _without_the_salary_structure(tenant):
+    """These test the payslip's own arithmetic from the salary alone, which is what a company that has no salary structure
+    gets (the structure's own behaviour is in test_salary_structure.py)."""
+    for component in tenant.get("/api/salary-structure").json()["components"]:
+        tenant.delete("/api/salary-structure/%d" % component["id"])
+
+
 def test_salaried_employee_basic_pay(tenant):
     emp = make_employee(tenant, salary=3000.0, tax_rate=20.0)
     res = tenant.post("/api/payslips", json={

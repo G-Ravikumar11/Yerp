@@ -214,12 +214,13 @@ def _given_elsewhere(db, client_id, keys, order):
     closed one, what was billed. The order this one revises is left out: the revision stands for it."""
     if not keys:
         return {}
+    from app.services.boq import boq_items_naming, boq_shares_of
     rows = db.query(models.DBSubcontractItem, models.DBSubcontractOrder).join(
         models.DBSubcontractOrder, models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
         models.DBSubcontractOrder.client_id == client_id,
         models.DBSubcontractOrder.id != order.id,
         models.DBSubcontractOrder.status.in_(("PROVISIONAL", "APPROVED", "EXECUTED", "CLOSED")),
-        models.DBSubcontractItem.boq_key.in_(list(keys))).all()
+        boq_items_naming(db, keys)).all()
     skip = {order.supersedes_id} if order.supersedes_id else set()
     # Another revision waiting for approval stands for its predecessor as well.
     skip |= {r[0] for r in db.query(models.DBSubcontractOrder.supersedes_id).filter(
@@ -237,7 +238,9 @@ def _given_elsewhere(db, client_id, keys, order):
             qty = billed_cache[o.id].get(it.id, 0.0)
         else:
             qty = it.quantity or 0
-        out[it.boq_key] = out.get(it.boq_key, 0.0) + qty
+        for key, share in boq_shares_of(it):
+            if key in keys:
+                out[key] = out.get(key, 0.0) + qty * share
     return out
 
 
@@ -246,17 +249,21 @@ def boq_breaches(db, order):
     contractors past the quantity the client ordered, and lines given at a higher rate than the client pays."""
     if not order.job_id:
         return []
-    from app.services.boq import boq_line_label, boq_lines_of_job
+    from app.services.boq import boq_line_label, boq_lines_of_job, boq_shares_of
     boq = {l.key: l for l in boq_lines_of_job(db, order.client_id, order.job_id)}
     if not boq:
         return []
     mine = {}
     rates = {}
     for it in db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == order.id).all():
-        if it.is_header or not it.boq_key or it.boq_key not in boq:
+        if it.is_header:
             continue
-        mine[it.boq_key] = mine.get(it.boq_key, 0.0) + (it.quantity or 0)
-        rates[it.boq_key] = max(rates.get(it.boq_key, 0.0), unit_rate(it.unit_rate or 0))
+        # A heading total gives each of its BOQ lines its share, all at the one contractor rate.
+        for key, share in boq_shares_of(it):
+            if key not in boq:
+                continue
+            mine[key] = mine.get(key, 0.0) + (it.quantity or 0) * share
+            rates[key] = max(rates.get(key, 0.0), unit_rate(it.unit_rate or 0))
     given = _given_elsewhere(db, order.client_id, set(mine), order)
     out = []
     for key, qty in mine.items():
@@ -274,7 +281,7 @@ def boq_breaches(db, order):
 def bill_boq_overbilling(db, bill):
     """Lines of this bill that take what contractors have been billed for, across every order, past the quantity in
     the project's BOQ - work the client will never pay for."""
-    from app.services.boq import boq_line_label, boq_lines_of_job
+    from app.services.boq import boq_items_naming, boq_line_label, boq_lines_of_job, boq_shares_of
     if not bill.job_id:
         return []
     boq = {l.key: l for l in boq_lines_of_job(db, bill.client_id, bill.job_id)}
@@ -283,20 +290,20 @@ def bill_boq_overbilling(db, bill):
     items = {it.id: it for it in db.query(models.DBSubcontractItem).join(
         models.DBSubBillLine, models.DBSubBillLine.item_id == models.DBSubcontractItem.id).filter(
         models.DBSubBillLine.sub_bill_id == bill.id).all()}
-    keys = {it.boq_key for it in items.values() if it.boq_key in boq}
+    keys = {k for it in items.values() for k, _ in boq_shares_of(it) if k in boq}
     if not keys:
         return []
     totals = {}
-    orders = {r[0] for r in db.query(models.DBSubcontractItem.order_id).filter(
-        models.DBSubcontractItem.boq_key.in_(list(keys))).all()}
-    for order_id in orders:
-        o = db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == order_id).first()
-        if o is None or o.client_id != bill.client_id:
-            continue
-        billed = billed_qty_by_item(db, order_id)
-        for it in db.query(models.DBSubcontractItem).filter(
-                models.DBSubcontractItem.order_id == order_id, models.DBSubcontractItem.boq_key.in_(list(keys))).all():
-            totals[it.boq_key] = totals.get(it.boq_key, 0.0) + billed.get(it.id, 0.0)
+    rows = db.query(models.DBSubcontractItem, models.DBSubcontractOrder).join(
+        models.DBSubcontractOrder, models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
+        models.DBSubcontractOrder.client_id == bill.client_id, boq_items_naming(db, keys)).all()
+    billed_cache = {}
+    for it, o in rows:
+        if o.id not in billed_cache:
+            billed_cache[o.id] = billed_qty_by_item(db, o.id)
+        for key, share in boq_shares_of(it):
+            if key in keys:
+                totals[key] = totals.get(key, 0.0) + billed_cache[o.id].get(it.id, 0.0) * share
     out = []
     for key in sorted(keys):
         line = boq[key]

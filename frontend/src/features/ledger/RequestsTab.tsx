@@ -112,6 +112,13 @@ function PayRequestModal({ request: x, onClose }: { request: PaymentRequest; onC
   })
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title={`Pay ${x.number}`} description={`${x.party_name} · ${against(x)} · approved by ${x.approved_by_name || x.checked_by_name}`}>
+      {/* What was approved - to whom, for which project, under which head - is fixed: only how and when it is paid is chosen here. */}
+      <dl className="mb-4 grid gap-x-4 gap-y-2 rounded-lg border border-border bg-muted/40 p-3 text-sm sm:grid-cols-3" aria-label="Approved - cannot be changed">
+        <div><dt className="text-xs text-muted-foreground">Pay to</dt><dd className="font-medium">{x.party_name}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Project</dt><dd className="font-medium">{x.project || '-'}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">For</dt><dd className="font-medium">{against(x) || '-'}</dd></div>
+        <p className="text-xs text-muted-foreground sm:col-span-3">Approved and locked. To pay someone else or charge another project, raise a new request.</p>
+      </dl>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Amount" htmlFor="pr-amount" hint={`Approved: ${formatINR(x.amount)}`}><NumField id="pr-amount" value={amount} onValue={setAmount} /></Field>
         <Field label="Date" htmlFor="pr-date"><Input id="pr-date" type="date" value={on} onChange={(e) => setOn(e.target.value)} /></Field>

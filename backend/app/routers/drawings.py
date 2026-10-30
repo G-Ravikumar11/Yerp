@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import DRAWING_STATUSES
 from app.core.audit import log_audit
@@ -23,7 +23,7 @@ router = APIRouter()
 
 
 @router.get("/api/drawings/{did}")
-def get_drawing(did: int, request: Request, db: Session = Depends(get_db)):
+def get_drawing(did: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     d = db.query(models.DBDrawing).filter(models.DBDrawing.id == did,
                                           models.DBDrawing.client_id == client.id).first()

@@ -3,16 +3,19 @@ import re
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.client_billing import RA_CREDIT_DAYS
 from app.constants.money import COST_CATEGORIES, EXPENSE_HEADS, INCOME_HEADS, MONEY_MODES, PARTY_TYPES
 from app.constants.projects import JOB_FINISHED
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, owned_or_404, require_items_access, session_employee, session_person, wo_actor
+from app.core.auth import (
+    current_member, get_client_user, owned_or_404, require_items_access, session_employee, session_person, wo_actor,
+)
 from app.core.cache import cached_read
 from app.core.currency import amount_in_words, inr, money
 from app.core.dates import ageing_bucket, days_after
@@ -55,7 +58,7 @@ router = APIRouter()
 
 
 @router.get("/api/reports/profit-loss")
-def profit_loss_report(request: Request, db: Session = Depends(get_db)):
+def profit_loss_report(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
@@ -94,7 +97,7 @@ def profit_loss_report(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/reports/balance-sheet")
-def balance_sheet_report(request: Request, db: Session = Depends(get_db)):
+def balance_sheet_report(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
@@ -125,7 +128,7 @@ def balance_sheet_report(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/reports/cash-summary")
-def cash_summary_report(request: Request, db: Session = Depends(get_db)):
+def cash_summary_report(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "reports.view")
     base = base_currency(client)
     invoices = db.query(models.DBInvoice).filter(models.DBInvoice.client_id == client.id).all()
@@ -159,7 +162,7 @@ def cash_summary_report(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/reports/aged-receivables")
-def aged_receivables(request: Request, db: Session = Depends(get_db)):
+def aged_receivables(request: Request, db: Session = Depends(get_read_db)):
     """Outstanding balances bucketed by how late they are - the report every
     finance team asks for first."""
     client = require_items_access(request, db, "reports.view")
@@ -316,7 +319,7 @@ def costs_by_project_xlsx(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/money/receivables")
-def receivables(request: Request, db: Session = Depends(get_db)):
+def receivables(request: Request, db: Session = Depends(get_read_db)):
     """What customers owe, and how long they have owed it."""
     client = require_items_access(request, db, "bills.view_all")
     today = date.today()
@@ -415,7 +418,7 @@ def receivables(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/money/payables")
-def payables(request: Request, db: Session = Depends(get_db)):
+def payables(request: Request, db: Session = Depends(get_read_db)):
     """What the business owes: supplier bills, and bills it has certified.
 
     A certified RA bill is a promise already made - the work was measured and
@@ -526,7 +529,7 @@ def payables(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/money/retention")
-def retention_register(request: Request, db: Session = Depends(get_db)):
+def retention_register(request: Request, db: Session = Depends(get_read_db)):
     """Money already earned that is being held back.
 
     Held on every certified bill, invoiced on none of them. Half is normally
@@ -594,7 +597,7 @@ def retention_register(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/money/receivables.xlsx")
-def receivables_export(request: Request, db: Session = Depends(get_db)):
+def receivables_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     data = receivables(request, db)
     b = data["buckets"]
@@ -616,7 +619,7 @@ def receivables_export(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/money/retention.xlsx")
-def retention_export(request: Request, db: Session = Depends(get_db)):
+def retention_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     data = retention_register(request, db)
     rows = [(r["number"], r["project"], r["customer"], r["job_status"],
@@ -638,7 +641,7 @@ def retention_export(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/bank-accounts")
-def list_bank_accounts(request: Request, db: Session = Depends(get_db)):
+def list_bank_accounts(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     rows = db.query(models.DBBankAccount).filter(
         models.DBBankAccount.client_id == client.id).order_by(models.DBBankAccount.id).all()
@@ -678,6 +681,9 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
     ledger and the bank book, which is the point.
     """
     client, actor_id, actor_name = wo_actor(request, db, "bills.pay")
+    if body.request_id:
+        # Paying an approved request: the payee, project and head are the approved ones and cannot be changed here.
+        preq.lock_to_request(db, client.id, body)
     amount = money(body.amount or 0)
     if amount <= 0:
         raise HTTPException(400, "How much?")
@@ -739,9 +745,15 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
             raise HTTPException(400, "Who is this from or to?")
         party_id, job_id, doc_number = None, owned_or_404(db, models.DBJob, client.id, body.job_id, "Project"), ""
 
+    # A colleague of the Master's signs in as the company but is not the Master: their payments are approved like anyone's.
+    if not body.request_id and direction == "OUT" and preq.needs_request(db, client.id, None, amount, member=_colleague(request, db)):
+        raise HTTPException(409, "Payments are approved before they are made: send it for approval "
+                                 "(a payment request), and pay it once it is approved.")
+
     approved = None
     if body.request_id:
-        approved = preq.use_for_payment(db, client.id, body.request_id, doc_type, doc.id if doc else None, amount)
+        approved = preq.use_for_payment(db, client.id, body.request_id, doc_type, doc.id if doc else None, amount, party_name, job_id,
+                                    head=head if doc_type == "expense" else None)
     elif direction == "OUT" and preq.needs_request(db, client.id, session_employee(request, db), amount):
         raise HTTPException(409, "Payments are approved before they are made: send it for approval "
                                  "(a payment request), and pay it once it is approved.")
@@ -780,7 +792,7 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/money/entries/{entry_id}/voucher.pdf")
-def money_voucher_pdf(entry_id: int, request: Request, db: Session = Depends(get_db)):
+def money_voucher_pdf(entry_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The voucher for one receipt, payment, expense or transfer, on the company's letterhead - to file, to sign, or
     to hand the payer as their receipt."""
     client = require_items_access(request, db, "bills.view_all")
@@ -792,6 +804,15 @@ def money_voucher_pdf(entry_id: int, request: Request, db: Session = Depends(get
     job = db.query(models.DBJob).filter(models.DBJob.id == e.job_id, models.DBJob.client_id == client.id).first() \
         if e.job_id else None
     return form_pdf_response(money_voucher_spec(db, client, e, accounts, job), e.number or "voucher")
+
+
+def _colleague(request, db):
+    """A colleague of the Master's: signed in as the company, but not the Master - their payments are approved like anyone's."""
+    try:
+        get_client_user(request, db)
+    except HTTPException:
+        return None
+    return current_member(request, db)
 
 
 def _request_reader(request, db):
@@ -808,10 +829,11 @@ def require_view(emp):
 
 
 @router.get("/api/payment-requests/rules")
-def payment_rules(request: Request, db: Session = Depends(get_db)):
+def payment_rules(request: Request, db: Session = Depends(get_read_db)):
     client, emp = _request_reader(request, db)
     rules = preq.approval_rules(db, client.id)
-    return {**rules, "can_check": preq.can_check(emp), "can_release": preq.can_release(emp), "master": emp is None,
+    master = emp is None and _colleague(request, db) is None
+    return {**rules, "can_check": preq.can_check(emp), "can_release": preq.can_release(emp), "master": master,
             "me": emp.id if emp is not None else None}
 
 
@@ -819,7 +841,7 @@ def payment_rules(request: Request, db: Session = Depends(get_db)):
 def save_payment_rules(body: PaymentRulesIn, request: Request, db: Session = Depends(get_db)):
     """Whether payments wait for approval - the Master's decision."""
     client, emp = session_person(request, db)
-    if emp is not None:
+    if emp is not None or _colleague(request, db) is not None:      # a colleague signs in as the company, but is not the Master
         raise HTTPException(403, "Only the Master sets how payments are approved.")
     if body.md_above is not None and body.free_below is not None and body.md_above and body.md_above < body.free_below:
         raise HTTPException(400, "The MD's limit cannot be below the amount that needs no approval.")
@@ -832,7 +854,7 @@ def save_payment_rules(body: PaymentRulesIn, request: Request, db: Session = Dep
 
 
 @router.get("/api/payment-requests")
-def list_payment_requests(request: Request, status: str = "", db: Session = Depends(get_db)):
+def list_payment_requests(request: Request, status: str = "", db: Session = Depends(get_read_db)):
     client, _ = _request_reader(request, db)
     q = db.query(models.DBPaymentRequest).filter(models.DBPaymentRequest.client_id == client.id)
     if status == "open":
@@ -853,7 +875,7 @@ def list_payment_requests(request: Request, status: str = "", db: Session = Depe
 def raise_payment_request(body: MoneyIn, request: Request, db: Session = Depends(get_db)):
     """Ask for a payment to be approved: a bill or part of it, an advance on account, or an expense."""
     client, _, actor_name = wo_actor(request, db, "bills.pay")
-    r = preq.raise_request(db, client, session_employee(request, db), actor_name, body)
+    r = preq.raise_request(db, client, session_employee(request, db), actor_name, body, member=_colleague(request, db))
     log_audit(db, client.id, "payment_requested", r.doc_type, r.doc_id or 0, r.number,
               "%s %s %s" % (r.party_name, inr(r.amount), r.doc_number), request)
     db.commit()
@@ -864,14 +886,14 @@ def raise_payment_request(body: MoneyIn, request: Request, db: Session = Depends
 @router.post("/api/payment-requests/{request_id}/decide")
 def decide_payment_request(request_id: int, body: PaymentDecisionIn, request: Request, db: Session = Depends(get_db)):
     client, emp = session_person(request, db)
-    return _decide_payment(db, client, emp, request_id, body.decision, body.note, request)
+    return _decide_payment(db, client, emp, request_id, body.decision, body.note, request, member=_colleague(request, db))
 
 
-def _decide_payment(db, client, emp, request_id, decision, note, request):
+def _decide_payment(db, client, emp, request_id, decision, note, request, member=None):
     from app.services.hr import employee_name
-    who = employee_name(emp) if emp is not None else (client.contact_name or "Master")
+    who = employee_name(emp) if emp is not None else ((member.name or member.email) if member is not None else (client.contact_name or "Master"))
     r = preq.request_or_404(db, client.id, request_id)
-    message = preq.decide(db, client, emp, who, r, decision, note)
+    message = preq.decide(db, client, emp, who, r, decision, note, member=member)
     log_audit(db, client.id, "payment_" + ("approved" if decision == "approve" else "rejected"), r.doc_type,
               r.doc_id or 0, r.number, message, request)
     db.commit()
@@ -919,7 +941,7 @@ def _jobs(db, client_id, ids):
 
 
 @router.get("/api/site-cash")
-def site_cash_view(request: Request, account_id: int = 0, status: str = "", db: Session = Depends(get_db)):
+def site_cash_view(request: Request, account_id: int = 0, status: str = "", db: Session = Depends(get_read_db)):
     """The cash boxes this person sees - every one for accounts, their own for a site engineer - with what each should
     hold, what is waiting to be checked, and the payments made out of them."""
     client, emp = session_person(request, db)
@@ -1010,7 +1032,7 @@ def _decide_site_expense(db, client, emp, expense_id, decision, note, request):
 
 @router.get("/api/site-cash/boxes/{account_id}/statement.pdf")
 def cash_box_statement(account_id: int, request: Request, date_from: str = "", date_to: str = "",
-                       db: Session = Depends(get_db)):
+                       db: Session = Depends(get_read_db)):
     """The box's cash book for the period, on the letterhead: opening, every top-up and every expense booked, the
     closing balance - and what has been spent and not yet checked - for the custodian to sign and accounts to keep."""
     from app.documents.forms import cash_statement_spec
@@ -1027,7 +1049,7 @@ def cash_box_statement(account_id: int, request: Request, date_from: str = "", d
 # --- bank reconciliation and the cheque register ----------------------------------------------------------------------
 
 @router.get("/api/bank-reco/{account_id}")
-def bank_reco_view(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_db)):
+def bank_reco_view(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_read_db)):
     """One bank account against its statement: the reconciliation on a day, the statement lines not yet matched (with
     the entries each could be), and the entries the bank has not moved yet."""
     client = require_items_access(request, db, "bills.view_all")
@@ -1036,7 +1058,7 @@ def bank_reco_view(account_id: int, request: Request, as_of: str = "", db: Sessi
     lines = db.query(models.DBBankStatementLine).filter(
         models.DBBankStatementLine.client_id == client.id, models.DBBankStatementLine.account_id == account.id,
         models.DBBankStatementLine.status == "UNMATCHED").order_by(models.DBBankStatementLine.txn_date).limit(500).all()
-    counts = dict(db.query(models.DBBankStatementLine.status, sqlfunc_count(models.DBBankStatementLine.id)).filter(
+    counts = dict(db.query(models.DBBankStatementLine.status, func.count(models.DBBankStatementLine.id)).filter(
         models.DBBankStatementLine.client_id == client.id, models.DBBankStatementLine.account_id == account.id).group_by(
         models.DBBankStatementLine.status).all())
     return {"account": account_dict(account), "brs": bank_reco.brs(db, client.id, account, day),
@@ -1044,11 +1066,6 @@ def bank_reco_view(account_id: int, request: Request, as_of: str = "", db: Sessi
             "suggestions": bank_reco.suggestions(db, client.id, account, lines),
             "counts": {"matched": counts.get("MATCHED", 0), "unmatched": counts.get("UNMATCHED", 0),
                        "ignored": counts.get("IGNORED", 0)}}
-
-
-def sqlfunc_count(col):
-    from sqlalchemy import func
-    return func.count(col)
 
 
 @router.post("/api/bank-reco/{account_id}/statement")
@@ -1167,7 +1184,7 @@ def clear_entry(entry_id: int, body: ClearIn, request: Request, db: Session = De
 
 
 @router.get("/api/bank-reco/{account_id}/brs.pdf")
-def brs_pdf(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_db)):
+def brs_pdf(account_id: int, request: Request, as_of: str = "", db: Session = Depends(get_read_db)):
     """The bank reconciliation statement on a day, on the letterhead, for the auditor's file."""
     from app.documents.forms import brs_spec
     client = require_items_access(request, db, "bills.view_all")
@@ -1178,7 +1195,7 @@ def brs_pdf(account_id: int, request: Request, as_of: str = "", db: Session = De
 
 
 @router.get("/api/cheques")
-def cheque_register(request: Request, status: str = "", account_id: int = 0, db: Session = Depends(get_db)):
+def cheque_register(request: Request, status: str = "", account_id: int = 0, db: Session = Depends(get_read_db)):
     """Every cheque written or received: number, date, party, amount, account, and where it stands."""
     client = require_items_access(request, db, "bills.view_all")
     q = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.client_id == client.id, models.DBMoneyEntry.mode == "Cheque")
@@ -1214,7 +1231,7 @@ def _tally_period(date_from, date_to):
 
 
 @router.get("/api/tally/settings")
-def tally_settings(request: Request, db: Session = Depends(get_db)):
+def tally_settings(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     names = tally.ledger_names(db, client.id)
     return {"company": tenant_setting(db, client.id, "tally_company", "") or "",
@@ -1276,7 +1293,7 @@ def tally_vouchers(request: Request, date_from: str = "", date_to: str = "", db:
 
 
 @router.get("/api/money/heads")
-def money_heads(request: Request, db: Session = Depends(get_db)):
+def money_heads(request: Request, db: Session = Depends(get_read_db)):
     """The heads an expense voucher or a sundry receipt is booked under."""
     require_items_access(request, db, "bills.view_all")
     return {"expense": list(EXPENSE_HEADS), "income": list(INCOME_HEADS)}
@@ -1319,13 +1336,14 @@ def transfer_money(body: TransferIn, request: Request, db: Session = Depends(get
             "message": "%s: %s moved from %s to %s." % (number, inr(amount), src.name, dst.name)}
 
 
-def _release_statement_line(db, e):
-    """A voided entry's line on the bank's statement is unmatched again: the money the bank moved is still to be
-    accounted for."""
+def _unmatch_statement(db, e):
+    """A voided entry's line on the bank's statement is unmatched again: the money the bank moved is still to be accounted for."""
     if e.statement_line_id:
         line = db.query(models.DBBankStatementLine).filter(models.DBBankStatementLine.id == e.statement_line_id).first()
         if line is not None:
             bank_reco.unmatch(db, line)
+        else:
+            e.statement_line_id, e.cleared_on = None, ""
 
 
 @router.post("/api/money/entries/{entry_id}/void")
@@ -1343,7 +1361,7 @@ def void_money(entry_id: int, request: Request, body: dict = None,
     if e.voided:
         raise HTTPException(409, "%s is already void." % e.number)
     e.voided, e.void_reason = True, reason[:300]
-    _release_statement_line(db, e)
+    _unmatch_statement(db, e)
     booked = site_cash.expense_for_entry(db, e.id)
     if booked is not None and booked.status == "APPROVED":
         booked.status, booked.entry_id, booked.checked_by_name, booked.checked_at = "SUBMITTED", None, "", ""
@@ -1356,7 +1374,7 @@ def void_money(entry_id: int, request: Request, body: dict = None,
                                                      models.DBMoneyEntry.client_id == client.id).first()
         if other is not None and not other.voided:
             other.voided, other.void_reason = True, reason[:300]
-            _release_statement_line(db, other)
+            _unmatch_statement(db, other)                 # the other account's statement line is open again too
     db.flush()
     if e.doc_id and e.doc_type != "on_account":
         doc, worth, *_ = _doc_for_any(db, client.id, e.doc_type, e.doc_id)
@@ -1368,7 +1386,7 @@ def void_money(entry_id: int, request: Request, body: dict = None,
 
 @router.get("/api/money/entries")
 def list_money(request: Request, direction: str = "", party: str = "", job_id: int = 0,
-               date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+               date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     q = db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.client_id == client.id)
     if direction:
@@ -1398,7 +1416,7 @@ def list_money(request: Request, direction: str = "", party: str = "", job_id: i
 
 
 @router.get("/api/ledger/parties")
-def ledger_parties(request: Request, party_type: str = "", db: Session = Depends(get_db)):
+def ledger_parties(request: Request, party_type: str = "", db: Session = Depends(get_read_db)):
     """Every party, what has been billed with them, what has moved, and the
     balance - owed to us for a client, owed by us for everybody else."""
     client = require_items_access(request, db, "bills.view_all")
@@ -1429,7 +1447,7 @@ def ledger_parties(request: Request, party_type: str = "", db: Session = Depends
 
 @router.get("/api/ledger/statement")
 def ledger_statement(request: Request, party_type: str, party: str,
-                     date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+                     date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     """A statement of account for one party, oldest first, with the balance
     after every line - the document that is sent to a supplier to agree what
     is owed, and the one a client is sent before a payment is chased."""
@@ -1472,7 +1490,7 @@ def ledger_statement(request: Request, party_type: str, party: str,
 
 @router.get("/api/money/book")
 def money_book(request: Request, account_id: int = 0, date_from: str = "", date_to: str = "",
-               db: Session = Depends(get_db)):
+               db: Session = Depends(get_read_db)):
     """The bank book or the cash book: every movement through one account,
     in date order, with the balance after each."""
     client = require_items_access(request, db, "bills.view_all")
@@ -1519,7 +1537,7 @@ def cash_book(db, client_id, account, date_from="", date_to=""):
 
 
 @router.get("/api/money/outstanding/{doc_type}/{doc_id}")
-def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_db)):
+def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     """What is still owed on one bill - for the payment box to open with."""
     client = require_items_access(request, db, "bills.view_all")
     doc, worth = _doc_for_any(db, client.id, doc_type, doc_id)
@@ -1538,7 +1556,7 @@ def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = 
 
 @router.get("/api/ledger/statement.pdf")
 def ledger_statement_pdf(request: Request, party_type: str, party: str, date_from: str = "", date_to: str = "",
-                         db: Session = Depends(get_db)):
+                         db: Session = Depends(get_read_db)):
     """The office's copy of a party's statement, to send them."""
     client = require_items_access(request, db, "bills.view_all")
     s = ledger_statement(request, party_type, party, date_from, date_to, db)
@@ -1547,7 +1565,7 @@ def ledger_statement_pdf(request: Request, party_type: str, party: str, date_fro
 
 
 @router.get("/api/money/payables.xlsx")
-def payables_export(request: Request, db: Session = Depends(get_db)):
+def payables_export(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = payables(request, db)
     rows = [(r["number"], r["kind"], r["party"], r["project"], r["due_date"], r["outstanding"], r["bucket"],
@@ -1562,7 +1580,7 @@ def payables_export(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/money/entries.xlsx")
 def money_entries_export(request: Request, direction: str = "", party: str = "", job_id: int = 0,
-                         date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+                         date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = list_money(request, direction, party, job_id, date_from, date_to, db)
     rows = [(e["paid_on"], e["number"], "Received" if e["direction"] == "IN" else "Paid", e["party_name"],

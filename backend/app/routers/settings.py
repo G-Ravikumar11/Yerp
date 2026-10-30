@@ -11,7 +11,7 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.settings import OLD_ALERT_DAYS, SETTINGS_ON_THE_COMPANY, THEME_FONTS
 from app.core.audit import log_audit
@@ -19,6 +19,7 @@ from app.core.auth import get_client_user, get_employee_user, require_erp_read, 
 from app.core.currency import DEFAULT_CURRENCY
 from app.core.files import file_bytes
 from app.core.gst import state_from_gstin
+from app.core.identity import logo_link
 from app.core.notifications import NOTIFY_KINDS, get_stored_refresh_token, notify, notify_settings
 from app.core.security import rate_limiter
 from app.schemas.settings import NotificationReadIn, NotificationSettingsIn, TaxRatesIn
@@ -47,7 +48,7 @@ router = APIRouter()
 
 
 @router.get("/api/settings")
-def get_settings(request: Request, db: Session = Depends(get_db)):
+def get_settings(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     settings = db.query(models.DBSettings).filter(models.DBSettings.client_id == client.id).all()
     out = {s.key: s.value for s in settings}
@@ -93,7 +94,7 @@ def save_settings(request: Request, body: dict = None, db: Session = Depends(get
 
 
 @router.get("/api/audit-logs")
-def get_audit_logs(request: Request, limit: int = 100, db: Session = Depends(get_db)):
+def get_audit_logs(request: Request, limit: int = 100, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     logs = db.query(models.DBAuditLog).filter(
         models.DBAuditLog.client_id == client.id
@@ -286,7 +287,7 @@ def delete_branding_theme(theme_id: int, request: Request,
 
 
 @router.get("/api/storage")
-def storage_report(request: Request, db: Session = Depends(get_db)):
+def storage_report(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     require_owner(request, db)
     kinds = {}
@@ -339,7 +340,7 @@ def storage_clean(body: dict, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/alerts")
-def list_notifications(request: Request, limit: int = 30, db: Session = Depends(get_db)):
+def list_notifications(request: Request, limit: int = 30, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     me = viewer_key(request)
     rows = db.query(models.DBAlert).filter(models.DBAlert.client_id == client.id).order_by(
@@ -377,7 +378,7 @@ def mark_notifications_read(body: NotificationReadIn, request: Request, db: Sess
 
 
 @router.get("/api/alerts/settings")
-def get_notification_settings(request: Request, db: Session = Depends(get_db)):
+def get_notification_settings(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     cfg = notify_settings(db, client.id)
     return {"emails": cfg["emails"], "whatsapp": cfg["whatsapp"], "channels": cfg["channels"],
@@ -525,10 +526,13 @@ def download_backup(request: Request, files: int = 0, db: Session = Depends(get_
 
 
 @router.get("/api/company/identity")
-def company_identity_api(request: Request, db: Session = Depends(get_db)):
+def company_identity_api(request: Request, db: Session = Depends(get_read_db)):
     """The company as its documents show it. Anyone signed in may read it - it is on every page they print."""
     client = get_client_user(request, db) if request.session.get("client_id") else None
     if client is None:
         emp = get_employee_user(request, db)
         client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
-    return company_identity(db, client)
+    out = company_identity(db, client)
+    # On every page (the company mark): a link the browser keeps, not the image itself every time.
+    out["logo_url"] = logo_link(client.id, out.get("logo_url"), "letterhead")
+    return out

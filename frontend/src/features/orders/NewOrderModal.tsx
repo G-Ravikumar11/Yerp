@@ -54,15 +54,15 @@ export function NewOrderModal({ open, onOpenChange }: { open: boolean; onOpenCha
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button loading={create.isPending} onClick={() => create.mutate()}>
+          <Button loading={create.isPending} disabled={!f.contractor_id} onClick={() => create.mutate()}>
             Open the draft
           </Button>
         </>
       }
     >
       <div className="grid gap-4">
-        <Field label="Sub contractor" htmlFor="no-con" hint="Only contractors whose registration form has been signed off can be issued an order.">
-          <Select id="no-con" value={f.contractor_id} onChange={set('contractor_id')} placeholder="Choose later" options={registered.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))} />
+        <Field label="Sub contractor *" htmlFor="no-con" hint="Only contractors whose registration form has been signed off can be issued an order.">
+          <Select id="no-con" value={f.contractor_id} onChange={set('contractor_id')} placeholder="Choose the sub contractor" options={registered.map((c) => ({ value: c.id, label: c.company_name + (c.vendor_code ? ` (${c.vendor_code})` : '') }))} />
         </Field>
         <Field
           label="Project"

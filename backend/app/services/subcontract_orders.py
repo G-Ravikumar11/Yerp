@@ -260,6 +260,7 @@ def wo_item_dict(i):
             "is_header": bool(i.is_header),
             "tolerance_percent": i.tolerance_percent or 0,
             "boq_key": i.boq_key or "",
+            "boq_parts": boq_parts_of(i),
             "max_quantity": item_ceiling(i)}
 
 
@@ -570,7 +571,7 @@ def next_vendor_code(db, client_id):
     return "%s%04d" % (prefix, highest + 1)
 
 
-def contractor_form_fields(con, body, fill_blanks_only=False):
+def contractor_form_fields(con, body):
     """The registration form's own boxes from a request onto the record."""
     for key in REGISTRATION_FIELDS:
         v = getattr(body, key, None)
@@ -799,7 +800,7 @@ def wo_copy_lines(db, source, target):
             unit_rate=i.unit_rate, total_amount=i.total_amount,
             budget_id=i.budget_id, cost_centre=i.cost_centre,
             display_order=i.display_order, is_header=bool(i.is_header),
-            tolerance_percent=i.tolerance_percent or 0, boq_key=i.boq_key or ""))
+            tolerance_percent=i.tolerance_percent or 0, boq_key=i.boq_key or "", boq_parts=i.boq_parts or ""))
     for t in db.query(models.DBSubcontractTerm).filter(
             models.DBSubcontractTerm.order_id == source.id).all():
         db.add(models.DBSubcontractTerm(
@@ -1933,7 +1934,7 @@ from app.services.client_billing import billed_qty_to_date, measured_to_date
 from app.services.crm import advance_paid, next_item_code, norm_name, settled_on, standard_unit
 from app.services.invoicing import active_irn
 from app.services.subcontract_billing import _live_releases, released_retention, sub_gross_measured
-from app.services.boq import boq_of_job, boq_tie_subcontract_lines
+from app.services.boq import boq_of_job, boq_parts_of, boq_tie_subcontract_lines
 from app.services.subcontract_rules import (
     advance_outstanding,
     bank_guarantee_missing,

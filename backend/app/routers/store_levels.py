@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 from app import models
 from app.core.audit import log_audit
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreStockBalance
 from app.models.store_extras import DBStoreItemLevel
+from app.routers.store_masters import visible_store_ids
 from app.services import store_levels
 from app.services.stock_ledger import assert_store_access, raise_reorder_alert
 
@@ -66,7 +67,7 @@ def _item(db, actor, item_id):
 
 
 @router.get("/{store_id}")
-def store_levels_list(store_id: int, request: Request, db: Session = Depends(get_db)):
+def store_levels_list(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     store = _store(db, actor, store_id)
     rows = db.query(DBStoreItemLevel).filter(DBStoreItemLevel.store_id == store.id).all()
@@ -114,16 +115,18 @@ def remove_level(store_id: int, item_id: int, request: Request, db: Session = De
 @router.post("/scan")
 def scan(request: Request, db: Session = Depends(get_db)):
     """Raise the alert for every item already at or below its reorder level in a store with none open - stock that fell below before alerts
-    were kept, or whose level was raised afterwards."""
+    were kept, or whose level was raised afterwards. Only the stores this person works in."""
     actor = store_actor(request, db, "store.masters.create")
-    stores = {s.id: s for s in db.query(DBStore).filter(DBStore.client_id == actor.client.id, DBStore.is_active.is_(True)).all()}
+    seen = visible_store_ids(db, actor)                                 # the stores this person works in (all of them for an administrator)
+    stores = {s.id: s for s in db.query(DBStore).filter(DBStore.client_id == actor.client.id, DBStore.is_active.is_(True)).all() if seen is None or s.id in seen}
     if not stores:
         return {"raised": 0}
     over = store_levels.overrides(db, list(stores))
-    sets = {s.item_id: s for s in db.query(DBStoreItemSettings).all()}
+    held = db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(list(stores))).all()
+    sets = {s.item_id: s for s in db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id.in_([b.item_id for b in held] or [0])).all()}
     raised = 0
     try:
-        for bal in db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(list(stores))).all():
+        for bal in held:
             level = store_levels.effective(sets.get(bal.item_id), over.get((bal.store_id, bal.item_id)))[0]
             if level > 0 and Decimal(str(bal.qty)) <= level:
                 item = db.get(models.DBItem, bal.item_id)

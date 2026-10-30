@@ -6,11 +6,12 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import PORTAL_INVOICE_TYPES
 from app.core import login_guard
 from app.core.audit import log_audit, log_login
+from app.core.config import LOGIN_PER_MINUTE
 from app.core.auth import end_every_session
 from app.core.currency import inr, money
 from app.core.dates import _parse_date, days_after
@@ -50,7 +51,7 @@ router = APIRouter()
 
 
 @router.get("/api/portal/invite")
-def portal_invite_check(token: str = "", db: Session = Depends(get_db)):
+def portal_invite_check(token: str = "", db: Session = Depends(get_read_db)):
     """Who the link is for, so the page can greet them before they choose a
     password - and say plainly when it has run out."""
     u = db.query(models.DBPortalUser).filter(
@@ -81,7 +82,7 @@ def portal_accept_invite(body: PortalPasswordIn, request: Request, db: Session =
 @router.post("/api/portal/login")
 def portal_login(body: PortalLoginIn, request: Request, db: Session = Depends(get_db)):
     ip = request.client.host if request.client else "unknown"
-    if rate_limiter.is_rate_limited(f"portal_login:{ip}", max_requests=10, window=60):
+    if rate_limiter.is_rate_limited(f"portal_login:{ip}", max_requests=LOGIN_PER_MINUTE, window=60):
         raise HTTPException(429, "Too many attempts. Try again in a minute.")
     email = (body.email or "").strip().lower()
     login_guard.guard(request, email, login_guard.body_of(body))
@@ -111,7 +112,7 @@ def portal_logout(request: Request):
 
 
 @router.get("/api/portal/me")
-def portal_me(request: Request, db: Session = Depends(get_db)):
+def portal_me(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     return {"name": u.name or "", "email": u.email, "party_type": u.party_type, "party": name,
             "company": client.company_name or "", "company_logo": client.logo_url or "",
@@ -119,7 +120,7 @@ def portal_me(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/portal/summary")
-def portal_summary(request: Request, db: Session = Depends(get_db)):
+def portal_summary(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     orders = _portal_orders(db, u, party, name)
     bills = _portal_bills(db, u, party, name)
@@ -145,13 +146,13 @@ def portal_summary(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/portal/orders")
-def portal_orders(request: Request, db: Session = Depends(get_db)):
+def portal_orders(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     return {"orders": _portal_orders(db, u, party, name)}
 
 
 @router.get("/api/portal/orders/{order_id}")
-def portal_order(order_id: int, request: Request, db: Session = Depends(get_db)):
+def portal_order(order_id: int, request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     o = next((x for x in _portal_orders(db, u, party, name) if x["id"] == order_id), None)
     if not o:
@@ -172,7 +173,7 @@ def portal_order(order_id: int, request: Request, db: Session = Depends(get_db))
 
 
 @router.get("/api/portal/bills")
-def portal_bills(request: Request, db: Session = Depends(get_db)):
+def portal_bills(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     return {"bills": _portal_bills(db, u, party, name)}
 
@@ -201,14 +202,14 @@ def portal_accept_bill(bill_id: int, request: Request, db: Session = Depends(get
 
 
 @router.get("/api/portal/payments")
-def portal_payments(request: Request, db: Session = Depends(get_db)):
+def portal_payments(request: Request, db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     return {"payments": _portal_payments(db, u, party, name)}
 
 
 @router.get("/api/portal/statement")
 def portal_statement(request: Request, date_from: str = "", date_to: str = "",
-                     db: Session = Depends(get_db)):
+                     db: Session = Depends(get_read_db)):
     """Their account with us: each bill, each payment, and the balance -
     positive is what we owe them."""
     u, client, party, name = get_portal_user(request, db)
@@ -217,7 +218,7 @@ def portal_statement(request: Request, date_from: str = "", date_to: str = "",
 
 @router.get("/api/portal/statement.xlsx")
 def portal_statement_export(request: Request, date_from: str = "", date_to: str = "",
-                            db: Session = Depends(get_db)):
+                            db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     s = _portal_statement(db, u, name, date_from, date_to)
     return sheet_response(
@@ -319,7 +320,7 @@ def portal_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/portal/statement.pdf")
-def portal_statement_pdf(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+def portal_statement_pdf(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     u, client, party, name = get_portal_user(request, db)
     s = _portal_statement(db, u, name, date_from, date_to)
     return form_pdf_response(statement_form_spec(client, name, "Sub Contractor" if u.party_type == "contractor"

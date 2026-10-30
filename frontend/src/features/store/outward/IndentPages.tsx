@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, FileSpreadsheet, PackageOpen, Pencil, Plus, Printer, Trash2 } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, Select, Skeleton, Textarea } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -18,7 +18,8 @@ export const IndentBadge = ({ status }: { status: Indent['status'] }) => <Badge 
 export function IndentListPage() {
   const nav = useNavigate()
   const { can } = useSession()
-  const [f, setF] = useState({ status: '', store_id: 0, project_id: 0, q: '' })
+  const [params] = useSearchParams()
+  const [f, setF] = useState({ status: params.get('status') ?? '', store_id: 0, project_id: 0, q: '' })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
   const projects = useProjects()
   const list = useIndents(f)

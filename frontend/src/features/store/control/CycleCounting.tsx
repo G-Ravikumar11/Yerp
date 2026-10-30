@@ -84,7 +84,7 @@ function AbcList() {
 
 function RulesForm() {
   const { can } = useSession()
-  const canEdit = can(storePerm('control', 'create'))
+  const canEdit = can(storePerm('control', 'approve'))      // those who count do not set the rules that check their counts
   const rules = useQuery({ queryKey: [...KEY, 'rules'], queryFn: () => get<Rules>('/api/store/cycle/settings') })
   const [f, setF] = useState<Partial<Record<keyof Rules, string>>>({})
   const val = (k: keyof Rules) => f[k] ?? String(rules.data?.[k] ?? '')

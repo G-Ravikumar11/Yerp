@@ -211,9 +211,11 @@ NOTIFY_KINDS = {
     "store_overdue": "Tools or returnable material issued from a store are overdue, or a tool is due for service",
     "daily_digest": "The morning list of what needs looking at",
     "security_lock": "An account was locked after too many wrong passwords",
+    "increment_due": "It is a year since somebody's last salary increment",
 }
 # Out of the box: the bell for everything, email for the money, the digest and a locked account.
-NOTIFY_DEFAULT_EMAIL = {"ra_bill_certified", "money_in", "daily_digest", "security_lock"}
+# Nothing is emailed on its own: a company ticks the alerts it wants mailed in Settings.
+NOTIFY_DEFAULT_EMAIL = set()
 
 
 def notify_settings(db, client_id):

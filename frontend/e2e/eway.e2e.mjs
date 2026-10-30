@@ -1,4 +1,4 @@
-import { clickText, fill, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
+import { clickText, fill, launch, open, setValue, signIn, sleep, toastsGone } from './lib.mjs'
 
 // E-way bills: type one for plant, see what the portal would refuse, fix it, record the number the portal gave, change the vehicle, cancel.
 const { page, check, done } = await launch()

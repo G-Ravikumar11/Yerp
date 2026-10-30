@@ -19,7 +19,7 @@ from app import models
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.models.store_core import (
     DBStore, DBStoreBin, DBStoreDocSequence, DBStoreFreeze, DBStoreItemSettings, DBStoreStockBalance, DBStoreStockLedger,
     DBStoreUomConversion, DBStoreUserAssignment, ItemCategory, StoreType,
@@ -135,13 +135,13 @@ def _store_rows(db, stores):
 
 
 @router.get("")
-def index(request: Request, db: Session = Depends(get_db)):
+def index(request: Request, db: Session = Depends(get_read_db)):
     """The slice's front door: the stores this person may see."""
     return {"slice": "masters", **list_stores(request, db=db)}
 
 
 @router.get("/stores")
-def list_stores(request: Request, q: str = "", type: str = "", project_id: int = 0, status: str = "all", db: Session = Depends(get_db)):
+def list_stores(request: Request, q: str = "", type: str = "", project_id: int = 0, status: str = "all", db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     query = db.query(DBStore).filter(DBStore.client_id == actor.client.id)
     seen = visible_store_ids(db, actor)
@@ -163,7 +163,7 @@ def list_stores(request: Request, q: str = "", type: str = "", project_id: int =
 
 
 @router.get("/stores/{store_id}")
-def get_store(store_id: int, request: Request, db: Session = Depends(get_db)):
+def get_store(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     return _store_rows(db, [my_store(db, actor, store_id)])[0]
 
@@ -256,7 +256,7 @@ def _bin_fields(body):
 
 
 @router.get("/labels.pdf")
-def labels(request: Request, store_id: int, kind: str = "bins", item_ids: str = "", db: Session = Depends(get_db)):
+def labels(request: Request, store_id: int, kind: str = "bins", item_ids: str = "", db: Session = Depends(get_read_db)):
     """Sticky QR labels to print: a tag for every rack and yard bay of a store (kind=bins), or a rack label for each item the
     store holds (kind=items; item_ids, comma-separated, for chosen ones). Scanning one in the app finds the bin or the item."""
     actor = store_actor(request, db, "store.masters.view")
@@ -281,7 +281,7 @@ def labels(request: Request, store_id: int, kind: str = "bins", item_ids: str = 
 
 
 @router.get("/stores/{store_id}/bins")
-def list_bins(store_id: int, request: Request, db: Session = Depends(get_db)):
+def list_bins(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     store = my_store(db, actor, store_id)
     return {"items": [_bin_dict(b) for b in db.query(DBStoreBin).filter(DBStoreBin.store_id == store.id).order_by(DBStoreBin.code).all()]}
@@ -342,6 +342,26 @@ class AssignIn(BaseModel):
     role: str = "STOREKEEPER"
 
 
+# What a person does in a store, from a fixed list so the staff list reads the same everywhere. It describes the job; what they
+# may do is still decided by their access level (and they reach only the stores they are put in).
+STORE_JOBS = {"STOREKEEPER": "Storekeeper", "STORE_INCHARGE": "Store in-charge", "ASSISTANT": "Store assistant", "GATE": "Gate / security",
+              "SITE_ENGINEER": "Site engineer (asks for material)", "VIEWER": "Looks up stock"}
+STORE_JOB_ALIASES = {"STORE_KEEPER": "STOREKEEPER", "KEEPER": "STOREKEEPER", "INCHARGE": "STORE_INCHARGE", "IN_CHARGE": "STORE_INCHARGE",
+                     "STORE_ASSISTANT": "ASSISTANT", "SECURITY": "GATE", "ENGINEER": "SITE_ENGINEER"}
+
+
+# Who works in a store decides who reaches its stock, so putting someone in (or taking them out) is an approval, not an edit.
+STAFF_RIGHT = "store.masters.approve"
+
+
+def store_job(raw) -> str:
+    code = "_".join((raw or "").upper().replace("-", " ").split()) or "STOREKEEPER"
+    code = STORE_JOB_ALIASES.get(code, code)
+    if code not in STORE_JOBS:
+        raise HTTPException(400, "The job in the store is one of: %s." % ", ".join(STORE_JOBS.values()))
+    return code
+
+
 def _employee_name(e):
     return ("%s %s" % (e.first_name or "", e.last_name or "")).strip()
 
@@ -352,7 +372,7 @@ def _assign_dict(a, e):
 
 
 @router.get("/employees")
-def employee_options(request: Request, q: str = "", limit: int = 30, db: Session = Depends(get_db)):
+def employee_options(request: Request, q: str = "", limit: int = 30, db: Session = Depends(get_read_db)):
     """Staff who can be assigned to a store."""
     actor = store_actor(request, db, "store.masters.view")
     query = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == actor.client.id, models.DBEmployee.status.in_(["active", "onboarding"]))
@@ -365,7 +385,7 @@ def employee_options(request: Request, q: str = "", limit: int = 30, db: Session
 
 
 @router.get("/stores/{store_id}/assignments")
-def list_assignments(store_id: int, request: Request, db: Session = Depends(get_db)):
+def list_assignments(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     store = my_store(db, actor, store_id)
     rows = db.query(DBStoreUserAssignment, models.DBEmployee).join(models.DBEmployee, models.DBEmployee.id == DBStoreUserAssignment.employee_id).filter(
@@ -376,12 +396,12 @@ def list_assignments(store_id: int, request: Request, db: Session = Depends(get_
 @router.post("/stores/{store_id}/assignments")
 def assign(store_id: int, body: AssignIn, request: Request, db: Session = Depends(get_db)):
     """Put a member of staff in a store (or bring back one who was taken out, with the new role label)."""
-    actor = store_actor(request, db, "store.masters.create")
+    actor = store_actor(request, db, STAFF_RIGHT)
     store = my_store(db, actor, store_id)
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == body.employee_id, models.DBEmployee.client_id == actor.client.id).first()
     if emp is None:
         raise HTTPException(400, "That employee does not exist.")
-    role = _clean(body.role, "role", 30).upper().replace(" ", "_")
+    role = store_job(body.role)
     row = db.query(DBStoreUserAssignment).filter(DBStoreUserAssignment.store_id == store.id, DBStoreUserAssignment.employee_id == emp.id).first()
     if row is not None and row.is_active:
         raise HTTPException(409, "%s already works in %s." % (_employee_name(emp), store.code))
@@ -399,7 +419,7 @@ def assign(store_id: int, body: AssignIn, request: Request, db: Session = Depend
 @router.delete("/stores/{store_id}/assignments/{employee_id}")
 def unassign(store_id: int, employee_id: int, request: Request, db: Session = Depends(get_db)):
     """Take a member of staff out of a store. The row stays, switched off, so the history of who worked there is kept."""
-    actor = store_actor(request, db, "store.masters.create")
+    actor = store_actor(request, db, STAFF_RIGHT)
     store = my_store(db, actor, store_id)
     row = db.query(DBStoreUserAssignment).filter(DBStoreUserAssignment.store_id == store.id, DBStoreUserAssignment.employee_id == employee_id,
                                                   DBStoreUserAssignment.is_active.is_(True)).first()
@@ -457,7 +477,7 @@ def _conversions(db, item_ids):
 
 
 @router.get("/items")
-def list_items(request: Request, q: str = "", category: str = "", configured: str = "all", limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
+def list_items(request: Request, q: str = "", category: str = "", configured: str = "all", limit: int = 100, offset: int = 0, db: Session = Depends(get_read_db)):
     """Every stock item with its store settings (or the defaults it would get) and how much is held in the stores this person may see."""
     actor = store_actor(request, db, "store.masters.view")
     query = db.query(models.DBItem, DBStoreItemSettings).outerjoin(DBStoreItemSettings, DBStoreItemSettings.item_id == models.DBItem.id).filter(
@@ -487,7 +507,7 @@ def list_items(request: Request, q: str = "", category: str = "", configured: st
 
 
 @router.get("/items/{item_id}")
-def get_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+def get_item(item_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
     item = _my_item(db, actor, item_id)
     s = db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item.id).first()
@@ -595,7 +615,7 @@ def _controls_dict(row, actor):
 
 
 @router.get("/controls")
-def get_controls(request: Request, db: Session = Depends(get_db)):
+def get_controls(request: Request, db: Session = Depends(get_read_db)):
     from app.models.store_core import DBStoreControlSetting
     actor = store_actor(request, db, ("store.masters.view", "store.inward.view", "store.outward.view", "store.control.view"))
     return _controls_dict(db.query(DBStoreControlSetting).filter(DBStoreControlSetting.client_id == actor.client.id).first(), actor)

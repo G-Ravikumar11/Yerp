@@ -75,7 +75,7 @@ def main_seed():
         foreman = person("Priya", "Shah", "supervisor", director["id"], rate=320)
         person("Tom", "Reilly", "staff", foreman["id"], rate=260)
         finance = person("Nina", "Patel", "finance", director["id"])
-        person("Meera", "Iyer", "hr_admin", director["id"])
+        person("Meera", "Iyer", "hr", director["id"])
 
         # Small costs approve themselves; large ones also need finance.
         c.put("/api/approval-rules", json={"auto_below": 2000, "finance_above": 200000})

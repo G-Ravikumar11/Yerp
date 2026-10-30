@@ -22,6 +22,9 @@ class EmployeeCreate(BaseModel):
     # The sites this person works on. None means "leave as it is"; an empty
     # list means "every site", which is what somebody unassigned already had.
     site_ids: Optional[List[int]] = None
+    # The rights the Master ticked, saved with the employee rather than by a second request
+    # (PUT /api/employees/{id}/permissions). None leaves the role's own rights.
+    permissions: Optional[List[str]] = None
     first_name: str
     last_name: str
     email: Optional[str] = ""
@@ -47,9 +50,18 @@ class EmployeeCreate(BaseModel):
     tax_id: Optional[str] = ""
     emergency_contact: Optional[str] = ""
     emergency_phone: Optional[str] = ""
+    gender: Optional[str] = ""
+    # Optional statutory numbers, which the employee may also give in their own portal.
+    aadhaar_no: Optional[str] = ""
+    pan_no: Optional[str] = ""
+    uan_no: Optional[str] = ""
+    esi_no: Optional[str] = ""
     start_date: Optional[str] = ""
     employee_id: Optional[str] = ""
     password: Optional[str] = ""
+    # The rights the Master ticked, saved with the employee rather than in a second
+    # request after it. None leaves them as the access level gives them.
+    permissions: Optional[List[str]] = None
 
 
 class DocumentRequirementIn(BaseModel):

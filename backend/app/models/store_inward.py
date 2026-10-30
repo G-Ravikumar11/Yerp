@@ -9,38 +9,15 @@ entry_uom / entry_qty), rates Numeric(18,4) per base unit.
 from datetime import date, datetime
 
 from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import declared_attr
 
 from app.db.session import Base
-from app.models.store_core import PERCENT, QTY, RATE, VALUE, DocStatus
+from app.models.store_core import DocHeader, PERCENT, QTY, RATE, VALUE
 
 # What the ledger calls each document (ref_doc_type) and what its number starts with.
 GRN, PURCHASE_RETURN, CLIENT_SUPPLY, OPENING = "GRN", "PRTN", "CSUP", "OSTK"
 
 
-class _Header:
-    """The columns every inward document shares."""
-
-    @declared_attr
-    def client_id(cls):
-        return Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-
-    @declared_attr
-    def store_id(cls):
-        return Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
-
-    id = Column(Integer, primary_key=True, index=True)
-    number = Column(String, nullable=False, index=True)
-    status = Column(String, nullable=False, default=DocStatus.DRAFT.value, index=True)
-    remarks = Column(Text, default="")
-    cancel_reason = Column(String, default="")
-    created_by_id = Column(Integer, nullable=True)           # employee id; empty when the account holder did it
-    created_by_name = Column(String, default="")
-    created_at = Column(DateTime, default=datetime.now)
-    posted_at = Column(DateTime, nullable=True)
-
-
-class DBStoreGrn(_Header, Base):
+class DBStoreGrn(DocHeader, Base):
     """One delivery received at a store, usually against a purchase order."""
     __tablename__ = "store_grn"
     __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_grn_number"),)
@@ -94,7 +71,7 @@ class DBStoreGrnLine(Base):
     landed_rate = Column(RATE, nullable=True)                # per base unit, rate plus its charges: what it went into stock at
 
 
-class DBStorePurchaseReturn(_Header, Base):
+class DBStorePurchaseReturn(DocHeader, Base):
     """Goods sent back to the supplier from a posted GRN."""
     __tablename__ = "store_purchase_return"
     __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_prtn_number"),)
@@ -125,7 +102,7 @@ class DBStorePurchaseReturnLine(Base):
     tax_value = Column(VALUE, default=0)
 
 
-class DBStoreClientSupply(_Header, Base):
+class DBStoreClientSupply(DocHeader, Base):
     """Material the client hands over for the project (free issue). It is stock of ours to look after, valued at the rate
     given on the receipt (zero if the client gives none)."""
     __tablename__ = "store_client_supply"
@@ -150,7 +127,7 @@ class DBStoreClientSupplyLine(Base):
     remarks = Column(String, default="")
 
 
-class DBStoreOpening(_Header, Base):
+class DBStoreOpening(DocHeader, Base):
     """Stock already held when the store starts being kept on the system."""
     __tablename__ = "store_opening"
     __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_ostk_number"),)

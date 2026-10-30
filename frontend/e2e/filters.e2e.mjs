@@ -1,4 +1,4 @@
-import { api, approvedOrder, fill, launch, open, setValue, signIn, sleep } from './lib.mjs'
+import { api, approvedOrder, fill, launch, open, signIn, sleep } from './lib.mjs'
 
 // The same search, status and date filters as Work Orders, on the Measurement Book, Sub Contract Registration and the other lists;
 // and the item code beside every item in the book.

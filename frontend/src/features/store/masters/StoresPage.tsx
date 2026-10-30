@@ -9,6 +9,9 @@ import { storeDelete, storePerm, storePost, storePut, useScanning, useStoreMeta 
 import StoreLevels from './StoreLevels'
 import { mastersInvalidate, useAssignments, useBins, useEmployeeOptions, useStores, type AssignRow, type BinRow, type StoreRow } from './api'
 
+/** What a person does in a store (the server holds the same list). What they may do comes from their access level. */
+const STORE_JOBS: Record<string, string> = { STOREKEEPER: 'Storekeeper', STORE_INCHARGE: 'Store in-charge', ASSISTANT: 'Store assistant', GATE: 'Gate / security', SITE_ENGINEER: 'Site engineer (asks for material)', VIEWER: 'Looks up stock' }
+
 const money = (v: string) => Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 /** Store > Masters > Stores: the places stock is kept, and who works in each. */
@@ -35,7 +38,7 @@ export default function StoresPage() {
     { id: 'held', header: 'Items held', align: 'right', width: '6rem', hideBelow: 'md', sort: (s) => s.items_held, cell: (s) => s.items_held },
     { id: 'value', header: 'Stock value', align: 'right', width: '8rem', hideBelow: 'sm', sort: (s) => Number(s.stock_value), cell: (s) => money(s.stock_value) },
     { id: 'bins', header: 'Bins', align: 'right', width: '4rem', hideBelow: 'lg', cell: (s) => s.bins },
-    { id: 'staff', header: 'Staff', align: 'right', width: '4rem', hideBelow: 'lg', cell: (s) => s.staff },
+    { id: 'staff', header: 'Staff', align: 'right', width: '6rem', hideBelow: 'lg', cell: (s) => (s.is_active && s.staff === 0 ? <Badge tone="warning">Nobody</Badge> : s.staff) },
     {
       id: 'state',
       header: 'Status',
@@ -55,6 +58,15 @@ export default function StoresPage() {
         </Field>
         {canEdit && <Button className="ml-auto" onClick={() => setEditing('new')}><Plus /> New store</Button>}
       </div>
+      {(() => {
+        // A store in use with nobody in it: staff cannot work there, so only the Master and store administrators can.
+        const empty = (stores.data ?? []).filter((s) => s.is_active && s.staff === 0)
+        return empty.length > 0 && (
+          <p role="status" className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
+            Nobody is assigned to {empty.map((s) => s.code).join(', ')}. Staff work only in the stores they are put in - open the store to add who works there.
+          </p>
+        )
+      })()}
       {stores.isError ? (
         <p role="alert" className="text-sm text-danger">Could not load the stores.</p>
       ) : (
@@ -165,21 +177,21 @@ function StoreDetailModal({ store, canEdit, canClose, onEdit, onToggle, onClose 
         </section>
         <section aria-labelledby="sd-staff">
           <h3 id="sd-staff" className="mb-2 border-b pb-1 text-sm font-semibold">Who works here</h3>
-          <p className="mb-2 text-xs text-muted-foreground">Staff can only see and work in the stores they are assigned to, whatever else they are allowed to do.</p>
+          <p className="mb-2 text-xs text-muted-foreground">Staff can only see and work in the stores they are assigned to, whatever else they are allowed to do. Adding or removing someone needs the right to approve store masters.</p>
           {staff.isPending ? <p className="text-sm text-muted-foreground">Loading...</p> : working.length === 0 ? <p className="text-sm text-muted-foreground">Nobody is assigned yet.</p> : (
             <ul className="divide-y rounded-lg border">
               {working.map((a) => (
                 <li key={a.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
-                  <span><span className="font-medium">{a.name}</span> <span className="text-muted-foreground">{a.email}</span> <Badge>{a.role}</Badge></span>
-                  {canEdit && <Button size="sm" variant="ghost" aria-label={`Remove ${a.name}`} onClick={() => unassign.mutate(a.employee_id)}>Remove</Button>}
+                  <span><span className="font-medium">{a.name}</span> <span className="text-muted-foreground">{a.email}</span> <Badge>{STORE_JOBS[a.role] ?? a.role}</Badge></span>
+                  {canClose && <Button size="sm" variant="ghost" aria-label={`Remove ${a.name}`} onClick={() => unassign.mutate(a.employee_id)}>Remove</Button>}
                 </li>
               ))}
             </ul>
           )}
-          {canEdit && (
+          {canClose && (
             <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (who) assign.mutate() }}>
               <Field label="Employee" htmlFor="sd-emp" className="min-w-48 flex-1"><Select id="sd-emp" value={who} placeholder="Choose a person" onChange={(e) => setWho(e.target.value)} options={free.map((e) => ({ value: e.id, label: `${e.name}${e.job_title ? ' - ' + e.job_title : ''}` }))} /></Field>
-              <Field label="Role" htmlFor="sd-role" className="w-40"><Input id="sd-role" value={role} onChange={(e) => setRole(e.target.value)} maxLength={30} /></Field>
+              <Field label="Job in this store" htmlFor="sd-role" className="w-56"><Select id="sd-role" value={role} onChange={(e) => setRole(e.target.value)} options={Object.entries(STORE_JOBS).map(([value, label]) => ({ value, label }))} /></Field>
               <Button type="submit" variant="outline" loading={assign.isPending} disabled={!who}>Assign</Button>
             </form>
           )}

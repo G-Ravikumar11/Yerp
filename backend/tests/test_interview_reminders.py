@@ -13,7 +13,8 @@ from conftest import make_employee
 
 
 @pytest.fixture(autouse=True)
-def _reset():
+def _reset(monkeypatch):
+    monkeypatch.setenv("INTERVIEW_REMINDERS_ENABLED", "1")     # off unless switched on: nothing is mailed on its own
     main.rate_limiter._hits.clear()
     with main.SessionLocal() as db:
         db.query(models.DBJobRun).delete()
@@ -133,3 +134,10 @@ def test_another_tenant_cannot_read_them(client, tenant):
     client.post("/api/client/login", json={"email": other, "password": "Passw0rdTest"})
     assert client.get(
         f"/api/recruitment/interviews/{iv['id']}/reminders").status_code == 404
+
+
+def test_nothing_is_mailed_on_its_own(client, tenant, monkeypatch):
+    monkeypatch.delenv("INTERVIEW_REMINDERS_ENABLED")
+    from app.services.recruitment import job_interview_reminders
+    with main.SessionLocal() as db:
+        assert "off" in job_interview_reminders(db, datetime.now())

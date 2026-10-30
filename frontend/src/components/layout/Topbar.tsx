@@ -161,7 +161,7 @@ export function Topbar() {
         <Breadcrumbs />
         <div className="ml-auto flex items-center gap-3">
           <InstallButton />
-          {user?.type === 'employee' && <NotificationBell />}
+          {user && <NotificationBell office={user.type !== 'employee'} />}
           <ActivityIndicator />
           <SyncIndicator />
           <ThemeSwitch />

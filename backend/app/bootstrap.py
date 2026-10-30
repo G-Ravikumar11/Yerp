@@ -97,6 +97,7 @@ from app.services import (
     assets,
     auth,
     boq,
+    budgeting,
     client_billing,
     compliance,
     client_orders,
@@ -163,6 +164,7 @@ from app.routers import (
     collaboration,
     subcontract_orders,
     boq,
+    budgeting,
     subcontract_billing,
     client_billing,
     stores,
@@ -193,8 +195,10 @@ from app.routers import (
     store_rejections,
     store_deliveries,
     store_levels,
+    store_dashboard,
     store_tools,
     store_cycle,
+    store_accounts,
 )
 
 for _module in (
@@ -225,6 +229,7 @@ for _module in (
     collaboration,
     subcontract_orders,
     boq,
+    budgeting,
     compliance,
     subcontract_billing,
     client_billing,
@@ -255,8 +260,10 @@ for _module in (
     store_rejections,
     store_deliveries,
     store_levels,
+    store_dashboard,
     store_tools,
     store_cycle,
+    store_accounts,
 ):
     app.include_router(_module.router)
 

@@ -8,17 +8,31 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_client_user, require_owner
+from app.core.auth import get_client_user, require_items_access, require_owner, require_people_admin
 from app.core.config import logger
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.services import purge
 from app.services.subcontract_orders import run_bulk_delete
 
 router = APIRouter()
 
+# What HR may delete as well as the Master: the records of the People portal.
+PEOPLE_KINDS = frozenset({"leave", "attendance"})
+
+
+def _actor(request, db, kind=None):
+    """The tenant, once the caller is the Master, or HR for a People record."""
+    if kind in PEOPLE_KINDS:
+        client = require_items_access(request, db, "people.manage")
+        require_people_admin(request, db)
+    else:
+        client = get_client_user(request, db)
+        require_owner(request, db)
+    return client
+
 
 @router.get("/api/master/kinds")
-def kinds(request: Request, db: Session = Depends(get_db)):
+def kinds(request: Request, db: Session = Depends(get_read_db)):
     get_client_user(request, db)
     require_owner(request, db)
     return {"kinds": {k: v[2] for k, v in purge.KINDS.items()}}
@@ -26,8 +40,7 @@ def kinds(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/master/{kind}/{rec_id}/delete-preview")
 def preview(kind: str, rec_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = _actor(request, db, kind)
     row, table, noun, label = purge.record(db, client.id, kind, rec_id)
     raw = purge.explain(db, table, [row.id])
     return {"numbers": [label], "noun": noun, "counts": purge.human(raw), "kept": purge.human(raw.get("_kept", {})),
@@ -45,14 +58,12 @@ def _delete(db, request, client, kind, rec_id):
 
 @router.delete("/api/master/{kind}/{rec_id}")
 def delete(kind: str, rec_id: int, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = _actor(request, db, kind)
     return {"ok": True, "message": _delete(db, request, client, kind, rec_id)}
 
 
 @router.post("/api/master/{kind}/bulk-delete")
 def bulk_delete(kind: str, body: dict, request: Request, db: Session = Depends(get_db)):
-    client = get_client_user(request, db)
-    require_owner(request, db)
+    client = _actor(request, db, kind)
     purge.kind_or_404(kind)
     return run_bulk_delete(body.get("ids"), lambda i: _delete(db, request, client, kind, i), db)

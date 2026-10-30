@@ -1,5 +1,5 @@
 """Sign-in pages that cannot be hammered: the visitor's real address, a CAPTCHA once there is reason to doubt them,
-an account locked after ten wrong passwords, and a limit on how fast one address may ask the API anything.
+ten wrong passwords shutting out the address they came from (never the Master), and a limit on how fast one address may ask the API anything.
 """
 import uuid
 
@@ -56,6 +56,8 @@ def test_the_address_is_the_one_the_proxy_saw_not_the_one_the_visitor_wrote(monk
 
 
 def test_writing_a_new_address_on_every_try_does_not_get_round_the_limit(account, monkeypatch):
+    import app.routers.auth as auth
+    monkeypatch.setattr(auth, "LOGIN_PER_MINUTE", 10)               # the limit is a setting (60 by default); ten shows the point
     c = account["client"]
     monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
     codes = [c.post("/api/client/login", json={"email": account["email"], "password": "wrong"},
@@ -97,6 +99,22 @@ def test_a_solved_captcha_covers_one_sign_in_and_cannot_be_used_again(account, c
         assert login(other, email, PASSWORD, **answer).status_code == 428
 
 
+def test_an_old_cookie_cannot_bring_a_spent_captcha_back(account, captcha_on):
+    c, email = account["client"], account["email"]
+    for _ in range(3):
+        login(c, email, "wrong")
+    answer = solve(c)
+    first = login(c, email, "wrong", **answer)                             # solved: this try, and the staff door's
+    assert first.status_code == 401
+    kept = first.headers["set-cookie"].split(";")[0]                       # the cookie as it was handed back
+    assert c.post("/api/employee/auth/login", json={"email": email, "password": "wrong"}).status_code == 401
+    # Whoever kept that cookie and sends it again, over and over, is not let through without a new CAPTCHA.
+    with TestClient(main.app) as replay:
+        replay.headers["cookie"] = kept
+        codes = [login(replay, email, "wrong").status_code for _ in range(4)]
+    assert codes[-1] == 428 and codes.count(401) <= 1
+
+
 def test_trying_address_after_address_needs_the_captcha_too(client, captcha_on):
     for i in range(3):
         assert client.post("/api/employee/auth/login",
@@ -133,24 +151,113 @@ def test_turnstile_is_used_when_its_keys_are_set(client, monkeypatch):
 
 # --- the lock --------------------------------------------------------------------------------------------------------
 
-def test_ten_wrong_passwords_lock_the_account_and_the_master_is_told(account):
+def colleague(account, password="Colleague123"):
+    """A colleague the Master has given a password: an account that can be locked, unlike the Master's own."""
+    email = f"mate-{uuid.uuid4().hex[:8]}@example.com"
+    r = account["client"].post("/api/team/invite", json={"email": email, "name": "Mate", "role": "admin", "password": password})
+    assert r.status_code == 200, r.text
+    return email
+
+
+def from_address(monkeypatch, c, address):
+    """Requests from `c` as if they came from `address` (the proxy's right-most X-Forwarded-For entry)."""
+    monkeypatch.setenv("TRUST_PROXY", "1")
+    c.headers["X-Forwarded-For"] = address
+
+
+def security_alerts(email):
+    with database.SessionLocal() as s:
+        return s.query(models.DBAlert).filter(models.DBAlert.kind == "security_lock", models.DBAlert.title.contains(email)).count()
+
+
+def test_nobody_can_lock_the_master_out(account, monkeypatch):
     c, email = account["client"], account["email"]
+    with TestClient(main.app) as attacker:
+        from_address(monkeypatch, attacker, "203.0.113.9")
+        for _ in range(25):
+            calm()
+            assert login(attacker, email, "wrong").status_code == 401        # refused, never locked
     calm()
-    for _ in range(10):
-        assert login(c, email, "wrong").status_code == 401
-    calm()
-    locked = login(c, email, PASSWORD)                                     # even the right password
-    assert locked.status_code == 429 and locked.json()["code"] == "YE-AUTH-10"
-    with database.SessionLocal() as s:
-        mine = lambda: s.query(models.DBAlert).filter(models.DBAlert.kind == "security_lock",
-                                                      models.DBAlert.title.contains(email)).count()
-        assert mine() == 1
-    login(c, email, "wrong")                                               # told once, not at every try
-    with database.SessionLocal() as s:
-        assert s.query(models.DBAlert).filter(models.DBAlert.kind == "security_lock",
-                                              models.DBAlert.title.contains(email)).count() == 1
+    assert login(c, email, PASSWORD).status_code == 200                  # the Master signs straight in
+    assert security_alerts(email) == 1, "and is told, once, that somebody has been guessing"
+
+
+def test_ten_wrong_passwords_shut_out_the_guesser_not_the_person(account, monkeypatch):
+    email = colleague(account)
+    with TestClient(main.app) as attacker:
+        from_address(monkeypatch, attacker, "203.0.113.9")
+        for _ in range(10):
+            calm()
+            assert login(attacker, email, "wrong").status_code == 401
+        calm()
+        locked = login(attacker, email, "Colleague123")                  # even the right password, from there
+        assert locked.status_code == 429 and locked.json()["code"] == "YE-AUTH-10"
+    with TestClient(main.app) as person:
+        from_address(monkeypatch, person, "198.51.100.4")
+        calm()
+        assert login(person, email, "Colleague123").status_code == 200   # the colleague, from anywhere else
+    assert security_alerts(email) == 1
+    with TestClient(main.app) as attacker:
+        from_address(monkeypatch, attacker, "203.0.113.9")
+        login(attacker, email, "wrong")
+    assert security_alerts(email) == 1, "told once, not at every try"
     login_guard.failures.reset()                                           # fifteen minutes on
-    assert login(c, email, PASSWORD).status_code == 200
+    with TestClient(main.app) as attacker:
+        from_address(monkeypatch, attacker, "203.0.113.9")
+        calm()
+        assert login(attacker, email, "Colleague123").status_code == 200
+
+
+def test_a_new_password_clears_the_lock(account, monkeypatch):
+    email = colleague(account)
+    with TestClient(main.app) as here:
+        from_address(monkeypatch, here, "203.0.113.9")
+        for _ in range(10):
+            calm()
+            login(here, email, "wrong")
+        calm()
+        assert login(here, email, "Colleague123").status_code == 429
+        # The Master gives them a new password: nothing counted against the account stands any more.
+        member = next(m for m in account["client"].get("/api/team").json()["members"] if m["email"] == email)
+        assert account["client"].put(f"/api/team/{member['id']}", json={"password": "Fresh456Pass"}).status_code == 200
+        calm()
+        assert login(here, email, "Fresh456Pass").status_code == 200
+
+
+def test_a_reset_link_clears_the_lock(account, monkeypatch):
+    from datetime import datetime, timedelta
+    email = colleague(account)
+    with TestClient(main.app) as here:
+        from_address(monkeypatch, here, "203.0.113.9")
+        for _ in range(10):
+            calm()
+            login(here, email, "wrong")
+        calm()
+        assert login(here, email, "Colleague123").status_code == 429
+        raw = uuid.uuid4().hex                                             # the link the email would carry
+        with database.SessionLocal() as s:
+            m = s.query(models.DBTeamMember).filter(models.DBTeamMember.email == email).first()
+            s.add(models.DBPasswordReset(user_type="member", member_id=m.id, token_hash=main.hash_reset_token(raw),
+                                         expires_at=(datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")))
+            s.commit()
+        assert here.post("/api/client/reset-password", json={"token": raw, "password": "Fresh456Pass"}).status_code == 200
+        calm()
+        assert login(here, email, "Fresh456Pass").status_code == 200
+
+
+def test_a_staff_member_is_locked_only_from_where_the_guessing_came(tenant, monkeypatch):
+    e = make_employee(tenant, password="Staff123Pass")
+    with TestClient(main.app) as attacker:
+        from_address(monkeypatch, attacker, "203.0.113.9")
+        for _ in range(10):
+            calm()
+            attacker.post("/api/employee/auth/login", json={"email": e["email"], "password": "wrong"})
+        calm()
+        assert attacker.post("/api/employee/auth/login", json={"email": e["email"], "password": "Staff123Pass"}).status_code == 429
+    with TestClient(main.app) as person:
+        from_address(monkeypatch, person, "198.51.100.4")
+        calm()
+        assert person.post("/api/employee/auth/login", json={"email": e["email"], "password": "Staff123Pass"}).status_code == 200
 
 
 def test_the_right_password_starts_the_count_again(account):

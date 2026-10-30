@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.documents import form_pdf
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.core.audit import log_audit
 from app.core.auth import require_erp_read, wo_actor
@@ -335,7 +335,7 @@ def adjust_stock(body: AdjustmentIn, request: Request,
 
 @router.get("/api/stock/consumption/{work_order_id}")
 def material_consumption(work_order_id: int, request: Request,
-                         db: Session = Depends(get_db)):
+                         db: Session = Depends(get_read_db)):
     """BOM against actual issues - the wastage report.
 
     The BOM is what the contract was costed on. The issues are what the site
@@ -422,7 +422,7 @@ def stock_export(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/stock/stores")
-def list_stores(request: Request, db: Session = Depends(get_db)):
+def list_stores(request: Request, db: Session = Depends(get_read_db)):
     """Every store that has ever held anything, with what it holds now."""
     client = require_erp_read(request, db)
     names = sorted({s for (s,) in db.query(models.DBStockMovement.store).filter(
@@ -482,7 +482,7 @@ def transfer_stock(body: TransferIn, request: Request, db: Session = Depends(get
 
 
 @router.get("/api/stock/transfers")
-def list_transfers(request: Request, db: Session = Depends(get_db)):
+def list_transfers(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     out = {}
     for m in db.query(models.DBStockMovement).filter(

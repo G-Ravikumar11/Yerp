@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.documents import form_pdf
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import (INCIDENT_KINDS, INJURY_KINDS, PERMIT_PRECAUTIONS, WORKER_MARITAL_STATUS,
                                   WORKER_MIN_AGE, WORKER_SEX, WORKER_TRADES)
@@ -33,7 +33,7 @@ router.include_router(checks_router)
 
 
 @router.get("/api/safety")
-def safety_overview(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def safety_overview(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     """Everything on the safety screen for one project, or every project."""
     client = require_erp_read(request, db)
 
@@ -67,7 +67,7 @@ def safety_overview(request: Request, job_id: int = 0, db: Session = Depends(get
 
 
 @router.get("/api/safety/hse-check")
-def hse_check(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def hse_check(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     """The site held against the company's HSE plan, from what is already recorded: each line ok, a warning, or a
     problem, with the count behind it and where in the app to put it right."""
     client = require_erp_read(request, db)
@@ -250,7 +250,7 @@ def close_permit(pid: int, body: PermitCloseIn, request: Request, db: Session = 
 
 
 @router.get("/api/safety/incidents.xlsx")
-def incidents_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def incidents_export(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     d = safety_overview(request, job_id, db)
     rows = [(i["number"], i["happened_on"], i["kind"], i["location"], i["description"], i["injured_name"], i["injury"],
@@ -261,7 +261,7 @@ def incidents_export(request: Request, job_id: int = 0, db: Session = Depends(ge
 
 
 @router.get("/api/safety/permits.xlsx")
-def permits_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def permits_export(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     d = safety_overview(request, job_id, db)
     rows = [(p["number"], p["kind"], p["location"], p["valid_from"], p["valid_to"], p["receiver"],
@@ -271,7 +271,7 @@ def permits_export(request: Request, job_id: int = 0, db: Session = Depends(get_
 
 
 @router.get("/api/safety/talks.xlsx")
-def talks_export(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def talks_export(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     d = safety_overview(request, job_id, db)
     rows = [(t["held_on"], t["topic"], t["conducted_by"], t["attendees"], t.get("attendee_names", ""))
@@ -281,7 +281,7 @@ def talks_export(request: Request, job_id: int = 0, db: Session = Depends(get_db
 
 
 @router.get("/api/safety/permits/{pid}/document.pdf")
-def permit_pdf(pid: int, request: Request, db: Session = Depends(get_db)):
+def permit_pdf(pid: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     p = db.query(models.DBWorkPermit).filter(models.DBWorkPermit.id == pid, models.DBWorkPermit.client_id == client.id).first()
     if not p:
@@ -311,7 +311,7 @@ def permit_pdf(pid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/safety/incidents/{iid}/document.pdf")
-def incident_pdf(iid: int, request: Request, db: Session = Depends(get_db)):
+def incident_pdf(iid: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     i = db.query(models.DBSafetyIncident).filter(models.DBSafetyIncident.id == iid,
                                                  models.DBSafetyIncident.client_id == client.id).first()
@@ -406,7 +406,7 @@ def _worker_dict(w, files):
 
 
 @router.get("/api/workers")
-def worker_list(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def worker_list(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     """Every worker screened for one project, or every project: in the order they were screened."""
     client = require_erp_read(request, db)
     q = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.client_id == client.id)
@@ -533,7 +533,7 @@ def _photo_data_uri(db, f):
 
 
 @router.get("/api/workers/{wid}/document.pdf")
-def worker_pdf(wid: int, request: Request, db: Session = Depends(get_db)):
+def worker_pdf(wid: int, request: Request, db: Session = Depends(get_read_db)):
     """The worker's screening, filled in on the company's "Screening Of Worker" form, ready to print and sign."""
     client = require_erp_read(request, db)
     w = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.id == wid,
@@ -599,7 +599,7 @@ def worker_pdf(wid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/workers/{wid}/signature.png")
-def worker_signature(wid: int, request: Request, db: Session = Depends(get_db)):
+def worker_signature(wid: int, request: Request, db: Session = Depends(get_read_db)):
     """The worker's signature, from the photo of it that was uploaded."""
     client = require_erp_read(request, db)
     w = db.query(models.DBWorkerScreening).filter(models.DBWorkerScreening.id == wid,

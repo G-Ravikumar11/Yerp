@@ -69,3 +69,112 @@ def chain_rows(db, entity_type, entity_id):
 
 def forget_chain(db, entity_type, entity_id):
     (db.info.get("chains") or {}).pop((entity_type, entity_id), None)
+
+
+def execute_together(db, statements):
+    """Run these write statements in order, in one trip to the database.
+
+    Each is still its own statement - checked, and failing, exactly as when sent one by one - but on Postgres they
+    travel together, so thirty of them cost one round trip across the ocean instead of thirty. SQLite takes one
+    statement at a time, so there they are sent in turn. An error comes back as SQLAlchemy's, as `db.execute`'s would.
+    """
+    statements = list(statements)
+    if not statements:
+        return
+    if db.bind.dialect.name != "postgresql":
+        for statement in statements:
+            db.execute(statement)
+        return
+    conn = db.connection()
+    raw = conn.connection.dbapi_connection
+    cursor = raw.cursor()
+    sql = None
+    try:
+        # psycopg2 quotes every value itself (mogrify), so the joined text carries no placeholders to fill.
+        sql = ";\n".join(cursor.mogrify(str(c), c.params).decode()
+                         for c in (s.compile(dialect=conn.dialect) for s in statements))
+        cursor.execute(sql)
+    except conn.dialect.loaded_dbapi.Error as error:
+        from sqlalchemy import exc
+        raise exc.DBAPIError.instance(sql, None, error, conn.dialect.loaded_dbapi.Error, dialect=conn.dialect) from error
+    finally:
+        cursor.close()
+
+
+_LANES = None
+
+
+def read_together(db, readers, max_lanes=4):
+    """Run independent reads side by side, each on a connection of its own, and return their answers in order.
+
+    From far away the time a read takes is the round trip to the database, so four reads at once cost one instead of
+    four. Each reader is called with a session and must return plain values (numbers, strings, tuples, SQLAlchemy `Row`s),
+    never ORM objects: an object belongs to the session that read it. The readers do not see this request's own
+    uncommitted changes, so this is for reads made before anything is written.
+
+    The first lane is this request's own session, the others take a connection each - and only as many as are idle in
+    the pool, because a new connection costs seconds. Without enough, or on SQLite, they run one after another on `db`.
+    """
+    readers = list(readers)
+    engine = db.get_bind()
+    if len(readers) < 2 or engine.dialect.name != "postgresql":
+        return [reader(db) for reader in readers]
+    idle = getattr(engine.pool, "checkedin", lambda: 0)()
+    lanes = max(1, min(max_lanes, len(readers), 1 + idle))
+    if lanes == 1:
+        return [reader(db) for reader in readers]
+    from concurrent.futures import ThreadPoolExecutor
+    from app.db.session import read_session
+    global _LANES
+    if _LANES is None:
+        _LANES = ThreadPoolExecutor(max_workers=16, thread_name_prefix="db-lane")
+    results = [None] * len(readers)
+
+    def lane(i, session=None):
+        def work(s):
+            for at in range(i, len(readers), lanes):
+                results[at] = readers[at](s)
+        if session is not None:
+            return work(session)
+        with read_session() as own:
+            work(own)
+
+    others = [_LANES.submit(lane, i) for i in range(1, lanes)]
+    failure = None
+    try:
+        lane(0, db)
+    except BaseException as error:           # the others are waited for all the same, so no session is left open
+        failure = error
+    for future in others:
+        try:
+            future.result()
+        except BaseException as error:
+            failure = failure or error
+    if failure is not None:
+        raise failure
+    return results
+
+
+def insert_rows(table, rows):
+    """An INSERT of several rows with the Python-side column defaults already filled in.
+
+    A statement that is compiled by hand and sent with execute_together skips SQLAlchemy's defaults (a created_at set by
+    a function, a flag that is False unless said otherwise), which are normally applied as the statement is executed.
+    The rows here are completed first, so the statement carries every value itself. Server-side defaults and
+    auto-numbered keys are left to the database."""
+    from sqlalchemy import insert
+    full = []
+    for row in rows:
+        row = dict(row)
+        for column in table.columns:
+            default = column.default
+            if column.name in row or default is None:
+                continue
+            if default.is_scalar:
+                row[column.name] = default.arg
+            elif default.is_callable:
+                row[column.name] = default.arg(None)     # SQLAlchemy wraps a function that takes nothing into one that takes the execution context
+            elif default.is_clause_element:
+                row[column.name] = default.arg
+        full.append(row)
+    return insert(table).values(full)

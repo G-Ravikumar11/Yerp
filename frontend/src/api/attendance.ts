@@ -54,9 +54,12 @@ export interface AttSettings {
 }
 export interface OvertimeLog { id?: number; employee_id: number; employee_name: string; date: string; hours: number; reason: string; announced_by: string; status: string }
 
-export const useAttStats = () => useQuery({ queryKey: k('stats'), queryFn: () => get<AttStats>('/api/attendance/stats') })
-export const useLive = () => useQuery({ queryKey: k('live'), queryFn: () => get<LivePerson[]>('/api/attendance/live'), refetchInterval: 60_000 })
-export const useBySite = () => useQuery({ queryKey: k('by-site'), queryFn: () => get<BySite>('/api/attendance/by-site') })
+export const attStatsQuery = () => ({ queryKey: k('stats'), queryFn: () => get<AttStats>('/api/attendance/stats') })
+export const useAttStats = () => useQuery(attStatsQuery())
+export const liveQuery = () => ({ queryKey: k('live'), queryFn: () => get<LivePerson[]>('/api/attendance/live') })
+export const useLive = () => useQuery({ ...liveQuery(), refetchInterval: 60_000 })
+export const bySiteQuery = () => ({ queryKey: k('by-site'), queryFn: () => get<BySite>('/api/attendance/by-site') })
+export const useBySite = () => useQuery(bySiteQuery())
 export const useAttRecords = (date: string) => useQuery({ queryKey: k('records', date), queryFn: () => get<AttRecord[]>(`/api/attendance${date ? `?date=${encodeURIComponent(date)}` : ''}`) })
 export const useAnalytics = (days = 30) => useQuery({ queryKey: k('analytics', days), queryFn: () => get<Analytics>(`/api/attendance/analytics?days=${days}`) })
 export const useAttSettings = () => useQuery({ queryKey: k('settings'), queryFn: () => get<AttSettings>('/api/attendance/settings') })

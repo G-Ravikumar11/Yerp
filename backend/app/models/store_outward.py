@@ -8,10 +8,9 @@ only when the document is POSTED, through app/services/stock_ledger.py. Quantiti
 from datetime import date, datetime
 
 from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import declared_attr
 
 from app.db.session import Base
-from app.models.store_core import PERCENT, QTY, RATE, DocStatus
+from app.models.store_core import DocHeader, PERCENT, QTY, RATE
 
 ISSUE, ISSUE_RETURN = "ISSUE", "ISSRET"             # what the ledger calls these documents (ref_doc_type) and their number prefix
 SITE, SUBCONTRACTOR = "SITE", "SUBCONTRACTOR"       # issue_type
@@ -21,27 +20,7 @@ PERSON, FOREMAN = "PERSON", "FOREMAN"               # received_by_type, besides 
 CONTRACT_RATE, AVERAGE_COST = "CONTRACT_RATE", "AVERAGE_COST"   # how the rate to recover from a subcontractor is set
 
 
-class _Header:
-    @declared_attr
-    def client_id(cls):
-        return Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-
-    @declared_attr
-    def store_id(cls):
-        return Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
-
-    id = Column(Integer, primary_key=True, index=True)
-    number = Column(String, nullable=False, index=True)
-    status = Column(String, nullable=False, default=DocStatus.DRAFT.value, index=True)
-    remarks = Column(Text, default="")
-    cancel_reason = Column(String, default="")
-    created_by_id = Column(Integer, nullable=True)
-    created_by_name = Column(String, default="")
-    created_at = Column(DateTime, default=datetime.now)
-    posted_at = Column(DateTime, nullable=True)
-
-
-class DBStoreIssue(_Header, Base):
+class DBStoreIssue(DocHeader, Base):
     """Material leaving a store for a project: used on the work, or handed to a subcontractor."""
     __tablename__ = "store_issue"
     __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_issue_number"),)
@@ -85,7 +64,7 @@ class DBStoreIssueLine(Base):
     batch_no = Column(String, default="")                              # the batch it was taken from, where the receipt named one
 
 
-class DBStoreIssueReturn(_Header, Base):
+class DBStoreIssueReturn(DocHeader, Base):
     """Issued material coming back to the store, or reported lost or damaged."""
     __tablename__ = "store_issue_return"
     __table_args__ = (UniqueConstraint("client_id", "number", name="uq_store_issret_number"),)

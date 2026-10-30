@@ -21,7 +21,7 @@ from app import models
 from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.documents import form_pdf
 from app.documents.store import report_forms
 from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreUserAssignment
@@ -76,6 +76,20 @@ def _project(db, actor, project_id):
     if project_id and job is None:
         raise HTTPException(404, "Project not found")
     return job
+
+
+def _may_see_project_cost(db, actor, job) -> bool:
+    """A project's material cost is the company's figure: open to whoever holds the company reports (or all bills), the project's own
+    manager, and the people who work in that project's stores - not to every storekeeper with a reports right."""
+    if actor.employee is None:
+        return True
+    held = permissions_for(actor.employee)
+    if held & {"store.admin", "reports.view", "bills.view_all"}:
+        return True
+    if job is not None and job.manager_id and job.manager_id == actor.employee.id:
+        return True
+    mine = _visible(db, actor) or set()
+    return job is not None and db.query(DBStore.id).filter(DBStore.id.in_(mine or {0}), DBStore.project_id == job.id).first() is not None
 
 
 def jsonable(x):
@@ -157,7 +171,7 @@ def _saved_dict(r):
 
 
 @router.get("")
-def index(request: Request, db: Session = Depends(get_db)):
+def index(request: Request, db: Session = Depends(get_read_db)):
     """The slice's front door: the reports this company has saved."""
     actor = store_actor(request, db, "store.reports.view")
     rows = db.query(DBStoreSavedReport).filter(DBStoreSavedReport.client_id == actor.client.id).order_by(DBStoreSavedReport.name).all()
@@ -233,7 +247,7 @@ def _norm_check(db, actor, body, norm_id=None):
 
 
 @router.get("/norms")
-def list_norms(request: Request, project_id: int = 0, boq_item_id: int = 0, db: Session = Depends(get_db)):
+def list_norms(request: Request, project_id: int = 0, boq_item_id: int = 0, db: Session = Depends(get_read_db)):
     """The material norms of a project's BOQ items (or of one BOQ item)."""
     actor = store_actor(request, db, "store.reports.view")
     _project(db, actor, project_id)
@@ -286,7 +300,7 @@ def delete_norm(norm_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/pick/boq-items")
-def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session = Depends(get_db)):
+def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session = Depends(get_read_db)):
     """A project's priced BOQ items (current revision), for setting norms against."""
     actor = store_actor(request, db, "store.reports.view")
     _project(db, actor, project_id)
@@ -306,10 +320,12 @@ def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session =
 # --- project material cost (the integration read) ------------------------------------------------------------------------------
 
 @router.get("/project-cost/{project_id}")
-def project_cost(project_id: int, request: Request, from_date: str = "", to_date: str = "", db: Session = Depends(get_db)):
+def project_cost(project_id: int, request: Request, from_date: str = "", to_date: str = "", db: Session = Depends(get_read_db)):
     """Material the stores issued to a project, by cost head, work order and BOQ item: the same figures the project's costing reads."""
     actor = store_actor(request, db, "store.reports.view")
-    _project(db, actor, project_id)
+    job = _project(db, actor, project_id)
+    if not _may_see_project_cost(db, actor, job):
+        raise HTTPException(403, "A project's material cost is for its manager, its stores and those who see the company's reports.")
     start, end = svc.parse_day(from_date, "From date"), svc.parse_day(to_date, "To date")
     lines = store_integration.get_project_material_cost(db, project_id, start or date(2000, 1, 1), end or date.today())
     items = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_([l.item_id for l in lines] or [0])).all()}
@@ -324,7 +340,7 @@ def project_cost(project_id: int, request: Request, from_date: str = "", to_date
 # --- the reports ----------------------------------------------------------------------------------------------------------------
 
 @router.get("/{report}")
-def get_report(report: str, request: Request, db: Session = Depends(get_db)):
+def get_report(report: str, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.reports.view")
     data, filters = run_report(db, actor, report, _params(request))
     return jsonable({"report": report, "filters": filters, **data})
@@ -352,7 +368,7 @@ def export_report(report: str, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/{report}/print")
-def print_report(report: str, request: Request, db: Session = Depends(get_db)):
+def print_report(report: str, request: Request, db: Session = Depends(get_read_db)):
     """The report as a printed form (PDF, landscape)."""
     actor = store_actor(request, db, "store.reports.view")
     data, filters = run_report(db, actor, report, _params(request))

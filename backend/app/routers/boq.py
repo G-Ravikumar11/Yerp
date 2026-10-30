@@ -9,7 +9,7 @@ from app.core.fastjson import fast_json
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.boq import BOQ_IMPORT_ALIASES, BOQ_PRICED, BOQ_RATE_ONLY_WORDS, BV_TRANSITIONS
 from app.core.audit import log_audit
@@ -35,6 +35,7 @@ from app.services.boq import (
     boq_given_to_contractors,
     boq_link_orders,
     boq_head,
+    boq_heads,
     boq_kind_of,
     boq_lines_with_subtotals,
     boq_new_key,
@@ -62,7 +63,7 @@ router = APIRouter()
 
 
 @router.get("/api/wo/boq/template")
-def wo_boq_template(request: Request, db: Session = Depends(get_db)):
+def wo_boq_template(request: Request, db: Session = Depends(get_read_db)):
     """The shape we can read, as a workbook to fill in."""
     require_erp_read(request, db)
     return sheet_response(
@@ -75,7 +76,7 @@ def wo_boq_template(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/boqs/sample.xlsx")
-def boq_sample_sheet(request: Request, db: Session = Depends(get_db)):
+def boq_sample_sheet(request: Request, db: Session = Depends(get_read_db)):
     """A filled-in sample in exactly the shape the BOQ import reads: headings in capitals, priced lines under them,
     a group code on each, and rate-only (R/o) lines. Fill it in, or import it as it is to see how a BOQ comes in."""
     require_erp_read(request, db)
@@ -99,7 +100,7 @@ def boq_sample_sheet(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/boqs/materials")
-def boq_materials(request: Request, db: Session = Depends(get_db)):
+def boq_materials(request: Request, db: Session = Depends(get_read_db)):
     """Every material or grade that has been put on any of this business's BOQ lines, for the Material dropdown: an
     item added once is on the list from then on, on every BOQ."""
     client = require_erp_read(request, db)
@@ -112,7 +113,7 @@ def boq_materials(request: Request, db: Session = Depends(get_db)):
 def boq_list(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     rows = db.query(models.DBBoq).filter(models.DBBoq.client_id == client.id).order_by(models.DBBoq.id.desc()).all()
-    return {"boqs": [boq_head(db, b) for b in rows]}
+    return {"boqs": boq_heads(db, rows)}
 
 
 @router.post("/api/boqs")
@@ -200,7 +201,7 @@ def boq_new_revision(boq_id: int, body: dict, request: Request, db: Session = De
 
 
 @router.get("/api/boqs/{boq_id}/changes")
-def boq_changes(boq_id: int, request: Request, frm: int = 0, to: Optional[int] = None, db: Session = Depends(get_db)):
+def boq_changes(boq_id: int, request: Request, frm: int = 0, to: Optional[int] = None, db: Session = Depends(get_read_db)):
     """What changed between two revisions: lines added, removed, and changed in quantity, rate or words."""
     client = require_erp_read(request, db)
     boq = boq_or_404(db, client.id, boq_id)

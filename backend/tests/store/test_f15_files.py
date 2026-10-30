@@ -61,3 +61,14 @@ def test_a_rejection_and_a_tool_take_files(account):
     ok(t.put("/api/store/masters/items/%d/settings" % w["item"], json={"category": "TOOL", "base_uom": "kg"}))
     tool = ok(t.post("/api/store/tools", json={"item_id": w["item"], "store_id": central["id"], "serial_no": "T-1"}))
     assert _upload(t, "store_tool", tool["id"], "service-sheet.png").status_code == 200
+
+
+def test_a_posted_document_takes_no_more_papers(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    grn = _grn(t, central, w)
+    assert _upload(t, "store_grn", grn["id"]).status_code == 200
+    walk(t, "inward", "grn", grn["id"], "submit", "approve", "post")
+    res = _upload(t, "store_grn", grn["id"], "late.png")
+    assert res.status_code == 409 and "kept as they are" in res.json()["detail"]

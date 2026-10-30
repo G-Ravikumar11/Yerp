@@ -10,7 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.client_billing import RA_EDITABLE, VO_TRANSITIONS
 from app.core.audit import log_audit
@@ -114,7 +114,7 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
 
 @router.get("/api/ra-bills")
 def list_ra_bills(request: Request, work_order_id: int = 0, status: str = "",
-                  db: Session = Depends(get_db)):
+                  db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     q = db.query(models.DBRABill).filter(models.DBRABill.client_id == client.id)
     if work_order_id:
@@ -140,7 +140,7 @@ def list_ra_bills(request: Request, work_order_id: int = 0, status: str = "",
 
 
 @router.get("/api/ra-bills/{bill_id}")
-def get_ra_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def get_ra_bill(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return {"bill": ra_bill_dict(db, ra_bill_or_404(db, client.id, bill_id), detail=True)}
 
@@ -219,7 +219,7 @@ def credit_ra_bill(bill_id: int, body: CreditNoteIn, request: Request, db: Sessi
 
 
 @router.get("/api/ra-bills/{bill_id}/credit-notes")
-def list_ra_bill_credit_notes(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def list_ra_bill_credit_notes(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     bill = ra_bill_or_404(db, client.id, bill_id)
     notes = db.query(models.DBCreditNote).filter(
@@ -235,7 +235,7 @@ def cancel_ra_bill(bill_id: int, body: RAActionIn, request: Request,
 
 
 @router.get("/api/ra-bills/{bill_id}/export.xlsx")
-def ra_bill_xlsx(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def ra_bill_xlsx(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The bill as it is presented for certification."""
     client = require_erp_read(request, db)
     bill = ra_bill_or_404(db, client.id, bill_id)
@@ -269,7 +269,7 @@ def ra_bill_xlsx(bill_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.get("/api/variations")
 def list_variations(request: Request, work_order_id: int = 0,
-                    db: Session = Depends(get_db)):
+                    db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     q = db.query(models.DBVariationOrder).filter(
         models.DBVariationOrder.client_id == client.id)
@@ -293,7 +293,7 @@ def list_variations(request: Request, work_order_id: int = 0,
 
 @router.get("/api/variations/suggest/{work_order_id}")
 def suggest_variation(work_order_id: int, request: Request,
-                      db: Session = Depends(get_db)):
+                      db: Session = Depends(get_read_db)):
     """What the app would raise, without raising it.
 
     The screen asks this to decide whether to offer the button at all, so a
@@ -370,7 +370,7 @@ def create_variation(body: VariationIn, request: Request,
 
 
 @router.get("/api/variations/{vo_id}")
-def get_variation(vo_id: int, request: Request, db: Session = Depends(get_db)):
+def get_variation(vo_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return vo_dict(db, vo_or_404(db, client.id, vo_id), detail=True)
 
@@ -432,7 +432,7 @@ def delete_variation(vo_id: int, request: Request, db: Session = Depends(get_db)
 
 
 @router.get("/api/ra-bills/{bill_id}/einvoice")
-def einvoice_check(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def einvoice_check(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Whether this bill can be e-invoiced, and if not, what is missing."""
     client = require_erp_read(request, db)
     bill = ra_bill_or_404(db, client.id, bill_id)
@@ -441,7 +441,7 @@ def einvoice_check(bill_id: int, request: Request, db: Session = Depends(get_db)
 
 
 @router.get("/api/ra-bills/{bill_id}/einvoice.json")
-def einvoice_download(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def einvoice_download(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The file to upload to the Invoice Registration Portal."""
     client = require_erp_read(request, db)
     bill = ra_bill_or_404(db, client.id, bill_id)
@@ -455,7 +455,7 @@ def einvoice_download(bill_id: int, request: Request, db: Session = Depends(get_
 
 
 @router.get("/api/ra-bills/{bill_id}/document.pdf")
-def ra_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def ra_bill_pdf(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     bill = ra_bill_or_404(db, client.id, bill_id)
     return form_pdf_response(ra_form_spec(db, client, bill), bill.number)

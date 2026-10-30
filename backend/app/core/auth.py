@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import SessionLocal
 
+from app.core import app_limits
 from app.core.config import ADMIN_PANEL_MIN_LENGTH, logger
-from app.core.permissions import HO_FOLLOW_UP_ONLY_ROLES, HO_QS_ONLY, HO_QS_ONLY_REFUSAL, PORTAL_PERMISSIONS, employee_can
+from app.core.permissions import (HO_FOLLOW_UP_ONLY_ROLES, HO_QS_ONLY, HO_QS_ONLY_REFUSAL, HR_ONLY, PORTAL_PERMISSIONS,
+                                  employee_can, permissions_for)
 from app.core.security import admin_panel_password, hash_password, verify_password
 
 
@@ -68,14 +70,20 @@ def get_client_user(request: Request, db: Session):
         if member.role == "viewer" and request.method in WRITE_METHODS:
             raise HTTPException(status_code=403,
                                 detail="Your account has read-only access.")
+    # In the phone app, anyone but the Master and the account's admins is held to the app's rules.
+    member_role = member.role if member_id else None
+    app_limits.enforce(request, app_limits.account_rights(member_role), app_limits.free_account(member_role))
     return client
 
 
-def set_session_lifetime(request: Request, remember: bool):
+def set_session_lifetime(request: Request, remember: bool, channel: str = "web"):
     """Stamp this sign-in as persistent (Remember me) or browser-session only. The middleware turns the stamp
     into the cookie's lifetime and enforces `exp` on every later request, so a copied cookie cannot outlive it."""
     from app.core.config import REMEMBER_MAX_AGE, SESSION_MAX_AGE
     request.session["remember"] = bool(remember)
+    # Where this sign-in came from. Signed in the cookie, so it cannot be changed without signing in again; the phone app's
+    # limits (core/app_limits.py) hold for the life of the session. Anything but "app" is the website, as before.
+    request.session["channel"] = "app" if channel == "app" else "web"
     request.session["exp"] = int(time.time()) + (REMEMBER_MAX_AGE if remember else SESSION_MAX_AGE)
 
 
@@ -150,6 +158,8 @@ def require_items_access(request, db, permission="items.manage"):
             raise HTTPException(
                 status_code=403,
                 detail=HO_QS_ONLY_REFUSAL.get(wanted[0], "Only HO QS can do that") + " - ask HO QS to open it.")
+        if set(wanted) <= HR_ONLY:
+            raise HTTPException(status_code=403, detail="Only HR and the Master can do that.")
         label = " or ".join(next((p["label"] for p in PORTAL_PERMISSIONS if p["key"] == w), w)
                             for w in wanted)
         raise HTTPException(
@@ -220,9 +230,46 @@ def current_role(request: Request, db: Session) -> str:
 
 
 def require_owner(request: Request, db: Session):
-    if current_role(request, db) != "owner":
+    # A staff login has no team member behind it, which reads as "owner" below: it is never the Master.
+    if not request.session.get("client_id") or current_role(request, db) != "owner":
         raise HTTPException(status_code=403,
                             detail="Only the account Master can do that")
+
+
+def require_hr_or_master(request: Request, db: Session, permission: str = "people.manage"):
+    """HR or the Master, for reading and changing alike: the Master's own sign-in, or a staff login holding the right
+    (which only HR can hold). A team member the Master has invited, even an admin, is neither."""
+    if request.session.get("client_id"):
+        client = get_client_user(request, db)
+        require_owner(request, db)
+        return client
+    return require_items_access(request, db, permission)
+
+
+def is_hr_or_master(request: Request, db: Session) -> bool:
+    """Whether whoever is calling is HR or the Master, asked rather than enforced."""
+    try:
+        require_hr_or_master(request, db)
+        return True
+    except HTTPException:
+        return False
+
+
+def require_payroll_editor(request: Request, db: Session):
+    """Payroll, to read or to change: the Master, or HR."""
+    return require_hr_or_master(request, db, "payroll.manage")
+
+
+def require_people_admin(request: Request, db: Session):
+    """The whole People portal: the Master, or a staff login holding people.manage (HR)."""
+    if request.session.get("client_id"):
+        require_owner(request, db)
+        return
+    require_employee_permission(request, db, "people.manage")
+
+
+def is_master_session(request: Request) -> bool:
+    return bool(request.session.get("client_id"))
 
 
 def get_employee_user(request: Request, db: Session):
@@ -247,6 +294,8 @@ def get_employee_user(request: Request, db: Session):
     # anybody else sees the ones they have a hand in.
     STAFF_VIEWER.set(None if employee_can(emp, "ho.view_all") else emp.id)
     CURRENT_CLIENT_ID.set(client.id)
+    # In the phone app, staff change only what their app rights allow (the Master's access level is not held to them).
+    app_limits.enforce(request, permissions_for(emp), app_limits.free_staff(emp.permission_role))
     return emp
 
 

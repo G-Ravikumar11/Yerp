@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Check, ChevronDown, FolderOpen, HardHat, UserRound, Users, Wallet, Warehouse, type LucideIcon } from 'lucide-react'
 import { Button, Field, Select, Skeleton } from '@/components/ui'
-import { peopleKeys, setAccess, useHrCatalogue, type EmployeeDetail, type Portal } from '@/api/people'
+import { setAccess, showEmployeeChange, useHrCatalogue, type EmployeeDetail, type Portal } from '@/api/people'
 import { useJobOptions } from '@/api/clientOrders'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAction } from '@/lib/mutate'
 
 const card = 'rounded-lg border border-border bg-card p-4'
@@ -90,7 +91,9 @@ export function EmployeeAccess({ e }: { e: EmployeeDetail }) {
   const [sites, setSites] = useState(e.all_sites ? [] : e.site_ids)
   useEffect(() => { setRole(e.permission_role); setGranted(e.permissions); setSites(e.all_sites ? [] : e.site_ids) }, [e.permission_role, e.permissions, e.site_ids, e.all_sites])
   const [editing, setEditing] = useState(false)
-  const save = useAction(() => setAccess(e.id, { permission_role: role, permissions: granted, site_ids: sites }), { invalidate: [peopleKeys.all], success: 'Access updated', onSuccess: () => setEditing(false) })
+  const qc = useQueryClient()
+  // The server answers with the saved profile: shown at once, the lists refreshed behind it.
+  const save = useAction(() => setAccess(e.id, { permission_role: role, permissions: granted, site_ids: sites }), { success: 'Access updated', onSuccess: (r) => { showEmployeeChange(qc, { saved: r }); setEditing(false) } })
   if (!cat.data) return <Skeleton className="h-40 w-full" />
 
   const current = cat.data.permission_roles.find((r) => r.code === role)
@@ -200,6 +203,7 @@ export function EmployeeAccess({ e }: { e: EmployeeDetail }) {
                     <div className="min-w-0">
                       <p className="text-[13px] leading-snug">{p.label}</p>
                       <p className="text-[11px] text-muted-foreground">{locked ? `${cat.data!.permission_roles.find((r) => r.code === p.only_role)?.label ?? p.only_role} only` : diff ? (isOn(p.key) ? 'Added for them' : 'Removed for them') : p.group}</p>
+                      {p.warning && !locked && isOn(p.key) && <p role="alert" className="mt-1 text-[11px] text-danger">{p.warning}</p>}
                     </div>
                     <Toggle on={!locked && isOn(p.key)} disabled={locked} label={p.label} onChange={(v) => setGranted((g) => v ? [...g, p.key] : g.filter((k) => k !== p.key))} />
                   </div>

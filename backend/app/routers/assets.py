@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.assets import ASSET_BOOK_DEFAULTS, ASSET_CATEGORIES, BOOK_METHODS, HIRE_BASES
 from app.core.audit import log_audit
@@ -57,7 +57,7 @@ router = APIRouter()
 
 
 @router.get("/api/assets")
-def list_assets(request: Request, status: str = "", job_id: int = 0, archived: bool = False, db: Session = Depends(get_db)):
+def list_assets(request: Request, status: str = "", job_id: int = 0, archived: bool = False, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     q = db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id,
                                         models.DBAsset.is_archived.is_(True) if archived else models.DBAsset.is_archived.isnot(True))
@@ -160,7 +160,7 @@ def archive_asset(asset_id: int, request: Request, body: dict = None, db: Sessio
 
 
 @router.get("/api/assets/{asset_id}")
-def get_asset(asset_id: int, request: Request, db: Session = Depends(get_db)):
+def get_asset(asset_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     a = asset_or_404(db, client.id, asset_id)
     jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
@@ -394,7 +394,8 @@ def fixed_asset_register(request: Request, fy: str = "", db: Session = Depends(g
     year = fy_start_year(fy) if fy else fy_start_year(date.today())
     if year is None:
         raise HTTPException(400, "Financial year should read like 2026-27.")
-    blocks = ensure_tax_blocks(db, client.id)
+    # The names are read before the commit: after it each block would be read back from the database one by one.
+    block_names = [b.name for b in ensure_tax_blocks(db, client.id)]
     db.commit()
     books = {b.asset_id: b for b in db.query(models.DBAssetBook).filter(
         models.DBAssetBook.client_id == client.id).all()}
@@ -421,7 +422,7 @@ def fixed_asset_register(request: Request, fy: str = "", db: Session = Depends(g
     return {
         "fy": fy_label(year), "fys": [fy_label(y) for y in range(max(first, year - 15), fy_start_year(date.today()) + 2)][::-1],
         "assets": rows, "not_set_up": unset,
-        "methods": list(BOOK_METHODS), "blocks": [b.name for b in blocks],
+        "methods": list(BOOK_METHODS), "blocks": block_names,
         "defaults": {k: {"life_years": v[0], "tax_block": v[1]} for k, v in ASSET_BOOK_DEFAULTS.items()},
         "totals": {
             "cost": money(sum(r["cost"] for r in rows)),
@@ -485,7 +486,7 @@ def set_up_all_books(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/fixed-assets/{asset_id}/schedule")
-def asset_book_schedule(asset_id: int, request: Request, db: Session = Depends(get_db)):
+def asset_book_schedule(asset_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     a = asset_or_404(db, client.id, asset_id)
     b = asset_book_or_none(db, client.id, a.id)

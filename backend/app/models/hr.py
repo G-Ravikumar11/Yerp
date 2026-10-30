@@ -74,6 +74,13 @@ class DBEmployee(Base):
     emergency_contact = Column(String, default="")
     emergency_phone = Column(String, default="")
 
+    # Optional; the employee gives them in their own portal. Aadhaar is kept as 12 digits and shown masked to HR.
+    gender = Column(String, default="")
+    aadhaar_no = Column(String, default="")
+    pan_no = Column(String, default="")
+    uan_no = Column(String, default="")
+    esi_no = Column(String, default="")      # the ESIC insurance number; 10 digits (17 for an employer code)
+
     annual_leave_entitlement = Column(Float, default=25.0)
     sick_leave_entitlement = Column(Float, default=10.0)
 
@@ -142,6 +149,67 @@ class DBPayslip(Base):
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     employee = relationship("DBEmployee", back_populates="payslips")
+    # What the pay is made of, line by line, when the company's salary structure was used. Gone with the payslip.
+    lines = relationship("DBPayslipLine", cascade="all, delete-orphan", order_by="DBPayslipLine.sort_order, DBPayslipLine.id")
+
+
+class DBPayComponent(Base):
+    """One line of a company's salary structure: Basic is 40% of the monthly salary, PF is 12%, and so on.
+
+    HR keeps this list. It is read when a payslip is created, never when one is viewed or downloaded.
+    """
+    __tablename__ = "pay_components"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    kind = Column(String, default="earning")             # earning | deduction
+    basis = Column(String, default="percent")            # percent of the monthly salary | manual (HR types it on each payslip)
+    percent = Column(Float, default=0.0)
+    # Where the amount goes among the payslip's own totals: earning -> basic | allowance; deduction -> pf | esi | other.
+    counts_as = Column(String, default="")
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBPayslipLine(Base):
+    """A payslip's own copy of one component: its name, how it was worked out and the amount, as they stood when it was
+    made. Changing the salary structure afterwards does not touch payslips already issued."""
+    __tablename__ = "payslip_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    payslip_id = Column(Integer, ForeignKey("payslips.id"), nullable=False, index=True)
+    # Also names the employee, so deleting an employee takes their payslip lines with them.
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    component_id = Column(Integer, nullable=True)         # which component it came from; not a link, so removing one keeps history
+    name = Column(String, nullable=False)
+    kind = Column(String, default="earning")
+    basis = Column(String, default="percent")
+    percent = Column(Float, default=0.0)
+    counts_as = Column(String, default="")
+    amount = Column(Float, default=0.0)
+    sort_order = Column(Integer, default=0)
+
+
+class DBSalaryRevision(Base):
+    """One salary increment: what the monthly salary was, what it became and from which day. Kept so a payslip for an
+    earlier period is made from the salary of the time."""
+    __tablename__ = "salary_revisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    old_salary = Column(Float, default=0.0)
+    new_salary = Column(Float, default=0.0)
+    mode = Column(String, default="percent")             # how it was given: percent | amount
+    percent = Column(Float, default=0.0)
+    effective_date = Column(String, nullable=False)
+    valid_until = Column(String, default="")             # the day the next review falls due; a year on unless HR says otherwise
+    reason = Column(String, default="")
+    changed_by = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 class DBOnboardingItem(Base):

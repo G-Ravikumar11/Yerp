@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.compliance import BACK_CHARGE_KINDS, DOC_KINDS, RATING_FIELDS
 from app.core.audit import log_audit
@@ -29,14 +29,14 @@ def _contractor_or_404(db, client_id, contractor_id):
 
 
 @router.get("/api/compliance")
-def compliance_home(request: Request, db: Session = Depends(get_db)):
+def compliance_home(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return {"contractors": compliance_overview(db, client.id), "kinds": DOC_KINDS,
             "back_charge_kinds": list(BACK_CHARGE_KINDS), "rating_fields": list(RATING_FIELDS)}
 
 
 @router.get("/api/compliance/contractors/{contractor_id}")
-def contractor_status(contractor_id: int, request: Request, db: Session = Depends(get_db)):
+def contractor_status(contractor_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     con = _contractor_or_404(db, client.id, contractor_id)
     out = contractor_compliance(db, client.id, con.id)
@@ -82,7 +82,7 @@ def delete_document(doc_id: int, request: Request, db: Session = Depends(get_db)
 
 
 @router.get("/api/back-charges")
-def list_back_charges(request: Request, contractor_id: int = 0, status: str = "", db: Session = Depends(get_db)):
+def list_back_charges(request: Request, contractor_id: int = 0, status: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     q = db.query(models.DBBackCharge).filter(models.DBBackCharge.client_id == client.id)
     if contractor_id:
@@ -153,6 +153,6 @@ def rate_contractor(body: RatingIn, request: Request, db: Session = Depends(get_
 
 
 @router.get("/api/subcontract-orders/{order_id}/settlement")
-def order_settlement(order_id: int, request: Request, db: Session = Depends(get_db)):
+def order_settlement(order_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return settlement(db, client.id, order_id)

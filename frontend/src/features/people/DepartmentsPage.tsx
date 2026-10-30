@@ -8,7 +8,8 @@ import { SiteDepartmentsModal } from './SiteDepartmentsModal'
 import { DepartmentHierarchy } from './SiteHierarchy'
 
 export default function DepartmentsPage() {
-  const { isOwner } = useSession()
+  const { can } = useSession()
+  const canManage = can('people.manage')
   const q = useDepartments()
   const all = q.data ?? []
   const sites = useAllSites().data ?? []
@@ -31,9 +32,9 @@ export default function DepartmentsPage() {
         <section aria-label={`Departments on ${site.name}`} className="rounded-xl border border-border bg-card p-5 shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">{`${site.number} ${site.name}`.trim()}</h2>
-            {isOwner && <Button size="sm" variant="outline" onClick={() => setEditing(true)}>Edit</Button>}
+            {canManage && <Button size="sm" variant="outline" onClick={() => setEditing(true)}>Edit</Button>}
           </div>
-          {onSite.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No departments on this site yet.{isOwner && ' Use Edit to add them.'}</p> : (
+          {onSite.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">No departments on this site yet.{canManage && ' Use Edit to add them.'}</p> : (
             <ul className="mt-3 flex flex-wrap gap-2">
               {onSite.map((x) => (
                 <li key={x.id}>

@@ -5,6 +5,7 @@ import { buttonVariants } from '@/components/ui/button'
 import { useAuditLog, useBackupInfo, type AuditRow } from '@/api/settings'
 import { formatDate } from '@/lib/format'
 import { Alerts } from './Alerts'
+import { GmailSending } from './GmailSending'
 import { WipeWorkOrders } from './WipeWorkOrders'
 import { Section } from './Section'
 import { Storage } from './Storage'
@@ -50,6 +51,7 @@ function Activity() {
 export default function DataTab() {
   return (
     <>
+      <GmailSending />
       <Alerts />
       <Backup />
       <Storage />

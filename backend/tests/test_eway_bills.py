@@ -148,3 +148,22 @@ def test_another_tenant_cannot_see_it(tenant, second_tenant):
     job = setup_company(tenant)
     e = from_transfer(tenant, transfer(tenant, cement(tenant)), job)
     assert second_tenant.get("/api/eway-bills/%d" % e["id"]).status_code == 404
+
+
+def test_e_way_bills_are_read_by_those_who_make_them_or_move_the_goods(tenant):
+    import uuid
+    from fastapi.testclient import TestClient
+    import main
+    from conftest import make_employee
+    tag = uuid.uuid4().hex[:6]
+    # HR reads every portal (all bills, store inward and outward), so it can read these too.
+    for role, expected in (("staff", 403), ("hr", 200), ("stores", 200), ("accounts", 200)):
+        email = "ew-%s-%s@example.com" % (role, tag)
+        make_employee(tenant, email=email, password="Crew1234", permission_role=role, status="active")
+        c = TestClient(main.app)
+        c.__enter__()
+        try:
+            assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
+            assert c.get("/api/eway-bills").status_code == expected, role
+        finally:
+            c.__exit__(None, None, None)

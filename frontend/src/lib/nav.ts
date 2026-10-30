@@ -73,6 +73,7 @@ const NAV: NavEntry[] = [
       { label: 'Site Diary', path: '/projects/diary' },
       { label: 'Project Chart', path: '/projects/chart' },
       { label: 'Equipment & Plant', path: '/projects/equipment' },
+      { label: 'Budgeting', path: '/projects/budgeting', perm: 'reports.view' },
       { label: 'Project Profit', path: '/projects/profit', perm: 'reports.view' },
       { label: 'Cost by Project', path: '/projects/costs', perm: 'reports.view' },
     ],
@@ -122,7 +123,7 @@ const NAV: NavEntry[] = [
       { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage' },
       { label: 'Item Master', path: '/store/items', perm: 'items.manage' },
       { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all' },
-      { label: 'E-way Bills', path: '/store/eway' },
+      { label: 'E-way Bills', path: '/store/eway', perm: 'accounts.manage|stores.manage|stores.receive|bills.view_all|store.inward.view|store.outward.view' },
     ],
   },
   {
@@ -145,9 +146,9 @@ const NAV: NavEntry[] = [
   {
     kind: 'group',
     id: 'people',
+    perm: 'people.manage',
     label: 'People',
     icon: Users,
-    ownerOnly: true,
     items: [
       { label: 'Employees', path: '/people/employees', perm: 'people.manage' },
       { label: 'Departments', path: '/people/departments', perm: 'people.manage' },

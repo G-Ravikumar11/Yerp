@@ -73,7 +73,7 @@ def normalise_tax(value):
     return text if text != raw else None
 
 
-def repair_row(row, kind, taken_codes):
+def repair_row(row, kind):
     """Correct what has exactly one right answer; leave the rest alone.
 
     Every change is returned so it can be shown. A silent correction to a

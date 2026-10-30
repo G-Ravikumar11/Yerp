@@ -7,7 +7,7 @@ from sqlalchemy import func as sqlfunc
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import PORTAL_INVITE_DAYS, PORTAL_PARTY_TYPES
 from app.core.audit import log_audit
@@ -31,7 +31,7 @@ router = APIRouter()
 
 
 @router.get("/api/team")
-def list_team(request: Request, db: Session = Depends(get_db)):
+def list_team(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     rows = db.query(models.DBTeamMember).filter(
         models.DBTeamMember.client_id == client.id
@@ -114,6 +114,8 @@ def update_member(member_id: int, body: TeamUpdate, request: Request,
         member.password_hash = hash_password(body.password)
         member.accepted_at = member.accepted_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_audit(db, client.id, "team_password_set", "team", member.id, member.email, "", request)
+        from app.core import login_guard
+        login_guard.clear_account(member.email)       # the Master has just given them a new password
 
     log_audit(db, client.id, "team_updated", "team", member.id, member.email,
               member.role, request)
@@ -148,7 +150,7 @@ def remove_member(member_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/portal-access")
-def list_portal_access(request: Request, db: Session = Depends(get_db)):
+def list_portal_access(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     users = [portal_user_dict(db, u) for u in db.query(models.DBPortalUser).filter(
         models.DBPortalUser.client_id == client.id).order_by(models.DBPortalUser.id.desc()).all()]

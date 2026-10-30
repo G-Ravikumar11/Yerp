@@ -34,3 +34,13 @@ export function nextTarget(fallback: string): string {
   const next = new URLSearchParams(window.location.search).get('next') || ''
   return next.startsWith('/') && !next.startsWith('//') ? next : fallback
 }
+
+/** Yahoo's mark: the purple tile with its "Y!". */
+export function YahooMark() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-[18px] shrink-0" aria-hidden>
+      <rect width="24" height="24" rx="5" fill="#6001D2" />
+      <text x="11.2" y="17" textAnchor="middle" fontFamily="Arial, Helvetica, sans-serif" fontWeight="700" fontSize="14" fill="#fff">Y!</text>
+    </svg>
+  )
+}

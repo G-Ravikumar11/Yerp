@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { FileSpreadsheet, Plus, Zap } from 'lucide-react'
 import { Badge, Button, Field, Input, Select } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -13,7 +13,8 @@ export default function DocListPage({ kind, label, plural }: { kind: OutwardKind
   const nav = useNavigate()
   const { can } = useSession()
   const meta = useStoreMeta()
-  const [f, setF] = useState({ status: '', store_id: 0, q: '' })
+  const [params] = useSearchParams()
+  const [f, setF] = useState({ status: params.get('status') ?? '', store_id: 0, q: '' })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
   const docs = useDocs(kind, f)
   const columns: TableColumn<Doc>[] = [

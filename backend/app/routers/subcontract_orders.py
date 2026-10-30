@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.validators import import_guard
 from app import models
 from app.documents import sheet_forms
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.approvals import GONE_STATUSES
 from app.constants.boq import BOQ_HEADER_ALIASES, BOQ_PRICED
@@ -42,7 +42,7 @@ from app.core.currency import format_money_plain, inr, money, sheet_number, unit
 from app.core.dates import financial_year_label
 from app.core.files import file_counts, file_headers, image_data_url, served_type
 from app.core.gst import state_from_gstin
-from app.core.notifications import notify, notify_employee
+from app.core.notifications import default_from_email, notify, notify_employee, send_email_background
 from app.core.queries import prime
 from app.core.serials import next_wo_number
 from app.core.sheets import (
@@ -55,6 +55,7 @@ from app.core.sheets import (
 )
 from app.core.tenant_settings import put_setting
 from app.core.units import UNITS_OF_MEASURE
+from app.documents import form_pdf
 from app.documents.forms import (
     WO_STANDARD_TERMS,
     form_pdf_response,
@@ -76,7 +77,7 @@ from app.schemas.subcontract_orders import (
     WorkTypeIn,
 )
 from app.services.approvals import owner_label, raised_by_owner
-from app.services.boq import boq_given_to_contractors, boq_lines_of_job, boq_over_allotments, boq_tie_subcontract_lines
+from app.services.boq import boq_given_to_contractors, boq_lines_of_job, boq_over_allotments, boq_parts_of, boq_tie_subcontract_lines
 from app.services.crm import norm_name
 from app.services.subcontract_orders import (
     _vendor_or_404,
@@ -179,6 +180,56 @@ def wo_document(order_id: int, request: Request, db: Session = Depends(get_db)):
     return wo_document_payload(db, client, wo_or_404(db, client.id, order_id))
 
 
+# Only an order that has been approved goes to the sub contractor: a draft or one waiting for a decision is still ours.
+WO_EMAILABLE = ("APPROVED", "EXECUTED", "CLOSED")
+
+
+def wo_email_draft(db, client, order):
+    con = by_id(db, models.DBContractor, order.contractor_id)
+    company = client.company_name or "Our company"
+    what = (" for " + order.subject) if order.subject else ""
+    return {"to": (con.email if con else "") or "", "contractor": con.company_name if con else "",
+            "subject": "Work order %s%s - %s" % (order.wo_number, what, company),
+            "body": "Dear %s,\n\nPlease find our work order %s%s attached. Kindly sign and return a copy "
+                    "as your acceptance, and let us know when you can start.\n\nRegards,\n%s"
+                    % ((con.contact_person or con.company_name) if con else "Sir/Madam", order.wo_number, what, company),
+            "attachment": "%s.pdf" % re.sub(r"[^A-Za-z0-9]+", "_", order.wo_number or "work_order").strip("_")}
+
+
+@router.get("/api/wo/orders/{order_id}/email-draft")
+def wo_email_draft_view(order_id: int, request: Request, db: Session = Depends(get_db)):
+    client = require_erp_read(request, db)
+    return wo_email_draft(db, client, wo_or_404(db, client.id, order_id))
+
+
+@router.post("/api/wo/orders/{order_id}/send-email")
+def wo_send_email(order_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Emails the order, with its PDF, to the sub contractor. Sent only when somebody asks for it."""
+    client, _, actor = wo_actor(request, db)
+    order = wo_or_404(db, client.id, order_id)
+    if order.status not in WO_EMAILABLE:
+        raise HTTPException(409, "%s can be emailed once it is approved. It is %s now." % (order.wo_number, (order.status or "").lower()))
+    body = body or {}
+    draft = wo_email_draft(db, client, order)
+    to = (body.get("to") or draft["to"] or "").strip()
+    if not re.match(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$", to):
+        raise HTTPException(400, "Give a valid email address to send %s to." % order.wo_number)
+    if not form_pdf.PDF_AVAILABLE:
+        raise HTTPException(503, "The PDF library is not installed on this server, so the order cannot be attached.")
+    subject = (body.get("subject") or draft["subject"]).strip()[:200]
+    text = (body.get("body") or draft["body"]).strip()
+    pdf = form_pdf.build_form_pdf(wo_form_spec(db, client, order))
+    ok, message = send_email_background(
+        to, subject, text, "%s <%s>" % (client.company_name or "Y ERP", default_from_email()), client_id=client.id,
+        pdf_b64=base64.b64encode(pdf).decode(), pdf_filename=draft["attachment"])
+    if not ok:
+        raise HTTPException(502, "%s was not sent: %s" % (order.wo_number, message))
+    log_audit(db, client.id, "subcontract_emailed", "subcontract_order", order.id, order.wo_number,
+              "Sent to %s by %s" % (to, actor or "the Master"), request)
+    db.commit()
+    return {"ok": True, "to": to, "message": "%s sent to %s." % (order.wo_number, to)}
+
+
 @router.get("/api/wo/orders/{order_id}/document.pdf")
 def wo_document_pdf(order_id: int, request: Request, db: Session = Depends(get_db)):
     """The order as the document that gets signed.
@@ -275,7 +326,7 @@ def wo_create_business_unit(body: BusinessUnitIn, request: Request,
 
 
 @router.get("/api/wo/contractors/{con_id}/documents/{key}")
-def wo_contractor_document(con_id: int, key: str, request: Request, db: Session = Depends(get_db)):
+def wo_contractor_document(con_id: int, key: str, request: Request, db: Session = Depends(get_read_db)):
     """One of the registration form's uploaded documents, as the file it was given."""
     client = require_erp_read(request, db)
     con = db.query(models.DBContractor).filter(models.DBContractor.id == con_id,
@@ -300,7 +351,7 @@ def wo_contractor_document(con_id: int, key: str, request: Request, db: Session 
 
 
 @router.get("/api/wo/contractors")
-def wo_list_contractors(request: Request, q: str = "", status: str = "", db: Session = Depends(get_db)):
+def wo_list_contractors(request: Request, q: str = "", status: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     query = db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id)
@@ -652,7 +703,9 @@ def wo_take_head(db, client, order, body, creating):
     company's own, every percentage is a percentage, the dates are dates and run forwards."""
     order.business_unit_id = owned_or_400(db, models.DBBusinessUnit, client.id, body.business_unit_id, "business unit")
     was_contractor = order.contractor_id
-    order.contractor_id = owned_or_400(db, models.DBContractor, client.id, body.contractor_id, "contractor")
+    # An order keeps its sub contractor: a save that leaves the field blank (or does not send it) changes the others.
+    chosen = body.contractor_id if (creating or body.contractor_id) else was_contractor
+    order.contractor_id = owned_or_400(db, models.DBContractor, client.id, chosen, "contractor")
     order.job_id = owned_or_400(db, models.DBJob, client.id, body.job_id, "project")
     order.work_type = (body.work_type or "").strip()
     order.subject = (body.subject or "").strip()
@@ -686,6 +739,8 @@ def wo_take_head(db, client, order, body, creating):
     order.ld_cap_percent = wo_percent(body.ld_cap_percent, "liquidated damages cap")
     order.billing_cycle = wo_billing_cycle(body.billing_cycle)
     order.payment_days = max(0, int(body.payment_days or 0))
+    if creating and not order.contractor_id:
+        raise HTTPException(400, "Choose the sub contractor this work order is for before opening it.")
 
 
 @router.post("/api/wo/orders")
@@ -790,7 +845,7 @@ def wo_copy_order(order_id: int, request: Request, db: Session = Depends(get_db)
 
 @router.get("/api/wo/rates")
 def wo_last_rates(request: Request, item_code: str = "", description: str = "",
-                  db: Session = Depends(get_db)):
+                  db: Session = Depends(get_read_db)):
     """What this line was last ordered at, and from whom.
 
     Farvision's "copy rate": the rate on the previous order for the same
@@ -940,6 +995,8 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
     db.query(models.DBSubcontractItem).filter(
         models.DBSubcontractItem.order_id == order.id).delete()
     kept = 0
+    dropped = []
+    project_boq = {l.key: l for l in boq_lines_of_job(db, client.id, order.job_id)}
     for index, line in enumerate(body.lines):
         description = (line.item_description or "").strip()
         if not description:
@@ -953,6 +1010,10 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
                                      % (index + 1))
         tolerance = 0.0 if header else wo_percent(line.tolerance_percent,
                                                   "tolerance on line %d" % (index + 1))
+        parts, gone = ([], 0) if header else wo_checked_parts(line.boq_parts, qty, project_boq)
+        if gone:
+            dropped.append("line %d: %d of the BOQ lines it adds up %s no longer on the project BOQ" % (
+                index + 1, gone, "is" if gone == 1 else "are"))
         db.add(models.DBSubcontractItem(
             order_id=order.id, activity_no=(line.activity_no or "").strip(),
             item_code=(line.item_code or "").strip(), item_description=description,
@@ -961,7 +1022,8 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
             total_amount=money(qty * rate), is_header=header, tolerance_percent=tolerance,
             budget_id=None if header else wo_valid_budget_id(db, client.id, order, line.budget_id),
             cost_centre=(line.cost_centre or "").strip(), display_order=index,
-            boq_key=(line.boq_key or "").strip()[:40] if not header else ""))
+            boq_key=(line.boq_key or "").strip()[:40] if not header and not parts else "",
+            boq_parts=json.dumps(parts) if parts else ""))
         kept += 1
 
     db.flush()
@@ -971,7 +1033,8 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
     recost_order(db, order)
     db.commit()
     db.refresh(order)
-    over = boq_over_allotments(db, client.id, [l.boq_key or "" for l in saved])
+    over = boq_over_allotments(db, client.id, [l.boq_key or "" for l in saved] + [p["key"] for l in saved for p in boq_parts_of(l)])
+    over = over + dropped
     if loose:
         over = over + ["%d line%s not on the project BOQ (first: %s) - pick %s from the BOQ, or add %s to the BOQ first" % (
             len(loose), "" if len(loose) == 1 else "s", loose[0].item_description[:40],
@@ -1004,7 +1067,7 @@ def wo_set_terms(order_id: int, body: TermsIn, request: Request,
 
 
 @router.get("/api/wo/terms/library")
-def wo_terms_library(request: Request, db: Session = Depends(get_db)):
+def wo_terms_library(request: Request, db: Session = Depends(get_read_db)):
     """The clauses this trade puts on nearly every order.
 
     Offered as a starting point rather than imposed: they are edited per order,
@@ -1210,7 +1273,7 @@ def wo_delete_order(order_id: int, request: Request, db: Session = Depends(get_d
 
 
 @router.get("/api/wo/contractors/{con_id}/delete-preview")
-def vendor_delete_preview(con_id: int, request: Request, db: Session = Depends(get_db)):
+def vendor_delete_preview(con_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     require_owner(request, db)
     con = _vendor_or_404(db, client, con_id)
@@ -1248,7 +1311,7 @@ def vendor_delete(con_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/work-orders/delete-all-preview")
-def work_orders_delete_all_preview(request: Request, db: Session = Depends(get_db)):
+def work_orders_delete_all_preview(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     require_owner(request, db)
     return {"phrase": WIPE_PHRASE,
@@ -1449,7 +1512,7 @@ def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
 
 
 @router.get("/api/wo/contractors/{con_id}/registration.pdf")
-def contractor_registration_pdf(con_id: int, request: Request, db: Session = Depends(get_db)):
+def contractor_registration_pdf(con_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     con = contractor_or_404(db, client.id, con_id)
     return form_pdf_response(registration_form_spec(db, client, con), "registration_%s" % (con.vendor_code or con.id))
@@ -1467,7 +1530,7 @@ def contractor_registration_xlsx(con_id: int, request: Request, db: Session = De
 
 
 @router.get("/api/wo/contractors.xlsx")
-def contractors_register_xlsx(request: Request, db: Session = Depends(get_db)):
+def contractors_register_xlsx(request: Request, db: Session = Depends(get_read_db)):
     """Every sub contractor on the books with their vendor code, as the office's
     vendor list - its PDF twin beside it."""
     client = require_erp_read(request, db)
@@ -1678,6 +1741,31 @@ def wo_charge_budget(order_id: int, body: ChargeBudgetIn, request: Request,
             "message": "%d line%s charged." % (n, "" if n == 1 else "s")}
 
 
+def wo_checked_parts(raw, quantity, project_boq):
+    """The BOQ lines a heading-total line adds up, and how many of them are no longer on this project's BOQ.
+
+    The parts are scaled to the quantity on the line, so editing the total in the schedule shares the change out
+    instead of leaving them out of step. A quantity cleared to nothing leaves them as they were, so typing it back
+    in later still knows which BOQ lines it is. A part whose BOQ line a revision took away is let go, and the save
+    says so, as it does for any other line that is not on the BOQ."""
+    parts, gone = [], 0
+    for p in raw or []:
+        key = str((p or {}).get("key") or "")
+        qty = money((p or {}).get("qty") or 0)
+        if not key:
+            continue
+        if key not in project_boq or project_boq[key].kind not in BOQ_PRICED:
+            gone += 1
+            continue
+        if qty > 0:
+            parts.append({"key": key, "qty": qty})
+    total = sum(p["qty"] for p in parts)
+    if parts and total > 0 and quantity > 0 and abs(total - quantity) > 0.0001:
+        scale = quantity / total
+        parts = [{"key": p["key"], "qty": money(p["qty"] * scale)} for p in parts]
+    return parts, gone
+
+
 @router.post("/api/wo/orders/{order_id}/boq-lines")
 def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
     """Lines of the project BOQ, ready to go into a contractor order's schedule: pick them by key, give the quantity and the
@@ -1685,10 +1773,32 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
     client, _, _ = wo_actor(request, db)
     order = wo_or_404(db, client.id, order_id)
     wanted = body.get("lines") or []
-    keys = [str(w.get("key") or "") for w in wanted]
+    groups = body.get("groups") or []
+    keys = [str(w.get("key") or "") for w in wanted] + [str(p.get("key") or "") for g in groups for p in (g.get("parts") or [])]
     found = {l.key: l for l in boq_lines_of_job(db, client.id, order.job_id) if l.key in set(keys)}
     given = boq_given_to_contractors(db, client.id, set(keys))
     out, warn = [], []
+    # A heading taken as one line: the quantities of the lines under it added up, at one contractor rate. Lines of
+    # different units are never added together, so a heading in two units comes back as two lines.
+    for g in groups:
+        by_unit = {}
+        for p in g.get("parts") or []:
+            l = found.get(str(p.get("key") or ""))
+            qty = money(p.get("quantity") or 0)
+            if l and l.kind in BOQ_PRICED and qty > 0:
+                by_unit.setdefault((l.uom or "").strip(), []).append((l, qty))
+        rate = unit_rate(g.get("rate") or 0)
+        for uom, members in by_unit.items():
+            qty = money(sum(q for _, q in members))
+            out.append({"boq_key": "", "boq_parts": [{"key": l.key, "qty": q} for l, q in members],
+                        "activity_no": str(g.get("group_code") or ""), "item_code": "",
+                        "item_description": str(g.get("description") or members[0][0].description)
+                        + ((" (%s)" % uom) if len(by_unit) > 1 and uom else ""),
+                        "technical_spec": "", "uom": uom, "quantity": qty, "unit_rate": rate})
+            for l, q in members:
+                total = (given.get(l.key) or {"qty": 0.0})["qty"] + q
+                if total > (l.quantity or 0) + 0.0001:
+                    warn.append("%s: %s would be given in all against %s in the BOQ" % (l.description[:30], money(total), money(l.quantity)))
     for w in wanted:
         l = found.get(str(w.get("key") or ""))
         if not l or l.kind not in BOQ_PRICED:

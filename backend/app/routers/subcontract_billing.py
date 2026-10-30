@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.validators import import_guard
 from app import models
 from app.documents import sheet_forms
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.common import HARDCOPY_TYPES, RETENTION_STAGES, SUB_TRANSITIONS
 from app.core.audit import log_audit
@@ -122,7 +122,7 @@ router = APIRouter()
 
 
 @router.get("/api/sub-bills/{bill_id}/delete-preview")
-def sub_bill_delete_preview(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def sub_bill_delete_preview(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
     require_owner(request, db)
     bill = sub_bill_or_404(db, client.id, bill_id)
@@ -164,7 +164,7 @@ def sub_bill_delete(bill_id: int, request: Request, db: Session = Depends(get_db
 
 @router.get("/api/mb/{work_order_id}")
 def measurement_book(work_order_id: int, request: Request,
-                     db: Session = Depends(get_db)):
+                     db: Session = Depends(get_read_db)):
     """Every ordered line, with what has been measured and what is left.
 
     The balance is the number somebody on site actually wants: how much of
@@ -992,7 +992,7 @@ def sub_bill_attach_hardcopy(bill_id: int, request: Request, file: UploadFile = 
 
 
 @router.get("/api/sub-bills/{bill_id}/hardcopy")
-def sub_bill_hardcopy(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def sub_bill_hardcopy(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     bill = sub_bill_or_404(db, client.id, bill_id)
     if not bill.scan_file_id:
@@ -1110,7 +1110,7 @@ def credit_sub_bill(bill_id: int, body: CreditNoteIn, request: Request, db: Sess
 
 
 @router.get("/api/sub-bills/{bill_id}/credit-notes")
-def list_sub_bill_credit_notes(bill_id: int, request: Request, db: Session = Depends(get_db)):
+def list_sub_bill_credit_notes(bill_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     bill = sub_bill_or_404(db, client.id, bill_id)
     notes = db.query(models.DBCreditNote).filter(
@@ -1334,7 +1334,7 @@ def export_sub_bill(bill_id: int, request: Request, db: Session = Depends(get_db
 
 
 @router.get("/api/material-recoveries")
-def list_material_recoveries(request: Request, order_id: int = 0, db: Session = Depends(get_db)):
+def list_material_recoveries(request: Request, order_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     q = db.query(models.DBMaterialRecovery).filter(
         models.DBMaterialRecovery.client_id == client.id)
@@ -1383,7 +1383,7 @@ def sub_measurement_bulk_delete(body: dict, request: Request, db: Session = Depe
 
 
 @router.get("/api/retention")
-def retention_overview(request: Request, db: Session = Depends(get_db)):
+def retention_overview(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     positions = retention_positions(db, client.id)
     settled = settled_amounts(db, client.id)
@@ -1537,7 +1537,7 @@ def certify_release(release_id: int, request: Request, body: dict = None, db: Se
 
 
 @router.get("/api/retention/releases/{release_id}")
-def get_release(release_id: int, request: Request, db: Session = Depends(get_db)):
+def get_release(release_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     return release_dict(db, release_or_404(db, client.id, release_id))
 
@@ -1564,7 +1564,7 @@ def cancel_release(release_id: int, request: Request, body: dict = None,
 
 
 @router.get("/api/retention/releases/{release_id}/export.xlsx")
-def export_release(release_id: int, request: Request, db: Session = Depends(get_db)):
+def export_release(release_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The release as a bill: the RA bills whose retention it gives back,
     then what was held, released before, released now, and the tax."""
     client = require_items_access(request, db, "bills.view_all")

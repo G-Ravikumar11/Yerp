@@ -151,3 +151,65 @@ def test_a_request_is_withdrawn_by_whoever_asked(tenant, office):
     r = clerk.post("/api/payment-requests", json={"doc_type": "supplier_bill", "doc_id": bill["id"], "amount": 1000}).json()["request"]
     assert clerk.post("/api/payment-requests/%d/cancel" % r["id"]).status_code == 200
     assert tenant.get("/api/payment-requests?status=open").json()["summary"]["open"] == 0
+
+
+# --- what was approved is what is paid --------------------------------------------------------------------------------
+# The payer chooses how and when; the payee, the project and the head are the approver's, whichever way it is paid.
+
+def _approved(clerk, approver, **body):
+    res = clerk.post("/api/payment-requests", json=body)
+    assert res.status_code == 200, res.text
+    r = res.json()["request"]
+    assert approver.post("/api/payment-requests/%d/decide" % r["id"], json={"decision": "approve"}).status_code == 200
+    return r
+
+
+def test_an_approved_expense_cannot_be_paid_to_someone_else_or_another_project(tenant, office):
+    clerk, head = office
+    job = tenant.post("/api/jobs", json={"name": "Vizag site"}).json()
+    other = tenant.post("/api/jobs", json={"name": "Hyderabad site"}).json()
+    r = _approved(clerk, head, doc_type="expense", head="Machinery hire", party_name="Sai Earthmovers", amount=45000, job_id=job["id"])
+    pay = {"doc_type": "expense", "head": "Machinery hire", "party_name": "Sai Earthmovers", "amount": 45000, "job_id": job["id"], "request_id": r["id"]}
+
+    res = clerk.post("/api/money/entries", json=dict(pay, party_name="Ravi Traders"))
+    assert res.status_code == 409 and "payee cannot be changed" in res.json()["detail"]
+    res = clerk.post("/api/money/entries", json=dict(pay, job_id=other["id"]))
+    assert res.status_code == 409 and "project cannot be changed" in res.json()["detail"]
+    res = clerk.post("/api/money/entries", json=dict(pay, head="Diesel & fuel"))
+    assert res.status_code == 409 and "head cannot be changed" in res.json()["detail"]
+    assert clerk.post("/api/money/entries", json=dict(pay, amount=50000)).status_code == 400                 # nor more than approved
+    assert tenant.get("/api/payment-requests?status=APPROVED").json()["requests"][0]["status"] == "APPROVED"  # nothing was paid
+
+    # The same payee written differently is the same payee; what is recorded is what was approved.
+    res = clerk.post("/api/money/entries", json=dict(pay, party_name="  sai   earthmovers "))
+    assert res.status_code == 200, res.text
+    entry = res.json()["entry"]
+    assert entry["party_name"] == "Sai Earthmovers" and entry["job_id"] == job["id"] and entry["head"] == "Machinery hire"
+
+
+def test_an_approved_advance_is_paid_to_the_approved_party_only(tenant, office):
+    clerk, head = office
+    job = tenant.post("/api/jobs", json={"name": "Vizag site"}).json()
+    r = _approved(clerk, head, doc_type="on_account", party_type="supplier", party_name="ACC Ltd", amount=20000, job_id=job["id"])
+    res = clerk.post("/api/money/entries", json={"doc_type": "on_account", "direction": "OUT", "party_type": "contractor", "party_name": "ACC Ltd",
+                                                 "amount": 20000, "request_id": r["id"]})
+    assert res.status_code == 409 and "payee" in res.json()["detail"]
+    res = clerk.post("/api/money/entries", json={"doc_type": "on_account", "direction": "IN", "amount": 20000, "request_id": r["id"]})
+    assert res.status_code == 409                                                                             # it was approved as money going out
+    # Left out, the approved payee and project are filled in.
+    res = clerk.post("/api/money/entries", json={"doc_type": "on_account", "amount": 20000, "request_id": r["id"]})
+    assert res.status_code == 200, res.text
+    entry = res.json()["entry"]
+    assert entry["party_name"] == "ACC Ltd" and entry["party_type"] == "supplier" and entry["job_id"] == job["id"] and entry["direction"] == "OUT"
+
+
+def test_a_bill_whose_payee_changed_after_approval_is_not_paid(tenant, office):
+    from app import db as database, models
+    clerk, head = office
+    bill = supplier_bill(tenant, amount=50000, tax=9000)
+    r = _approved(clerk, head, doc_type="supplier_bill", doc_id=bill["id"], amount=59000)
+    with database.SessionLocal() as s:
+        s.get(models.DBBill, bill["id"]).vendor_name = "Someone Else Pvt Ltd"
+        s.commit()
+    res = clerk.post("/api/payment-requests/%d/pay" % r["id"], json={"mode": "Bank transfer"})
+    assert res.status_code == 409 and "Raise a new request" in res.json()["detail"]

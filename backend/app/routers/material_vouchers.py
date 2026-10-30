@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.core.auth import require_erp_read, wo_actor
 from app.core.sheets import sheet_response
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.documents import form_pdf
 from app.documents.forms import _field_doc, _pre, form_pdf_response
 from app.services.projects import job_or_404
@@ -68,7 +68,7 @@ def _list(db, client_id, job_id):
 
 
 @router.get("/api/material-vouchers")
-def voucher_list(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def voucher_list(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     """Every voucher, in Sl. No. order."""
     client = require_erp_read(request, db)
     projects = _projects(db, client.id)
@@ -121,7 +121,7 @@ def _qty(n):
 
 
 @router.get("/api/material-vouchers/{vid}/document.pdf")
-def voucher_pdf(vid: int, request: Request, db: Session = Depends(get_db)):
+def voucher_pdf(vid: int, request: Request, db: Session = Depends(get_read_db)):
     """The voucher as the printed form: the company's head, MATERIAL ISSUE VOUCHER, the four fields, the items, and
     the four signatures."""
     client = require_erp_read(request, db)
@@ -149,7 +149,7 @@ def voucher_pdf(vid: int, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/material-vouchers.xlsx")
-def voucher_register(request: Request, job_id: int = 0, db: Session = Depends(get_db)):
+def voucher_register(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     """The register: every line of every voucher, in Sl. No. order, with the voucher's fields beside it."""
     client = require_erp_read(request, db)
     projects = _projects(db, client.id)

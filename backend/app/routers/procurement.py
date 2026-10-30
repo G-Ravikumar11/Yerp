@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 
 from app.constants.approvals import PO_APPROVED, PO_AWAITING_APPROVAL, PO_REJECTED
 from app.constants.common import GRN_EDITABLE, PURCHASE_ORDER_STATUSES
@@ -181,7 +181,7 @@ def delete_purchase_order(order_id: int, request: Request, db: Session = Depends
 
 
 @router.get("/api/purchase-orders/{po_id}/export.xlsx")
-def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_db)):
+def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_read_db)):
     """One purchase order, as sent to the supplier."""
     client = require_items_access(request, db, ("purchase.manage", "bills.view_all", "stores.receive"))
     po = db.query(models.DBPurchaseOrder).filter(
@@ -244,7 +244,7 @@ def grn_open_orders(request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/api/grn")
-def list_goods_receipts(request: Request, db: Session = Depends(get_db),
+def list_goods_receipts(request: Request, db: Session = Depends(get_read_db),
                         purchase_order_id: int = 0, status: str = ""):
     client = require_erp_read(request, db)
     q = db.query(models.DBGoodsReceipt).filter(
@@ -436,7 +436,7 @@ def delete_goods_receipt(grn_id: int, request: Request, db: Session = Depends(ge
 
 
 @router.get("/api/grn/{grn_id}/export.xlsx")
-def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_read_db)):
     """The receipt as a workbook, for the file the store keeps by the gate."""
     client = require_erp_read(request, db)
     grn = grn_or_404(db, client.id, grn_id)
@@ -466,13 +466,13 @@ def export_goods_receipt(grn_id: int, request: Request, db: Session = Depends(ge
 
 
 @router.get("/api/grn/{grn_id}")
-def get_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_db)):
+def get_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return grn_dict(db, grn_or_404(db, client.id, grn_id), detail=True)
 
 
 @router.get("/api/match/three-way")
-def three_way_match(request: Request, db: Session = Depends(get_db),
+def three_way_match(request: Request, db: Session = Depends(get_read_db),
                     job_id: int = 0, only_exceptions: bool = False):
     """Every order with what was ordered, what arrived and what was billed.
 
@@ -679,7 +679,7 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
 
 
 @router.get("/api/suppliers")
-def list_suppliers(request: Request, q: str = "", db: Session = Depends(get_db)):
+def list_suppliers(request: Request, q: str = "", db: Session = Depends(get_read_db)):
     """The supplier master - and the names already on orders and bills that
     are not in it yet, so the history can be adopted in one click."""
     client = require_erp_read(request, db)
@@ -750,7 +750,7 @@ def adopt_suppliers(request: Request, body: dict = None, db: Session = Depends(g
 
 
 @router.get("/api/rfqs")
-def list_rfqs(request: Request, db: Session = Depends(get_db)):
+def list_rfqs(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     rows = rfq_list_rows(db, client.id, db.query(models.DBRfq).filter(
         models.DBRfq.client_id == client.id).order_by(models.DBRfq.id.desc()).limit(300).all())
@@ -829,7 +829,7 @@ def edit_rfq(rfq_id: int, body: RfqIn, request: Request, db: Session = Depends(g
 
 
 @router.get("/api/rfqs/{rfq_id}")
-def get_rfq(rfq_id: int, request: Request, db: Session = Depends(get_db)):
+def get_rfq(rfq_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return comparative_statement(db, rfq_or_404(db, client.id, rfq_id))
 
@@ -972,6 +972,17 @@ def purchase_order_pdf(order_id: int, request: Request, db: Session = Depends(ge
     return form_pdf_response(po_form_spec(db, client, order), order.number)
 
 
+@router.get("/api/purchase-orders/{order_id}/email-draft")
+def purchase_order_email_draft(order_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The plain wording for the email to the supplier, to read and change before it is sent. Nothing is sent."""
+    client = require_erp_read(request, db)
+    order = purchase_order_or_404(db, client.id, order_id)
+    from app.ai.po_supplier_email import plain_draft
+    draft = plain_draft(purchase_order_to_dict(db, order), client.company_name or "Our company")
+    return {"to": order.supplier_email or "", "subject": draft["subject"], "body": draft["body"],
+            "attachment": "%s.pdf" % re.sub(r"[^A-Za-z0-9]+", "_", order.number).strip("_")}
+
+
 @router.post("/api/purchase-orders/{order_id}/send-email")
 def send_purchase_order_email(order_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
     """Email the purchase order, with its PDF, to the supplier from the company's connected Gmail.
@@ -1003,7 +1014,7 @@ def send_purchase_order_email(order_id: int, request: Request, body: dict = None
 
 @router.get("/api/rfqs/{rfq_id}/comparison.xlsx")
 def rfq_comparison_export(rfq_id: int, request: Request, supplier: List[str] = Query(default=[]),
-                          db: Session = Depends(get_db)):
+                          db: Session = Depends(get_read_db)):
     """The comparative statement: each line against each supplier, then each
     supplier's total landed at site and its rank. `supplier` (repeat it) narrows
     it to the suppliers the buyer is comparing; none means everybody."""
@@ -1030,7 +1041,7 @@ def rfq_comparison_export(rfq_id: int, request: Request, supplier: List[str] = Q
 
 @router.get("/api/rfqs/{rfq_id}/comparison.pdf")
 def rfq_comparison_pdf(rfq_id: int, request: Request, supplier: List[str] = Query(default=[]),
-                       db: Session = Depends(get_db)):
+                       db: Session = Depends(get_read_db)):
     """The same comparison as a signed-off sheet to print: A4 landscape, one column a supplier."""
     client = require_erp_read(request, db)
     r = rfq_or_404(db, client.id, rfq_id)

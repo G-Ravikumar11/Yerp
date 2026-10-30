@@ -30,6 +30,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/projects/diary': 'The site diary: one entry a day with weather, labour, plant, work done, hold-ups and visitors. A signed-off day is changed only with a reason, and the change is kept.',
   '/projects/chart': 'The project chart: every activity as a bar against time, to see what is running, late or next.',
   '/projects/equipment': 'Equipment & Plant: machines and vehicles, where each one is, service due dates, fuel and rentals.',
+  '/projects/budgeting': "Our own cost for each line of the client's BOQ - material, labour and the rest - against what the BOQ pays, and the profit that leaves.",
   '/projects/profit': 'What each project has earned against what it has cost, so you can see where money is made or lost.',
   '/projects/costs': 'The cost of each project by head - materials, labour, subcontract and plant. Open one for the lines behind it.',
   '/projects/costs/:id': 'The costs of one project, line by line, by head and by month.',

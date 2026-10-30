@@ -62,7 +62,7 @@ def test_a_draft_is_shown_then_saved_only_when_applied(tenant, monkeypatch):
     res = tenant.post("/api/ai/planning/jobs/%d/draft/apply" % job_id, json={"work_order_id": wo["id"], "activities": out["activities"]})
     assert res.status_code == 200, res.text
     a = res.json()["schedule"]["activities"]
-    assert len(a) == 1 and a[0]["work_order_line_id"] == line_id and a[0]["planned_finish"] == d(40) and a[0]["code"] == "A10"
+    assert len(a) == 1 and a[0]["work_order_line_id"] == line_id and a[0]["planned_finish"] == (d(39) if (date.today() + timedelta(days=40)).weekday() == 6 else d(40)) and a[0]["code"] == "A10"
     again = tenant.post("/api/ai/planning/jobs/%d/draft/apply" % job_id, json={"work_order_id": wo["id"], "activities": out["activities"]})
     assert again.status_code == 409                                                           # already on the programme
 
@@ -92,10 +92,12 @@ def test_a_project_with_only_a_boq_is_drafted_from_it(tenant, monkeypatch):
     res = tenant.post("/api/ai/planning/jobs/%d/draft/apply" % jid, json={"boq": True, "activities": out["activities"]})
     assert res.status_code == 200, res.text
     acts = res.json()["schedule"]["activities"]
-    assert len(acts) == 4 and acts[0]["planned_start"] == d(0)
+    # The first activity starts today - or on the Monday, when today is a Sunday: the programme does not work Sundays.
+    first = d(1) if date.today().weekday() == 6 else d(0)
+    assert len(acts) == 4 and acts[0]["planned_start"] == first
     # The span asked for, or a day or two after it: an activity that would start on a Sunday starts on the Monday,
     # and the ones waiting on it move with it.
-    assert d(60) <= acts[-1]["planned_finish"] <= d(63), acts[-1]["planned_finish"]
+    assert d(59) <= acts[-1]["planned_finish"] <= d(63), acts[-1]["planned_finish"]
     again = boq_draft(tenant, jid)
     assert again.status_code == 409 and "already on the programme" in again.json()["detail"]
     # drawing from the BOQ by item afterwards finds the same lines already placed

@@ -53,9 +53,10 @@ def test_marking_read(tenant, sent):
     assert tenant.get("/api/alerts").json()["unread"] == 0
 
 
-def test_money_in_is_announced_and_emailed_to_whoever_is_named(tenant, sent):
+def test_money_in_is_emailed_to_whoever_is_named_once_ticked(tenant, sent):
     b = certified_bill(tenant)
-    tenant.put("/api/alerts/settings", json={"emails": ["accounts@yprojects.co.in"]})
+    # nothing is mailed on its own: the company ticks the alerts it wants emailed
+    tenant.put("/api/alerts/settings", json={"emails": ["accounts@yprojects.co.in"], "channels": {"money_in": ["email"]}})
     tenant.post("/api/money/entries", json={"doc_type": "ra_bill", "doc_id": b["id"], "amount": 5000,
                                             "mode": "NEFT", "reference": "UTR1"})
     assert kinds(tenant)[0] == "money_in"

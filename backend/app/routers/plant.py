@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, get_read_db
 from app.core.audit import log_audit
 from app.core.auth import require_erp_read, wo_actor
 from app.core.currency import money
@@ -75,7 +75,7 @@ def people(db, client_id, ids):
 # ---- dashboard ---------------------------------------------------------------------------------
 
 @router.get("/api/plant/dashboard")
-def dashboard(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+def dashboard(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     """Every figure is worked out from the records each time it is asked for."""
     client = require_erp_read(request, db)
     f0, t0 = month_bounds()
@@ -152,7 +152,7 @@ def dashboard(request: Request, date_from: str = "", date_to: str = "", db: Sess
 
 
 @router.get("/api/plant/costs")
-def plant_costs(request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, db: Session = Depends(get_db)):
+def plant_costs(request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     rows = sorted(costs(db, client.id, date_from[:10], date_to[:10], asset_id).values(), key=lambda r: -r["total"])
     keys = ("operating_hours", "fuel", "maintenance", "rental", "rental_outstanding", "other_expenses", "labour_hours", "labour_cost", "total")
@@ -162,7 +162,7 @@ def plant_costs(request: Request, date_from: str = "", date_to: str = "", asset_
 # ---- people and allocations ---------------------------------------------------------------------
 
 @router.get("/api/plant/employees")
-def plant_employees(request: Request, db: Session = Depends(get_db)):
+def plant_employees(request: Request, db: Session = Depends(get_read_db)):
     """The company's employees as the plant screens need them - code, name, mobile, designation, status - and what each is on."""
     client = require_erp_read(request, db)
     on = {}
@@ -189,7 +189,7 @@ def allocation_dict(al, assets, staff, jobs):
 
 
 @router.get("/api/plant/allocations")
-def list_allocations(request: Request, asset_id: int = 0, employee_id: int = 0, status: str = "", db: Session = Depends(get_db)):
+def list_allocations(request: Request, asset_id: int = 0, employee_id: int = 0, status: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     P = models.DBPlantAllocation
     q = db.query(P).filter(P.client_id == client.id)
@@ -325,7 +325,7 @@ def log_dict(l, assets, staff, jobs):
 
 @router.get("/api/plant/logs")
 def list_logs(request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, employee_id: int = 0, status: str = "",
-              db: Session = Depends(get_db)):
+              db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     L = models.DBAssetLog
     q = db.query(L).filter(L.client_id == client.id)
@@ -480,7 +480,7 @@ def decide_log(lid: int, body: DecisionIn, request: Request, db: Session = Depen
 
 
 @router.get("/api/plant/settings")
-def plant_settings(request: Request, db: Session = Depends(get_db)):
+def plant_settings(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     return {"regular_hours": regular_hours(db, client.id)}
 
@@ -513,7 +513,7 @@ def fuel_dict(f, assets, jobs):
 
 
 @router.get("/api/plant/fuel")
-def list_fuel(request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, db: Session = Depends(get_db)):
+def list_fuel(request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     F = models.DBPlantFuel
     q = db.query(F).filter(F.client_id == client.id)
@@ -605,7 +605,7 @@ def maint_dict(s, assets):
 
 
 @router.get("/api/plant/maintenance")
-def list_maintenance(request: Request, asset_id: int = 0, status: str = "", date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+def list_maintenance(request: Request, asset_id: int = 0, status: str = "", date_from: str = "", date_to: str = "", db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     S = models.DBAssetService
     q = db.query(S).filter(S.client_id == client.id)
@@ -802,7 +802,7 @@ def provider_dict(p):
 
 
 @router.get("/api/plant/rental-providers")
-def list_providers(request: Request, db: Session = Depends(get_db)):
+def list_providers(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     rows = db.query(models.DBPlantRentalProvider).filter(models.DBPlantRentalProvider.client_id == client.id).order_by(models.DBPlantRentalProvider.name).all()
     sup = [{"id": s.id, "name": s.name} for s in db.query(models.DBSupplier).filter(models.DBSupplier.client_id == client.id).order_by(models.DBSupplier.name).all()]
@@ -884,7 +884,7 @@ def rental_dict(db, r, assets, providers):
 
 
 @router.get("/api/plant/rentals")
-def list_rentals(request: Request, status: str = "", provider_id: int = 0, db: Session = Depends(get_db)):
+def list_rentals(request: Request, status: str = "", provider_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     R = models.DBPlantRental
     q = db.query(R).filter(R.client_id == client.id)
@@ -1060,7 +1060,7 @@ def expense_dict(e, assets, jobs):
 
 
 @router.get("/api/plant/expenses")
-def list_expenses(request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, category: str = "", db: Session = Depends(get_db)):
+def list_expenses(request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, category: str = "", db: Session = Depends(get_read_db)):
     """One register of every machine cost: what is entered here, and - read-only, from their own registers - fuel,
     maintenance and rental bills, so each appears once."""
     client = require_erp_read(request, db)
@@ -1215,7 +1215,7 @@ REPORTS = {
 
 @router.get("/api/plant/reports/{kind}.xlsx")
 def plant_report(kind: str, request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, employee_id: int = 0,
-                 ownership: str = "", status: str = "", provider_id: int = 0, db: Session = Depends(get_db)):
+                 ownership: str = "", status: str = "", provider_id: int = 0, db: Session = Depends(get_read_db)):
     """Each report through the same reads the screens use, so it shows what the person asking may see. A .pdf of each
     is served beside it."""
     client = require_erp_read(request, db)
