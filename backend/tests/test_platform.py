@@ -62,7 +62,9 @@ def test_rate_limiter_sweeps_stale_keys():
     assert len(limiter._hits) == 1
 
 
-def test_login_is_rate_limited(client):
+def test_login_is_rate_limited(client, monkeypatch):
+    import app.routers.auth as auth
+    monkeypatch.setattr(auth, "LOGIN_PER_MINUTE", 10)        # a setting (60 by default, for an office that signs in together)
     main.rate_limiter._hits.clear()
     codes = [
         client.post("/api/client/login", json={"email": "nobody@example.com", "password": "x"}).status_code
