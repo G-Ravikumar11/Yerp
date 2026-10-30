@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+from types import SimpleNamespace
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -967,6 +968,13 @@ async def wo_import_boq(order_id: int, request: Request, file: UploadFile = File
         if not description:
             skipped += 1
             continue
+        if not quantity and not rate:
+            # No quantity and no rate: the sheet's heading over the lines below it, as the BOQ has its headings.
+            lines.append({"activity_no": (row.get("activity_no") or "").strip(), "item_code": "",
+                          "item_description": description, "technical_spec": (row.get("technical_spec") or "").strip(),
+                          "material": "", "uom": "", "quantity": 0, "unit_rate": 0, "total_amount": 0,
+                          "budget_id": None, "cost_centre": "", "is_header": True, "heading_level": 1})
+            continue
         lines.append({
             "activity_no": (row.get("activity_no") or "").strip() or "%d.0" % index,
             "item_code": (row.get("item_code") or "").strip(),
@@ -979,16 +987,36 @@ async def wo_import_boq(order_id: int, request: Request, file: UploadFile = File
             "budget_id": None, "cost_centre": "",
         })
 
-    if not lines:
+    if not any(not l.get("is_header") for l in lines):
         raise HTTPException(
             400, "Nothing on that sheet read as a priced line." + sheet_note())
+
+    # On a project with a BOQ the lines are matched to it (by item code, else by the same words) and laid out under
+    # its headings with their grades, as if they had been picked from it; anything not on the BOQ stays as it came.
+    every = boq_current_lines(db, client.id, order.job_id)
+    if any(l.kind in BOQ_PRICED for l in every):
+        heads, path, place = boq_outline(every)
+        priced = [SimpleNamespace(item_code=l["item_code"], item_description=l["item_description"], boq_key="",
+                                  is_header=False, boq_parts="", line=l) for l in lines if not l.get("is_header")]
+        boq_tie_subcontract_lines(db, client.id, order.job_id, priced)
+        for p in priced:
+            p.line["boq_key"], p.line["item_code"] = p.boq_key, p.item_code
+        sheet_heads = [l for l in lines if l.get("is_header")]
+        tied = [l for l in lines if not l.get("is_header") and l.get("boq_key")]
+        # The sheet's own headings give way to the BOQ's when its lines are all on the BOQ.
+        keep = lines if len(tied) < len(lines) - len(sheet_heads) else [l for l in lines if not l.get("is_header")]
+        lines = [dict(l, total_amount=money((l.get("quantity") or 0) * (l.get("unit_rate") or 0)))
+                 for l in arrange_schedule(keep, heads, path, place, materials=line_materials(every, heads, path))]
+        for l in lines:
+            l.setdefault("budget_id", None)
+            l.setdefault("cost_centre", "")
 
     return {
         "lines": lines,
         "read_as": mapping_report(header, mapping),
         "ignored_columns": unmapped,
         "skipped_rows": skipped,
-        "gross_amount": money(sum(line["total_amount"] for line in lines)),
+        "gross_amount": money(sum(line.get("total_amount") or 0 for line in lines)),
         "message": "%d line(s) read%s. Check them against the sheet, then save."
                    % (len(lines),
                       ", %d row(s) with no description left out" % skipped
@@ -1786,11 +1814,14 @@ def wo_checked_parts(raw, quantity, project_boq):
             gone += 1
             continue
         if qty > 0:
-            parts.append({"key": key, "qty": qty})
+            part = {"key": key, "qty": qty}
+            if (p or {}).get("rate"):
+                part["rate"] = unit_rate(p["rate"])        # its own rate before it was added up, for splitting it back
+            parts.append(part)
     total = sum(p["qty"] for p in parts)
     if parts and total > 0 and quantity > 0 and abs(total - quantity) > 0.0001:
         scale = quantity / total
-        parts = [{"key": p["key"], "qty": money(p["qty"] * scale)} for p in parts]
+        parts = [dict(p, qty=money(p["qty"] * scale)) for p in parts]
     return parts, gone
 
 

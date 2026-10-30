@@ -101,13 +101,18 @@ def boq_headings(db, boq, lines):
     rev = db.query(models.DBBoqRevision).filter(models.DBBoqRevision.boq_id == boq.id, models.DBBoqRevision.rev_no == boq.current_rev).first()
     if rev is None:
         return []
-    heads = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id, models.DBBoqLine.kind == "section").order_by(
-        models.DBBoqLine.display_order).all()
+    from app.services.boq_outline import boq_outline
+    every = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(
+        models.DBBoqLine.display_order, models.DBBoqLine.id).all()
+    outline, _, _ = boq_outline(every)
+    heads = [l for l in every if l.kind == "section"]
     out, at = [], 0
     for h in heads:
         while at < len(lines) and (lines[at].display_order or 0) <= (h.display_order or 0):
             at += 1
-        out.append({"key": h.key, "item_no": h.item_no or "", "description": h.description or "", "before": lines[at].key if at < len(lines) else ""})
+        # How deep it sits (0 a main heading) and the headings above it, so a main heading folds its sub-headings too.
+        out.append({"key": h.key, "item_no": h.item_no or "", "description": h.description or "", "before": lines[at].key if at < len(lines) else "",
+                    "level": outline[h.key]["level"], "path": outline[h.key]["path"]})
     return out
 
 
@@ -134,6 +139,12 @@ def budget_view(db, client_id, job):
     oh, ct = (cfg.overhead_percent or 0.0) if cfg else 0.0, (cfg.contingency_percent or 0.0) if cfg else 0.0
 
     headings = boq_headings(db, boq, lines) if boq else []
+    grades = {}
+    if boq:
+        from app.services.boq_outline import boq_current_lines, boq_outline, line_materials
+        every = boq_current_lines(db, client_id, job.id)
+        heads_, path_, _ = boq_outline(every)
+        grades = line_materials(every, heads_, path_)
     # Which heading each line is under: the nearest one above it in the BOQ ('' before the first), so the screen can fold a section away.
     standing_over = {}
     for h in headings:
@@ -162,7 +173,7 @@ def budget_view(db, client_id, job):
         rows.append({
             "key": l.key, "under": under.get(l.key, ""), "item_no": l.item_no or "", "group_code": sec, "description": l.description or "",
             "uom": l.uom or "", "quantity": money(qty), "rate": money(l.rate), "revenue": revenue, "rate_only": bool(l.rate_only),
-            "item_code": l.item_code or "", "budgeted": budgeted, "items": [item_dict(i) for i in got],
+            "item_code": l.item_code or "", "grade": grades.get(l.key, ""), "budgeted": budgeted, "items": [item_dict(i) for i in got],
             "unit_material": round(unit["MATERIAL"], 4), "unit_labour": round(unit["LABOUR"], 4), "unit_other": round(unit["OTHER"], 4),
             "unit_cost": round(sum(unit.values()), 4), "material": mat, "labour": lab, "other": oth, "direct": direct,
             "overheads": overheads, "contingency": contingency, "cost": cost, "profit": profit,

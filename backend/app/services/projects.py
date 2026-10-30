@@ -1576,9 +1576,11 @@ def schedule_from_boq(db, client_id, job, start, finish, by="section", actor_nam
     groups = []
     if by == "section":
         current = None
+        from app.services.boq_outline import boq_outline, heading_trail
+        outline, _, _ = boq_outline(lines)
         for l in lines:
             if l.kind == "section":
-                current = [l.key, first_line(l.description) or "Section", 0.0, []]
+                current = [l.key, first_line(heading_trail(outline, l.key, " - ")) or "Section", 0.0, []]
                 groups.append(current)
             elif priced(l):
                 if current is None:

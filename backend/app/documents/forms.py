@@ -696,7 +696,7 @@ def sub_bill_certificate(db, client, bill):
             pending_header = None
         n += 1
         r8 = unit_rate(line["rate"] if line else it.unit_rate)
-        rows.append({"sl": n, "description": (it.item_description or "").split("\n")[0], "unit": it.uom or "",
+        rows.append({"sl": n, "description": with_grade((it.item_description or "").split("\n")[0], it.material), "unit": it.uom or "",
                      "prev_qty": pq or None, "prev_rate": r8 if pq else None, "prev_amount": money(pq * r8) if pq else None,
                      "this_qty": tq or None, "this_rate": r8 if tq else None, "this_amount": money(tq * r8) if tq else None,
                      "upto_qty": money(pq + tq), "upto_amount": money((pq + tq) * r8), "remarks": ""})
@@ -738,7 +738,7 @@ def sub_bill_certificate(db, client, bill):
     for it in sorted((it for it in items if it.id in by_item), key=lambda x: order_of[x.id]):
         k += 1
         uom = it.uom or ""
-        mb_rows.append({"kind": "item", "sno": str(k), "description": (it.item_description or "").split("\n")[0].upper()})
+        mb_rows.append({"kind": "item", "sno": str(k), "description": with_grade((it.item_description or "").split("\n")[0], it.material).upper()})
         item_total = 0.0
         ents = by_item[it.id]
         section, sec_total, sec_count = None, 0.0, 0
@@ -1305,6 +1305,7 @@ from app.documents.letterhead import (
     sign_boxes,
 )
 from app.services.client_billing import _words, dimensions_for, order_variations, ra_bill_dict
+from app.services.boq_outline import with_grade
 from app.services.crm import norm_name
 from app.services.hr import employee_name
 from app.services.invoicing import active_irn, einvoice_buyer

@@ -243,21 +243,8 @@ export function ScheduleTab({
     },
     {
       success: (r) => r.message,
-      onSuccess: (r) => {
-        onRows(
-          r.lines.map((l) => ({
-            ...blankLine(),
-            activity_no: l.activity_no ?? '',
-            item_code: l.item_code ?? '',
-            item_description: l.item_description ?? '',
-            technical_spec: l.technical_spec ?? '',
-            material: l.material ?? '',
-            uom: l.uom ?? '',
-            quantity: l.quantity ?? null,
-            unit_rate: l.unit_rate ?? null,
-          })),
-        )
-      },
+      // The sheet's headings come in as headings, and on a project with a BOQ the lines come laid out under its headings.
+      onSuccess: (r) => onRows(r.lines.map((l) => fromServer(l as unknown as ScheduleRow, onlyBudget))),
     },
   )
 

@@ -34,6 +34,8 @@ export interface BudgetRow {
   revenue: number
   rate_only: boolean
   item_code: string
+  /** The grade the BOQ names for the line, or its heading does (M10). */
+  grade?: string
   budgeted: boolean
   items: BudgetItem[]
   unit_material: number
@@ -79,7 +81,7 @@ export interface Budget {
   updated_by_name: string
   rows: BudgetRow[]
   /** The BOQ's section headings, each standing above the priced line `before` ('' = after the last one). */
-  headings: { key: string; item_no: string; description: string; before: string }[]
+  headings: { key: string; item_no: string; description: string; before: string; level?: number; path?: string[] }[]
   total: BudgetTotal
   sections: { group: string; revenue: number; cost: number; profit: number; margin: number | null }[]
 }

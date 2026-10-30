@@ -19,6 +19,7 @@ from app.core.gst import GST_STATES, WORKS_CONTRACT_SAC, our_state, split_gst, s
 from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
 from app.services.compliance import contractor_compliance
+from app.services.boq_outline import with_grade
 from app.services.credit_notes import (
     bill_credit_summary, credited_qty_by_item, credited_retention_by_order, credited_taxable_by_order)
 
@@ -584,7 +585,7 @@ def draw_sub_bill_lines(db, bill, order, entry_ids=None):
         rate = unit_rate(it.unit_rate)
         db.add(models.DBSubBillLine(
             sub_bill_id=bill.id, item_id=it.id, activity_no=it.activity_no or "",
-            description=it.item_description or "", uom=it.uom or "",
+            description=with_grade(it.item_description, it.material), uom=it.uom or "",
             ordered_qty=money(it.quantity), measured_to_date=done,
             previously_billed_qty=prior, this_bill_qty=this, rate=rate,
             amount=money(this * rate), display_order=i))

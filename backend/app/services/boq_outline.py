@@ -119,6 +119,22 @@ def line_materials(lines, heads, path):
     return out
 
 
+def heading_trail(heads, key, sep=" \u203a "):
+    """A heading named with the headings above it: REINFORCED CEMENT CONCRETE > Basement-02(Grade Slab Lvl)."""
+    h = heads.get(key)
+    if h is None:
+        return ""
+    return sep.join([heads[k]["description"] for k in h["path"] if k in heads] + [h["description"]])
+
+
+def with_grade(text, grade):
+    """A line's words with its grade after them, unless they already say it: "Tower Columns (M60)"."""
+    text, grade = (text or "").strip(), (grade or "").strip()
+    if not grade or grade.lower().replace(" ", "") in text.lower().replace(" ", ""):
+        return text
+    return "%s (%s)" % (text, grade)
+
+
 def last_given_rates(db, client_id, keys):
     """{BOQ key: the contractor rate it was last given at}, from orders whose rates were agreed - the newest first."""
     keys = {k for k in keys if k}
@@ -249,10 +265,11 @@ def make_cumulative(rows, heads, path, level=0, keep_grades=True, materials=None
         key = r.get("boq_key") or ""
         if r.get("boq_parts"):
             trail = (heads[key]["path"] + [key]) if key in heads else []
-            parts = [(p["key"], float(p.get("qty") or 0)) for p in r["boq_parts"] if p.get("key")]
+            parts = [(p["key"], float(p.get("qty") or 0), float(p.get("rate") or r.get("unit_rate") or 0))
+                     for p in r["boq_parts"] if p.get("key")]
         elif key in path:
             trail = path[key]
-            parts = [(key, float(r.get("quantity") or 0))]
+            parts = [(key, float(r.get("quantity") or 0), float(r.get("unit_rate") or 0))]
         else:
             out.append(r)                                  # typed in by hand: not the BOQ's to add up
             continue
@@ -275,16 +292,18 @@ def make_cumulative(rows, heads, path, level=0, keep_grades=True, materials=None
         anchor, uom, _ = item
         qty = sum(float(r.get("quantity") or 0) for r, _, _ in members)
         value = sum(float(r.get("quantity") or 0) * float(r.get("unit_rate") or 0) for r, _, _ in members)
-        merged = {}
+        merged, own_rate = {}, {}
         for _, parts, _ in members:
-            for k, q in parts:
+            for k, q, rate in parts:
                 merged[k] = merged.get(k, 0.0) + q
+                own_rate.setdefault(k, rate)
         grades = {g for _, _, g in members}
         grade = grades.pop() if len(grades) == 1 else ""
         first = members[0][0]
         budgets = {r.get("budget_id") for r, _, _ in members}
         result.append({
-            "is_header": False, "boq_key": anchor, "boq_parts": [{"key": k, "qty": money(q)} for k, q in merged.items()],
+            "is_header": False, "boq_key": anchor,
+            "boq_parts": [{"key": k, "qty": money(q), "rate": unit_rate(own_rate[k])} for k, q in merged.items()],
             "item_description": heads[anchor]["description"] + ((" - " + grade) if keep_grades and grade else ""),
             "technical_spec": "\n".join(heads[anchor]["notes"]), "material": grade, "uom": first.get("uom") or "",
             "quantity": money(qty), "unit_rate": unit_rate(value / qty) if qty else 0.0, "activity_no": "",
@@ -302,8 +321,8 @@ def make_cumulative(rows, heads, path, level=0, keep_grades=True, materials=None
 
 
 def split_cumulative(rows, lines_by_key, materials=None):
-    """Each line that adds up a heading put back as the BOQ lines it stands for, at its rate, each with its own
-    quantity, grade and item code."""
+    """Each line that adds up a heading put back as the BOQ lines it stands for, each with its own quantity, grade,
+    item code and the rate it had before it was added up."""
     materials = materials or {}
     out = []
     for r in rows:
@@ -317,7 +336,9 @@ def split_cumulative(rows, lines_by_key, materials=None):
             out.append({"is_header": False, "boq_key": l.key, "boq_parts": [], "item_description": l.description,
                         "item_code": l.item_code or "", "activity_no": "", "technical_spec": l.remarks or "",
                         "material": materials.get(l.key, ""), "uom": l.uom or "", "quantity": money(p.get("qty") or 0),
-                        "unit_rate": unit_rate(r.get("unit_rate") or 0), "tolerance_percent": r.get("tolerance_percent") or 0,
+                        # each line's own rate, as it was before it was added up; the total's rate if it never had one
+                        "unit_rate": unit_rate(p.get("rate") or r.get("unit_rate") or 0),
+                        "tolerance_percent": r.get("tolerance_percent") or 0,
                         "budget_id": r.get("budget_id"), "heading_level": 0})
     return out
 
