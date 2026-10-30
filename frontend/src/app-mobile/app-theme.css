@@ -1,0 +1,111 @@
+/*
+ * The phone app's look.
+ *
+ * This file is imported by the phone shell only (MobileShell.tsx). The website's build leaves that shell out, so this
+ * stylesheet is never in it, and nothing here can change the website. The shell puts the class `app-ui` on <html> while
+ * it is on screen; everything below is scoped to that class, so a dialog or menu that opens outside the shell's own
+ * element (the screen's portals) is restyled too.
+ *
+ * It does not restyle screens one by one. The website's colours, corners and shadows are variables, so overriding them
+ * here gives every screen the app's look at once: a deep blue-black dark theme, a soft off-white light theme with white
+ * cards, one blue, rounder corners. The website's own light/dark switch still decides which of the two is shown.
+ */
+html.app-ui {
+  --radius: 14px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-3xl: 28px;
+
+  --background: #f5f7fb;
+  --foreground: #0b1220;
+  --surface: #ffffff;
+  --card: #ffffff;
+  --card-foreground: #0b1220;
+  --popover: #ffffff;
+  --muted: #edf0f6;
+  --muted-foreground: #667085;
+  --subtle: #98a2b3;
+  --border: #e6eaf1;
+  --input: #d5dbe6;
+  --ring: #1f6fc4;
+  --body: #344054;
+
+  --primary: #1f6fc4;
+  --primary-foreground: #ffffff;
+  --primary-soft: #e3eefb;
+  --accent: #edf0f6;
+  --accent-foreground: #0b1220;
+
+  --success: #0f9d6e;
+  --success-soft: #ddf5ec;
+  --warning: #b7791f;
+  --warning-soft: #fbf0d8;
+  --danger: #d14343;
+  --danger-soft: #fbe4e4;
+  --info: #1f6fc4;
+  --info-soft: #e3eefb;
+
+  --select-tint: #e3eefb;
+  --sidebar: #ffffff;
+  --sidebar-border: #e6eaf1;
+
+  /* What the shell's own pieces use (the tab bar, the home card): a blue gradient, a glass bar, a soft card shadow. */
+  --app-grad: linear-gradient(135deg, #1a62b8 0%, #3e93ea 100%);
+  --app-glass: rgb(255 255 255 / 0.82);
+  --app-card-shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 6px 18px rgb(16 24 40 / 0.06);
+  --app-bar-shadow: 0 10px 30px rgb(16 24 40 / 0.18);
+  --shadow-card: var(--app-card-shadow);
+}
+
+html.app-ui.dark {
+  --background: #080b12;
+  --foreground: #f4f6fb;
+  --surface: #111622;
+  --card: #111622;
+  --card-foreground: #f4f6fb;
+  --popover: #151b29;
+  --muted: #1a2130;
+  --muted-foreground: #8e97ab;
+  --subtle: #5f6a80;
+  --border: #1d2434;
+  --input: #2a3244;
+  --ring: #3b82f6;
+  --body: #cfd6e4;
+
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --primary-soft: #14264a;
+  --accent: #1a2130;
+  --accent-foreground: #f4f6fb;
+
+  --success: #34d399;
+  --success-soft: #12372b;
+  --warning: #fbbf24;
+  --warning-soft: #3a3014;
+  --danger: #f87171;
+  --danger-soft: #3d2020;
+  --info: #60a5fa;
+  --info-soft: #14264a;
+
+  --select-tint: #14264a;
+  --sidebar: #0c1019;
+  --sidebar-border: #1d2434;
+
+  --app-grad: linear-gradient(135deg, #2f6feb 0%, #4fa3ff 100%);
+  --app-glass: rgb(20 25 38 / 0.78);
+  --app-card-shadow: none;
+  --app-bar-shadow: 0 10px 30px rgb(0 0 0 / 0.55);
+}
+
+/* The page behind everything is the app's background, not the website's. */
+html.app-ui body {
+  background: var(--background);
+}
+
+/* Numbers in money columns and counters line up. */
+html.app-ui {
+  font-variant-numeric: tabular-nums;
+}
