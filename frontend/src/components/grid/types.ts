@@ -103,6 +103,12 @@ export interface DataGridProps<T> {
   /** Anything that belongs beside the row count in the status bar. */
   footer?: ReactNode
   onSelectionChange?: (range: Range | null) => void
+  /**
+   * The rows as they would be if the box being typed in were kept now, on every keystroke, so a total or a Save
+   * button can follow the typing instead of waiting for Enter. null once the box is closed (the rows are then
+   * the answer), or while what is typed cannot be kept.
+   */
+  onDraft?: (rows: T[] | null) => void
   'aria-label': string
   className?: string
   emptyText?: string
