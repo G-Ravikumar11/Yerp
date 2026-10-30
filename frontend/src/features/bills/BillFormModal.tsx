@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { Button, Field, Input, Modal, NumField, Select, Textarea } from '@/components/ui'
 import { billKeys, CATEGORIES, createBill, nextBillNumber, updateBill, useTaxRates, type BillInput, type SupplierBill } from '@/api/bills'
 import { useSuppliers } from '@/api/ledger'
+import { usePurchaseOrders } from '@/api/purchaseOrders'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 
-const blank = (): BillInput => ({ number: '', vendor_name: '', vendor_email: '', category: 'general', issue_date: today(), due_date: '', amount: 0, tax_amount: 0, total: 0, reference: '', notes: '' })
+const blank = (): BillInput => ({ number: '', vendor_name: '', vendor_email: '', category: 'general', issue_date: today(), due_date: '', amount: 0, tax_amount: 0, total: 0, reference: '', notes: '', purchase_order_id: null })
 
 export function BillFormModal({ open, bill, onClose }: { open: boolean; bill: SupplierBill | null; onClose: () => void }) {
   return (
@@ -21,6 +22,7 @@ function Form({ bill, onClose }: { bill: SupplierBill | null; onClose: () => voi
   const [rate, setRate] = useState('')
   const rates = useTaxRates()
   const suppliers = useSuppliers()
+  const orders = usePurchaseOrders(false)
   useEffect(() => {
     if (!bill) void nextBillNumber().then((n) => setF((s) => (s.number ? s : { ...s, number: n }))).catch(() => undefined)
   }, [bill])
@@ -33,8 +35,12 @@ function Form({ bill, onClose }: { bill: SupplierBill | null; onClose: () => voi
     setRate(v)
     if (v) setF((s) => ({ ...s, ...money(s.amount, Math.round(s.amount * Number(v)) / 100) }))
   }
+  // Orders that have been agreed (only those can be matched), this supplier's first when one is named.
+  const committed = (orders.data ?? []).filter((o) => o.approval_status === 'approved' || ['Approved', 'Closed'].includes(o.status) || o.id === f.purchase_order_id)
+  const sameSupplier = (o: { supplier_name: string }) => !f.vendor_name.trim() || o.supplier_name.trim().toLowerCase() === f.vendor_name.trim().toLowerCase()
+  const poOptions = [...committed.filter(sameSupplier), ...committed.filter((o) => !sameSupplier(o))].map((o) => ({ value: String(o.id), label: `${o.number} - ${o.supplier_name} (${formatINR(o.total)})` }))
   const names = [...(suppliers.data?.suppliers ?? []).map((s) => s.name), ...(suppliers.data?.unregistered ?? [])]
-  const save = useAction(() => (bill ? updateBill(bill.id, f) : createBill(f)), { invalidate: [billKeys.all], success: () => (bill ? 'Bill updated' : 'Bill created'), onSuccess: onClose })
+  const save = useAction(() => (bill ? updateBill(bill.id, f) : createBill(f)), { invalidate: [billKeys.all], success: (r) => [bill ? 'Bill updated' : 'Bill created', ...(r?.warnings ?? [])].join('. '), onSuccess: onClose })
   const ready = f.number.trim() && f.vendor_name.trim()
 
   return (
@@ -53,7 +59,8 @@ function Form({ bill, onClose }: { bill: SupplierBill | null; onClose: () => voi
         <Field label="Tax rate" htmlFor="bf-rate"><Select id="bf-rate" value={rate} onChange={(e) => pickRate(e.target.value)} placeholder="Enter it myself" options={(rates.data ?? []).map((r) => ({ value: String(r.percent), label: r.label }))} /></Field>
         <Field label="Tax" htmlFor="bf-tax"><NumField id="bf-tax" value={f.tax_amount} onValue={(n) => { setRate(''); setF((s) => ({ ...s, ...money(s.amount, n) })) }} /></Field>
         <Field label="Total" htmlFor="bf-total"><Input id="bf-total" readOnly value={formatINR(f.total)} className="bg-muted/40" /></Field>
-        <Field label="Reference" htmlFor="bf-ref" className="sm:col-span-2"><Input id="bf-ref" value={f.reference} onChange={set('reference')} placeholder="PO number, invoice ref..." /></Field>
+        <Field label="Supplier's invoice number" htmlFor="bf-ref"><Input id="bf-ref" value={f.reference} onChange={set('reference')} placeholder="As printed on their invoice" /></Field>
+        <Field label="Purchase order" htmlFor="bf-po"><Select id="bf-po" value={f.purchase_order_id ? String(f.purchase_order_id) : ''} onChange={(e) => setF((s) => ({ ...s, purchase_order_id: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={poOptions} /></Field>
         <Field label="Notes" htmlFor="bf-notes" className="sm:col-span-2"><Textarea id="bf-notes" rows={2} value={f.notes} onChange={set('notes')} /></Field>
       </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">

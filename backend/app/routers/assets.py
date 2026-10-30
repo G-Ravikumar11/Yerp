@@ -9,7 +9,7 @@ from app.db import get_db, get_read_db
 
 from app.constants.assets import ASSET_BOOK_DEFAULTS, ASSET_CATEGORIES, BOOK_METHODS, HIRE_BASES
 from app.core.audit import log_audit
-from app.core.auth import require_erp_read, require_items_access, wo_actor
+from app.core.auth import require_erp_read, require_items_access, session_employee, wo_actor
 from app.core.currency import inr, money
 from app.core.dates import _parse_date
 from app.core.sheets import sheet_response
@@ -46,6 +46,7 @@ from app.services.assets import (
     ensure_tax_blocks,
     fy_label,
     fy_start_year,
+    closed_years,
     hire_cost_for,
     next_asset_code,
     tax_block_schedule,
@@ -113,10 +114,19 @@ def create_asset(body: AssetIn, request: Request, db: Session = Depends(get_db))
 
 @router.put("/api/assets/{asset_id}")
 def update_asset(asset_id: int, body: AssetIn, request: Request, db: Session = Depends(get_db)):
-    client, _, actor_name = wo_actor(request, db, ("stores.manage", "workorders.manage"))
+    client, actor_id, actor_name = wo_actor(request, db, ("stores.manage", "workorders.manage"))
     a = asset_or_404(db, client.id, asset_id)
     before = schedule_snapshot(a)
+    was_owned = (a.ownership or "Owned") == "Owned"
     _apply_asset(a, body)
+    if was_owned and a.ownership != "Owned" and asset_book_or_none(db, client.id, a.id) is not None:
+        # In the company's books: taking it out of them is accounts' call, not the store's.
+        from app.core.permissions import employee_can
+        emp = session_employee(request, db) if actor_id is not None else None
+        if emp is not None and not employee_can(emp, "accounts.manage"):
+            db.rollback()
+            raise HTTPException(403, "%s is in the company's books as a fixed asset. Only accounts can change it to "
+                                     "hired or leased." % a.code)
     code = (body.code or "").strip().upper()
     if code:
         a.code = code
@@ -367,22 +377,45 @@ def asset_back(asset_id: int, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/api/assets/{asset_id}/dispose")
 def dispose_asset(asset_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, ("stores.manage", "workorders.manage"))
+    """Off the register: sold, scrapped, or handed back to the hirer. An owned machine is in the company's books, so
+    taking it out of them is accounts' to do - on the day it went, for what it fetched - the same as the fixed-asset
+    register's own disposal."""
+    body = body or {}
+    client = require_erp_read(request, db)
     a = asset_or_404(db, client.id, asset_id)
+    b = asset_book_or_none(db, client.id, a.id)
+    owned = (a.ownership or "Owned") == "Owned"
+    client, _, _ = wo_actor(request, db, "accounts.manage" if owned or b else ("stores.manage", "workorders.manage"))
+    if a.status == "Disposed":
+        raise HTTPException(409, "%s has already been disposed of." % a.code)
     if a.current_job_id:
         raise HTTPException(409, "%s is still on a site. Bring it back to the yard first." % a.code)
-    reason = ((body or {}).get("reason") or "").strip()
+    reason = (body.get("reason") or "").strip()
     if not reason:
         raise HTTPException(400, "Say why - sold, scrapped, returned to the hirer.")
+    on = _parse_date(body.get("disposed_on") or body.get("on") or date.today().isoformat())
+    if not on:
+        raise HTTPException(400, "When did it go? (YYYY-MM-DD)")
+    if on > date.today():
+        raise HTTPException(400, "That date has not come yet.")
+    bought = _parse_date((b.put_to_use_on if b else "") or a.purchase_date or "")
+    if bought and on < bought:
+        raise HTTPException(400, "It cannot go before it was bought (%s)." % bought.isoformat())
+    try:
+        value = money(float(body.get("value") or body.get("disposal_value") or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "What it fetched should be a number.")
+    if value < 0:
+        raise HTTPException(400, "What it fetched cannot be less than nothing.")
     a.status = "Disposed"
-    a.notes = ((a.notes or "") + "\nDisposed %s: %s" % (date.today().isoformat(), reason)).strip()
-    b = asset_book_or_none(db, client.id, a.id)
+    a.notes = ((a.notes or "") + "\nDisposed %s: %s" % (on.isoformat(), reason)).strip()
     if b and not b.disposed_on:
-        b.disposed_on = date.today().isoformat()
-        b.disposal_value = money((body or {}).get("value") or 0)
+        b.disposed_on = on.isoformat()
+        b.disposal_value = value
         b.disposal_note = reason[:300]
+    log_audit(db, client.id, "asset_disposed", "asset", a.id, a.code, "%s on %s for %s" % (reason[:120], on.isoformat(), inr(value)), request)
     db.commit()
-    return {"ok": True, "message": "%s disposed of." % a.code}
+    return {"ok": True, "message": "%s disposed of on %s." % (a.code, on.isoformat())}
 
 
 @router.get("/api/fixed-assets")
@@ -451,7 +484,20 @@ def save_asset_book(asset_id: int, body: AssetBookIn, request: Request, db: Sess
     if new:
         b = models.DBAssetBook(client_id=client.id, asset_id=a.id)
         db.add(b)
+        before = None
+    else:
+        before = (b.method, b.life_years, b.residual_percent, money(b.cost), b.put_to_use_on, b.opening_fy,
+                  money(b.opening_book_value))
     _apply_book(db, client.id, a, b, body)
+    if before is not None and actor_id is not None:
+        after = (b.method, b.life_years, b.residual_percent, money(b.cost), b.put_to_use_on, b.opening_fy,
+                 money(b.opening_book_value))
+        closed = closed_years(b, before)
+        if after != before and closed:
+            db.rollback()
+            raise HTTPException(409, "%s already has depreciation in a closed year (%s). Changing its method, life, "
+                                     "residual or cost would rewrite those accounts; only the Master may do it."
+                                     % (a.code, closed))
     log_audit(db, client.id, "asset_book_" + ("set" if new else "changed"), "asset", a.id, a.code,
               "%s %s yrs, cost %s" % (b.method, b.life_years, inr(b.cost)), request)
     db.commit()

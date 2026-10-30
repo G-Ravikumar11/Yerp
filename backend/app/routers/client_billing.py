@@ -20,7 +20,7 @@ from app.core.notifications import notify
 from app.core.sheets import sheet_response
 from app.documents.forms import form_pdf_response, ra_form_spec
 from app.schemas.client_billing import CreditNoteIn, RAActionIn, RABillIn, VariationIn
-from app.services.credit_notes import credit_note_dict, credit_totals_by_bill, raise_credit_note
+from app.services.credit_notes import bill_credited_net, credit_note_dict, credit_totals_by_bill, raise_credit_note
 from app.services.client_billing import (
     _ra_action,
     apply_variation,
@@ -30,7 +30,10 @@ from app.services.client_billing import (
     next_vo_number,
     order_variations,
     over_measured_lines,
+    TDS_SETTING_KEY,
+    check_deductions,
     contract_rates,
+    default_tds_percent,
     ra_bill_dict,
     ra_bill_or_404,
     recost_ra_bill,
@@ -41,7 +44,8 @@ from app.services.client_billing import (
     write_ra_bill_lines,
 )
 from app.services.invoicing import einvoice_payload
-from app.services.subcontract_billing import past_tense
+from app.services.subcontract_billing import past_tense, released_retention
+from app.core.tenant_settings import put_setting
 from app.services.subcontract_orders import work_order_or_404
 
 
@@ -104,12 +108,36 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
     db.flush()
 
     write_ra_bill_lines(db, bill, claimable)
+    check_deductions(db, bill, advance=False)
     log_audit(db, client.id, "ra_bill_raised", "ra_bill", bill.id, bill.number,
               "%s, %d line(s)" % (wo.number, len(claimable)), request)
     db.commit()
     db.refresh(bill)
     return {"bill": ra_bill_dict(db, bill, detail=True),
             "message": "%s drawn up for %s." % (bill.number, inr(bill.this_bill))}
+
+
+@router.get("/api/billing/ra-defaults")
+def ra_defaults(request: Request, db: Session = Depends(get_read_db)):
+    """The TDS our clients are taken to deduct from a new bill, unless the bill says otherwise."""
+    client = require_erp_read(request, db)
+    return {"tds_percent": default_tds_percent(db, client.id)}
+
+
+@router.put("/api/billing/ra-defaults")
+def set_ra_defaults(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """2% under 194C is the rate for a company or a firm; an individual or HUF contractor is deducted at 1%."""
+    client, _, _ = wo_actor(request, db, "accounts.manage")
+    try:
+        tds = float((body or {}).get("tds_percent"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Give the TDS rate as a number.")
+    if not 0 <= tds <= 100:
+        raise HTTPException(400, "TDS has to be between 0 and 100%.")
+    put_setting(db, client.id, TDS_SETTING_KEY, str(tds))
+    log_audit(db, client.id, "ra_tds_default_set", "settings", None, "RA bill TDS", "%s%%" % tds, request)
+    db.commit()
+    return {"tds_percent": tds, "message": "New RA bills take TDS at %s%%." % tds}
 
 
 @router.get("/api/ra-bills")
@@ -124,6 +152,13 @@ def list_ra_bills(request: Request, work_order_id: int = 0, status: str = "",
     taken_back = credit_totals_by_bill(db, client.id, "client")     # one query for every row
     rows = [ra_bill_dict(db, b, credits=taken_back) for b in q.order_by(models.DBRABill.id.desc()).limit(300).all()]
     live = [r for r in rows if r["status"] not in ("CANCELLED",)]
+    # Held as the retention page holds it: on certified bills only, less what credit notes took back, less what has
+    # been released on those orders.
+    released = released_retention(db, client.id, "client")
+    held_on = [r for r in rows if r["status"] in ("CERTIFIED", "PAID")]
+    retention_held = money(sum(r["retention_amount"] - taken_back.get(r["id"], {}).get("retention", 0.0)
+                               for r in held_on)
+                           - sum(released.get(w, 0.0) for w in {r["work_order_id"] for r in held_on}))
     return {
         "bills": rows,
         "summary": {
@@ -132,8 +167,7 @@ def list_ra_bills(request: Request, work_order_id: int = 0, status: str = "",
             "certified_unpaid": money(sum(r["net_payable"] for r in rows
                                           if r["status"] == "CERTIFIED")),
             "claimed": money(sum(r["this_bill"] - r["credited"] for r in live)),
-            "retention_held": money(sum(r["retention_amount"] - taken_back.get(r["id"], {}).get("retention", 0.0)
-                                        for r in live)),
+            "retention_held": retention_held,
             "paid": money(sum(r["net_payable"] for r in rows if r["status"] == "PAID")),
         },
     }
@@ -167,6 +201,7 @@ def update_ra_bill(bill_id: int, body: RABillIn, request: Request,
     bill.period_from = (body.period_from or bill.period_from or "").strip()
     bill.period_to = (body.period_to or bill.period_to or "").strip()
     recost_ra_bill(db, bill)
+    check_deductions(db, bill, advance=False)
     db.commit()
     db.refresh(bill)
     return {"bill": ra_bill_dict(db, bill, detail=True), "message": "Saved."}
@@ -193,9 +228,23 @@ def reject_ra_bill(bill_id: int, body: RAActionIn, request: Request,
 
 
 @router.post("/api/ra-bills/{bill_id}/pay")
-def pay_ra_bill(bill_id: int, body: RAActionIn, request: Request,
+def pay_ra_bill(bill_id: int, request: Request, body: dict = None,
                 db: Session = Depends(get_db)):
-    return _ra_action(bill_id, "PAY", body, request, db, "bills.pay")
+    """The client's payment of a certified bill, received in full - through the ledger and the bank book as a
+    receipt, never by a flag on the bill: a bill marked paid with nothing received dropped off what the client owes
+    while the bank never saw the money, and a part-received bill marked paid lost its balance from Owed."""
+    from app.services.money import already_settled, pay_in_full
+    client, actor_id, actor_name = wo_actor(request, db, "bills.pay")
+    bill = ra_bill_or_404(db, client.id, bill_id)
+    if (bill.status or "") not in ("CERTIFIED", "PAID"):
+        raise HTTPException(409, "%s is %s; it cannot be paid from there." % (bill.number, (bill.status or "draft").lower()))
+    worth = money((bill.net_payable or 0) - bill_credited_net(db, "client", bill.id))
+    if money(worth - already_settled(db, client.id, "ra_bill", bill, worth)) <= 0:
+        raise HTTPException(409, "%s is already fully received." % bill.number)
+    got = pay_in_full(db, request, "ra_bill", bill, worth, body)
+    db.refresh(bill)
+    return {"ok": True, "bill": ra_bill_dict(db, bill, detail=True), "entry": got.get("entry"),
+            "message": "%s received in full through the ledger." % bill.number}
 
 
 @router.post("/api/ra-bills/{bill_id}/credit-notes")

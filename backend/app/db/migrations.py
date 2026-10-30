@@ -158,6 +158,21 @@ SUBCONTRACT_CONTROL_COLUMNS = (
     ("retention_releases", "certified_by_name", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
     ("retention_releases", "certified_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
     ("retention_releases", "override_note", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    # The end of the defects period stated on a client release, and whether a project's retention was stated at all.
+    ("retention_releases", "dlp_ends", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
+    ("jobs", "retention_stated", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
+)
+
+BILL_GST_COLUMNS = (
+    # (table, column, Postgres type, SQLite type) - a supplier bill's own tax split (NULL until it is saved with one),
+    # whether its input credit may be taken and whether it is under reverse charge; and when an e-way bill was
+    # generated, to the minute, for the portal's 24-hour cancellation window.
+    ("bills", "cgst", "DOUBLE PRECISION", "FLOAT"),
+    ("bills", "sgst", "DOUBLE PRECISION", "FLOAT"),
+    ("bills", "igst", "DOUBLE PRECISION", "FLOAT"),
+    ("bills", "itc_eligible", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+    ("bills", "reverse_charge", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
+    ("eway_bills", "ewb_generated_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
 )
 
 ACCOUNTS_COLUMNS = (
@@ -170,6 +185,9 @@ ACCOUNTS_COLUMNS = (
     ("bank_accounts", "imprest_amount", "FLOAT DEFAULT 0"),
     # Bank reconciliation: when the bank moved it, and the statement line it was matched to.
     ("money_entries", "cleared_on", "VARCHAR DEFAULT ''"), ("money_entries", "statement_line_id", "INTEGER"),
+    # A site expense entered by the Master or a colleague of theirs, who may not then approve it.
+    ("site_cash_expenses", "submitted_by_master", "BOOLEAN DEFAULT FALSE"),
+    ("site_cash_expenses", "submitted_by_member", "INTEGER"),
 )
 
 QUALITY_COLUMNS = (
@@ -1881,6 +1899,18 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # Supplier bills' GST split, credit and reverse charge; the e-way bill's generation time.
+            try:
+                for table, column, pg_type, _ in BILL_GST_COLUMNS:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {pg_type}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step bill gst: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # Quality: the workflow columns. Additive, defaulted, safe on a live database.
             try:
                 for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS:
@@ -2085,7 +2115,7 @@ def migrate_sqlite():
             add_col("project_files", "original_size", "INTEGER DEFAULT 0")
             add_col("project_files", "blob_of", "INTEGER")
             add_col("diary_labour", "worker_ids", "TEXT DEFAULT ''")
-            for table, column, _, lite_type in SUBCONTRACT_CONTROL_COLUMNS:
+            for table, column, _, lite_type in SUBCONTRACT_CONTROL_COLUMNS + BILL_GST_COLUMNS:
                 add_col(table, column, lite_type)
             add_col("worker_screenings", "contractor_name", "TEXT DEFAULT ''")
             add_col("worker_screenings", "father_name", "TEXT DEFAULT ''")

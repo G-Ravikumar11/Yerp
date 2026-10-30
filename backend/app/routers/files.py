@@ -85,6 +85,7 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
     def wanted(fy, q):
         return (not year or fy == year) and (not quarter or q == quarter)
 
+    from app.services.subcontract_rules import statutory_tds
     deducted = []
     for b in db.query(models.DBSubBill).filter(
             models.DBSubBill.client_id == client.id,
@@ -94,13 +95,20 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
         if not wanted(fy, q) or not (b.tds_amount or 0):
             continue
         con = contractors.get(b.contractor_id)
+        # One reading of the PAN for the flag, the section, the rate due and the count below: no valid PAN on file
+        # is section 206AA, 20%; otherwise 194C, 1% for an individual or HUF and 2% for anybody else.
+        due, _ = statutory_tds(con)
+        no_pan = due is None or due >= 20.0
+        rate = b.tds_percent or 0
         deducted.append({
             "date": on, "year": fy, "quarter": q, "bill": b.number or "",
-            "deductee": con.company_name if con else "", "pan": (con.pan or "") if con else "",
-            "section": "194C", "rate": b.tds_percent or 0,
+            "deductee": con.company_name if con else "", "pan": (con.pan or "").strip().upper() if con else "",
+            "section": "194C / 206AA" if no_pan else "194C", "rate": rate,
+            "rate_due": 20.0 if no_pan else due,
+            "short_deducted": rate + 1e-9 < (20.0 if no_pan else due),
             "amount_credited": money(b.this_bill), "tds": money(b.tds_amount),
             "paid_on": (b.paid_at or "")[:10], "status": b.status,
-            "missing_pan": not (con and (con.pan or "").strip()),
+            "missing_pan": no_pan,
         })
 
     suffered = []
@@ -145,9 +153,45 @@ def tds_register(request: Request, year: str = "", quarter: str = "",
         "summary": {
             "deducted": money(sum(r["tds"] for r in deducted)),
             "suffered": money(sum(r["tds"] for r in suffered)),
-            "deductees_without_pan": len({r["deductee"] for r in deducted if r["missing_pan"]}),
+            "deductees_without_pan": len({r["deductee"] for r in deducted if r.get("missing_pan")}),
+            "short_deducted": len([r for r in deducted if r.get("short_deducted")]),
         },
     }
+
+
+def _plus_months(day, months):
+    y, m = divmod(day.month - 1 + int(months or 0), 12)
+    y, m = day.year + y, m + 1
+    for d in (day.day, 30, 29, 28):
+        try:
+            return date(y, m, d)
+        except ValueError:
+            continue
+    return date(y, m, 28)
+
+
+def _day_of(text):
+    try:
+        return datetime.strptime((text or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def guarantee_state(o, today=None):
+    """Where an order's bank guarantee stands, worked on dates (so it is valid all of its last day):
+    {"valid_until", "days_left", "in_force", "defects_end", "covers_defects", "state"}."""
+    today = today or date.today()
+    valid = _day_of(o.bank_guarantee_validity)
+    days = (valid - today).days if valid else None
+    done = _day_of(getattr(o, "actual_completion_date", "") or "") or _day_of(o.completion_date)
+    defects_end = _plus_months(done, o.defect_liability_months) if done and (o.defect_liability_months or 0) else done
+    covers = None if not (valid and defects_end) else valid >= defects_end
+    in_force = bool(o.bank_guarantee_applicable) and not o.bank_guarantee_returned_at and days is not None and days >= 0
+    state = ("no expiry recorded" if days is None else "lapsed" if days < 0 else
+             "lapses within 30 days" if days <= 30 else
+             "expires before defects period ends" if covers is False else "in force")
+    return {"valid_until": valid.isoformat() if valid else "", "days_left": days, "in_force": in_force,
+            "defects_end": defects_end.isoformat() if defects_end else "", "covers_defects": covers, "state": state}
 
 
 @router.get("/api/registers/guarantees")
@@ -158,7 +202,6 @@ def guarantee_register(request: Request, db: Session = Depends(get_read_db)):
     worth nothing, and the bank does not write to say so.
     """
     client = require_items_access(request, db, "bills.view_all")
-    today = datetime.now().strftime("%Y-%m-%d")
     contractors = {c.id: c for c in db.query(models.DBContractor).filter(
         models.DBContractor.client_id == client.id).all()}
     rows = []
@@ -170,13 +213,8 @@ def guarantee_register(request: Request, db: Session = Depends(get_read_db)):
         if o.bank_guarantee_returned_at:
             continue
         con = contractors.get(o.contractor_id)
-        valid = (o.bank_guarantee_validity or "")[:10]
-        days = None
-        if valid:
-            try:
-                days = (datetime.strptime(valid, "%Y-%m-%d") - datetime.now()).days
-            except ValueError:
-                days = None
+        g = guarantee_state(o)
+        valid, days = g["valid_until"] or (o.bank_guarantee_validity or "")[:10], g["days_left"]
         rows.append({
             "order_id": o.id, "order": o.wo_number or "", "contractor": con.company_name if con else "",
             "number": o.bank_guarantee_number or "", "bank": o.bank_guarantee_bank or "",
@@ -184,8 +222,10 @@ def guarantee_register(request: Request, db: Session = Depends(get_read_db)):
             "amount": money(o.bank_guarantee_amount), "valid_until": valid, "days_left": days,
             "completion_date": o.completion_date or "",
             "defect_liability_months": o.defect_liability_months or 0,
-            "state": ("no expiry recorded" if days is None else
-                      "lapsed" if days < 0 else "lapses within 30 days" if days <= 30 else "in force"),
+            # The guarantee has to outlast the defects period, or it is worth nothing when a defect turns up.
+            "defects_period_ends": g["defects_end"],
+            "short_of_defects_period": g["covers_defects"] is False,
+            "state": g["state"],
         })
     rows.sort(key=lambda r: (r["days_left"] is None, r["days_left"] if r["days_left"] is not None else 0))
     return {
@@ -195,6 +235,7 @@ def guarantee_register(request: Request, db: Session = Depends(get_read_db)):
             "lapsed": len([r for r in rows if r["state"] == "lapsed"]),
             "lapsing_soon": len([r for r in rows if r["state"] == "lapses within 30 days"]),
             "no_expiry": len([r for r in rows if r["days_left"] is None]),
+            "short_of_defects_period": len([r for r in rows if r["short_of_defects_period"] and r["state"] != "lapsed"]),
         },
     }
 
@@ -217,7 +258,8 @@ def advance_register(request: Request, db: Session = Depends(get_read_db)):
     rows = []
     for o in db.query(models.DBSubcontractOrder).filter(
             models.DBSubcontractOrder.client_id == client.id,
-            models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED"))).all():
+            # A closed order whose advance has not all come back still has money out.
+            models.DBSubcontractOrder.status.in_(("APPROVED", "EXECUTED", "CLOSED"))).all():
         if not (o.mobilization_advance_amount or 0):
             continue
         con = contractors.get(o.contractor_id)
@@ -226,13 +268,24 @@ def advance_register(request: Request, db: Session = Depends(get_read_db)):
         agreed = money(o.mobilization_advance_amount)
         given = advance_paid(db, client.id, o.id)
         back = money(recovered.get(o.id, 0.0))
+        outstanding = money(given - back)
+        if o.status == "CLOSED" and outstanding <= 0.005:
+            continue
+        # Secured only by a guarantee that is in force (not lapsed, not handed back) and covers what is still out.
+        g = guarantee_state(o)
+        cover = money(o.bank_guarantee_amount or 0) if g["in_force"] else 0.0
+        security = ("nothing out" if outstanding <= 0.005 else "secured" if cover >= outstanding - 0.005
+                    else "partly secured" if cover > 0 else "unsecured")
         rows.append({
             "order_id": o.id, "order": o.wo_number or "", "contractor": con.company_name if con else "",
             "agreed": agreed, "not_yet_paid": money(max(0.0, agreed - given)),
             "advance": given, "recovery_percent": o.advance_recovery_percent or 0,
-            "recovered": back, "outstanding": money(given - back),
+            "recovered": back, "outstanding": outstanding,
             "percent_recovered": round(back / given * 100, 1) if given else 0.0,
-            "secured_by_bg": bool(o.bank_guarantee_applicable),
+            "order_status": o.status or "",
+            "secured_by_bg": security == "secured" and cover > 0,
+            "security": security, "bg_cover": cover, "bg_state": g["state"] if o.bank_guarantee_applicable else "",
+            "unsecured": money(max(0.0, outstanding - cover)),
         })
     rows.sort(key=lambda r: -r["outstanding"])
     return {
@@ -242,7 +295,7 @@ def advance_register(request: Request, db: Session = Depends(get_read_db)):
             "given": money(sum(r["advance"] for r in rows)),
             "recovered": money(sum(r["recovered"] for r in rows)),
             "outstanding": money(sum(r["outstanding"] for r in rows)),
-            "unsecured": money(sum(r["outstanding"] for r in rows if not r["secured_by_bg"])),
+            "unsecured": money(sum(r["unsecured"] for r in rows)),
         },
     }
 

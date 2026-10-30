@@ -96,7 +96,7 @@ def test_a_cancelled_bill_gives_its_back_charges_back(tenant):
 def test_another_contractors_back_charge_cannot_go_on_this_bill(tenant):
     order, bill = a_draft(tenant)
     other = tenant.post("/api/wo/contractors", json={"company_name": "Somebody Else", "pan": "AAAPB1234C",
-                                                     "gst_number": "36AAAPB1234C1Z5"}).json()
+                                                     "gst_number": "36AAAPB1234C1ZP"}).json()
     charge = tenant.post("/api/back-charges", json={"contractor_id": other["id"], "reason": "Not theirs", "amount": 10}).json()["back_charge"]
     refused = tenant.post("/api/sub-bills/%d/back-charges" % bill["id"], json={"ids": [charge["id"]]})
     assert refused.status_code == 400 and "another contractor" in refused.json()["detail"]

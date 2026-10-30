@@ -537,6 +537,19 @@ def book_schedule(book, upto_year):
     return rows
 
 
+def closed_years(book, before=None):
+    """The financial years of this book that have already ended (31 March gone), as "2024-25" or "2024-25 to
+    2025-26"; "" when none has. `before` is the book's (method, life, residual, cost, put to use, opening year,
+    opening value) as it stood, so a change is judged against the years it already had."""
+    put = (before[4] if before else book.put_to_use_on) or ""
+    opening_fy = (before[5] if before else book.opening_fy) or ""
+    start = fy_start_year(opening_fy) if opening_fy else fy_start_year(put)
+    now = fy_start_year(date.today())
+    if start is None or start >= now:
+        return ""
+    return fy_label(start) if start == now - 1 else "%s to %s" % (fy_label(start), fy_label(now - 1))
+
+
 def book_dict(book, a, fy_year):
     rows = book_schedule(book, fy_year)
     row = next((r for r in rows if r["fy"] == fy_label(fy_year)), None)

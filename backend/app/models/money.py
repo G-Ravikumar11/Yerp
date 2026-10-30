@@ -106,6 +106,9 @@ class DBRetentionRelease(Base):
     certified_at = Column(String, default="")
     # Why it went ahead though a check said not yet (defects period still running, a back-charge open...).
     override_note = Column(Text, default="")
+    # When the defects liability period on the work ends (YYYY-MM-DD), as stated on a client release: the client's
+    # work order carries no completion date of its own, so the last of the retention is claimed only after it.
+    dlp_ends = Column(String, default="")
     notes = Column(Text, default="")
     cancel_reason = Column(String, default="")
     created_by_name = Column(String, default="")
@@ -133,8 +136,8 @@ class DBCreditNote(Base):
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
     contractor_id = Column(Integer, ForeignKey("contractors.id"), nullable=True, index=True)
 
-    number = Column(String, default="", index=True)         # <bill number>/CN-01
-    sequence = Column(Integer, default=1)                   # CN-01, CN-02 ... on that bill
+    number = Column(String, default="", index=True)         # CN/2026-27/0001 - one series a financial year
+    sequence = Column(Integer, default=1)                   # the serial within that year's series
     note_date = Column(String, default="")
     reason = Column(Text, default="")
 
@@ -233,6 +236,9 @@ class DBSiteCashExpense(Base):
     bill_no = Column(String, default="")
     status = Column(String, default="SUBMITTED", index=True)         # SUBMITTED -> APPROVED | REJECTED
     submitted_by = Column(Integer, nullable=True)                    # the member of staff; None for the Master
+    # Entered by the Master (or a colleague signing in as the company): they may not then check it themselves.
+    submitted_by_master = Column(Boolean, default=False)
+    submitted_by_member = Column(Integer, nullable=True)             # a colleague of the Master's (team_members)
     submitted_by_name = Column(String, default="")
     submitted_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     checked_by_name = Column(String, default="")

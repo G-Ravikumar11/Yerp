@@ -15,7 +15,7 @@ from app.db import get_db, get_read_db
 
 from app.constants.settings import OLD_ALERT_DAYS, SETTINGS_ON_THE_COMPANY, THEME_FONTS
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, get_employee_user, require_erp_read, require_owner
+from app.core.auth import current_member, get_client_user, get_employee_user, require_erp_read, require_owner
 from app.core.currency import DEFAULT_CURRENCY
 from app.core.files import file_bytes
 from app.core.gst import state_from_gstin
@@ -41,7 +41,7 @@ from app.services.settings import (
     viewer_key,
 )
 from app.services.subcontract_orders import sweep_referrers
-from app.validators.common import validate_email_address, validate_tax_rate
+from app.validators.common import validate_email_address, validate_gstin, validate_tax_rate
 
 
 router = APIRouter()
@@ -76,6 +76,10 @@ def save_settings(request: Request, body: dict = None, db: Session = Depends(get
     if gstin:
         if len(gstin) != 15 or not state_from_gstin(gstin):
             raise HTTPException(400, "A GSTIN is fifteen characters and starts with a state code.")
+        validate_gstin(gstin)
+        if gstin != (client.gstin or "") and current_member(request, db) is not None:
+            # Who the company is for tax is the Master's to change (or accounts', on the GST screen) - not a colleague's.
+            raise HTTPException(403, "Only the Master changes the company's GSTIN.")
         client.gstin, client.state_code = gstin, state_from_gstin(gstin)
         body["company_abn"] = gstin
     if body:

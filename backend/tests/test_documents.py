@@ -21,9 +21,9 @@ def certified(tenant):
 
 
 def test_the_ra_bill_names_both_parties_and_states_the_figure_twice(tenant):
-    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZX"})
+    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZI"})
     b = certified(tenant)
-    assert b["our"]["gstin"] == "36AABCY1234H1ZX"
+    assert b["our"]["gstin"] == "36AABCY1234H1ZI"
     assert b["our"]["name"]
     assert b["client_party"]["name"]
     assert b["amount_in_words"].startswith("Rupees")

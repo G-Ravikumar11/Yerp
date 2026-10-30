@@ -12,6 +12,7 @@ from app.core.audit import log_audit
 from app.core.auth import wo_actor
 from app.core.currency import amount_in_words, inr, money, unit_rate
 from app.core.gst import GST_STATES, our_state, split_gst, supply_state_for_job
+from app.core.tenant_settings import tenant_setting
 from app.services.credit_notes import bill_credit_summary, credited_qty_by_item
 
 
@@ -91,25 +92,114 @@ def write_ra_bill_lines(db, bill, claimable):
 
 DEFAULT_RETENTION_PERCENT = 5.0  # when the project states no retention
 DEFAULT_GST_PERCENT = 18.0     # works contract, when the company has set no default rate
-DEFAULT_TDS_PERCENT = 1.0      # 194C, payments to a company
+DEFAULT_TDS_PERCENT = 2.0      # 194C, a payment to a company or a firm (1% is for an individual or HUF)
+TDS_SETTING_KEY = "ra_tds_percent"   # the company's own default, when its clients deduct at another rate
+GST_RATES = (0.0, 5.0, 12.0, 18.0, 28.0)
+
+
+def default_tds_percent(db, client_id):
+    """The TDS a client is expected to deduct from our bills: the company's setting, else 2% (194C, company/firm)."""
+    raw = tenant_setting(db, client_id, TDS_SETTING_KEY, "")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_TDS_PERCENT
+    return value if 0 <= value <= 100 else DEFAULT_TDS_PERCENT
 
 
 def contract_rates(db, work_order):
     """The retention, GST and TDS a new bill on this order is drawn at.
 
-    Retention is a term of the contract, kept on the project: when the project states one, that is used. A project
-    that states none (0 is what an empty field holds) is billed at the usual 5%, and the draft can be changed.
-    GST is the company's default tax rate (Settings > Tax rates), and TDS the usual 1%. A screen that sends nothing
-    therefore gets the contract's terms where there are any, not a fixed 5 / 18 / 1 whatever the project says.
+    Retention is a term of the contract, kept on the project: when the project states one - 0 included, a contract
+    with no retention - that is used. A project that states none is billed at the usual 5%, and the draft can be
+    changed. GST is the company's default tax rate (Settings > Tax rates), and TDS the company's default (2% under
+    194C unless it has set another). A screen that sends nothing therefore gets the contract's terms where there are
+    any, not a fixed 5 / 18 / 2 whatever the project says.
     """
     job = db.query(models.DBJob).filter(models.DBJob.id == work_order.job_id).first() if work_order.job_id else None
     retention = float(job.retention_percent or 0.0) if job else 0.0
-    if retention <= 0:
+    stated = bool(job and (job.retention_stated or retention > 0))
+    if not stated:
         retention = DEFAULT_RETENTION_PERCENT
     default_tax = db.query(models.DBTaxRate).filter(
         models.DBTaxRate.client_id == work_order.client_id, models.DBTaxRate.is_default.is_(True)).first()
     gst = float(default_tax.percent) if default_tax and default_tax.percent else DEFAULT_GST_PERCENT
-    return {"retention_percent": retention, "tax_percent": gst, "tds_percent": DEFAULT_TDS_PERCENT}
+    return {"retention_percent": retention, "tax_percent": gst,
+            "tds_percent": default_tds_percent(db, work_order.client_id)}
+
+
+def check_rates(retention_percent=None, tax_percent=None, tds_percent=None, advance_recovery=None,
+                other_deductions=None):
+    """What a bill's deductions may be: nothing negative, a percentage between 0 and 100, GST at a rate GST has."""
+    for label, value in (("Retention", retention_percent), ("TDS", tds_percent)):
+        if value is not None and not (0 <= float(value) <= 100):
+            raise HTTPException(400, "%s has to be between 0 and 100%%; %s is not." % (label, value))
+    if tax_percent is not None and float(tax_percent) not in GST_RATES:
+        raise HTTPException(400, "GST is charged at 0, 5, 12, 18 or 28%%; %s is not one of them." % tax_percent)
+    for label, value in (("Advance recovery", advance_recovery), ("Other deductions", other_deductions)):
+        if value is not None and float(value) < 0:
+            raise HTTPException(400, "%s cannot be negative." % label)
+
+
+def _party(name):
+    """A party's name as the ledgers compare it (norm_name): case, spacing and full stops do not make two clients."""
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def client_advance_available(db, bill):
+    """What the client has paid us on account (an advance) that bills have not already recovered.
+
+    The advance is what the ledger shows came in on account from the project's client, less what went back to them
+    on account; every other live bill to the same client that recovers advance takes its share."""
+    job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first() if bill.job_id else None
+    who = _party(job.customer_name if job else "")
+    if not who:
+        return 0.0
+    got = 0.0
+    for e in db.query(models.DBMoneyEntry).filter(
+            models.DBMoneyEntry.client_id == bill.client_id, models.DBMoneyEntry.doc_type == "on_account",
+            models.DBMoneyEntry.party_type == "client", models.DBMoneyEntry.voided.isnot(True)).all():
+        if _party(e.party_name) == who:
+            got += (e.amount or 0) if e.direction == "IN" else -(e.amount or 0)
+    jobs = [j.id for j in db.query(models.DBJob).filter(models.DBJob.client_id == bill.client_id).all()
+            if _party(j.customer_name) == who]
+    used = sum((b.advance_recovery or 0) for b in db.query(models.DBRABill).filter(
+        models.DBRABill.client_id == bill.client_id, models.DBRABill.job_id.in_(jobs or [0]),
+        models.DBRABill.status != "CANCELLED").all() if b.id != bill.id)
+    return money(got - used)
+
+
+def check_deductions(db, bill, advance=True):
+    """After a bill is costed: its rates are rates, the bill does not ask the client for less than nothing, and (when
+    it goes up for signature) an advance recovered is one the client actually paid. A draft may carry an advance the
+    ledger does not show yet - the receipt can be recorded before it is submitted."""
+    check_rates(bill.retention_percent, bill.tax_percent, bill.tds_percent, bill.advance_recovery,
+                bill.other_deductions)
+    if advance and money(bill.advance_recovery) > 0:
+        room = client_advance_available(db, bill)
+        if money(bill.advance_recovery) > room + 0.009:
+            raise HTTPException(
+                400, "Only %s of advance from the client is on the ledger and not yet recovered; %s is more than "
+                     "that. Record the advance as a receipt on account first." % (inr(max(room, 0.0)),
+                                                                                  inr(bill.advance_recovery)))
+    if money(bill.net_payable) < 0:
+        raise HTTPException(400, "The deductions come to more than the bill: it would ask the client for %s."
+                                 % inr(bill.net_payable))
+
+
+def over_order_lines(db, bill):
+    """Lines of this bill that take what has been billed past the quantity ordered. An approved variation raises the
+    order line's quantity (apply_variation), so agreed extra work is inside the cap."""
+    ordered = {l.id: money(l.qty) for l in db.query(models.DBWorkOrderLine).filter(
+        models.DBWorkOrderLine.work_order_id == bill.work_order_id).all()}
+    out = []
+    for l in db.query(models.DBRABillLine).filter(models.DBRABillLine.ra_bill_id == bill.id).all():
+        cap = ordered.get(l.line_id, 0.0)
+        total = money((l.previously_billed_qty or 0) + (l.this_bill_qty or 0))
+        if total > cap + 0.0001:
+            out.append({"line_id": l.line_id, "description": (l.description or "").split("\n")[0][:60],
+                        "ordered": cap, "billed": total, "over": money(total - cap)})
+    return out
 
 
 def ra_bill_or_404(db, client_id, bill_id):
@@ -211,6 +301,7 @@ def ra_bill_dict(db, bill, detail=False, credits=None):
             "upto_date_amount": money(money(l.measured_to_date) * unit_rate(l.rate)),
             "credited_qty": money(credit["credited_qty"].get(l.id, 0.0)),
             "creditable_qty": money((l.this_bill_qty or 0) - credit["credited_qty"].get(l.id, 0.0)),
+            "over_order": money(money(l.previously_billed_qty) + money(l.this_bill_qty)) > money(l.ordered_qty) + 0.0001,
         } for l in db.query(models.DBRABillLine).filter(
             models.DBRABillLine.ra_bill_id == bill.id).order_by(
                 models.DBRABillLine.display_order, models.DBRABillLine.id).all()]
@@ -276,6 +367,14 @@ def ra_apply(db, client, bill, action, actor_id, actor_name, comments=""):
             raise HTTPException(
                 400, "There is nothing left to claim - the measurements behind "
                      "this bill have been withdrawn since it was drawn up.")
+        over = over_order_lines(db, bill)
+        if over:
+            raise HTTPException(
+                409, "%s claims past the order: %s. Raise a variation for the extra work and have it approved, "
+                     "then redraw the bill." % (bill.number, "; ".join(
+                         "'%s' %s billed against %s ordered" % (o["description"], o["billed"], o["ordered"])
+                         for o in over)))
+        check_deductions(db, bill)
         # The measurements behind it are pinned to the bill, so a later entry
         # cannot quietly join a claim that has already gone up for signature.
         for line in db.query(models.DBRABillLine).filter(

@@ -27,19 +27,40 @@ export interface Payable extends Aged {
   approved?: boolean
 }
 
+/** A bill a credit note took past what was owed on it: the balance is now in the party's favour. */
+export interface CreditBalance {
+  id: number
+  number: string
+  doc_type: string
+  party: string
+  project: string
+  amount: number
+}
+
+/** Per party: owed on open documents, in their favour after credit notes, on account, and the net. */
+export interface PartyPosition {
+  party: string
+  owed: number
+  credit: number
+  on_account: number
+  net: number
+}
+
 export interface Ledger<T> {
   rows: T[]
   buckets: Buckets
   summary: Record<string, number>
+  credits: CreditBalance[]
+  parties: PartyPosition[]
 }
 
 export const owedKeys = { all: ['owed'] as const, receivables: ['owed', 'receivables'] as const, payables: ['owed', 'payables'] as const, retention: ['owed', 'retention'] as const }
 
 export const useOwedReceivables = () =>
-  useQuery({ queryKey: owedKeys.receivables, queryFn: async (): Promise<Ledger<Receivable>> => { const d = await get<{ invoices: Receivable[]; buckets: Buckets; summary: Record<string, number> }>('/api/money/receivables'); return { rows: d.invoices ?? [], buckets: d.buckets, summary: d.summary ?? {} } } })
+  useQuery({ queryKey: owedKeys.receivables, queryFn: async (): Promise<Ledger<Receivable>> => { const d = await get<{ invoices: Receivable[]; buckets: Buckets; summary: Record<string, number>; credits?: CreditBalance[]; parties?: PartyPosition[] }>('/api/money/receivables'); return { rows: d.invoices ?? [], buckets: d.buckets, summary: d.summary ?? {}, credits: d.credits ?? [], parties: d.parties ?? [] } } })
 
 export const useOwedPayables = () =>
-  useQuery({ queryKey: owedKeys.payables, queryFn: async (): Promise<Ledger<Payable>> => { const d = await get<{ bills: Payable[]; buckets: Buckets; summary: Record<string, number> }>('/api/money/payables'); return { rows: d.bills ?? [], buckets: d.buckets, summary: d.summary ?? {} } } })
+  useQuery({ queryKey: owedKeys.payables, queryFn: async (): Promise<Ledger<Payable>> => { const d = await get<{ bills: Payable[]; buckets: Buckets; summary: Record<string, number>; credits?: CreditBalance[]; parties?: PartyPosition[] }>('/api/money/payables'); return { rows: d.bills ?? [], buckets: d.buckets, summary: d.summary ?? {}, credits: d.credits ?? [], parties: d.parties ?? [] } } })
 
 /* --- Retention: money held back on a bill until the work is proved ---------------------- */
 
@@ -60,6 +81,8 @@ export interface Position {
   suggest?: { stage: string; amount: number }
   dlp_ends: string
   dlp_over: boolean
+  /** Released (or taken back by credit notes) past what was held - an error to put right. */
+  over_released?: number
   /** What would stop the release suggested next: the defects period still running, a back-charge open... */
   holds?: string[]
   actual_completion_date?: string
@@ -95,6 +118,6 @@ export interface Retention {
 
 export const useRetentionPage = () => useQuery({ queryKey: owedKeys.retention, queryFn: () => get<Retention>('/api/retention') })
 
-export const raiseRelease = (b: { side: string; order_id: number; stage: string; amount: number; release_on: string; notes: string; override?: boolean }) => post<{ message: string }>('/api/retention/releases', b)
+export const raiseRelease = (b: { side: string; order_id: number; stage: string; amount: number; release_on: string; notes: string; override?: boolean; dlp_ends?: string }) => post<{ message: string }>('/api/retention/releases', b)
 export const certifyRelease = (id: number, comments: string) => post<{ message: string }>(`/api/retention/releases/${id}/certify`, { comments })
 export const cancelRelease = (id: number, reason: string) => post<{ message: string }>(`/api/retention/releases/${id}/cancel`, { reason })

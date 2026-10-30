@@ -192,7 +192,7 @@ def take_on(con):
 
 def priced_order(client):
     unit = client.post("/api/wo/business-units", json={"name": "Yalavarti Projects", "code": "YP",
-                                                       "gstin": "36AABCY1234H1ZX"}).json()
+                                                       "gstin": "36AABCY1234H1ZI"}).json()
     con = client.post("/api/wo/contractors", json={"company_name": "Rani Labour %s" % id(client),
                                                    "pan": "AAAPR1234C",
                                                    "bank_account": "50100012345678", "bank_ifsc": "HDFC0001234"}).json()

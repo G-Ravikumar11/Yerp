@@ -18,7 +18,9 @@ function Form({ project: p, onClose }: { project: BoardProject | null; onClose: 
   const states = useGstStates()
   const loc = useSiteLocation(p?.id ?? null)
   const [f, setF] = useState({ number: p?.number ?? '', name: p?.name ?? '', customer_name: p?.customer_name ?? '', status: p?.status ?? 'quoting', site_address: p?.site_address ?? '', state_code: p?.state_code ?? '', start_date: p?.start_date ?? today(), target_end_date: p?.target_end_date ?? '', description: p?.description ?? '' })
-  const [n, setN] = useState({ quoted_value: p?.quoted_value ?? 0, budget: p?.budget ?? 0, retention_percent: p?.retention_percent ?? 0 })
+  const [n, setN] = useState({ quoted_value: p?.quoted_value ?? 0, budget: p?.budget ?? 0 })
+  // Left empty, the project states no retention and its bills take the usual 5%; 0 typed in means none at all.
+  const [ret, setRet] = useState(p && (p.retention_stated || p.retention_percent) ? String(p.retention_percent ?? 0) : '')
   const [geo, setGeo] = useState<string | null>(null)
   const [radius, setRadius] = useState<number | null>(null)
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }))
@@ -31,7 +33,7 @@ function Form({ project: p, onClose }: { project: BoardProject | null; onClose: 
   const shownGeo = geo ?? (loc.data?.set ? `${loc.data.lat}, ${loc.data.lng}` : '')
   const shownRadius = radius ?? (loc.data?.set ? loc.data.radius_m ?? 300 : 0)
   const save = useAction(async () => {
-    const r = await saveProject(p?.id ?? null, { ...f, ...n })
+    const r = await saveProject(p?.id ?? null, { ...f, ...n, retention_percent: ret.trim() === '' ? null : Number(ret) })
     const id = p?.id ?? (r as { id: number }).id
     if (geo !== null || radius !== null) {
       if (!shownGeo.trim()) { if (loc.data?.set) await clearSiteLocation(id) } else await setSiteLocation(id, shownGeo.trim(), shownRadius || 300)
@@ -59,7 +61,7 @@ function Form({ project: p, onClose }: { project: BoardProject | null; onClose: 
         </div>
         <Field label="Quoted value" htmlFor="pj-quoted"><NumField id="pj-quoted" value={n.quoted_value} onValue={num('quoted_value')} /></Field>
         <Field label="Cost budget" htmlFor="pj-budget"><NumField id="pj-budget" value={n.budget} onValue={num('budget')} /></Field>
-        <Field label="Retention %" htmlFor="pj-ret"><NumField id="pj-ret" value={n.retention_percent} onValue={num('retention_percent')} /></Field>
+        <Field label="Retention %" htmlFor="pj-ret" hint="Empty: the usual 5%. 0: no retention on this contract."><Input id="pj-ret" inputMode="decimal" className="tabular text-right" placeholder="5 (usual)" value={ret} onChange={(e) => { const t = e.target.value; if (t === '' || /^\d*\.?\d*$/.test(t)) setRet(t) }} /></Field>
         <span />
         <Field label="Start" htmlFor="pj-start"><Input id="pj-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
         <Field label="Target finish" htmlFor="pj-end"><Input id="pj-end" type="date" value={f.target_end_date} onChange={set('target_end_date')} /></Field>

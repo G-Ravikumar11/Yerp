@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Stat, StatGrid, Tabs } from '@/components/ui'
-import { cancelRelease, certifyRelease, owedKeys, useOwedPayables, useOwedReceivables, useRetentionPage, type Payable, type Position, type Receivable, type Release } from '@/api/owed'
+import { cancelRelease, certifyRelease, owedKeys, useOwedPayables, useOwedReceivables, useRetentionPage, type CreditBalance, type Payable, type PartyPosition, type Position, type Receivable, type Release } from '@/api/owed'
 import { PayModal } from '@/features/money/PayModal'
 import { EInvoiceModal } from '@/features/einvoice/EInvoiceModal'
 import { useAction } from '@/lib/mutate'
@@ -22,6 +22,25 @@ function Age({ r }: { r: { bucket: string; days_overdue: number } }) {
 }
 
 const money = 'tabular whitespace-nowrap'
+
+/** Money on the other side of the ledger: credit notes past what was owed, and money paid on account, per party. */
+function InTheirFavour({ parties, credits, who, favour }: { parties: PartyPosition[]; credits: CreditBalance[]; who: string; favour: 'theirs' | 'ours' }) {
+  if (!parties.length) return null
+  const cols: TableColumn<PartyPosition>[] = [
+    { id: 'party', header: who, cell: (p) => <div>{p.party || '-'}{credits.filter((c) => c.party === p.party).map((c) => <div key={`${c.doc_type}-${c.id}`} className="text-xs text-muted-foreground">credit note on {c.number}: {formatINR(c.amount)}</div>)}</div> },
+    { id: 'owed', header: 'On open documents', align: 'right', cell: (p) => <span className={money}>{formatINR(p.owed)}</span> },
+    { id: 'credit', header: 'Credit balance', align: 'right', cell: (p) => <span className={money}>{formatINR(p.credit)}</span> },
+    { id: 'acc', header: 'On account', align: 'right', cell: (p) => <span className={`${money} ${p.on_account < 0 ? 'text-danger' : ''}`}>{formatINR(p.on_account)}</span> },
+    { id: 'net', header: 'Net', align: 'right', cell: (p) => <span className={`${money} font-bold`}>{formatINR(p.net)}</span> },
+  ]
+  return (
+    <div className="mt-8">
+      <h2 className="mb-1 text-lg font-semibold">Credit balances and money on account</h2>
+      <p className="mb-3 text-sm text-muted-foreground">{favour === 'theirs' ? 'In the client’s favour: a credit note past what they owed, or money they paid on account. A negative on-account figure is advance recovered on bills that the ledger never shows coming in.' : 'In our favour: a credit note past what we owed them, or an advance we paid on account.'}</p>
+      <DataTable label="Credit balances and on account" rows={parties} columns={cols} rowKey={(p) => p.party} />
+    </div>
+  )
+}
 
 export default function OwedPage() {
   const { can } = useSession()
@@ -72,10 +91,11 @@ export default function OwedPage() {
       id: 'st',
       header: contractor ? 'Defects period' : 'Job',
       cell: (p) =>
-        contractor ? (p.dlp_ends ? (p.dlp_over && p.balance > 0 ? <Badge tone="warning">ended {p.dlp_ends} - pay it</Badge> : `ends ${p.dlp_ends}`) : <span className="text-muted-foreground">not set on the order</span>) : p.balance <= 0 ? <Badge tone="success">all released</Badge> : p.finished ? <Badge tone="danger">job finished - claim it</Badge> : <Badge>{p.job_status || 'running'}</Badge>,
+        contractor ? (p.dlp_ends ? (p.dlp_over && p.balance > 0 ? <Badge tone="warning">ended {p.dlp_ends} - pay it</Badge> : `ends ${p.dlp_ends}`) : <span className="text-muted-foreground">not set on the order</span>) : p.dlp_ends && p.balance > 0 && !p.dlp_over ? `defects period ends ${p.dlp_ends}` : p.balance <= 0 ? <Badge tone="success">all released</Badge> : p.finished ? <Badge tone="danger">job finished - claim it</Badge> : <Badge>{p.job_status || 'running'}</Badge>,
     },
     // Owing a contractor money is a decision, as certifying their bill is.
-    { id: 'act', header: '', align: 'right', cell: (p) => (p.balance > 0 && (contractor ? can('subcontracts.approve') : canPay) ? <Button size="sm" variant="outline" onClick={() => setReleasing(p)}>Release</Button> : null) },
+    // The same rights the server asks for: a contractor's needs subcontracts.approve, a claim on the client billing or accounts.
+    { id: 'act', header: '', align: 'right', cell: (p) => (p.over_released ? <Badge tone="danger">{formatINR(p.over_released)} over-released</Badge> : p.balance > 0 && (contractor ? can('subcontracts.approve') : can('billing.manage') || can('accounts.manage')) ? <Button size="sm" variant="outline" onClick={() => setReleasing(p)}>Release</Button> : null) },
   ]
 
   const relCols: TableColumn<Release>[] = [
@@ -127,6 +147,7 @@ export default function OwedPage() {
           </StatGrid>
           <AgeingStrip buckets={recv.data?.buckets} total={rs.owed ?? 0} />
           <DataTable label="Owed to us" rows={recv.data?.rows ?? []} columns={recvCols} rowKey={(r) => `${r.doc_type ?? 'inv'}-${r.id}`} loading={recv.isPending} empty="Nobody owes anything. Nothing to chase." />
+          <InTheirFavour parties={recv.data?.parties ?? []} credits={recv.data?.credits ?? []} who="Client" favour="theirs" />
         </>
       )}
       {tab === 'owe' && (
@@ -139,6 +160,7 @@ export default function OwedPage() {
           </StatGrid>
           <AgeingStrip buckets={pay.data?.buckets} total={ps.owed ?? 0} />
           <DataTable label="We owe" rows={pay.data?.rows ?? []} columns={payCols} rowKey={(r) => `${r.doc_type ?? 'b'}-${r.id}`} loading={pay.isPending} empty="Nothing outstanding." />
+          <InTheirFavour parties={pay.data?.parties ?? []} credits={pay.data?.credits ?? []} who="Party" favour="ours" />
         </>
       )}
       {tab === 'retention' && (

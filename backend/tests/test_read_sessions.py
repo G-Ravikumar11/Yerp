@@ -284,7 +284,8 @@ def test_the_attendance_export_asks_once_for_everybody_not_once_per_row(tenant, 
 def test_a_payslip_opens_in_a_handful_of_reads_and_keeps_its_figures(tenant, people_data):
     eid, slip = people_data["staff"][0]["id"], people_data["slip"]
     sent, res = trips(tenant, "/api/payslips/%d" % slip)
-    assert len(sent) <= 8, "%d statements:\n%s" % (len(sent), "\n".join(s[:110] for s in sent))
+    # 8, plus the salary of that period (its increments) and the payslip's own component lines.
+    assert len(sent) <= 10, "%d statements:\n%s" % (len(sent), "\n".join(s[:110] for s in sent))
     body = res.json()
     assert body["employee"]["full_name"].startswith("Test ") and body["ytd"]["payslip_count"] == 1
     assert body["ytd"]["year"] == "2026" and body["ytd"]["gross_pay"] > 0

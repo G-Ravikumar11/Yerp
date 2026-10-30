@@ -14,6 +14,21 @@ class BankAccountIn(BaseModel):
     opening_date: Optional[str] = ""
 
 
+class BankAccountEditIn(BaseModel):
+    """What may be corrected on an account; anything left out stays as it is."""
+    name: Optional[str] = None
+    bank_name: Optional[str] = None
+    account_no: Optional[str] = None
+    ifsc: Optional[str] = None
+    opening_balance: Optional[float] = None
+    opening_date: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class MoneyLockIn(BaseModel):
+    locked_upto: Optional[str] = ""        # YYYY-MM-DD, or empty to reopen
+
+
 class MoneyIn(BaseModel):
     doc_type: Optional[str] = ""          # ra_bill | sub_bill | supplier_bill | on_account
     doc_id: Optional[int] = None
@@ -38,6 +53,7 @@ class PaymentRulesIn(BaseModel):
     on: bool = False
     free_below: Optional[float] = 0
     md_above: Optional[float] = 100000
+    valid_days: Optional[int] = None       # an approval not paid within this many days expires; None leaves it as it is
 
 
 class RequestPayIn(BaseModel):

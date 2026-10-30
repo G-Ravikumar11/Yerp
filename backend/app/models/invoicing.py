@@ -201,6 +201,16 @@ class DBBill(Base):
     # what turns "approved after the fact" into "we agreed this beforehand".
     purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=True, index=True)
 
+    # The tax split as the supplier charged it, set when the bill is saved (from their GSTIN's state against ours, or
+    # as typed). NULL on a bill saved before the split was kept: the input register then works it out as it used to.
+    cgst = Column(Float, nullable=True)
+    sgst = Column(Float, nullable=True)
+    igst = Column(Float, nullable=True)
+    # Whether the input credit may be taken (blocked credits - motor vehicles, food, works contracts for our own
+    # building - are not), and whether we pay the tax ourselves under reverse charge.
+    itc_eligible = Column(Boolean, default=True)
+    reverse_charge = Column(Boolean, default=False)
+
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     client = relationship("DBClient", back_populates="bills")
@@ -218,7 +228,7 @@ class DBBillLineItem(Base):
     description = Column(String, default="")
     qty = Column(Float, default=1.0)
     price = Column(Float, default=0.0)
-    tax_rate = Column(String, default="20%")
+    tax_rate = Column(String, default="18%")
 
     bill = relationship("DBBill", back_populates="line_items")
 
@@ -339,6 +349,9 @@ class DBEwayBill(Base):
     status = Column(String, default="DRAFT", index=True)       # DRAFT | GENERATED | CANCELLED
     ewb_no = Column(String, default="", index=True)
     ewb_date = Column(String, default="")
+    # When the portal generated it, to the minute: it cancels only within 24 hours of that. "" on older rows, where
+    # the date alone is known.
+    ewb_generated_at = Column(String, default="")
     valid_upto = Column(String, default="")
     cancel_reason = Column(String, default="")
     vehicle_history = Column(Text, default="")                 # Part B changes, one per line

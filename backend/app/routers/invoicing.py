@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -34,9 +35,9 @@ from app.core.currency import (
     parse_tax_rate,
 )
 from app.core.dates import ack_datetime, days_after
-from app.core.gst import GST_STATES, WORKS_CONTRACT_SAC, our_state, state_from_gstin
+from app.core.gst import GST_STATES, WORKS_CONTRACT_SAC, our_state, state_from_gstin, supply_state_for_job
 from app.core.notifications import default_from_email, notify_employee, send_email_background
-from app.core.serials import invoice_prefix_for, next_sequence_number
+from app.core.serials import allocate_bill_number, invoice_prefix_for, next_sequence_number
 from app.core.sheets import sheet_response
 from app.documents.forms import _pre
 from app.routers.employee_portal import employee_create_bill
@@ -53,15 +54,23 @@ from app.schemas.invoicing import (
     SendInvoiceEmail,
 )
 from app.services.approvals import get_approval_chain_history
-from app.services.crm import invoice_overdue_days, norm_name, settled_on
+from app.services.crm import invoice_overdue_days, norm_name
+from app.services.money import already_settled, pay_in_full
 from app.services.invoicing import (
+    BILL_LOCKED,
     _eway_apply,
     _eway_set_lines,
     _month_key,
     _signed_qr_data,
     active_irn,
     apply_payment_status,
+    bill_figures,
+    bill_gst_split,
+    bill_order_warnings,
+    check_bill_lines,
+    einvoice_buyer,
     einvoice_document,
+    guess_bill_split,
     eway_dict,
     eway_lines,
     eway_or_404,
@@ -76,6 +85,7 @@ from app.services.invoicing import (
     payment_terms_for,
     qr_svg,
     recurring_to_dict,
+    refuse_duplicate_bill,
     send_whatsapp_background,
     transfer_lines_for,
 )
@@ -86,6 +96,7 @@ from app.services.subcontract_billing import release_gst_rows
 from app.services.wallet_ai import require_credit
 from app.validators.common import (
     validate_email_address,
+    validate_gstin,
     validate_invoice_dates,
     validate_line_items,
     validate_recurring,
@@ -206,12 +217,21 @@ def get_next_invoice_number(request: Request, db: Session = Depends(get_read_db)
         "payment_terms_days": payment_terms_for(db, client.id)}
 
 
+def refuse_paid_status(status):
+    """Paid and part-paid are what the payments make an invoice, never a status typed onto it: an invoice saved as
+    "Paid" with nothing received dropped out of what clients owe."""
+    if (status or "").strip().lower() in ("paid", "partially paid"):
+        raise HTTPException(status_code=400, detail="An invoice becomes paid when the payment is recorded against "
+                                                    "it, not by setting its status.")
+
+
 @router.post("/api/invoices")
 def create_invoice(invoice: InvoiceCreate, request: Request, db: Session = Depends(get_db)):
     client = get_client_user(request, db)
 
     validate_line_items(invoice.line_items)
     validate_invoice_dates(invoice.issue_date, invoice.due_date)
+    refuse_paid_status(invoice.status)
 
     subtotal, tax, total = compute_invoice_totals(invoice.line_items, invoice.tax_type)
 
@@ -550,7 +570,25 @@ def list_bills(request: Request, db: Session = Depends(get_read_db)):
              "current_step": b.current_approval_step or 0,
              "rejection_reason": b.rejection_reason or "",
              "submitted_by": b.submitted_by,
-             "submitted_by_name": submitters.get(b.submitted_by, "")} for b in bills]
+             "submitted_by_name": submitters.get(b.submitted_by, ""),
+             **_bill_tax_fields(b)} for b in bills]
+
+
+def _bill_tax_fields(b):
+    return {"purchase_order_id": b.purchase_order_id, "job_id": b.job_id,
+            "cgst": money(b.cgst) if b.cgst is not None else None,
+            "sgst": money(b.sgst) if b.sgst is not None else None,
+            "igst": money(b.igst) if b.igst is not None else None,
+            "itc_eligible": b.itc_eligible is not False, "reverse_charge": bool(b.reverse_charge)}
+
+
+def _flag(body, key, default):
+    v = body.get(key)
+    if v in (None, ""):
+        return default
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
 
 
 @router.post("/api/bills")
@@ -563,6 +601,10 @@ def create_bill(request: Request, body: dict = None, db: Session = Depends(get_d
     existing = db.query(models.DBBill).filter(models.DBBill.number == body.get("number", ""), models.DBBill.client_id == client.id).first()
     if existing:
         raise HTTPException(status_code=400, detail="Bill number already exists")
+    amount, tax, total = bill_figures(body)
+    check_bill_lines(amount, body.get("line_items"))
+    refuse_duplicate_bill(db, client.id, body.get("vendor_name") or "", body.get("reference") or "", body.get("number") or "")
+    cgst, sgst, igst = bill_gst_split(db, client.id, body.get("vendor_name") or "", tax, body)
     bill = models.DBBill(
         client_id=client.id,
         number=body.get("number", ""),
@@ -574,9 +616,12 @@ def create_bill(request: Request, body: dict = None, db: Session = Depends(get_d
         due_date=body.get("due_date") or days_after(
             body.get("issue_date") or datetime.now().strftime("%Y-%m-%d"),
             supplier_payment_days(db, client.id, body.get("vendor_name") or "")),
-        amount=body.get("amount", 0.0),
-        tax_amount=body.get("tax_amount", 0.0),
-        total=body.get("total", 0.0),
+        amount=amount,
+        tax_amount=tax,
+        total=total,
+        cgst=cgst, sgst=sgst, igst=igst,
+        itc_eligible=_flag(body, "itc_eligible", True),
+        reverse_charge=_flag(body, "reverse_charge", False),
         status=body.get("status", "Draft"),
         category=body.get("category", "general"),
         reference=body.get("reference", ""),
@@ -594,12 +639,23 @@ def create_bill(request: Request, body: dict = None, db: Session = Depends(get_d
                                           li.get("po_line_id")),
             qty=float(li.get("qty") or 1),
             price=float(li.get("price") or 0),
-            tax_rate=li.get("tax_rate") or "0%"))
+            tax_rate=li.get("tax_rate") or _line_rate(amount, tax)))
+    db.flush()
+    warnings = bill_order_warnings(db, bill)
     db.commit()
     db.refresh(bill)
     log_audit(db, client.id, "bill_created", "bill", bill.id, bill.number, f"Vendor: {bill.vendor_name}, Total: {bill.total}", request)
     db.commit()
-    return {"id": bill.id, "number": bill.number}
+    return {"id": bill.id, "number": bill.number, "warnings": warnings}
+
+
+def _line_rate(amount, tax):
+    """A line with no rate given takes the bill's own (tax over amount), else the usual 18% GST - never the 20% VAT
+    the lines used to default to."""
+    if amount and tax:
+        pct = round(tax / amount * 100.0, 2)
+        return "%s%% GST" % (int(pct) if pct == int(pct) else pct)
+    return "18% GST" if not amount else "0%"
 
 
 @router.get("/api/bills/{bill_id}")
@@ -620,7 +676,8 @@ def get_bill(bill_id: int, request: Request, db: Session = Depends(get_read_db))
         "rejection_reason": bill.rejection_reason or "",
         "submitted_by": bill.submitted_by,
         "approval_history": get_approval_chain_history("bill", bill.id, db),
-        "line_items": [{"id": li.id, "description": li.description or "", "qty": li.qty or 1, "price": li.price or 0, "tax_rate": li.tax_rate or "20%"} for li in line_items]
+        **_bill_tax_fields(bill),
+        "line_items": [{"id": li.id, "description": li.description or "", "qty": li.qty or 1, "price": li.price or 0, "tax_rate": li.tax_rate or "18%"} for li in line_items]
     }
 
 
@@ -630,29 +687,100 @@ def update_bill(bill_id: int, request: Request, body: dict = None, db: Session =
     bill = db.query(models.DBBill).filter(models.DBBill.id == bill_id, models.DBBill.client_id == client.id).first()
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
-    if body and session_employee(request, db):
-        # Staff correct a bill; they do not mark it paid or approved by
-        # editing it, and they do not change one somebody is deciding on or
-        # has already approved.
-        body = {k: v for k, v in body.items() if k not in ("status", "amount_paid")}
-        if bill.approval_status == "pending":
+    body = dict(body or {})
+    if not body:
+        return {"id": bill.id, "number": bill.number}
+    staff = session_employee(request, db)
+    changed = [k for k in BILL_LOCKED if k in body and _bill_field_changed(bill, k, body[k])]
+
+    # What has been paid is what the ledger says; it is never typed in here.
+    if "amount_paid" in body and _bill_field_changed(bill, "amount_paid", body.get("amount_paid")):
+        raise HTTPException(409, "Payments on a bill are recorded under Payments & Ledgers, not by editing it.")
+    # A bill's status moves by approval and by payment. The one step taken here is the Master accepting a draft they
+    # entered themselves (no approval chain, nothing paid) as owed.
+    new_status = body.get("status")
+    if new_status not in (None, "") and new_status != (bill.status or "Draft"):
+        if not (new_status == "Awaiting Payment" and (bill.status or "Draft") == "Draft" and not staff
+                and (bill.approval_status or "none") in ("none", "")):
+            raise HTTPException(409, "A bill's status moves by approval and by payment, not by editing it.")
+    else:
+        new_status = None
+
+    paid = money(already_settled(db, client.id, "supplier_bill", bill, money(bill.total or bill.amount or 0)))
+    if changed:
+        if (bill.approval_status or "") == "approved" or paid > 0:
+            raise HTTPException(409, "%s has been %s, so its supplier, number, date, amounts, order and project stay as "
+                                     "they are (%s would change). Raise a debit note, or ask for it to be sent back."
+                                     % (bill.number or "This bill", "paid against" if paid > 0 else "approved",
+                                        ", ".join(f.replace("_", " ") for f in changed)))
+        if (bill.approval_status or "") == "pending":
             raise HTTPException(409, "This bill is with an approver and cannot be changed.")
-        if bill.approval_status == "approved" and any(
-                k in body and money(body[k] or 0) != money(getattr(bill, k) or 0)
-                for k in ("amount", "tax_amount", "total")):
-            raise HTTPException(409, "This bill has been approved at its amount. "
-                                     "Ask the approver to send it back before changing it.")
-    if body:
-        for field in ["number", "vendor_name", "vendor_email", "issue_date", "due_date", "amount", "tax_amount", "total", "amount_paid", "status", "category", "reference", "notes"]:
-            if field in body:
-                setattr(bill, field, body[field])
-        if "job_id" in body:
-            bill.job_id = resolve_job_id(db, client.id, body["job_id"])
-        if "purchase_order_id" in body:
-            bill.purchase_order_id = resolve_order_id(db, client.id, body["purchase_order_id"])
+
+    amount, tax, total = bill.amount, bill.tax_amount, bill.total
+    if {"amount", "tax_amount", "total"} & set(changed):
+        amount, tax, total = bill_figures(body, bill)
+    if "line_items" in body:
+        check_bill_lines(amount, body.get("line_items"))
+    vendor = (body.get("vendor_name") if "vendor_name" in changed else bill.vendor_name) or ""
+    number = (body.get("number") if "number" in changed else bill.number) or ""
+    reference = (body.get("reference") if "reference" in body else bill.reference) or ""
+    if "number" in changed and db.query(models.DBBill).filter(
+            models.DBBill.client_id == client.id, models.DBBill.number == number,
+            models.DBBill.id != bill.id).first():
+        raise HTTPException(409, "Another bill is already numbered %s." % number)
+    if "vendor_name" in changed or "number" in changed or reference != (bill.reference or ""):
+        refuse_duplicate_bill(db, client.id, vendor, reference, number, exclude_id=bill.id)
+
+    for field in ("number", "vendor_name", "issue_date"):
+        if field in changed:
+            setattr(bill, field, body[field])
+    for field in ("vendor_email", "due_date", "category", "reference", "notes"):
+        if field in body:
+            setattr(bill, field, body[field] if body[field] is not None else "")
+    bill.amount, bill.tax_amount, bill.total = amount, tax, total
+    if "job_id" in changed:
+        bill.job_id = resolve_job_id(db, client.id, body["job_id"])
+    if "purchase_order_id" in changed:
+        bill.purchase_order_id = resolve_order_id(db, client.id, body["purchase_order_id"])
+    split_given = any(body.get(k) not in (None, "") for k in ("cgst", "sgst", "igst"))
+    if split_given or bill.cgst is None or {"vendor_name", "tax_amount", "total"} & set(changed):
+        bill.cgst, bill.sgst, bill.igst = bill_gst_split(db, client.id, bill.vendor_name, bill.tax_amount or 0,
+                                                         body if split_given else None)
+    if "itc_eligible" in body:
+        bill.itc_eligible = _flag(body, "itc_eligible", True)
+    if "reverse_charge" in body:
+        bill.reverse_charge = _flag(body, "reverse_charge", False)
+    if new_status:
+        bill.status = new_status
+    db.flush()
+    warnings = bill_order_warnings(db, bill) if {"purchase_order_id", "amount", "total"} & set(changed) else []
+    if changed or new_status:
+        log_audit(db, client.id, "bill_updated", "bill", bill.id, bill.number,
+                  ", ".join(changed + (["status -> %s" % new_status] if new_status else [])), request)
+    try:
         db.commit()
-        db.refresh(bill)
-    return {"id": bill.id, "number": bill.number}
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Another bill is already numbered %s." % number) from None
+    db.refresh(bill)
+    return {"id": bill.id, "number": bill.number, "warnings": warnings}
+
+
+def _bill_field_changed(bill, field, raw):
+    """Whether an edit really changes a field - the form sends the whole bill back, changed or not."""
+    cur = getattr(bill, field)
+    if field in ("amount", "tax_amount", "total", "amount_paid"):
+        try:
+            return money(float(raw or 0)) != money(cur or 0)
+        except (TypeError, ValueError):
+            return True
+    if field in ("job_id", "purchase_order_id"):
+        try:
+            new = int(raw) if raw not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            return True
+        return new != (cur or None)
+    return str(raw if raw is not None else "").strip() != str(cur or "").strip()
 
 
 @router.delete("/api/bills/{bill_id}")
@@ -664,7 +792,7 @@ def delete_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
     # Money paid against it stays in the ledger and the bank book; deleting
     # the bill left those payments pointing at nothing, and voiding one then
     # failed because its bill could not be found.
-    paid = money(settled_on(db, client.id, "supplier_bill", bill.id))
+    paid = money(already_settled(db, client.id, "supplier_bill", bill, money(bill.total or bill.amount or 0)))
     if paid > 0:
         raise HTTPException(409, "%s has %s paid against it. Void those payments under "
                                  "Payments & Ledgers first, or keep the bill."
@@ -694,26 +822,23 @@ def mark_bill_paid(bill_id: int, request: Request, body: dict = None, db: Sessio
         # Where payments wait for approval, marking a bill paid would skip it: it is paid from an approved request.
         raise HTTPException(status_code=409, detail="Payments are approved before they are made: send this bill for approval "
                                                     "(a payment request), and pay it once it is approved.")
-    bill.amount_paid = bill.total or bill.amount or 0.0
-    bill.status = "Paid"
+    if (bill.status or "Draft") == "Draft":
+        bill.status = "Awaiting Payment"        # paying a draft the owner entered accepts it on the way
+    # Paid through the ledger and the bank book: a flag alone left the bill payable a second time from Payments &
+    # Ledgers, and deletable as if nothing had been paid on it.
+    paid = pay_in_full(db, request, "supplier_bill", bill, money(bill.total or bill.amount or 0), body)
+    db.refresh(bill)
     notify_employee(db, client.id, bill.submitted_by, "Paid",
                     f"{bill.number} has been paid.")
     log_audit(db, client.id, "bill_paid", "bill", bill.id, bill.number, f"Amount: {bill.amount_paid}", request)
     db.commit()
-    return {"ok": True, "status": "Paid"}
+    return {"ok": True, "status": bill.status, "entry": paid.get("entry"), "message": paid.get("message")}
 
 
 @router.get("/api/next-bill-number")
 def next_bill_number(request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, ("bills.view_all", "bills.submit"))
-    last = db.query(models.DBBill).filter(models.DBBill.client_id == client.id).order_by(models.DBBill.id.desc()).first()
-    if last and last.number:
-        try:
-            num = int(last.number.replace("BILL-", "").replace("BILL", ""))
-            return {"number": f"BILL-{num + 1:04d}"}
-        except (ValueError, TypeError):
-            pass
-    return {"number": "BILL-0001"}
+    return {"number": allocate_bill_number(db, client.id)}
 
 
 @router.delete("/api/invoices/{number}")
@@ -722,8 +847,15 @@ def delete_invoice(number: str, request: Request, db: Session = Depends(get_db))
     inv = db.query(models.DBInvoice).filter(models.DBInvoice.number == number, models.DBInvoice.client_id == client.id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    # Deleting took the receipts with it, so money that came in vanished from the books with the invoice.
+    if (inv.paid or 0) > 0.005 or db.query(models.DBPayment.id).filter(models.DBPayment.invoice_id == inv.id).first():
+        raise HTTPException(status_code=409, detail=f"{inv.number} has money received against it. Reverse those "
+                                                    "payments first, or keep the invoice.")
+    if inv.sent or (inv.status or "Draft") not in ("Draft",):
+        # Once it has gone out its number is in the series the GST return lists: it is voided, not deleted.
+        raise HTTPException(status_code=409, detail=f"{inv.number} has gone to the client. Void it instead of "
+                                                    "deleting it, so its number stays in the series.")
     db.query(models.DBLineItem).filter(models.DBLineItem.invoice_id == inv.id).delete()
-    db.query(models.DBPayment).filter(models.DBPayment.invoice_id == inv.id).delete()
     log_audit(db, client.id, "invoice_deleted", "invoice", inv.id, inv.number, f"Contact: {inv.to_contact}", request)
     db.delete(inv)
     db.commit()
@@ -833,8 +965,12 @@ def update_invoice(number: str, invoice: InvoiceCreate, request: Request, db: Se
         )
     validate_line_items(invoice.line_items)
     validate_invoice_dates(invoice.issue_date, invoice.due_date)
+    refuse_paid_status(invoice.status)
 
     if invoice.invoice_number and invoice.invoice_number.strip() and invoice.invoice_number.strip() != inv.number:
+        if inv.sent or (inv.status or "Draft") != "Draft":
+            # A number the client has seen is spent: renumbering it leaves a gap in the series the GST return lists.
+            raise HTTPException(status_code=409, detail=f"{inv.number} has gone to the client, so it keeps its number.")
         new_number = invoice.invoice_number.strip()
         clash = db.query(models.DBInvoice).filter(
             models.DBInvoice.client_id == client.id, models.DBInvoice.number == new_number
@@ -1007,16 +1143,27 @@ def gst_settings(request: Request, db: Session = Depends(get_read_db)):
 
 @router.put("/api/gst/settings")
 def set_gst_settings(body: CompanyGstIn, request: Request, db: Session = Depends(get_db)):
-    """Our GSTIN. The state falls out of it, so it cannot disagree with it."""
-    client = get_client_user(request, db)
+    """Our GSTIN. The state falls out of it, so it cannot disagree with it.
+
+    Every tax invoice and return goes out under it, so it is set by the Master or by accounts - not by a colleague
+    the Master has let into the company login, nor by staff without accounts.manage."""
+    client = require_items_access(request, db, "accounts.manage")
+    if session_employee(request, db) is None and current_member(request, db) is not None:
+        raise HTTPException(403, "Only the Master, or accounts, sets the company's GSTIN.")
     g = (body.gstin or "").strip().upper()
     if g and (len(g) != 15 or not g[:2].isdigit() or g[:2] not in GST_STATES):
         raise HTTPException(400, "A GSTIN is fifteen characters and starts with a "
                                  "state code - %s is not one." % (g[:2] or "that"))
+    if g:
+        validate_gstin(g)
+    before = client.gstin or ""
     client.gstin = g
     client.state_code = state_from_gstin(g) or (body.state_code or "").strip()
     if client.state_code and client.state_code not in GST_STATES:
         raise HTTPException(400, "Not a GST state code: %s" % client.state_code)
+    if before != client.gstin:
+        log_audit(db, client.id, "company_gstin_changed", "settings", None, "GSTIN",
+                  "%s -> %s" % (before or "none", client.gstin or "none"), request)
     db.commit()
     return {"ok": True, "gstin": client.gstin, "state_code": client.state_code,
             "state": GST_STATES.get(client.state_code, "")}
@@ -1033,6 +1180,16 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
     """
     client = require_items_access(request, db, "bills.view_all")
     rows = []
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
+    contacts = {}
+    for c in db.query(models.DBContact).filter(models.DBContact.client_id == client.id).all():
+        contacts.setdefault(norm_name(c.name), c)
+
+    def recipient_gstin(job, name=""):
+        buyer = contacts.get(norm_name(name)) if name else None
+        buyer = buyer or (einvoice_buyer(db, client.id, job) if job else None)
+        return (buyer.gstin or "").strip().upper() if buyer else ""
+
     for b in db.query(models.DBRABill).filter(
             models.DBRABill.client_id == client.id,
             models.DBRABill.status.in_(("CERTIFIED", "PAID"))).all():
@@ -1041,24 +1198,63 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
             continue
         if date_to and on > date_to:
             continue
-        job = db.query(models.DBJob).filter(models.DBJob.id == b.job_id).first()
+        job = jobs.get(b.job_id)
         taxable = money(b.this_bill)
         rows.append({
             "kind": "RA bill", "number": b.number or "", "date": on,
             "party": job.customer_name if job else "", "project": job.name if job else "",
+            "party_gstin": recipient_gstin(job),
             "place_of_supply": b.place_of_supply or "",
             "sac": WORKS_CONTRACT_SAC, "rate": b.tax_percent or 0,
             "taxable": taxable, "cgst": money(b.cgst_amount), "sgst": money(b.sgst_amount),
             "igst": money(b.igst_amount), "tax": money(b.tax_amount),
             "total": money(taxable + (b.tax_amount or 0)),
         })
+    # Tax invoices raised from Invoices are outward supplies too - a return built from the RA bills alone left every
+    # one of them out. Split the way the RA bills are: by the project's site where there is one (a works contract is
+    # supplied where the property is), else the recipient's GSTIN state; unknown is IGST.
+    home = our_state(db, client.id)
+    for inv in db.query(models.DBInvoice).filter(
+            models.DBInvoice.client_id == client.id,
+            ~models.DBInvoice.status.in_(("Draft", "Void", "Cancelled"))).all():
+        on = (inv.issue_date or "")[:10]
+        if date_from and on < date_from:
+            continue
+        if date_to and on > date_to:
+            continue
+        if (inv.currency or DEFAULT_CURRENCY) != "INR":
+            continue                     # an export invoice is not a domestic supply in rupees
+        taxable, tax, total = compute_invoice_totals(inv.line_items, inv.tax_type or "exclusive")
+        job = jobs.get(inv.job_id)
+        gstin = recipient_gstin(job, inv.to_contact or "")
+        pos = supply_state_for_job(db, inv.job_id) or state_from_gstin(gstin)
+        if home and pos and pos == home:
+            cgst = money(tax / 2.0)
+            sgst, igst = money(tax - cgst), 0.0
+        else:
+            cgst, sgst, igst = 0.0, 0.0, money(tax)
+        rows.append({
+            "kind": "Tax invoice", "number": inv.number or "", "date": on,
+            "party": inv.to_contact or (job.customer_name if job else ""), "project": job.name if job else "",
+            "party_gstin": gstin, "place_of_supply": pos or "",
+            "sac": "", "rate": round(tax / taxable * 100.0, 2) if taxable else 0,
+            "taxable": money(taxable), "cgst": cgst, "sgst": sgst, "igst": igst, "tax": money(tax),
+            "total": money(total),
+        })
     rows.extend(release_gst_rows(db, client.id, "client", date_from, date_to))
     # A credit note reverses the tax in the month it is issued, as a negative line - the filed month is not touched.
     rows.extend(credit_gst_rows(db, client.id, "client", date_from, date_to))
     irns = {r.doc_number: r.irn for r in db.query(models.DBEinvoiceIrn).filter(
         models.DBEinvoiceIrn.client_id == client.id, models.DBEinvoiceIrn.status == "ACTIVE").all()}
+    cancelled = {r.doc_number for r in db.query(models.DBEinvoiceIrn).filter(
+        models.DBEinvoiceIrn.client_id == client.id, models.DBEinvoiceIrn.status == "CANCELLED").all()}
     for r in rows:
         r["irn"] = irns.get(r["number"], "")
+        # The portal has the IRN for this number cancelled: the document has to be cancelled or re-issued under a
+        # new number, not left in the return as if it stood.
+        r["irn_cancelled"] = bool(not r["irn"] and r["number"] in cancelled)
+        r.setdefault("party_gstin", "")
+        r["b2b"] = bool(r["party_gstin"])
     by_month, by_rate = {}, {}
     for r in rows:
         m = by_month.setdefault(_month_key(r["date"]), {
@@ -1084,6 +1280,9 @@ def gst_outward(request: Request, date_from: str = "", date_to: str = "",
             "bills": len(rows),
             "missing_place_of_supply": len([r for r in rows if not r["place_of_supply"]]),
             "without_irn": len([r for r in rows if not r["irn"]]),
+            "b2b": len([r for r in rows if r["b2b"]]),
+            "b2c": len([r for r in rows if not r["b2b"]]),
+            "irn_cancelled": len([r for r in rows if r["irn_cancelled"]]),
         },
     }
 
@@ -1126,7 +1325,11 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
     home = our_state(db, client.id)
     for b in db.query(models.DBBill).filter(
             models.DBBill.client_id == client.id).all():
-        if (b.status or "") in ("Cancelled", "Rejected", "Draft"):
+        # A bill counts once it is accepted: not a draft, not thrown out, and not one still waiting on its approver -
+        # credit taken on a bill that is then rejected has to be reversed.
+        if (b.status or "Draft") in ("Cancelled", "Rejected", "Draft", "Awaiting Approval"):
+            continue
+        if (b.approval_status or "none") not in ("none", "approved", ""):
             continue
         on = (b.issue_date or b.created_at or "")[:10]
         if date_from and on < date_from:
@@ -1136,26 +1339,34 @@ def gst_inward(request: Request, date_from: str = "", date_to: str = "",
         gstin = supplier_gstin.get(norm_name(b.vendor_name), "")
         tax = money(b.tax_amount)
         taxable = money(b.amount)
-        # Same state as us: CGST and SGST. Another state, or a supplier whose
-        # state is not known: IGST, the side a mistake is cheaper on.
-        intra = bool(home and gstin and state_from_gstin(gstin) == home)
-        half = money(tax / 2.0) if intra else 0.0
+        if b.cgst is None and b.sgst is None and b.igst is None:
+            cgst, sgst, igst = guess_bill_split(tax, gstin, home)     # saved before the split was kept
+        else:
+            cgst, sgst, igst = money(b.cgst), money(b.sgst), money(b.igst)
         rows.append({
             "kind": "Supplier bill", "number": b.number or "", "date": on,
-            "party": b.vendor_name or "", "party_gstin": gstin,
+            "party": b.vendor_name or "", "party_gstin": gstin, "reference": b.reference or "",
             "sac": "", "rate": round(tax / taxable * 100.0, 2) if taxable else 0,
-            "taxable": taxable, "cgst": half, "sgst": money(tax - half) if intra else 0.0,
-            "igst": 0.0 if intra else tax, "tax": tax,
+            "taxable": taxable, "cgst": cgst, "sgst": sgst, "igst": igst, "tax": tax,
+            "itc_eligible": b.itc_eligible is not False, "reverse_charge": bool(b.reverse_charge),
         })
+    for r in rows:
+        r.setdefault("itc_eligible", True)
+        r.setdefault("reverse_charge", False)
     rows.sort(key=lambda r: r["date"], reverse=True)
+    # The credit is the tax on eligible bills; a blocked credit is listed but not counted. Reverse-charge tax is ours
+    # to pay before it can be claimed, so it is also shown on its own.
+    credit = [r for r in rows if r["itc_eligible"]]
     return {
         "supplies": rows,
         "summary": {
             "taxable": money(sum(r["taxable"] for r in rows)),
-            "tax": money(sum(r["tax"] for r in rows)),
-            "cgst": money(sum(r["cgst"] for r in rows)),
-            "sgst": money(sum(r["sgst"] for r in rows)),
-            "igst": money(sum(r["igst"] for r in rows)),
+            "tax": money(sum(r["tax"] for r in credit)),
+            "cgst": money(sum(r["cgst"] for r in credit)),
+            "sgst": money(sum(r["sgst"] for r in credit)),
+            "igst": money(sum(r["igst"] for r in credit)),
+            "ineligible_tax": money(sum(r["tax"] for r in rows if not r["itc_eligible"])),
+            "reverse_charge_tax": money(sum(r["tax"] for r in rows if r["reverse_charge"])),
             "bills": len(rows),
             # Input credit needs the supplier's GSTIN on the bill. Without it
             # the credit is at risk, so say how many are missing.
@@ -1169,18 +1380,19 @@ def gst_outward_export(request: Request, date_from: str = "", date_to: str = "",
                        db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, "bills.view_all")
     d = gst_outward(request, date_from, date_to, db)
-    rows = [(r["date"], r["number"], r["party"], r["project"], r["place_of_supply"],
+    rows = [(r["date"], r.get("kind", ""), r["number"], r["party"], r.get("party_gstin", ""),
+             "B2B" if r.get("b2b") else "B2C", r["project"], r["place_of_supply"],
              r["sac"], r["rate"], r["taxable"], r["cgst"], r["sgst"], r["igst"],
              r["tax"], r["total"]) for r in d["supplies"]]
     s = d["summary"]
     return sheet_response(
-        ("Date", "Bill", "Client", "Project", "Place of supply", "SAC", "Rate %",
+        ("Date", "Kind", "Bill", "Client", "Client GSTIN", "B2B/B2C", "Project", "Place of supply", "SAC", "Rate %",
          "Taxable", "CGST", "SGST", "IGST", "Tax", "Total"),
         rows, "gst_outward.xlsx",
         preamble=[("OUTWARD SUPPLIES", client.company_name or ""),
                   ("GSTIN", client.gstin or "", "Period",
                    "%s to %s" % (date_from or "start", date_to or "today")), ()],
-        closing=[(), ("Total", "", "", "", "", "", "", s["taxable"], s["cgst"],
+        closing=[(), ("Total", "", "", "", "", "", "", "", "", "", s["taxable"], s["cgst"],
                       s["sgst"], s["igst"], s["tax"])])
 
 
@@ -1293,14 +1505,41 @@ def eway_generated(eid: int, body: EwayGeneratedIn, request: Request, db: Sessio
     no = re.sub(r"\D", "", body.ewb_no or "")
     if len(no) != 12:
         raise HTTPException(400, "An e-way bill number is twelve digits.")
+    if e.status == "CANCELLED":
+        raise HTTPException(409, "%s is cancelled. Draw a new one for the goods." % e.number)
+    if e.status == "GENERATED":
+        raise HTTPException(409, "%s is already recorded as generated (%s)." % (e.number, e.ewb_no or "no number"))
     clash = db.query(models.DBEwayBill).filter(
         models.DBEwayBill.client_id == client.id, models.DBEwayBill.ewb_no == no,
         models.DBEwayBill.id != e.id).first()
     if clash:
         raise HTTPException(409, "%s is already recorded on %s." % (no, clash.number))
+    now = datetime.now()
+    made = ack_datetime(body.ewb_date) if (body.ewb_date or "").strip() else now
+    if made is None:
+        raise HTTPException(400, "The generated date, as the portal gave it (YYYY-MM-DD, or with the time).")
+    if made > now + timedelta(minutes=5):
+        raise HTTPException(400, "The e-way bill cannot have been generated in the future.")
+    # The time matters: the portal cancels within 24 hours of it. A date typed without a time is today's generation
+    # recorded now, or an older one whose hour is not known (the cancel window then runs on the date).
+    has_time = bool((body.ewb_date or "").strip()) and len((body.ewb_date or "").strip()) > 10
+    if not (body.ewb_date or "").strip() or has_time:
+        e.ewb_generated_at = made.strftime("%Y-%m-%d %H:%M:%S")
+    elif made.date() == now.date():
+        e.ewb_generated_at = now.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        e.ewb_generated_at = ""
+    valid = (body.valid_upto or "").strip()
+    if valid:
+        upto = ack_datetime(valid)
+        if upto is None:
+            raise HTTPException(400, "Valid up to is not a date (YYYY-MM-DD, or with the time, as the portal gives it).")
+        if upto.date() < made.date():
+            raise HTTPException(400, "Valid up to is before the e-way bill was generated.")
+        valid = upto.strftime("%Y-%m-%d %H:%M")
     e.ewb_no = no
-    e.ewb_date = (body.ewb_date or date.today().isoformat())[:10]
-    e.valid_upto = (body.valid_upto or "").strip() or eway_validity(e.ewb_date, e.distance_km, e.vehicle_type)
+    e.ewb_date = made.date().isoformat()
+    e.valid_upto = valid or eway_validity(e.ewb_date, e.distance_km, e.vehicle_type)
     e.status = "GENERATED"
     log_audit(db, client.id, "eway_bill_generated", "eway_bill", e.id, e.number, no, request)
     db.commit()
@@ -1329,21 +1568,34 @@ def eway_vehicle(eid: int, body: EwayVehicleIn, request: Request, db: Session = 
 @router.post("/api/eway-bills/{eid}/cancel")
 def eway_cancel(eid: int, body: EwayCancelIn, request: Request, db: Session = Depends(get_db)):
     """The portal allows cancelling within 24 hours of generation."""
-    client, _, _ = wo_actor(request, db, ("accounts.manage", "stores.manage"))
+    client, _, actor_name = wo_actor(request, db, ("accounts.manage", "stores.manage"))
     e = eway_or_404(db, client.id, eid)
     if not (body.reason or "").strip():
         raise HTTPException(400, "Say why it is being cancelled.")
-    if e.status == "GENERATED" and e.ewb_date:
-        try:
-            made = datetime.strptime(e.ewb_date[:10], "%Y-%m-%d")
-            if datetime.now() - made > timedelta(hours=48):
-                raise HTTPException(409, "The portal only cancels an e-way bill within 24 hours of "
-                                         "generating it. Let it expire unused instead.")
-        except ValueError:
-            pass
-    e.status, e.cancel_reason = "CANCELLED", body.reason.strip()
+    if e.status == "CANCELLED":
+        raise HTTPException(409, "%s is already cancelled." % e.number)
+    if e.status == "GENERATED":
+        late = "The portal only cancels an e-way bill within 24 hours of generating it. Let it expire unused instead."
+        made = ack_datetime(e.ewb_generated_at or "")
+        if made is not None:
+            if datetime.now() - made > timedelta(hours=24):
+                raise HTTPException(409, late)
+        elif e.ewb_date:
+            # Only the date is known: generated at the latest at midnight's end, so allowed to the end of the next day.
+            day = ack_datetime(e.ewb_date[:10])
+            if day is not None and datetime.now() - day > timedelta(hours=48):
+                raise HTTPException(409, late)
+    was = e.status
+    e.status, e.cancel_reason = "CANCELLED", body.reason.strip()[:300]
+    log_audit(db, client.id, "eway_bill_cancelled", "eway_bill", e.id, e.number,
+              "%s%s: %s" % (was.lower(), (" " + e.ewb_no) if e.ewb_no else "", e.cancel_reason), request,
+              user_name=actor_name)
     db.commit()
     return {"eway_bill": eway_dict(db, e, detail=True)}
+
+
+# Who may read an e-invoice's contents (the buyer, the values, our GSTIN) and download the file for the portal.
+EINVOICE_READ = ("accounts.manage", "bills.view_all")
 
 
 @router.get("/api/einvoice/irns")
@@ -1385,30 +1637,59 @@ def cancel_irn(irn_id: int, request: Request, body: dict = None, db: Session = D
                                  "Past that, correct the invoice with a credit note." % IRN_CANCEL_HOURS)
     row.status, row.cancel_reason = "CANCELLED", reason[:200]
     row.cancelled_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_audit(db, client.id, "irn_cancelled", row.doc_type, row.doc_id, row.doc_number, reason, request)
+    log_audit(db, client.id, "irn_cancelled", row.doc_type, row.doc_id, row.doc_number,
+              "%s - the number cannot be registered again; the document must be cancelled or credited and re-billed"
+              % reason, request)
     db.commit()
-    return {"irn": irn_dict(row), "message": "IRN for %s recorded as cancelled." % row.doc_number}
+    return {"irn": irn_dict(row), "irn_cancelled": True,
+            "message": "IRN for %s recorded as cancelled. The portal will not take %s again: cancel or credit it "
+                       "and bill the supply under a new number." % (row.doc_number, row.doc_number)}
+
+
+def refuse_reused_doc_number(db, client_id, doc, payload):
+    """Once an IRN is cancelled the portal refuses that document number for good. Sending it again only bounces;
+    recording a second IRN against it would put a registration on the books the portal does not have."""
+    numbers = {(doc.number or "").upper()}
+    try:
+        numbers.add(str(payload["DocDtls"]["No"]).upper())
+    except (KeyError, TypeError):
+        pass
+    numbers.discard("")
+    hit = db.query(models.DBEinvoiceIrn).filter(
+        models.DBEinvoiceIrn.client_id == client_id, models.DBEinvoiceIrn.status == "CANCELLED").all()
+    if any((h.doc_number or "").upper() in numbers for h in hit):
+        raise HTTPException(409, "The IRN for %s was cancelled, and the portal does not register the same document "
+                                 "number twice. Cancel or credit %s and bill the supply again under a new number."
+                                 % (doc.number, doc.number))
 
 
 @router.get("/api/einvoice/{doc_type}/{doc_id}")
 def einvoice_status(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Everything the e-invoice box shows: whether the bill can go to the
     portal, what is missing if not, and the IRN if it has been."""
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, EINVOICE_READ)
     doc, payload, problems = einvoice_document(db, client, doc_type, doc_id)
     history = db.query(models.DBEinvoiceIrn).filter(
         models.DBEinvoiceIrn.client_id == client.id, models.DBEinvoiceIrn.doc_type == doc_type,
         models.DBEinvoiceIrn.doc_id == doc.id).order_by(models.DBEinvoiceIrn.id.desc()).all()
-    return {"number": doc.number or "", "ready": not problems, "missing": problems,
+    live = next((irn_dict(h) for h in history if h.status == "ACTIVE"), None)
+    dead = live is None and any(h.status == "CANCELLED" for h in history)
+    return {"number": doc.number or "", "ready": not problems and not dead, "missing": problems,
             "payload": payload if not problems else None,
-            "irn": next((irn_dict(h) for h in history if h.status == "ACTIVE"), None),
-            "history": [irn_dict(h) for h in history if h.status != "ACTIVE"]}
+            "irn": live,
+            "history": [irn_dict(h) for h in history if h.status != "ACTIVE"],
+            # The portal never takes the same document number again once its IRN is cancelled: this document has to
+            # be cancelled here (or credited) and the supply billed again under a new number.
+            "irn_cancelled": dead,
+            "action_needed": ("The IRN for %s was cancelled on the portal. Cancel or credit this document and bill the "
+                              "supply again under a new number." % (doc.number or "this document")) if dead else ""}
 
 
 @router.get("/api/einvoice/{doc_type}/{doc_id}/json")
 def einvoice_file(doc_type: str, doc_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = require_erp_read(request, db)
+    client = require_items_access(request, db, EINVOICE_READ)
     doc, payload, problems = einvoice_document(db, client, doc_type, doc_id)
+    refuse_reused_doc_number(db, client.id, doc, payload)
     if problems:
         raise HTTPException(409, "Not ready for the portal - still needed: " + "; ".join(problems) + ".")
     name = re.sub(r"[^A-Za-z0-9]+", "_", doc.number or doc_type)
@@ -1459,6 +1740,7 @@ def record_irn(doc_type: str, doc_id: int, request: Request, body: dict = None,
         raise HTTPException(409, "That is not %s's registration: %s." % (doc.number, "; ".join(wrong)))
     if active_irn(db, client.id, doc_type, doc.id):
         raise HTTPException(409, "%s already has an IRN. Cancel that one first." % doc.number)
+    refuse_reused_doc_number(db, client.id, doc, payload)
     other = db.query(models.DBEinvoiceIrn).filter(models.DBEinvoiceIrn.client_id == client.id,
                                                   models.DBEinvoiceIrn.irn == irn,
                                                   models.DBEinvoiceIrn.status == "ACTIVE").first()
@@ -1482,9 +1764,11 @@ def gst_inward_export(request: Request, date_from: str = "", date_to: str = "", 
     client = require_items_access(request, db, "bills.view_all")
     d = gst_inward(request, date_from, date_to, db)
     rows = [(r["date"], r["kind"], r["number"], r["party"], r.get("party_gstin", ""), r.get("sac", ""), r["rate"],
-             r["taxable"], r["cgst"], r["sgst"], r["igst"], r["tax"]) for r in d["supplies"]]
+             r["taxable"], r["cgst"], r["sgst"], r["igst"], r["tax"],
+             "Yes" if r.get("itc_eligible", True) else "No", "Yes" if r.get("reverse_charge") else "No")
+            for r in d["supplies"]]
     s = d["summary"]
     return sheet_response(("Date", "Kind", "Number", "Party", "GSTIN", "SAC/HSN", "Rate %", "Taxable", "CGST", "SGST",
-                           "IGST", "Tax"), rows, "gst_inward.xlsx",
+                           "IGST", "Tax", "Credit", "Reverse charge"), rows, "gst_inward.xlsx",
                           preamble=_pre(client, "GST - INPUT REGISTER", ("Period", "%s to %s" % (date_from or "start", date_to or "today"))),
-                          closing=[(), ("Total", "", "", "", "", "", "", s["taxable"], s["cgst"], s["sgst"], s["igst"], s["tax"])])
+                          closing=[(), ("Credit", "", "", "", "", "", "", s["taxable"], s["cgst"], s["sgst"], s["igst"], s["tax"])])

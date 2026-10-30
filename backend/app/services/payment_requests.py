@@ -7,7 +7,7 @@ Nobody checks their own request.
 
 Off until the company turns it on, so nothing changes for a business that does not work this way.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 
@@ -18,6 +18,8 @@ from app.core.tenant_settings import tenant_setting
 from app.constants.money import EXPENSE_HEADS, PARTY_TYPES
 
 ON_KEY, FREE_KEY, MD_KEY = "payment_approval", "payment_free_below", "payment_md_above"
+# An approval is for a payment soon, not a cheque book: one not paid within this many days expires.
+VALID_KEY, DEFAULT_VALID_DAYS = "payment_request_valid_days", 30
 OPEN = ("PENDING", "AWAITING_MD", "APPROVED")          # asked for and not yet paid, refused or withdrawn
 STATUS_LABEL = {"PENDING": "With the accounts head", "AWAITING_MD": "With the MD", "APPROVED": "Approved - to pay",
                 "PAID": "Paid", "REJECTED": "Rejected", "CANCELLED": "Withdrawn"}
@@ -34,12 +36,47 @@ def approval_rules(db, client_id):
     """Whether payments wait for approval, up to what amount they need none, and above what the MD signs too."""
     return {"on": str(tenant_setting(db, client_id, ON_KEY, "")).strip().lower() in ("1", "true", "yes", "on"),
             "free_below": _num(tenant_setting(db, client_id, FREE_KEY, "0"), 0.0),
-            "md_above": _num(tenant_setting(db, client_id, MD_KEY, "100000"), 100000.0)}
+            "md_above": _num(tenant_setting(db, client_id, MD_KEY, "100000"), 100000.0),
+            "valid_days": valid_days(db, client_id)}
 
 
-def save_rules(db, client_id, on, free_below, md_above):
-    for key, value in ((ON_KEY, "true" if on else "false"), (FREE_KEY, str(money(free_below or 0))),
-                       (MD_KEY, str(money(md_above or 0)))):
+def valid_days(db, client_id):
+    try:
+        n = int(float(tenant_setting(db, client_id, VALID_KEY, str(DEFAULT_VALID_DAYS))))
+    except (TypeError, ValueError):
+        return DEFAULT_VALID_DAYS
+    return n if n > 0 else DEFAULT_VALID_DAYS
+
+
+def is_expired(r, days):
+    """An approved request not paid within `days` of its approval can no longer be paid."""
+    if r.status != "APPROVED" or not r.approved_at:
+        return False
+    try:
+        approved = datetime.strptime(r.approved_at[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        try:
+            approved = datetime.strptime(r.approved_at[:10], "%Y-%m-%d")
+        except ValueError:
+            return False
+    return datetime.now() > approved + timedelta(days=days)
+
+
+def refuse_if_expired(db, client_id, r):
+    days = valid_days(db, client_id)
+    if is_expired(r, days):
+        raise HTTPException(409, "%s was approved on %s and not paid within %d days, so the approval has expired. "
+                                 "Raise a new request." % (r.number, (r.approved_at or "")[:10], days))
+
+
+def save_rules(db, client_id, on, free_below, md_above, days=None):
+    pairs = [(ON_KEY, "true" if on else "false"), (FREE_KEY, str(money(free_below or 0))),
+             (MD_KEY, str(money(md_above or 0)))]
+    if days is not None:
+        if days < 1 or days > 365:
+            raise HTTPException(400, "An approval stays good for 1 to 365 days.")
+        pairs.append((VALID_KEY, str(int(days))))
+    for key, value in pairs:
         row = db.query(models.DBSettings).filter(models.DBSettings.client_id == client_id,
                                                  models.DBSettings.key == key).first()
         if row:
@@ -48,11 +85,45 @@ def save_rules(db, client_id, on, free_below, md_above):
             db.add(models.DBSettings(client_id=client_id, key=key, value=value, description="Payment approval"))
 
 
-def needs_request(db, client_id, emp, amount, member=None):
+def needs_request(db, client_id, emp, amount, member=None, so_far=0.0):
     """Whether a payment of `amount` by this person has to go through a request first. The Master never does; a member of
-    staff and a colleague of the Master's (who signs in as the company, `member`) both do."""
+    staff and a colleague of the Master's (who signs in as the company, `member`) both do. `so_far` is what has already
+    gone out without a request that this payment adds up with (see paid_unasked), so a payment over the limit is not
+    slipped through as several under it."""
     rules = approval_rules(db, client_id)
-    return bool(rules["on"] and (emp is not None or member is not None) and money(amount) > rules["free_below"])
+    return bool(rules["on"] and (emp is not None or member is not None)
+                and money((amount or 0) + (so_far or 0)) > rules["free_below"])
+
+
+def paid_unasked(db, client_id, party_name="", on="", doc_type="", doc_id=None):
+    """What has already been paid, with no approved request behind it, that a new payment adds up with: everything
+    against the same bill, and everything to the same party on the same day. Five payments of 999 under a 1,000 limit
+    each went through without a signature; counted together they are 4,995 and need one."""
+    from sqlalchemy import and_, or_
+    from app.services.crm import norm_name
+    asked = {eid for (eid,) in db.query(models.DBPaymentRequest.entry_id).filter(
+        models.DBPaymentRequest.client_id == client_id, models.DBPaymentRequest.entry_id.isnot(None)).all()}
+    asked |= {eid for (eid,) in db.query(models.DBSiteCashExpense.entry_id).filter(
+        models.DBSiteCashExpense.client_id == client_id, models.DBSiteCashExpense.entry_id.isnot(None)).all()}
+    near = []
+    if doc_id and doc_type:
+        near.append(and_(models.DBMoneyEntry.doc_type == doc_type, models.DBMoneyEntry.doc_id == doc_id))
+    if on and party_name:
+        near.append(models.DBMoneyEntry.paid_on == on)
+    if not near:
+        return 0.0
+    key = norm_name(party_name)
+    total = 0.0
+    for e in db.query(models.DBMoneyEntry).filter(
+            models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.direction == "OUT",
+            models.DBMoneyEntry.voided.is_(False), models.DBMoneyEntry.doc_type != "contra", or_(*near)).all():
+        if e.id in asked:
+            continue
+        same_bill = bool(doc_id and doc_type and e.doc_type == doc_type and e.doc_id == doc_id)
+        same_day = bool(key and on and e.paid_on == on and norm_name(e.party_name) == key)
+        if same_bill or same_day:
+            total += e.amount or 0
+    return money(total)
 
 
 def can_check(emp):
@@ -79,7 +150,8 @@ def asked_on_doc(db, client_id, doc_type, doc_id, but=None):
         models.DBPaymentRequest.doc_id == doc_id, models.DBPaymentRequest.status.in_(OPEN))
     if but:
         q = q.filter(models.DBPaymentRequest.id != but)
-    return money(sum(r.amount or 0 for r in q.all()))
+    days = valid_days(db, client_id)
+    return money(sum(r.amount or 0 for r in q.all() if not is_expired(r, days)))
 
 
 def raise_request(db, client, emp, actor_name, body, member=None):
@@ -187,6 +259,7 @@ def lock_to_request(db, client_id, body):
     r = request_or_404(db, client_id, body.request_id)
     if r.status != "APPROVED":
         raise HTTPException(409, "%s is %s, not approved to pay." % (r.number, STATUS_LABEL.get(r.status, r.status).lower()))
+    refuse_if_expired(db, client_id, r)
     approved_type = r.doc_type or "on_account"
     if (body.doc_type or "on_account").strip() != approved_type or (body.doc_id or None) != (r.doc_id or None):
         raise HTTPException(400, "%s was approved for something else." % r.number)
@@ -215,6 +288,7 @@ def use_for_payment(db, client_id, request_id, doc_type, doc_id, amount, party_n
     r = request_or_404(db, client_id, request_id)
     if r.status != "APPROVED":
         raise HTTPException(409, "%s is %s, not approved to pay." % (r.number, STATUS_LABEL.get(r.status, r.status).lower()))
+    refuse_if_expired(db, client_id, r)
     if (r.doc_type or "") != (doc_type or "on_account") or (r.doc_id or None) != (doc_id or None):
         raise HTTPException(400, "%s was approved for something else." % r.number)
     if party_name is not None and not _same_name(party_name, r.party_name):
@@ -232,15 +306,17 @@ def request_for_entry(db, entry_id):
     return db.query(models.DBPaymentRequest).filter(models.DBPaymentRequest.entry_id == entry_id).first()
 
 
-def request_dict(r, accounts=None, jobs=None):
+def request_dict(r, accounts=None, jobs=None, days=None):
     acc = (accounts or {}).get(r.account_id)
     job = (jobs or {}).get(r.job_id)
+    expired = is_expired(r, days) if days else False
     return {"id": r.id, "number": r.number or "", "doc_type": r.doc_type or "", "doc_id": r.doc_id,
             "doc_number": r.doc_number or "", "party_type": r.party_type or "", "party_name": r.party_name or "",
             "job_id": r.job_id, "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",
             "head": r.head or "", "amount": money(r.amount), "account_id": r.account_id,
             "account": acc.name if acc else "", "mode": r.mode or "", "note": r.note or "",
-            "status": r.status, "status_label": STATUS_LABEL.get(r.status, r.status),
+            "status": r.status, "status_label": "Approved - expired" if expired else STATUS_LABEL.get(r.status, r.status),
+            "expired": expired,
             "requested_by": r.requested_by, "requested_by_name": r.requested_by_name or "",
             "requested_at": r.requested_at or "", "checked_by_name": r.checked_by_name or "",
             "checked_at": r.checked_at or "", "approved_by_name": r.approved_by_name or "",

@@ -34,7 +34,7 @@ def project(tenant, name="Kokapet Towers"):
 
 def vendor_body(**over):
     body = {"company_name": "Sri Balaji Civil Works %s" % uuid.uuid4().hex[:6],
-            "pan": "AAAPB1234C", "gst_number": "36AAAPB1234C1Z5"}
+            "pan": "AAAPB1234C", "gst_number": "36AAAPB1234C1ZP"}
     body.update(over)
     return body
 

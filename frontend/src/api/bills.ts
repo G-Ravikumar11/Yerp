@@ -18,9 +18,12 @@ export interface SupplierBill {
   reference: string
   notes: string
   approval_status: string
+  purchase_order_id?: number | null
+  itc_eligible?: boolean
+  reverse_charge?: boolean
 }
 
-export type BillInput = Pick<SupplierBill, 'number' | 'vendor_name' | 'vendor_email' | 'category' | 'issue_date' | 'due_date' | 'amount' | 'tax_amount' | 'total' | 'reference' | 'notes'>
+export type BillInput = Pick<SupplierBill, 'number' | 'vendor_name' | 'vendor_email' | 'category' | 'issue_date' | 'due_date' | 'amount' | 'tax_amount' | 'total' | 'reference' | 'notes' | 'purchase_order_id'>
 
 export const CATEGORIES = ['materials', 'labour', 'equipment', 'services', 'general']
 
@@ -30,6 +33,6 @@ export const useSupplierBills = () => useQuery({ queryKey: billKeys.list, queryF
 export const useTaxRates = () => useQuery({ queryKey: ['tax-rates'], queryFn: () => get<{ id: number; percent: number; label: string; is_default: boolean }[]>('/api/tax-rates'), staleTime: 10 * 60_000 })
 export const nextBillNumber = async () => (await get<{ number: string }>('/api/next-bill-number')).number
 
-export const createBill = (b: BillInput) => post<{ number: string }>('/api/bills', { ...b, status: 'Draft' })
-export const updateBill = (id: number, b: Partial<BillInput> & { status?: string }) => put<{ number: string }>(`/api/bills/${id}`, b)
+export const createBill = (b: BillInput) => post<{ number: string; warnings?: string[] }>('/api/bills', { ...b, status: 'Draft' })
+export const updateBill = (id: number, b: Partial<BillInput> & { status?: string }) => put<{ number: string; warnings?: string[] }>(`/api/bills/${id}`, b)
 export const deleteBill = (id: number) => del<{ message?: string }>(`/api/bills/${id}`)

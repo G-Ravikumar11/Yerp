@@ -12,6 +12,7 @@ from app.constants.client_billing import RA_CREDIT_DAYS
 from app.constants.invoicing import EWAY_THRESHOLD
 from app.constants.projects import JOB_FINISHED
 from app.constants.quality import SERIOUS_KINDS
+from app.core import checks
 from app.core.config import logger
 from app.core.currency import inr, money, unit_rate
 from app.core.dates import _days_until, ageing_bucket
@@ -27,6 +28,9 @@ def job_or_404(db, client_id, job_id):
     job = db.query(models.DBJob).filter(
         models.DBJob.id == job_id, models.DBJob.client_id == client_id).first()
     if not job:
+        from app.core.site_scope import out_of_reach
+        if out_of_reach(db, client_id, job_id):
+            raise HTTPException(status_code=403, detail="You are not assigned to that site. Ask HR to add you to it.")
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
@@ -229,6 +233,7 @@ def job_to_dict(db, job, costing=False):
         "completed_at": job.completed_at or "",
         "quoted_value": job.quoted_value or 0.0, "budget": job.budget or 0.0,
             "retention_percent": job.retention_percent or 0.0,
+            "retention_stated": bool(job.retention_stated),
         "currency": job.currency or "", "reference": job.reference or "",
         "manager_id": job.manager_id,
         "created_at": job.created_at or "",
@@ -348,6 +353,7 @@ def cost_jobs(db, client_id, jobs):
             "completed_at": job.completed_at or "",
             "quoted_value": job.quoted_value or 0.0, "budget": job.budget or 0.0,
             "retention_percent": job.retention_percent or 0.0,
+            "retention_stated": bool(job.retention_stated),
             "currency": job.currency or "", "reference": job.reference or "",
             "manager_id": job.manager_id,
             "manager_name": managers.get(job.manager_id, ""),
@@ -544,6 +550,9 @@ def _replace_diary_lines(db, diary, labour, plant):
             # A row added "from Workers & Safety" names its people; its headcount always matches how many are
             # named, so a line cannot claim more heads than it has named workers for.
             ids = [int(w) for w in (l.get("worker_ids") or []) if str(w).strip().isdigit()][:200]
+            checks.between(l.get("headcount"), "number of workers", 0, 5000)
+            checks.between(l.get("hours"), "hours worked", 0, 24, unit="hours")
+            checks.between(l.get("rate"), "labour rate", 0, 10_000_000)
             heads = float(len(ids)) if ids else money(l.get("headcount") or 0)
             if not heads:
                 continue
@@ -559,6 +568,9 @@ def _replace_diary_lines(db, diary, labour, plant):
             models.DBDiaryPlant.site_diary_id == diary.id).delete()
         for i, p in enumerate((plant or [])[:60]):
             name = (p.get("plant") or "").strip()
+            checks.between(p.get("worked_hours"), "hours the machine worked", 0, 24, unit="hours")
+            checks.between(p.get("idle_hours"), "hours the machine stood idle", 0, 24, unit="hours")
+            checks.between(p.get("rate"), "plant rate", 0, 10_000_000)
             if not name:
                 continue
             db.add(models.DBDiaryPlant(

@@ -54,12 +54,12 @@ interface Costing {
   expected_margin: number
   counts: { bills: number; work_orders: number }
 }
-export interface BoardProject extends Project { customer_name: string; state_code?: string; description?: string; retention_percent?: number; costing: Costing }
+export interface BoardProject extends Project { customer_name: string; state_code?: string; description?: string; retention_percent?: number; retention_stated?: boolean; costing: Costing }
 export interface Board { jobs: BoardProject[]; totals: { budget: number; used: number; remaining: number } }
 export interface ProjectDoc { id: number; number: string; total: number; status: string; issue_date: string; to_contact?: string; supplier_name?: string; vendor_name?: string; over_order?: boolean }
 export interface ProjectDetail extends BoardProject { invoices: ProjectDoc[]; bills: ProjectDoc[]; purchase_orders: ProjectDoc[]; quotes: ProjectDoc[] }
 export interface SiteLocation { set: boolean; lat?: number; lng?: number; radius_m?: number }
-export interface ProjectInput { /** The job code, typed by hand. */ number?: string; name: string; customer_name: string; status: string; site_address: string; state_code: string; quoted_value: number; budget: number; retention_percent: number; start_date: string; target_end_date: string; description: string }
+export interface ProjectInput { /** The job code, typed by hand. */ number?: string; name: string; customer_name: string; status: string; site_address: string; state_code: string; quoted_value: number; budget: number; retention_percent: number | null; start_date: string; target_end_date: string; description: string }
 
 export const useBoard = () => useQuery({ queryKey: ['projects', 'board'], queryFn: () => get<Board>('/api/jobs-summary') })
 export const useProject = (id: number) => useQuery({ queryKey: ['projects', 'one', id], enabled: id > 0, queryFn: () => get<ProjectDetail>(`/api/jobs/${id}`) })
