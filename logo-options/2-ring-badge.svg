@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Y ERP"><defs><linearGradient id="tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1d2142"/><stop offset=".55" stop-color="#10132a"/><stop offset="1" stop-color="#070914"/></linearGradient>
+<radialGradient id="glow" cx=".5" cy=".36" r=".6"><stop offset="0" stop-color="#ffb347" stop-opacity=".30"/><stop offset="1" stop-color="#ffb347" stop-opacity="0"/></radialGradient></defs>
+<rect width="512" height="512" rx="112" fill="url(#tile)"/><rect width="512" height="512" rx="112" fill="url(#glow)"/><defs>
+<linearGradient id="ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd58a"/><stop offset="1" stop-color="#e5611a"/></linearGradient>
+<linearGradient id="y" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#f1c27a"/></linearGradient></defs>
+<circle cx="256" cy="256" r="188" fill="none" stroke="url(#ring)" stroke-width="10"/>
+<circle cx="256" cy="256" r="166" fill="none" stroke="#fff" stroke-opacity=".10" stroke-width="2"/>
+<g transform="translate(256 262) scale(.62) translate(-256 -262)"><path d="M96 100H172L256 232L340 100H416L288 304V424H224V304Z" fill="url(#y)"/></g>
+<circle cx="256" cy="68" r="9" fill="#ffb347"/></svg>
