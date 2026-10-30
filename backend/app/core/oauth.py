@@ -3,6 +3,8 @@ import os
 
 from authlib.integrations.starlette_client import OAuth
 
+from app.constants.common import GMAIL_SCOPES
+
 
 oauth = OAuth()
 oauth.register(
@@ -10,9 +12,9 @@ oauth.register(
     client_id=os.getenv("GOOGLE_CLIENT_ID"),
     client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
     server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={
-        'scope': 'openid email profile https://www.googleapis.com/auth/gmail.send'
-    }
+    # The default is the Gmail connection's: send mail only. The platform console's sign-in passes its own scope
+    # (GOOGLE_SIGNIN_SCOPES) to be told who somebody is.
+    client_kwargs={'scope': ' '.join(GMAIL_SCOPES)}
 )
 
 # Yahoo is plain OpenID Connect; sign-in only, no mail permission.
