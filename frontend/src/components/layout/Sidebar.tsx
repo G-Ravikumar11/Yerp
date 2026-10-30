@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { groupFor, visibleNav, type NavGroup } from '@/lib/nav'
-import { prefetchPage } from '@/lib/prefetch'
+import { prefetchPage, preloadScreen, preloadScreens } from '@/lib/prefetch'
 import { useSession } from '@/lib/session'
 import { useInbox } from '@/api/approvals'
 import { useUI } from '@/stores/ui'
@@ -54,6 +54,8 @@ function LinkItem({ to, label, icon: Icon, collapsed }: { to: string; label: str
       <NavLink
         to={to}
         end
+        onMouseEnter={() => preloadScreen(to)}
+        onFocus={() => preloadScreen(to)}
         className={cn(itemBase, 'h-10', collapsed && 'justify-center px-0', isActive ? 'text-foreground dark:text-slate-900' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
       >
         {isActive && (
@@ -173,6 +175,10 @@ function SidebarBody({ collapsed, showToggle }: { collapsed: boolean; showToggle
   const { user, can } = useSession()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const nav = useMemo(() => visibleNav(can, user?.type === 'employee', !!user?.headOffice), [user])
+  // Every screen this person's menu leads to, loaded ahead in idle time (once, however many sidebars are drawn).
+  useEffect(() => {
+    preloadScreens(nav.flatMap((e) => (e.kind === 'link' ? [e.path] : e.items.map((i) => i.path))))
+  }, [nav])
   return (
     <div className="flex h-full flex-col">
       <div className={cn('flex h-16 shrink-0 items-center px-4', collapsed && 'justify-center px-0')}>
