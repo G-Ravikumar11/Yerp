@@ -18,6 +18,7 @@ from app.db import SessionLocal
 
 from app.core.config import logger
 from app.core.push import push_to
+from app.constants.common import GMAIL_SCOPES
 
 
 def default_from_email():
@@ -36,7 +37,8 @@ def get_gmail_credentials(access_token: str = None, refresh_token: str = None):
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id,
-        client_secret=client_secret
+        client_secret=client_secret,
+        scopes=GMAIL_SCOPES,
     )
     try:
         if creds.expired or not creds.valid:
