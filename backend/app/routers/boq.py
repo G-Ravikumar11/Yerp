@@ -54,7 +54,7 @@ from app.services.boq import (
     bv_start_chain,
     bv_write_lines,
 )
-from app.services.boq_outline import boq_outline, rate_suggestions
+from app.services.boq_outline import boq_outline, line_materials, rate_suggestions
 from app.services.crm import estimate_or_404
 from app.services.projects import job_or_404
 from app.services.subcontract_billing import past_tense, sub_bill_step_name
@@ -364,6 +364,7 @@ def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
         models.DBBoqLine.display_order, models.DBBoqLine.id).all()
     # Every heading over a line, main and sub, with the text written under it; and a contractor rate to start from.
     heads, path, _place = boq_outline(lines)
+    grades = line_materials(lines, heads, path)
     suggest = rate_suggestions(db, client.id, boq.job_id, {l.key for l in lines if l.kind in BOQ_PRICED})
     rows = []
     for l in lines:
@@ -375,7 +376,7 @@ def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
             g = given.get(l.key, {"qty": 0.0})
             rate, source = suggest.get(l.key, (0.0, ""))
             rows.append({"kind": l.kind, "key": l.key, "item_no": l.item_no or "", "group_code": l.group_code or "",
-                         "description": l.description, "uom": l.uom or "", "material": l.material or "", "remarks": l.remarks or "",
+                         "description": l.description, "uom": l.uom or "", "material": grades.get(l.key, ""), "remarks": l.remarks or "",
                          "item_code": l.item_code or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate),
                          "given": money(g["qty"]), "left": money(max(0.0, (l.quantity or 0) - g["qty"])),
                          "path": path.get(l.key, []), "suggested_rate": rate, "rate_from": source})
