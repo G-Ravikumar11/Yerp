@@ -53,6 +53,7 @@ from app.services.employee_portal import (
 )
 from app.services.hr import employee_name, employee_site_ids, request_to_dict, resolve_employee_job_id, with_request_links
 from app.services.holidays import custom_holidays
+from app.services.invoicing import bill_gst_split, check_bill_lines, refuse_duplicate_bill
 from app.services.procurement import (
     apply_order_fields,
     purchase_order_or_404,
@@ -572,15 +573,20 @@ def employee_create_bill(request: Request, body: dict = None,
     if not vendor:
         raise HTTPException(status_code=400, detail="Who is this owed to?")
     amount, tax, total = bill_money_from(body)
+    check_bill_lines(amount, body.get("line_items"))
+    number = allocate_bill_number(db, emp.client_id)
+    refuse_duplicate_bill(db, emp.client_id, vendor, (body.get("reference") or "").strip(), number)
+    cgst, sgst, igst = bill_gst_split(db, emp.client_id, vendor, tax, body)
 
     bill = models.DBBill(
         client_id=emp.client_id,
-        number=allocate_bill_number(db, emp.client_id),
+        number=number,
         vendor_name=vendor,
         vendor_email=(body.get("vendor_email") or "").strip(),
         issue_date=body.get("issue_date") or datetime.now().strftime("%Y-%m-%d"),
         due_date=body.get("due_date") or "",
         amount=amount, tax_amount=tax, total=total,
+        cgst=cgst, sgst=sgst, igst=igst,
         status="Draft",
         category=body.get("category") or "general",
         reference=(body.get("reference") or "").strip(),
@@ -601,7 +607,7 @@ def employee_create_bill(request: Request, body: dict = None,
                                           li.get("po_line_id")),
             qty=float(li.get("qty") or 1),
             price=float(li.get("price") or 0),
-            tax_rate=li.get("tax_rate") or "0%",
+            tax_rate=li.get("tax_rate") or ("18%" if tax else "0%"),
         ))
 
     log_audit(db, emp.client_id, "bill_created", "bill", bill.id, bill.number,
@@ -646,6 +652,10 @@ def employee_update_bill(bill_id: int, request: Request, body: dict = None,
     for field in ("vendor_email", "issue_date", "due_date", "category", "reference", "notes"):
         if field in body:
             setattr(bill, field, (body.get(field) or ""))
+    if "vendor_name" in body or "reference" in body:
+        refuse_duplicate_bill(db, emp.client_id, bill.vendor_name, bill.reference or "", bill.number or "", exclude_id=bill.id)
+    if any(k in body for k in ("vendor_name", "amount", "tax_amount", "cgst", "sgst", "igst")):
+        bill.cgst, bill.sgst, bill.igst = bill_gst_split(db, emp.client_id, bill.vendor_name, bill.tax_amount or 0, body)
     if "job_id" in body:
         bill.job_id = resolve_employee_job_id(db, emp, body.get("job_id"))
     if "purchase_order_id" in body:
@@ -868,23 +878,26 @@ def employee_approval_history(entity_type: str, entity_id: int, request: Request
 
 
 @router.post("/api/employee/bills/{bill_id}/pay")
-def employee_pay_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
-    """Finance releases payment on an approved bill."""
+def employee_pay_bill(bill_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Finance releases payment on an approved bill - through the ledger and the bank book, like any payment, so it
+    waits for an approved payment request where payments need one and the bill cannot be paid a second time."""
     emp = require_employee_permission(request, db, "bills.pay")
     bill = employee_bill_or_404(db, emp, bill_id)
     if (bill.approval_status or "none") not in ("none", "approved", ""):
         raise HTTPException(
             status_code=403,
             detail=f"This bill is {bill.approval_status} and cannot be paid yet.")
-    bill.amount_paid = bill.total or bill.amount or 0.0
-    bill.status = "Paid"
+    from app.core.currency import money
+    from app.services.money import pay_in_full
+    pay_in_full(db, request, "supplier_bill", bill, money(bill.total or bill.amount or 0), body)
+    db.refresh(bill)
     notify_employee(db, emp.client_id, bill.submitted_by, "Paid",
                     f"{bill.number} has been paid.")
     log_audit(db, emp.client_id, "bill_paid", "bill", bill.id, bill.number,
               f"Paid by {employee_name(emp)}: {bill.amount_paid}", request,
               user_type="employee", user_name=employee_name(emp))
     db.commit()
-    return {"ok": True, "status": "Paid"}
+    return {"ok": True, "status": bill.status}
 
 
 @router.get("/api/employee/document-requests")

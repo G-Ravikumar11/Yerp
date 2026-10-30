@@ -62,12 +62,12 @@ def test_another_company_cannot_print_ours(tenant, second_tenant):
 
 
 def test_the_purchase_order_and_the_contractors_bill_print_in_the_same_form(tenant):
-    tenant.post("/api/suppliers", json={"name": "ACC Ltd", "gstin": "36AAACA1234C1Z5"})
+    tenant.post("/api/suppliers", json={"name": "ACC Ltd", "gstin": "36AAACA1234C1ZH"})
     po = tenant.post("/api/purchase-orders", json={"supplier_name": "ACC Ltd", "amount": 38500,
                                                    "line_items": [{"description": "OPC 53 cement", "uom": "Bags",
                                                                    "qty": 100, "price": 385}]}).json()
     _, text = pdf_text(tenant.get("/api/purchase-orders/%d/document.pdf" % po["id"]))
-    for words in ("PURCHASE ORDER", "Supplier Name", "36AAACA1234C1Z5", "OPC 53 cement", "Delivery", "Supplier Acceptance"):
+    for words in ("PURCHASE ORDER", "Supplier Name", "36AAACA1234C1ZH", "OPC 53 cement", "Delivery", "Supplier Acceptance"):
         assert words in text, words
     from test_subcontractor_bills import book, measure as smeasure, raise_bill as sraise
     order = live_order(tenant, retention_percent=5)

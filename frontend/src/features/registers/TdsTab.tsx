@@ -7,7 +7,7 @@ import { compactINR, formatINR } from '@/lib/utils'
 
 const QUARTERS = [['Q1', 'Q1 - Apr to Jun'], ['Q2', 'Q2 - Jul to Sep'], ['Q3', 'Q3 - Oct to Dec'], ['Q4', 'Q4 - Jan to Mar']]
 
-/** TDS under section 194C, both ways: what we withhold and deposit, and what was withheld from us to claim. */
+/** TDS under section 194C (206AA at 20% where there is no valid PAN), both ways: what we withhold and deposit, and what was withheld from us to claim. */
 export function TdsTab() {
   const [year, setYear] = useState('')
   const [quarter, setQuarter] = useState('')
@@ -19,8 +19,8 @@ export function TdsTab() {
     { id: 'date', header: 'Date', cell: (r) => formatDate(r.date) },
     { id: 'q', header: 'Quarter', hideBelow: 'md', cell: (r) => `${r.year} ${r.quarter}` },
     { id: 'bill', header: 'Bill', cell: (r) => <span className="font-mono text-[13px]">{r.bill}</span> },
-    { id: 'who', header: 'Deductee', cell: (r) => <div>{r.deductee}{r.missing_pan ? <div className="text-[11px] text-danger">no PAN - 20% applies</div> : <div className="font-mono text-[11px] text-muted-foreground">{r.pan}</div>}</div> },
-    { id: 'sec', header: 'Section', hideBelow: 'lg', cell: (r) => `${r.section} @ ${r.rate}%` },
+    { id: 'who', header: 'Deductee', cell: (r) => <div>{r.deductee}{r.missing_pan ? <div className="text-[11px] text-danger">no valid PAN - 20% under 206AA</div> : <div className="font-mono text-[11px] text-muted-foreground">{r.pan}</div>}</div> },
+    { id: 'sec', header: 'Section', hideBelow: 'lg', cell: (r) => <div>{`${r.section} @ ${r.rate}%`}{r.short_deducted && <div className="text-[11px] text-danger">{r.rate_due}% due</div>}</div> },
     { id: 'amt', header: 'Amount credited', hideBelow: 'md', align: 'right', cell: (r) => formatINR(r.amount_credited) },
     { id: 'tds', header: 'TDS', align: 'right', cell: (r) => <span className="font-semibold">{formatINR(r.tds)}</span> },
     { id: 'paid', header: 'Deposited', hideBelow: 'lg', cell: (r) => formatDate(r.paid_on) || '-' },

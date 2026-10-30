@@ -62,7 +62,7 @@ export function RequestsTab() {
             <Button size="sm" loading={approve.isPending && approve.variables?.id === x.id} onClick={() => approve.mutate(x)}><Check /> {x.status === 'AWAITING_MD' ? 'Release' : 'Approve'}</Button>
             <Button size="sm" variant="outline" className="text-danger" onClick={() => setRejecting(x)}><X /> Reject</Button>
           </>}
-          {x.status === 'APPROVED' && can('bills.pay') && <Button size="sm" onClick={() => setPaying(x)}>Pay</Button>}
+          {x.status === 'APPROVED' && !x.expired && can('bills.pay') && <Button size="sm" onClick={() => setPaying(x)}>Pay</Button>}
           {x.status === 'PAID' && x.entry_id && <Button size="icon-sm" variant="ghost" asChild><a href={voucherUrl(x.entry_id)} target="_blank" rel="noreferrer" aria-label={`Voucher for ${x.number}`} title="Print the voucher"><FileText /></a></Button>}
           {['PENDING', 'AWAITING_MD', 'APPROVED'].includes(x.status) && (x.requested_by === r?.me || r?.can_check) && (
             <Button size="sm" variant="ghost" loading={withdraw.isPending && withdraw.variables?.id === x.id} onClick={() => withdraw.mutate(x)}>Withdraw</Button>

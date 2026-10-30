@@ -162,15 +162,15 @@ def next_serial(db, series: str = "item") -> int:
 # finance still has to pay it through the existing bills screen. Rejection
 # hands it back to whoever raised it, with the reason, to fix and send again.
 def allocate_bill_number(db, client_id) -> str:
-    last = db.query(models.DBBill).filter(
-        models.DBBill.client_id == client_id).order_by(models.DBBill.id.desc()).first()
-    if last and last.number:
-        try:
-            num = int(str(last.number).replace("BILL-", "").replace("BILL", ""))
-            return f"BILL-{num + 1:04d}"
-        except (ValueError, TypeError):
-            pass
-    return "BILL-0001"
+    """One past the highest BILL-nnnn on file. Read from the last row, a supplier's own number entered on the latest
+    bill (INV/2291) sent the series back to BILL-0001 - which was already taken."""
+    top = 0
+    for (number,) in db.query(models.DBBill.number).filter(
+            models.DBBill.client_id == client_id, models.DBBill.number.like("BILL%")).all():
+        tail = str(number or "").upper().replace("BILL-", "").replace("BILL", "")
+        if tail.isdigit():
+            top = max(top, int(tail))
+    return f"BILL-{top + 1:04d}"
 
 
 # PURCHASE ORDERS
@@ -224,6 +224,31 @@ def allocate_grn_number(db, client_id) -> str:
         except (ValueError, TypeError):
             pass
     return "GRN-0001"
+
+
+def allocate_series_number(db, model, client_id, series, prefix, width=4):
+    """The next number in a series of a company's documents: prefix + a serial that only goes up.
+
+    Counting rows hands a number out again once one is deleted, and two requests counting together get the same one.
+    The serial is a counter row taken under a lock (next_serial); the first time a series is used it starts after the
+    highest number already on file with that prefix, so existing documents carry on from where they are. A number the
+    counter reaches that is somehow already taken is stepped past. Two requests creating a brand-new series at once
+    clash on the counter's unique name, and the one that loses is refused and can simply be sent again.
+    """
+    name = "%s:%d" % (series, client_id)
+    if not db.query(models.DBCodeSequence).filter(models.DBCodeSequence.name == name).first():
+        highest = 0
+        for (number,) in db.query(model.number).filter(model.client_id == client_id,
+                                                       model.number.like(prefix + "%")).all():
+            tail = (number or "")[len(prefix):]
+            if tail.isdigit():
+                highest = max(highest, int(tail))
+        db.add(models.DBCodeSequence(name=name, next_value=highest + 1))
+        db.flush()
+    while True:
+        number = "%s%0*d" % (prefix, width, next_serial(db, name))
+        if not db.query(model.id).filter(model.client_id == client_id, model.number == number).first():
+            return number
 
 
 def next_number(db, model, client_id, stem):

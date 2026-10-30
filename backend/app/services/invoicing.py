@@ -25,7 +25,7 @@ from app.constants.invoicing import (
 from app.core.config import logger
 from app.core.currency import DEFAULT_CURRENCY, compute_invoice_totals, currency_symbol, esc, money
 from app.core.dates import _parse_date, ack_datetime, advance_date
-from app.core.gst import GST_STATES, WORKS_CONTRACT_SAC, state_from_gstin, state_from_pin
+from app.core.gst import GST_STATES, WORKS_CONTRACT_SAC, our_state, state_from_gstin, state_from_pin
 from app.core.scheduler import scheduled_job
 from app.core.serials import invoice_prefix_for, next_sequence_number
 from app.core.tenant_settings import tenant_setting
@@ -881,6 +881,168 @@ def qr_svg(text, size=180):
     return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d" '
             'shape-rendering="crispEdges"><rect width="%d" height="%d" fill="#fff"/>'
             '<path fill="#000" d="%s"/></svg>' % (total, total, size, size, total, total, "".join(parts)))
+
+
+# SUPPLIER BILLS
+#
+# What has to be true of a supplier bill whoever saves it: its figures add up, it is not the same supplier invoice
+# entered twice, its tax is split the way the supplier charged it, and once it is approved or paid against, what it
+# says it is for does not change.
+BILL_DEAD = ("Cancelled", "Rejected")
+# Once a bill is approved or money has gone out on it, these say what was approved and paid; they stay as they are.
+BILL_LOCKED = ("vendor_name", "number", "issue_date", "amount", "tax_amount", "total", "purchase_order_id", "job_id")
+
+
+def _bill_number(raw, what):
+    try:
+        v = float(0 if raw in (None, "") else raw)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "%s must be a number." % what) from None
+    if v != v or v in (float("inf"), float("-inf")):
+        raise HTTPException(400, "%s must be a number." % what)
+    if v < 0:
+        raise HTTPException(400, "%s cannot be negative." % what)
+    if v > 1e11:
+        raise HTTPException(400, "%s is unrealistically large." % what)
+    return money(v)
+
+
+def bill_figures(body, bill=None):
+    """(amount, tax, total) for a supplier bill, checked: none negative, and the total is the amount plus the tax to
+    within a rupee of rounding. On an edit, what is not sent is kept from the bill. A total typed with no amount is
+    read as the amount plus tax, as the form has it."""
+    body = body or {}
+
+    def has(k):
+        return body.get(k) not in (None, "")
+
+    tax = _bill_number(body["tax_amount"] if has("tax_amount") else (bill.tax_amount if bill is not None else 0), "The tax")
+    if has("amount"):
+        amount = _bill_number(body["amount"], "The amount")
+    elif bill is not None:
+        amount = _bill_number(bill.amount, "The amount")
+    else:
+        amount = money(max(0.0, _bill_number(body.get("total"), "The total") - tax))
+    if has("total"):
+        total = _bill_number(body["total"], "The total")
+    elif bill is not None and not (has("amount") or has("tax_amount")):
+        total = _bill_number(bill.total, "The total")
+    else:
+        total = money(amount + tax)
+    if abs(total - money(amount + tax)) > 1.0:
+        raise HTTPException(400, "The total %s is not the amount %s plus the tax %s (%s)."
+                                 % (total, amount, tax, money(amount + tax)))
+    return amount, tax, total
+
+
+def check_bill_lines(amount, lines):
+    """When the bill's lines are given, its amount is what they come to (before tax) - to within a rupee."""
+    lines = [li for li in (lines or [])[:50] if isinstance(li, dict)]
+    if not lines:
+        return
+    try:
+        came_to = money(sum(float(li.get("qty") or 1) * float(li.get("price") or 0) for li in lines))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Each line's quantity and price must be numbers.") from None
+    if abs(came_to - money(amount)) > 1.0:
+        raise HTTPException(400, "The lines come to %s before tax, but the bill's amount is %s." % (came_to, money(amount)))
+
+
+def supplier_invoice_key(reference, number):
+    """The supplier's own invoice number: the reference, or the bill number when no reference was given."""
+    return re.sub(r"\s+", "", (reference or "").strip() or (number or "")).upper()
+
+
+def duplicate_supplier_bill(db, client_id, vendor_name, reference, number, exclude_id=None):
+    """A live bill (not cancelled or rejected) already on file for the same supplier's same invoice - the one that
+    would be paid twice."""
+    key = supplier_invoice_key(reference, number)
+    who = norm_name(vendor_name)
+    if not key or not who:
+        return None
+    from sqlalchemy import or_
+    q = db.query(models.DBBill).filter(
+        models.DBBill.client_id == client_id,
+        or_(models.DBBill.status.is_(None), ~models.DBBill.status.in_(BILL_DEAD)))
+    if exclude_id:
+        q = q.filter(models.DBBill.id != exclude_id)
+    for b in q.all():
+        if norm_name(b.vendor_name) == who and supplier_invoice_key(b.reference, b.number) == key:
+            return b
+    return None
+
+
+def refuse_duplicate_bill(db, client_id, vendor_name, reference, number, exclude_id=None):
+    dup = duplicate_supplier_bill(db, client_id, vendor_name, reference, number, exclude_id)
+    if dup is not None:
+        raise HTTPException(409, "%s's invoice %s is already entered as %s. A second copy would be paid twice."
+                                 % (vendor_name, (reference or number or "").strip(), dup.number or "another bill"))
+
+
+def supplier_gstin_of(db, client_id, vendor_name):
+    who = norm_name(vendor_name)
+    for x in db.query(models.DBSupplier).filter(models.DBSupplier.client_id == client_id).all():
+        if norm_name(x.name) == who:
+            return (x.gstin or "").strip().upper()
+    return ""
+
+
+def guess_bill_split(tax, gstin, home):
+    """Same state as us: CGST and SGST, half each. Another state, or a supplier whose state is not known: IGST, the
+    side a mistake is cheaper on."""
+    tax = money(tax)
+    if home and gstin and state_from_gstin(gstin) == home:
+        half = money(tax / 2.0)
+        return half, money(tax - half), 0.0
+    return 0.0, 0.0, tax
+
+
+def bill_gst_split(db, client_id, vendor_name, tax, body=None):
+    """(cgst, sgst, igst) to store on a bill: as typed when given (and then it has to be a real split of the tax),
+    otherwise from the supplier's GSTIN against ours."""
+    body = body or {}
+    if any(body.get(k) not in (None, "") for k in ("cgst", "sgst", "igst")):
+        c = _bill_number(body.get("cgst"), "CGST")
+        s = _bill_number(body.get("sgst"), "SGST")
+        i = _bill_number(body.get("igst"), "IGST")
+        if i and (c or s):
+            raise HTTPException(400, "A bill is CGST and SGST (same state) or IGST (another state), not both.")
+        if abs(c - s) > 1.0:
+            raise HTTPException(400, "CGST and SGST are equal halves of the tax.")
+        if abs(money(c + s + i) - money(tax)) > 1.0:
+            raise HTTPException(400, "CGST, SGST and IGST come to %s, but the tax is %s." % (money(c + s + i), money(tax)))
+        return c, s, i
+    return guess_bill_split(tax, supplier_gstin_of(db, client_id, vendor_name), our_state(db, client_id))
+
+
+def bill_order_warnings(db, bill):
+    """What a bill does to the order it settles, said rather than refused: every live bill on the order together over
+    the order's value, or billed past what the receipts against it took in. The received figure is the three-way
+    match's own (accepted quantity at the order's rate); with no receipt yet there is nothing to compare."""
+    if not bill.purchase_order_id:
+        return []
+    order = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.id == bill.purchase_order_id).first()
+    if order is None:
+        return []
+    from sqlalchemy import or_
+    from app.services.approvals import bill_exceeds_its_order
+    from app.services.procurement import OrderPrefetch
+    out = []
+    if (bill.status or "") not in BILL_DEAD and bill_exceeds_its_order(db, bill, "bill"):
+        out.append("The bills on %s now come to more than the order's %s - it will be looked at before it is paid."
+                   % (order.number or "the order", money(order.total)))
+    pre = OrderPrefetch(db, [order])
+    if pre.receipts.get(order.id) or pre.hub_receipts.get(order.id):
+        got = pre.received(order.id)
+        received = money(sum(got.get(l.id, 0.0) * (l.price or 0) for l in pre.lines.get(order.id, [])))
+        live = db.query(models.DBBill).filter(
+            models.DBBill.purchase_order_id == order.id,
+            or_(models.DBBill.status.is_(None), ~models.DBBill.status.in_(BILL_DEAD))).all()
+        billed = money(sum((b.amount if b.amount else b.total) or 0 for b in live))
+        if billed > received + 1.0:
+            out.append("%s has %s billed against %s received (before tax). Check the gate before paying."
+                       % (order.number or "The order", billed, received))
+    return out
 
 
 # Names this module only needs once it is running. They come from modules that in turn need this one,

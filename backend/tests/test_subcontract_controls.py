@@ -206,7 +206,7 @@ def test_tds_starts_at_the_rate_the_law_sets_for_the_contractor(tenant, monkeypa
 def test_an_order_below_the_statutory_tds_needs_the_masters_reason(tenant, monkeypatch):
     monkeypatch.setenv("ENFORCE_STATUTORY_TDS", "1")
     firm = tenant.post("/api/wo/contractors", json={"company_name": "Kaveri & Sons", "pan": "AABFK1234L",
-                                                    "gst_number": "36AABFK1234L1Z5"}).json()
+                                                    "gst_number": "36AABFK1234L1ZH"}).json()
     assert firm["tds_rate"] == 2.0
     order = priced(tenant, contractor_id=firm["id"], tds_rate=1)
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200

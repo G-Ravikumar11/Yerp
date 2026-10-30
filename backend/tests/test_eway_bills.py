@@ -7,7 +7,7 @@ from test_goods_receipt import order, receipt, set_lines, post
 
 
 def setup_company(tenant):
-    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZX"})
+    tenant.put("/api/gst/settings", json={"gstin": "36AABCY1234H1ZI"})
     tenant.post("/api/settings", json={"company_address": "Plot 12, Madhapur, Hyderabad 500081"})
     job = tenant.post("/api/jobs", json={"name": "Vanya City STP", "customer_name": "Arabtec",
                                          "site_address": "Kokapet, Hyderabad 500075"}).json()
@@ -73,7 +73,7 @@ def test_the_portal_file_is_in_the_nic_format(tenant):
     res = tenant.get("/api/eway-bills/%d/json" % e["id"])
     assert res.status_code == 200
     bill = res.json()["billLists"][0]
-    assert bill["userGstin"] == "36AABCY1234H1ZX" and bill["supplyType"] == "O"
+    assert bill["userGstin"] == "36AABCY1234H1ZI" and bill["supplyType"] == "O"
     assert bill["subSupplyType"] == 5 and bill["docType"] == "CHL"
     assert bill["fromPincode"] == 500081 and bill["toPincode"] == 500075
     assert bill["transDistance"] == 18 and bill["vehicleNo"] == "TS09UB1234"

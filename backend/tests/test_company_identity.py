@@ -13,7 +13,7 @@ from test_delete_work_order import live_order, raise_a_bill
 def with_letterhead(tenant):
     order, unit, con = an_order(tenant)
     tenant.put("/api/wo/business-units/%d" % unit["id"], json={
-        "name": "Yalavarti Projects Pvt Ltd", "code": "YPPL", "gstin": "36AABCY1234H1ZX",
+        "name": "Yalavarti Projects Pvt Ltd", "code": "YPPL", "gstin": "36AABCY1234H1ZI",
         "address": "Plot 12, Madhapur\nHyderabad 500081", "logo_url": png()})
     return order, con
 
@@ -40,12 +40,12 @@ def test_the_contractor_bill_and_the_registration_form_carry_the_logo_in_pdf_and
     order = live_order(tenant, pay_advance=False)
     unit = tenant.get("/api/wo/business-units").json()["business_units"][0]
     tenant.put("/api/wo/business-units/%d" % unit["id"], json={
-        "name": "Yalavarti Projects Pvt Ltd", "gstin": "36AABCY1234H1ZX", "address": "Plot 12, Madhapur", "logo_url": png()})
+        "name": "Yalavarti Projects Pvt Ltd", "gstin": "36AABCY1234H1ZI", "address": "Plot 12, Madhapur", "logo_url": png()})
     con = {"id": order["contractor_id"]}
     bill = raise_a_bill(tenant, order)
     pdf = pdf_of(tenant.get("/api/sub-bills/%d/document.pdf" % bill["id"]))
     assert all(pictures(pdf, n) >= 1 for n in range(min(3, len(pdf.pages))))      # Top Sheet, AB-1, MB-1
-    assert "36AABCY1234H1ZX" in text(pdf)
+    assert "36AABCY1234H1ZI" in text(pdf)
     xl, _ = images(tenant.get("/api/sub-bills/%d/export.xlsx" % bill["id"]))
     assert xl and all(n >= 1 for n in xl)
     reg = pdf_of(tenant.get("/api/wo/contractors/%d/registration.pdf" % con["id"]))
@@ -60,7 +60,7 @@ def test_a_register_in_excel_is_headed_with_the_company_but_a_template_is_not(te
     n, book = images(res)
     ws = book.worksheets[0]
     assert n[0] == 1
-    assert ws["A1"].value == "YALAVARTI PROJECTS PVT LTD" and "36AABCY1234H1ZX" in " ".join(str(c.value) for c in ws["A"][:4])
+    assert ws["A1"].value == "YALAVARTI PROJECTS PVT LTD" and "36AABCY1234H1ZI" in " ".join(str(c.value) for c in ws["A"][:4])
     template = tenant.get("/api/sub-mb/template.xlsx")
     assert images(template)[0] == [0]
     tmpl = tenant.get("/api/erp/work-orders/template")

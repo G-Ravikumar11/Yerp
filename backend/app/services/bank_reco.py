@@ -279,11 +279,14 @@ def brs(db, client_id, account, as_of):
     """The bank reconciliation statement on a day: the balance in the books, the entries the bank has not moved by
     then (cheques not presented, deposits not credited), the balance the bank should show - and, when its statement
     is in, the balance it does show and any difference."""
-    from app.services.money import account_balance
-    entries = db.query(models.DBMoneyEntry).filter(
+    from app.services.money import account_balance, opening_day
+    q = db.query(models.DBMoneyEntry).filter(
         models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.account_id == account.id,
-        models.DBMoneyEntry.voided.isnot(True), models.DBMoneyEntry.paid_on <= as_of).order_by(
-        models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all()
+        models.DBMoneyEntry.voided.isnot(True), models.DBMoneyEntry.paid_on <= as_of)
+    if opening_day(account):
+        # The opening balance stands on the opening day: what moved before it is already inside that figure.
+        q = q.filter(models.DBMoneyEntry.paid_on >= opening_day(account))
+    entries = q.order_by(models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all()
     books = money((account.opening_balance or 0) + sum(e.amount if e.direction == "IN" else -e.amount for e in entries))
     open_ = [e for e in entries if not e.cleared_on or e.cleared_on > as_of]
     issued = [e for e in open_ if e.direction == "OUT"]

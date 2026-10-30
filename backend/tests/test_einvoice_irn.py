@@ -16,7 +16,7 @@ def b64(obj):
 def signed_qr(payload, **over):
     """A QR shaped as the portal signs it: a JWT whose payload's "data" is
     the registered invoice's summary."""
-    data = {"SellerGstin": "36AABCY1234H1ZX", "BuyerGstin": payload["BuyerDtls"]["Gstin"],
+    data = {"SellerGstin": "36AABCY1234H1ZI", "BuyerGstin": payload["BuyerDtls"]["Gstin"],
             "DocNo": payload["DocDtls"]["No"], "DocTyp": "INV", "DocDt": payload["DocDtls"]["Dt"],
             "TotInvVal": payload["ValDtls"]["TotInvVal"], "ItemCnt": len(payload["ItemList"]),
             "MainHsnCode": "9954", "Irn": IRN, "IrnDt": "2026-09-26 11:02:00"}
@@ -73,7 +73,7 @@ def test_a_qr_from_another_bill_is_refused_with_what_differs(tenant):
     bill = ready_bill(tenant)
     p = status(tenant, bill)["payload"]
     for over, words in (({"DocNo": "RA-99"}, "RA-99"), ({"TotInvVal": 1.0}, "is for"),
-                        ({"SellerGstin": "29AAAAA0000A1Z5"}, "29AAAAA0000A1Z5"),
+                        ({"SellerGstin": "29AAAAA0000A1ZY"}, "29AAAAA0000A1ZY"),
                         ({"Irn": "f" * 64}, "different IRN")):
         res = tenant.post("/api/einvoice/ra_bill/%d/irn" % bill["id"],
                           json={"response": portal_response(p, **over)})

@@ -47,6 +47,10 @@ export interface SiteExpense {
   reject_reason: string
   entry_id: number | null
   photo: { id: number; name: string } | null
+  /** Entered by the Master (or a colleague signing in as the company): checked by somebody else. */
+  submitted_by_master?: boolean
+  /** Over the small-cash threshold: approved only with the bill kept against it. */
+  bill_needed?: boolean
 }
 
 export interface SiteCash { boxes: CashBox[]; expenses: SiteExpense[]; manage: boolean; me: number | null }
@@ -58,7 +62,7 @@ export const setCashBox = (id: number, b: { job_id: number | null; custodian_id:
   put<{ message: string }>(`/api/site-cash/boxes/${id}`, b)
 
 export const spendSiteCash = (b: { account_id: number; amount: number; head: string; paid_to: string; spent_on: string; note: string; bill_no: string }) =>
-  post<{ expense: SiteExpense; message: string }>('/api/site-cash/expenses', b)
+  post<{ expense: SiteExpense; message: string; warning?: string }>('/api/site-cash/expenses', b)
 
 /** The bill's photo, kept with the expense. */
 export function attachBillPhoto(id: number, file: File) {
@@ -68,6 +72,6 @@ export function attachBillPhoto(id: number, file: File) {
 }
 
 export const decideSiteExpense = (id: number, decision: 'approve' | 'reject', note = '') =>
-  post<{ expense: SiteExpense; message: string }>(`/api/site-cash/expenses/${id}/decide`, { decision, note })
+  post<{ expense: SiteExpense; message: string; warning?: string }>(`/api/site-cash/expenses/${id}/decide`, { decision, note })
 
 export const cashStatementUrl = (id: number) => `/api/site-cash/boxes/${id}/statement.pdf`

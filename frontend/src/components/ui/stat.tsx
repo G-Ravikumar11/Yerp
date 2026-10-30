@@ -34,24 +34,24 @@ export function Stat({
     <>
       <div className="flex items-center justify-between gap-2">
         <p className="text-[12.5px] text-muted-foreground">{label}</p>
-        {(to || onClick) && <ArrowUpRight className="size-3.5 shrink-0 text-subtle transition-colors group-hover:text-foreground" />}
+        {(to || onClick) && <ArrowUpRight className="size-3.5 shrink-0 text-subtle transition-colors group-hover:text-primary" />}
       </div>
       {loading ? (
         <Skeleton className="mt-2.5 h-7 w-28" />
       ) : (
-        <p className={cn('tabular mt-1.5 break-words font-display text-xl font-semibold leading-tight sm:text-2xl', tone && toneClass[tone])}>{value}</p>
+        <p className={cn('tabular mt-1.5 break-words font-display text-xl font-semibold leading-tight sm:text-2xl', tone ? toneClass[tone] : 'title-gradient w-fit max-w-full')}>{value}</p>
       )}
       {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
     </>
   )
-  const box = 'min-w-0 rounded-xl border border-border bg-card p-4 shadow-card'
+  const box = 'card-lit stat-lit min-w-0 rounded-xl border border-border bg-card p-4'
   if (onClick)
     return (
       <button
         type="button"
         onClick={onClick}
         aria-pressed={active}
-        className={cn(box, 'group block w-full text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', active && 'border-ring ring-1 ring-ring/60', className)}
+        className={cn(box, 'card-lit-hover group block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', active && 'border-ring ring-1 ring-ring/60', className)}
       >
         {body}
       </button>
@@ -60,7 +60,7 @@ export function Stat({
   return (
     <Link
       to={to}
-      className={cn(box, 'group block transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
+      className={cn(box, 'card-lit-hover group block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
     >
       {body}
     </Link>

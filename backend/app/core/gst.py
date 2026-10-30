@@ -42,6 +42,29 @@ def state_from_gstin(gstin):
     return g[:2] if len(g) >= 2 and g[:2].isdigit() and g[:2] in GST_STATES else ""
 
 
+_GSTIN_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_GSTIN_SHAPE = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
+
+
+def gstin_check_char(first14):
+    """The fifteenth character of a GSTIN: the portal's mod-36 check over the first fourteen (odd places weighted 1,
+    even places 2, each product folded as quotient plus remainder by 36)."""
+    total = 0
+    for i, ch in enumerate(first14):
+        v = _GSTIN_CHARS.index(ch) * (2 if i % 2 else 1)
+        total += v // 36 + v % 36
+    return _GSTIN_CHARS[(36 - total % 36) % 36]
+
+
+def gstin_valid(gstin):
+    """A GSTIN the portal would accept: a real state code, the PAN shape, the entity number, Z, and the right check
+    character. A typo in any one of the fifteen fails the check, as it would on the portal."""
+    g = (gstin or "").strip().upper()
+    if len(g) != 15 or not _GSTIN_SHAPE.match(g) or g[:2] not in GST_STATES:
+        return False
+    return gstin_check_char(g[:14]) == g[14]
+
+
 def split_gst(taxable, rate_percent, our_state, supply_state):
     """The one place the CGST/SGST-or-IGST decision is made.
 

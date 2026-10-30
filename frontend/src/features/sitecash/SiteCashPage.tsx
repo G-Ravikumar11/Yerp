@@ -58,8 +58,8 @@ export default function SiteCashPage() {
           {x.photo ? <Button size="icon-sm" variant="ghost" asChild><a href={`/api/files/${x.photo.id}`} target="_blank" rel="noreferrer" aria-label={`Bill for ${x.number}`} title="The bill"><Camera /></a></Button>
             : x.status === 'SUBMITTED' && <PhotoButton expense={x} />}
           {x.entry_id && <Button size="icon-sm" variant="ghost" asChild><a href={voucherUrl(x.entry_id)} target="_blank" rel="noreferrer" aria-label={`Voucher for ${x.number}`} title="The expense voucher"><FileText /></a></Button>}
-          {d?.manage && x.status === 'SUBMITTED' && (d.me === null || x.submitted_by !== d.me) && <>
-            <Button size="sm" loading={accept.isPending && accept.variables?.id === x.id} onClick={() => accept.mutate(x)}><Check /> Accept</Button>
+          {d?.manage && x.status === 'SUBMITTED' && (d.me === null ? !x.submitted_by_master : x.submitted_by !== d.me) && <>
+            <Button size="sm" loading={accept.isPending && accept.variables?.id === x.id} disabled={!!x.bill_needed && !x.photo} title={x.bill_needed && !x.photo ? 'Add the photo of the bill first' : undefined} onClick={() => accept.mutate(x)}><Check /> Accept</Button>
             <Button size="sm" variant="outline" className="text-danger" onClick={() => setRejecting(x)}><X /> Reject</Button>
           </>}
         </div>
@@ -69,7 +69,7 @@ export default function SiteCashPage() {
 
   return (
     <>
-      <PageHeader eyebrow={d?.manage ? 'Money' : 'My work'} title="Site Cash"
+      <PageHeader eyebrow={d?.manage ? 'Accounts' : 'My work'} title="Site Cash"
         description={d?.manage ? 'Each site’s cash box: what it should hold, what the site has spent and is waiting to be checked, and what tops it back up.'
           : 'The cash box you hold for the site. Enter each payment as you make it, with a photo of the bill; accounts check it.'} />
       {q.isPending ? null : !d?.boxes.length ? (
@@ -150,7 +150,7 @@ function SpendModal({ box, onClose }: { box: CashBox; onClose: () => void }) {
       try { await attachBillPhoto(r.expense.id, photo) } catch { toast.error('Saved, but the photo did not go up. Add it again from the list.') }
     }
     return r
-  }, { invalidate: [siteCashKeys.all], onSuccess: onClose })
+  }, { invalidate: [siteCashKeys.all], onSuccess: (r) => { if (r.warning) toast.info(r.warning); onClose() } })
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title={`Spent from ${box.name}`} description={`${formatINR(box.in_hand)} should be in hand. Accounts check each payment against its bill before it is booked to ${box.project || 'the site'}.`}>
       <div className="grid gap-4 sm:grid-cols-2">

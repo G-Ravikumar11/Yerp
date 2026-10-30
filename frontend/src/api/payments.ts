@@ -48,6 +48,8 @@ export interface PaymentRequest {
   rejected_by_name: string
   reject_reason: string
   entry_id: number | null
+  /** Approved, but not paid in time: it can no longer be paid. */
+  expired?: boolean
 }
 
 export const usePaymentRules = () => useQuery({ queryKey: [...paymentKeys.all, 'rules'], staleTime: 60_000, queryFn: () => get<PaymentRules>('/api/payment-requests/rules') })

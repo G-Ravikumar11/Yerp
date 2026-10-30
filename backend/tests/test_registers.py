@@ -78,7 +78,7 @@ def test_the_register_filters_by_quarter(tenant):
 def test_a_deductee_without_a_pan_is_called_out(tenant):
     unit = tenant.post("/api/wo/business-units", json={"name": "YP", "code": "YP"}).json()
     # Registered with a GSTIN so the order may be this size; the tax numbers are cleared once it has been billed.
-    con = tenant.post("/api/wo/contractors", json={"company_name": "Unregistered Contractor", "gst_number": "36AAAPB1234C1Z5"}).json()
+    con = tenant.post("/api/wo/contractors", json={"company_name": "Unregistered Contractor", "gst_number": "36AAAPB1234C1ZP"}).json()
     job = tenant.post("/api/jobs", json={"name": "Site", "customer_name": "X"}).json()
     order, bill = certified_sub_bill(tenant, business_unit_id=unit["id"],
                                      contractor_id=con["id"], job_id=job["id"])
@@ -168,3 +168,74 @@ def test_an_advance_not_yet_paid_is_shown_as_such(tenant):
     live_order(tenant, pay_advance=False, mobilization_advance_percent=10)
     row = tenant.get("/api/registers/advances").json()["advances"][0]
     assert row["advance"] == 0 and row["not_yet_paid"] == row["agreed"] > 0
+
+
+def _set_order(order_id, **fields):
+    with main.SessionLocal() as db:
+        o = db.get(main.models.DBSubcontractOrder, order_id)
+        for k, v in fields.items():
+            setattr(o, k, v)
+        db.commit()
+
+
+def test_a_closed_order_with_advance_still_out_stays_on_the_register(tenant):
+    order, bill = certified_sub_bill(tenant, mobilization_advance_percent=10, advance_recovery_percent=10)
+    _set_order(order["id"], status="CLOSED")
+    row = [r for r in tenant.get("/api/registers/advances").json()["advances"] if r["order_id"] == order["id"]][0]
+    assert row["outstanding"] > 0 and row["order_status"] == "CLOSED"
+
+
+def test_an_advance_is_secured_only_by_a_guarantee_in_force_that_covers_it(tenant):
+    from datetime import date, timedelta
+    later = (date.today() + timedelta(days=400)).isoformat()
+    order, bill = certified_sub_bill(tenant, mobilization_advance_percent=10, advance_recovery_percent=10,
+                                     bank_guarantee_applicable=True, bank_guarantee_amount=1,
+                                     bank_guarantee_validity=later)
+
+    def row():
+        return [r for r in tenant.get("/api/registers/advances").json()["advances"] if r["order_id"] == order["id"]][0]
+    _set_order(order["id"], bank_guarantee_amount=100000000)
+    r = row()
+    assert r["security"] == "secured" and r["secured_by_bg"] is True and r["unsecured"] == 0
+    _set_order(order["id"], bank_guarantee_amount=1)
+    r = row()
+    assert r["security"] == "partly secured" and r["secured_by_bg"] is False and r["unsecured"] == round(r["outstanding"] - 1, 2)
+    _set_order(order["id"], bank_guarantee_amount=100000000, bank_guarantee_validity="2020-01-01")
+    assert row()["security"] == "unsecured"                       # lapsed
+    _set_order(order["id"], bank_guarantee_validity=later, bank_guarantee_returned_at="2026-01-01 10:00:00")
+    assert row()["security"] == "unsecured"                       # handed back
+
+
+def test_a_guarantee_is_valid_on_its_last_day(tenant):
+    from datetime import date
+    o = live_order(tenant, bank_guarantee_applicable=True, bank_guarantee_amount=100000,
+                   bank_guarantee_validity="2099-12-31")
+    _set_order(o["id"], bank_guarantee_validity=date.today().isoformat())
+    g = [r for r in tenant.get("/api/registers/guarantees").json()["guarantees"] if r["order_id"] == o["id"]][0]
+    assert g["days_left"] == 0 and g["state"] == "lapses within 30 days"
+
+
+def test_a_guarantee_that_ends_before_the_defects_period_is_called_out(tenant):
+    from datetime import date, timedelta
+    o = live_order(tenant, bank_guarantee_applicable=True, bank_guarantee_amount=100000,
+                   bank_guarantee_validity="2099-12-31")
+    _set_order(o["id"], bank_guarantee_validity=(date.today() + timedelta(days=90)).isoformat(),
+               completion_date=date.today().isoformat(), actual_completion_date="", defect_liability_months=12)
+    g = [r for r in tenant.get("/api/registers/guarantees").json()["guarantees"] if r["order_id"] == o["id"]][0]
+    assert g["state"] == "expires before defects period ends" and g["short_of_defects_period"] is True
+
+
+def test_no_pan_is_section_206aa_at_20_percent(tenant):
+    unit = tenant.post("/api/wo/business-units", json={"name": "YP", "code": "YP"}).json()
+    con = tenant.post("/api/wo/contractors", json={"company_name": "No PAN Contractor", "gst_number": "36AAAPB1234C1ZP"}).json()
+    job = tenant.post("/api/jobs", json={"name": "Site", "customer_name": "X"}).json()
+    order, bill = certified_sub_bill(tenant, business_unit_id=unit["id"], contractor_id=con["id"], job_id=job["id"])
+    with main.SessionLocal() as db:
+        c = db.query(main.models.DBContractor).get(con["id"])
+        c.gst_number, c.pan = "", "NOTAPAN"                      # something typed, but not a PAN
+        db.commit()
+    reg = tenant.get("/api/registers/tds").json()
+    row = reg["deducted"][0]
+    assert row["missing_pan"] is True and row["section"] == "194C / 206AA" and row["rate_due"] == 20.0
+    assert row["short_deducted"] is (row["rate"] < 20)
+    assert reg["summary"]["deductees_without_pan"] == 1

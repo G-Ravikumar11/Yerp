@@ -7,16 +7,16 @@ import { cn } from '@/lib/utils'
 export const buttonVariants = cva(
   [
     'relative inline-flex shrink-0 select-none items-center justify-center gap-2 whitespace-nowrap',
-    'cursor-pointer rounded-md text-sm font-medium transition-[background-color,opacity] duration-150 ease-in-out',
+    'cursor-pointer rounded-lg text-sm font-medium transition-[background-color,opacity,box-shadow] duration-150 ease-in-out',
     'disabled:pointer-events-none disabled:opacity-50',
     '[&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
   ],
   {
     variants: {
       variant: {
-        primary: 'bg-primary text-primary-foreground shadow-xs hover:bg-[color-mix(in_srgb,var(--primary),black_10%)]',
+        primary: 'btn-glow bg-primary text-primary-foreground',
         secondary: 'bg-muted text-foreground hover:bg-[color-mix(in_srgb,var(--muted),black_10%)]',
-        outline: 'border border-input bg-transparent text-foreground hover:bg-accent',
+        outline: 'border border-input bg-card/60 text-foreground hover:border-primary/50 hover:bg-primary-soft/60',
         ghost: 'text-muted-foreground hover:bg-accent',
         danger: 'bg-danger text-white shadow-xs hover:bg-[color-mix(in_srgb,var(--danger),black_10%)]',
         soft: 'bg-primary-soft text-primary hover:bg-[color-mix(in_srgb,var(--primary-soft),black_10%)]',

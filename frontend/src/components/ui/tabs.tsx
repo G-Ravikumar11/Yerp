@@ -33,10 +33,10 @@ export function Tabs<V extends string>({ items, value, onChange, label, size = '
             className={cn(
               'relative shrink-0 whitespace-nowrap transition-colors',
               lg ? 'rounded-lg px-5 py-2 text-[14.5px] font-semibold' : 'rounded-lg px-3.5 py-1.5 text-[13px] font-medium',
-              on ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+              on ? 'text-white' : 'text-muted-foreground hover:text-foreground',
             )}
           >
-            {on && <motion.span layoutId={`tab-${id}`} className={cn('absolute inset-0 bg-card shadow-xs', 'rounded-lg')} transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+            {on && <motion.span layoutId={`tab-${id}`} className={cn('tab-on absolute inset-0', 'rounded-lg')} transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
             <span className="relative">
               {t.label}
               {t.count !== undefined && <span className="tabular ml-1.5 text-xs text-subtle">{t.count}</span>}

@@ -24,7 +24,7 @@ def test_a_bill_without_rates_uses_the_contracts_not_fixed_ones(tenant):
     wo = placed_order(tenant, qty=100, rate=100)
     measure(tenant, wo["id"], line_of(tenant, wo["id"]), 100)
     b = raise_bill(tenant, wo["id"]).json()["bill"]
-    assert b["retention_percent"] == 5 and b["tax_percent"] == 18 and b["tds_percent"] == 1
+    assert b["retention_percent"] == 5 and b["tax_percent"] == 18 and b["tds_percent"] == 2   # 194C, company/firm
     # Rates stated on the bill still win.
     wo2 = placed_order(tenant, qty=100, rate=100)
     measure(tenant, wo2["id"], line_of(tenant, wo2["id"]), 100)

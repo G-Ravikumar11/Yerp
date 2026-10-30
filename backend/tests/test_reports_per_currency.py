@@ -124,7 +124,8 @@ def test_bills_stay_with_the_base_currency(tenant):
     paid_invoice(tenant, 90000.0, currency=OTHER_CURRENCY)
     tenant.post("/api/bills", json={
         "vendor_name": "Supplier", "issue_date": "2026-01-05",
-        "due_date": "2026-01-20", "amount": 100.0, "total": 100.0})
+        "due_date": "2026-01-20", "amount": 100.0, "total": 100.0,
+        "status": "Awaiting Payment"})      # a draft is a bill nobody has accepted, and is no expense yet
 
     report = tenant.get("/api/reports/profit-loss").json()
     assert report["total_expenses"] == 100.0

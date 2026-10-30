@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Y ERP error pages</title>
+<style>
+  body{margin:0;padding:28px;background:#0b0d12;color:#e5e7eb;font:15px/1.5 system-ui,sans-serif}
+  h1{font-size:22px;margin:0 0 4px} p.lead{color:#9ca3af;margin:0 0 24px}
+  .card{margin:0 0 36px} .card h2{font-size:16px;margin:0 0 4px} .card p{color:#9ca3af;margin:0 0 10px;font-size:14px}
+  img{width:100%;max-width:1100px;border-radius:14px;border:1px solid #23262f;display:block}
+  code{background:#1a1d26;padding:1px 6px;border-radius:6px;font-size:13px}
+</style></head><body>
+<h1>Y ERP - the error pages</h1>
+<p class="lead">What a person sees when something fails. Mistakes in a form still show a short message beside the form, so nothing typed is lost.</p>
+<div class="card"><h2>404 - Page not found</h2><p>An address the app does not have. Live now: open any wrong address, e.g. <code>/next/anything</code>.</p><img src="notFound.png" alt="404 page"></div>
+<div class="card"><h2>403 - No access here</h2><p>Opening or saving something the person's access does not include.</p><img src="forbidden.png" alt="403 page"></div>
+<div class="card"><h2>500 - Something broke</h2><p>A save hit a server fault. Go back returns to the screen with everything typed; the ref is in Settings &gt; Error log.</p><img src="server.png" alt="500 page"></div>
+<div class="card"><h2>503 - Server busy</h2><p>The server is busy or restarting.</p><img src="busy.png" alt="503 page"></div>
+<div class="card"><h2>Offline - No connection</h2><p>The app could not reach the server.</p><img src="offline.png" alt="Offline page"></div>
+<div class="card"><h2>Oops - This screen broke</h2><p>A screen crashed. It is reported to Settings &gt; Error log under the same ref.</p><img src="crash.png" alt="Crash page"></div>
+<div class="card"><h2>404 - It is not there any more</h2><p>Saving something that someone else removed meanwhile.</p><img src="gone.png" alt="Gone page"></div>
+</body></html>

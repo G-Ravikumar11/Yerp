@@ -116,3 +116,6 @@ class RetentionReleaseIn(BaseModel):
     # Release it although a check says not yet - the defects period still running, a back-charge open. The notes
     # then say why.
     override: Optional[bool] = False
+    # The client's side: when the defects liability period ends (YYYY-MM-DD). The last of the retention is claimed
+    # only after it - before, only the Master may, with a reason.
+    dlp_ends: Optional[str] = ""

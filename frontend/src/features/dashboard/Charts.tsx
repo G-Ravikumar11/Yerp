@@ -7,12 +7,30 @@ import { ageing, type MonthFlow } from '@/lib/cashflow'
 import { compactINR, formatINR } from '@/lib/utils'
 
 /* The charts read their colours from the design tokens, so they follow the theme. */
-// Money coming in is always green and money going out always red, on every chart, so they read at a glance.
-const RECEIVED = 'var(--success)'
-const PAID = 'var(--danger)'
-const BALANCE = 'var(--chart-2)'
-const REVENUE = 'var(--chart-2)'
-const COST = 'var(--chart-1)'
+// Money coming in is always blue and money going out always cyan, on every chart, so they read at a glance.
+// Profit and loss keep green and red: there the colour is the message.
+const RECEIVED = 'var(--chart-1)'
+const PAID = 'var(--chart-3)'
+const BALANCE = 'var(--chart-4)'
+const REVENUE = 'var(--chart-1)'
+const COST = 'var(--chart-3)'
+const PROFIT = 'var(--success)'
+const LOSS = 'var(--danger)'
+// Bars are lit from the top: the colour fades a little towards the axis.
+const IN_FILL = 'url(#fill-in)'
+const OUT_FILL = 'url(#fill-out)'
+const FILLS = (
+  <defs>
+    <linearGradient id="fill-in" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stopColor="var(--chart-2)" />
+      <stop offset="100%" stopColor="var(--chart-1)" />
+    </linearGradient>
+    <linearGradient id="fill-out" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stopColor="var(--chart-3)" />
+      <stop offset="100%" stopColor="var(--chart-3)" stopOpacity={0.6} />
+    </linearGradient>
+  </defs>
+)
 const GRID = 'var(--border)'
 const TICK = { fill: 'var(--muted-foreground)', fontSize: 12 }
 const short = (v: string, n = 14) => (v.length > n ? v.slice(0, n - 1) + '…' : v)
@@ -56,7 +74,7 @@ const SLICES = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--cha
 type ProjectRow = ProjectPnl & { label: string }
 
 const frame = (aria: string, h: number, chart: React.ReactElement) => (
-  <figure aria-label={aria} className="m-0 h-full" style={{ minHeight: h }}>
+  <figure aria-label={aria} className="chart-glow m-0 h-full" style={{ minHeight: h }}>
     <ResponsiveContainer width="100%" height="100%">
       {chart}
     </ResponsiveContainer>
@@ -91,6 +109,7 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
     'Money earned and spent by project',
     240,
     <BarChart data={data} margin={{ top: 22, right: 12, left: 0, bottom: 4 }} barGap={6} barCategoryGap="22%">
+      {FILLS}
       <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
       <XAxis dataKey="label" interval={0} height={wide ? 40 : 24} tick={<ProjectTick names={names} narrow={!wide} />} axisLine={false} tickLine={false} />
       <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={wide ? 64 : 78} tickCount={5} />
@@ -106,17 +125,17 @@ export function ProfitChart({ projects }: { projects: ProjectPnl[] }) {
               rows={[
                 { name: 'Money earned', value: p.revenue, color: REVENUE },
                 { name: 'Money spent', value: p.incurred, color: COST },
-                { name: `Profit (${p.margin_percent}%)`, value: p.margin, color: p.margin < 0 ? 'var(--danger)' : 'var(--success)', strong: true },
+                { name: `Profit (${p.margin_percent}%)`, value: p.margin, color: p.margin < 0 ? LOSS : PROFIT, strong: true },
               ]}
             />
           )
         }}
       />
       <Legend verticalAlign={wide ? 'top' : 'bottom'} align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} wrapperStyle={wide ? undefined : { paddingTop: 8 }} />
-      <Bar name="Money earned" dataKey="revenue" fill={REVENUE} radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
+      <Bar name="Money earned" dataKey="revenue" fill={IN_FILL} radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
         {wide && <LabelList dataKey="revenue" position="top" formatter={label} style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />}
       </Bar>
-      <Bar name="Money spent" dataKey="incurred" fill={COST} radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
+      <Bar name="Money spent" dataKey="incurred" fill={OUT_FILL} radius={[8, 8, 2, 2]} maxBarSize={36} isAnimationActive={!calm}>
         {wide && <LabelList dataKey="incurred" position="top" formatter={label} style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />}
       </Bar>
     </BarChart>,
@@ -147,7 +166,7 @@ export function IncidentsChart({ kinds }: { kinds: { kind: string; count: number
           )
         }}
       />
-      <Bar dataKey="count" fill={PAID} radius={[2, 8, 8, 2]} maxBarSize={26} isAnimationActive={!calm}>
+      <Bar dataKey="count" fill={LOSS} radius={[2, 8, 8, 2]} maxBarSize={26} isAnimationActive={!calm}>
         <LabelList dataKey="count" position="right" style={{ fill: 'var(--muted-foreground)', fontSize: 11 }} />
       </Bar>
     </BarChart>,
@@ -175,12 +194,12 @@ export function MarginChart({ projects }: { projects: ProjectPnl[] }) {
         content={({ active, payload }) => {
           const p = payload?.[0]?.payload as ProjectRow | undefined
           if (!p) return null
-          return <Tip active={active} title={`${p.number} ${p.name}`} rows={[{ name: `Profit (${p.margin_percent}%)`, value: p.margin, color: p.margin < 0 ? 'var(--danger)' : 'var(--success)', strong: true }]} />
+          return <Tip active={active} title={`${p.number} ${p.name}`} rows={[{ name: `Profit (${p.margin_percent}%)`, value: p.margin, color: p.margin < 0 ? LOSS : PROFIT, strong: true }]} />
         }}
       />
       <Bar name="Profit or loss" dataKey="margin" radius={[0, 8, 8, 0]} maxBarSize={14} isAnimationActive={!calm}>
         {data.map((p) => (
-          <Cell key={p.job_id} fill={p.margin < 0 ? PAID : RECEIVED} />
+          <Cell key={p.job_id} fill={p.margin < 0 ? LOSS : PROFIT} />
         ))}
         <LabelList dataKey="margin" position="right" formatter={label} fill="currentColor" fontSize={11} className="text-muted-foreground" />
       </Bar>
@@ -201,6 +220,7 @@ export function BudgetChart({ projects }: { projects: CostRow[] }) {
     'Budget against spend by project',
     210,
     <BarChart data={data} margin={{ top: 12, right: 16, left: 0, bottom: 0 }} barGap={4} barCategoryGap="30%">
+      {FILLS}
       <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
       <XAxis dataKey="label" tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v: string) => short(v, 10)} />
       <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={78} />
@@ -215,18 +235,18 @@ export function BudgetChart({ projects }: { projects: CostRow[] }) {
               title={`${p.number} ${p.name}`}
               rows={[
                 { name: 'Contract amount', value: p.contract_value, color: REVENUE },
-                { name: 'Expected cost', value: p.forecast_cost, color: 'var(--chart-3)' },
+                { name: 'Expected cost', value: p.forecast_cost, color: 'var(--chart-4)' },
                 { name: 'Spent so far', value: p.incurred, color: COST },
-                { name: 'Promised, bill not yet received', value: p.commitment, color: 'var(--chart-4)' },
+                { name: 'Promised, bill not yet received', value: p.commitment, color: 'var(--chart-5)' },
               ]}
             />
           )
         }}
       />
       <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
-      <Bar name="Contract amount" dataKey="contract_value" fill={REVENUE} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
-      <Bar name="Expected cost" dataKey="forecast_cost" fill={'var(--chart-3)'} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
-      <Bar name="Spent so far" dataKey="incurred" fill={COST} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
+      <Bar name="Contract amount" dataKey="contract_value" fill={IN_FILL} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
+      <Bar name="Expected cost" dataKey="forecast_cost" fill={'var(--chart-4)'} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
+      <Bar name="Spent so far" dataKey="incurred" fill={OUT_FILL} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
     </BarChart>,
   )
 }
@@ -262,9 +282,10 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
   const calm = useReducedMotion()
   const wide = useMinWidth(640)
   return (
-    <figure aria-label="Cash flow by month" className="m-0 h-full min-h-[210px]">
+    <figure aria-label="Cash flow by month" className="chart-glow m-0 h-full min-h-[210px]">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={months} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={4} barCategoryGap="30%">
+          {FILLS}
           <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
           <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeOpacity={0.5} />
           <XAxis dataKey="label" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" />
@@ -281,7 +302,7 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
                   rows={[
                     { name: 'Money in', value: m.received, color: RECEIVED },
                     { name: 'Money out', value: m.paid, color: PAID },
-                    { name: 'Left over this month', value: m.net, color: m.net < 0 ? 'var(--danger)' : 'var(--success)', strong: true },
+                    { name: 'Left over this month', value: m.net, color: m.net < 0 ? LOSS : PROFIT, strong: true },
                     { name: 'Balance', value: m.running, color: BALANCE },
                   ]}
                 />
@@ -289,8 +310,8 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
             }}
           />
           <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
-          <Bar name="Money in" dataKey="received" fill={RECEIVED} radius={[8, 8, 2, 2]} maxBarSize={16} isAnimationActive={!calm} />
-          <Bar name="Money out" dataKey="paid" fill={PAID} radius={[8, 8, 2, 2]} maxBarSize={16} isAnimationActive={!calm} />
+          <Bar name="Money in" dataKey="received" fill={IN_FILL} radius={[8, 8, 2, 2]} maxBarSize={16} isAnimationActive={!calm} />
+          <Bar name="Money out" dataKey="paid" fill={OUT_FILL} radius={[8, 8, 2, 2]} maxBarSize={16} isAnimationActive={!calm} />
           <Area name="Balance" type="monotone" dataKey="running" stroke="none" fill={BALANCE} fillOpacity={0.12} legendType="none" isAnimationActive={!calm} />
           <Line name="Balance" type="monotone" dataKey="running" stroke={BALANCE} strokeWidth={2.5} dot={{ r: 3, strokeWidth: 2, fill: 'var(--card)' }} activeDot={{ r: 5 }} isAnimationActive={!calm} />
         </ComposedChart>
@@ -305,9 +326,10 @@ export function AgeingChart({ receivable, payable }: { receivable: Record<string
   const wide = useMinWidth(640)
   const rows = ageing(receivable, payable)
   return (
-    <figure aria-label="Money to receive and money to pay, by age" className="m-0 h-full min-h-[210px]">
+    <figure aria-label="Money to receive and money to pay, by age" className="chart-glow m-0 h-full min-h-[210px]">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={rows} margin={{ top: 20, right: 8, left: 0, bottom: 0 }} barGap={3}>
+          {FILLS}
           <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
           <XAxis dataKey="bucket" tick={TICK} axisLine={false} tickLine={false} />
           <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={78} />
@@ -317,15 +339,15 @@ export function AgeingChart({ receivable, payable }: { receivable: Record<string
               <Tip
                 active={active}
                 label={String(label)}
-                rows={(payload ?? []).map((p) => ({ name: String(p.name), value: Number(p.value), color: String(p.color ?? p.fill) }))}
+                rows={(payload ?? []).map((p) => ({ name: String(p.name), value: Number(p.value), color: p.dataKey === 'payable' ? PAID : RECEIVED }))}
               />
             )}
           />
           <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
-          <Bar name="Money to receive" dataKey="receivable" fill={RECEIVED} radius={[8, 8, 2, 2]} maxBarSize={22} isAnimationActive={!calm}>
+          <Bar name="Money to receive" dataKey="receivable" fill={IN_FILL} radius={[8, 8, 2, 2]} maxBarSize={22} isAnimationActive={!calm}>
             <LabelList dataKey="receivable" position="top" formatter={label} fill="currentColor" fontSize={11} className="text-muted-foreground" />
           </Bar>
-          <Bar name="Money to pay" dataKey="payable" fill={PAID} radius={[8, 8, 2, 2]} maxBarSize={22} isAnimationActive={!calm}>
+          <Bar name="Money to pay" dataKey="payable" fill={OUT_FILL} radius={[8, 8, 2, 2]} maxBarSize={22} isAnimationActive={!calm}>
             <LabelList dataKey="payable" position="top" formatter={label} fill="currentColor" fontSize={11} className="text-muted-foreground" />
           </Bar>
         </BarChart>

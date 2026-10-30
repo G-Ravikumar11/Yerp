@@ -73,9 +73,25 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
     [rm.data, master],
   )
 
-  const lines = rows.filter((r) => (r.qty ?? 0) > 0 && (r.item_code || r.description.trim()))
+  // The lines as they are on screen, counting a number still being typed into a cell.
+  const [draft, setDraft] = useState<Row[] | null>(null)
+  const live = draft ?? rows
+  const lines = live.filter((r) => (r.qty ?? 0) > 0 && (r.item_code || r.description.trim()))
   const amount = lines.reduce((t, r) => t + lineAmount(r), 0)
   const tax = lines.reduce((t, r) => t + (lineAmount(r) * rateOf(r.tax)) / 100, 0)
+  // Why Save is greyed out, in words: the first box still to fill, so nobody is left guessing.
+  const missing = (() => {
+    if (!supplier.trim()) return 'fill in the Supplier'
+    if (lines.length && amount > 0) return null
+    const started = live.map((r, i) => ({ r, n: i + 1 })).filter(({ r }) => r.item_code || r.description.trim() || r.qty || r.price)
+    if (!started.length) return 'add a line - choose an Item or write a Description'
+    for (const { r, n } of started) {
+      if (!r.item_code && !r.description.trim()) return `line ${n} needs an Item or a Description`
+      if (!((r.qty ?? 0) > 0)) return `line ${n} needs a Quantity`
+      if (!((r.price ?? 0) > 0)) return `line ${n} needs a Rate`
+    }
+    return 'the order comes to nothing'
+  })()
   const save = useAction(
     () => {
       const body: PoInput = { supplier_name: supplier.trim(), amount, tax_amount: Math.round(tax * 100) / 100, total: Math.round((amount + tax) * 100) / 100, issue_date: issue, needed_by: needed, notes: notes.trim(), job_id: job ? Number(job) : null, line_items: lines.map((r) => ({ item_code: r.item_code, description: r.description || r.item_code, uom: r.uom, qty: r.qty ?? 0, price: r.price ?? 0, tax_rate: `${rateOf(r.tax)}%` })) }
@@ -100,14 +116,15 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
         <Field label="Needed by" htmlFor="po-needed"><Input id="po-needed" type="date" value={needed} onChange={(e) => setNeeded(e.target.value)} /></Field>
       </div>
       <div className="mb-2 flex justify-end"><Button variant="outline" size="sm" onClick={() => setImporting(true)}><FileUp /> Lines from Excel</Button></div>
-      <DataGrid aria-label="Order lines" columns={columns} rows={rows} onRowsChange={setRows} newRow={blank} minRows={5} maxHeight={280} />
+      <DataGrid aria-label="Order lines" columns={columns} rows={rows} onRowsChange={setRows} onDraft={setDraft} newRow={blank} minRows={5} maxHeight={280} />
       <Field label="Notes" htmlFor="po-notes" className="mt-4"><Textarea id="po-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
       <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <p className="text-sm">Amount {formatINR(amount)} · GST {formatINR(tax)} · <strong className="tabular">total {formatINR(amount + tax)}</strong></p>
         <div className="flex items-center gap-2">
           {save.error && <p role="alert" className="text-[13px] text-danger">{save.error.message}</p>}
+          {!save.error && missing && <p className="text-[13px] text-muted-foreground">To save, {missing}.</p>}
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button loading={save.isPending} disabled={!supplier.trim() || lines.length === 0 || amount <= 0} onClick={() => save.mutate()}>{staff && !order ? 'Send for approval' : 'Save'}</Button>
+          <Button loading={save.isPending} disabled={!!missing} onClick={() => save.mutate()}>{staff && !order ? 'Send for approval' : 'Save'}</Button>
         </div>
       </div>
       <SheetImportModal open={importing} onOpenChange={setImporting} kind="po_lines" title="Order lines from Excel" intro="A supplier's quotation or a site's requirement list: read, checked and corrected here, then put on the order." confirmLabel="Put these on the order" invalidate={[]} onRows={fromSheet} />
