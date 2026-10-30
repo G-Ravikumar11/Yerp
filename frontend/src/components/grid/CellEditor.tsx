@@ -251,7 +251,9 @@ function OptionList({
         width: Math.max(rect.width, 200),
         ...(flip ? { bottom: window.innerHeight - rect.top } : { top: rect.bottom }),
       }}
-      className="fixed z-[70] max-h-60 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-[13px] shadow-pop"
+      // An open window turns off the mouse for the rest of the page, and this list is drawn outside the window: it
+      // takes the mouse back, or a click goes straight through it to the cell underneath.
+      className="pointer-events-auto fixed z-[70] max-h-60 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-[13px] shadow-pop"
     >
       {options.length === 0 && !extra && <li className="px-2.5 py-2 text-muted-foreground">No match</li>}
       {options.map((o, i) => (

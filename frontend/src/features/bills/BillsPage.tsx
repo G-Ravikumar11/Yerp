@@ -76,7 +76,7 @@ export default function BillsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Money"
+        eyebrow="Accounts"
         title="Supplier Bills"
         description="Bills from vendors and suppliers. A new one is a draft: accept it once it has been checked, and it then shows as owed and can be paid."
         actions={

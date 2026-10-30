@@ -106,7 +106,7 @@ function UserChip() {
 
   return (
     <div className="flex items-center gap-2 rounded-lg py-1 pl-1 pr-1 sm:gap-2.5">
-      <span className="grid size-8 place-items-center rounded-full bg-info text-[11px] font-semibold text-white">{initials(user?.name)}</span>
+      <span className="grid size-8 place-items-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-[11px] font-semibold text-white">{initials(user?.name)}</span>
       <span className="hidden min-w-0 leading-tight sm:block">
         <span className="block max-w-36 truncate text-[13px] font-medium">{user?.name ?? 'Guest'}</span>
         <span className="block text-[11px] text-muted-foreground">{user ? [user.roleLabel, user.department].filter(Boolean).join(' · ') : 'Not signed in'}</span>
@@ -148,7 +148,7 @@ export function Topbar() {
   const setMobileNav = useUI((s) => s.setMobileNav)
   const { user } = useSession()
   return (
-    <header className="pt-safe surface sticky top-0 z-20 rounded-none border-x-0 border-t-0 border-b border-border">
+    <header className="pt-safe sticky top-0 z-20 border-b border-border/70 bg-background/70 backdrop-blur-xl">
       <div className="flex h-16 items-center gap-3 px-4 sm:px-6 lg:px-8">
         <button
           type="button"

@@ -40,5 +40,5 @@ export const useUI = create<UIState>()(
 export function applyTheme(theme: Theme) {
   const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
   document.documentElement.classList.toggle('dark', dark)
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#111827' : '#f9fafb')
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0d0f14' : '#eef2f7')
 }

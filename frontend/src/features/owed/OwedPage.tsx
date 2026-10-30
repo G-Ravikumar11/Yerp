@@ -134,7 +134,7 @@ export default function OwedPage() {
   const positions = ret.data?.positions ?? []
   return (
     <>
-      <PageHeader eyebrow="Money" title="Owed & Retention" description="Who owes what today, and the retention nobody chases. Money that is not late yet is kept apart from money that is." />
+      <PageHeader eyebrow="Accounts" title="Owed & Retention" description="Who owes what today, and the retention nobody chases. Money that is not late yet is kept apart from money that is." />
       <div className="mb-5"><Tabs label="View" value={tab} onChange={setTab} items={[{ value: 'owed', label: 'Money to receive' }, { value: 'owe', label: 'Money to pay' }, { value: 'retention', label: 'Retention money' }]} /></div>
 
       {tab === 'owed' && (

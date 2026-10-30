@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Y ERP"><defs><linearGradient id="t" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc766"/><stop offset="1" stop-color="#e5611a"/></linearGradient></defs>
+<rect width="512" height="512" rx="112" fill="url(#t)"/>
+<path d="M96 100H172L256 232L340 100H416L288 304V424H224V304Z" fill="#10132a"/>
+<polygon points="256,142 273,190 256,230 239,190" fill="#fff4dc"/></svg>

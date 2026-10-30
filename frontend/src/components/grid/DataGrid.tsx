@@ -86,6 +86,7 @@ export function DataGrid<T>({
   rowClassName,
   footer,
   onSelectionChange,
+  onDraft,
   className,
   emptyText = 'Nothing here yet.',
   ref,
@@ -299,6 +300,25 @@ export function DataGrid<T>({
   }
 
   const cancelEdit = () => closeEditor()
+
+  /** What is in the box, told to onDraft as the rows it would make. A picker's typing is a search, not a value. */
+  const typing = (text: string) => {
+    editTextRef.current = text
+    if (!onDraft || !edit || columns[edit.c].type === 'select') return
+    const col = columns[edit.c]
+    const parsed = coerce(col, text)
+    if (!parsed.ok) return onDraft(null)
+    const next = withRows(rows, edit.r + 1, newRowRef.current)
+    next[edit.r] = setValue(col, next[edit.r], parsed.value)
+    onDraft(next)
+  }
+
+  // The box closed, kept or not: the rows are the answer again.
+  const onDraftRef = useRef(onDraft)
+  onDraftRef.current = onDraft
+  useEffect(() => {
+    if (!edit) onDraftRef.current?.(null)
+  }, [edit])
 
   /** A picker opened only to look at its choices, then left: the cell keeps what it had. */
   const untouchedPicker = (text: string) => !!edit && columns[edit.c]?.type === 'select' && !text.trim()
@@ -566,7 +586,7 @@ export function DataGrid<T>({
               })()
             : undefined
         }
-        onTextChange={(t) => (editTextRef.current = t)}
+        onTextChange={typing}
         onCommit={commit}
         onCancel={cancelEdit}
         onBlurAway={blurAway}

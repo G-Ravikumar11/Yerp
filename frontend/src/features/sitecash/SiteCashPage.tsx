@@ -69,7 +69,7 @@ export default function SiteCashPage() {
 
   return (
     <>
-      <PageHeader eyebrow={d?.manage ? 'Money' : 'My work'} title="Site Cash"
+      <PageHeader eyebrow={d?.manage ? 'Accounts' : 'My work'} title="Site Cash"
         description={d?.manage ? 'Each site’s cash box: what it should hold, what the site has spent and is waiting to be checked, and what tops it back up.'
           : 'The cash box you hold for the site. Enter each payment as you make it, with a photo of the bill; accounts check it.'} />
       {q.isPending ? null : !d?.boxes.length ? (

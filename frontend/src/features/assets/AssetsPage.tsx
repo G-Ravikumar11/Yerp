@@ -73,7 +73,7 @@ export default function AssetsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Money"
+        eyebrow="Accounts"
         title="Fixed Assets"
         description="What each owned asset is worth on the books, and the income-tax blocks the return is filed on."
         actions={

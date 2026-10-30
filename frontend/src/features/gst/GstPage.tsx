@@ -66,7 +66,7 @@ export default function GstPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Money" title="GST" description="The outward and inward supplies a return is filed from, grouped by month and by rate. Bills with no place of supply are called out, because a return cannot be filed against a blank." />
+      <PageHeader eyebrow="Accounts" title="GST" description="The outward and inward supplies a return is filed from, grouped by month and by rate. Bills with no place of supply are called out, because a return cannot be filed against a blank." />
       <div className="mb-6 flex flex-wrap items-end gap-4 rounded-xl border border-border bg-card p-4">
         <Field label="Our GSTIN" htmlFor="gst-gstin" hint={settings.data ? (settings.data.state ? `${settings.data.state} (${settings.data.state_code})` : 'Not set - every bill will carry IGST until it is.') : undefined}>
           <Input id="gst-gstin" className="w-64 font-mono uppercase" value={gstin} onChange={(e) => setGstin(e.target.value)} />

@@ -10,8 +10,10 @@
    --------------------------------------------------------------------------
    Plain, solid and functional, light or dark (the switch in the top bar;
    dark unless changed). Primary is blue, the accent is
-   hard-hat amber, on cool neutral greys. No gradients, glows, blur or
-   decorative motion: every colour carries hierarchy, state or feedback.
+   hard-hat amber, on cool neutral greys. Depth is quiet and blue: a soft glow
+   at the top of the page, cards lit faintly from above, and the primary action
+   in a blue gradient. Colour still carries hierarchy, state or feedback; the
+   glow only sets the mood and never stands in for meaning.
    Everything a component paints comes from a semantic token below; the raw
    scales exist to define those and for charts.
    ========================================================================== */
@@ -86,8 +88,8 @@
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
-  --radius-xl: 8px;
-  --radius-2xl: 8px;
+  --radius-xl: 14px;
+  --radius-2xl: 16px;
   --radius-3xl: 8px;
   --radius-4xl: 8px;
 
@@ -100,8 +102,8 @@
   --shadow-lg: var(--shadow-md);
   --shadow-xl: var(--shadow-md);
   --shadow-2xl: var(--shadow-md);
-  --shadow-card: var(--shadow-xs);
-  --shadow-lift: var(--shadow-md);
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -14px rgb(30 64 175 / 0.18);
+  --shadow-lift: 0 2px 4px rgb(15 23 42 / 0.05), 0 16px 32px -14px rgb(37 99 235 / 0.28);
   --shadow-pop: var(--shadow-md);
 
   --animate-fade-in: fade-in 0.15s ease-out both;
@@ -118,25 +120,25 @@
 :root {
   --radius: 6px;
 
-  --background: #f9fafb;
-  --foreground: #111827;
-  --surface: #f3f4f6;
+  --background: #eef2f7;
+  --foreground: #0f172a;
+  --surface: #f1f4f9;
   --card: #ffffff;
-  --card-foreground: #111827;
+  --card-foreground: #0f172a;
   --popover: #ffffff;
-  --muted: #f3f4f6;
-  --muted-foreground: #6b7280;
-  --subtle: #9ca3af;
-  --border: #e5e7eb;
-  --input: #d1d5db;
+  --muted: #f1f4f9;
+  --muted-foreground: #64748b;
+  --subtle: #94a3b8;
+  --border: #e2e8f0;
+  --input: #cbd5e1;
   --ring: #2563eb;
   --body: #374151;
 
   --primary: #2563eb;
   --primary-foreground: #ffffff;
   --primary-soft: #dbeafe;
-  --accent: #f3f4f6;
-  --accent-foreground: #111827;
+  --accent: #f1f4f9;
+  --accent-foreground: #0f172a;
 
   --success: #15803d;
   --success-soft: #dcfce7;
@@ -153,35 +155,35 @@
   --error-tint: #fef2f2;
 
   --sidebar: #ffffff;
-  --sidebar-border: #e5e7eb;
+  --sidebar-border: #e2e8f0;
 
   --chart-1: #2563eb;
-  --chart-2: #f79009;
-  --chart-3: #15803d;
-  --chart-4: #ca8a04;
-  --chart-5: #6b7280;
+  --chart-2: #60a5fa;
+  --chart-3: #06b6d4;
+  --chart-4: #93c5fd;
+  --chart-5: #94a3b8;
 }
 
 /* ---- Dark ---------------------------------------------------------------- */
 .dark {
-  --background: #111827;
-  --foreground: #f9fafb;
-  --surface: #1f2937;
-  --card: #1f2937;
-  --card-foreground: #f9fafb;
-  --popover: #1f2937;
-  --muted: #374151;
-  --muted-foreground: #9ca3af;
-  --subtle: #6b7280;
-  --border: #374151;
-  --input: #4b5563;
+  --background: #0d0f14;
+  --foreground: #f5f7fa;
+  --surface: #161920;
+  --card: #15181f;
+  --card-foreground: #f5f7fa;
+  --popover: #1a1e26;
+  --muted: #20242d;
+  --muted-foreground: #9aa3b2;
+  --subtle: #677081;
+  --border: #252a34;
+  --input: #363c48;
   --ring: #3b82f6;
   --body: #d1d5db;
 
   --primary: #2563eb;
   --primary-foreground: #ffffff;
-  --primary-soft: #1e2d52;
-  --accent: #374151;
+  --primary-soft: #1a2747;
+  --accent: #20242d;
   --accent-foreground: #f3f4f6;
 
   --success: #3d9468;
@@ -195,17 +197,17 @@
 
   /* Solid, not see-through: a pinned cell sits over the ones scrolling
      beneath it, and a translucent tint would let their text show through. */
-  --select-tint: #1e2d52;
+  --select-tint: #1a2747;
   --error-tint: #3d2020;
 
-  --sidebar: #111827;
-  --sidebar-border: #374151;
+  --sidebar: #101217;
+  --sidebar-border: #1f232c;
 
-  --chart-1: #3b82f6;
-  --chart-2: #f79009;
-  --chart-3: #3d9468;
-  --chart-4: #ca8a04;
-  --chart-5: #9ca3af;
+  --chart-1: #2563eb;
+  --chart-2: #60a5fa;
+  --chart-3: #22d3ee;
+  --chart-4: #93c5fd;
+  --chart-5: #64748b;
 }
 
 /* The thin bar under the top of the screen while the app is working. */
@@ -260,8 +262,20 @@
     color-scheme: dark;
   }
 
+  html.dark body {
+    background-image:
+      radial-gradient(65% 60% at 80% 0%, rgb(37 99 235 / 0.26), transparent 70%),
+      radial-gradient(45% 45% at 25% 0%, rgb(34 211 238 / 0.08), transparent 70%);
+  }
+
   body {
     background-color: var(--background);
+    /* The blue glow across the top of every page. Fixed, so it stays put while the page scrolls. */
+    background-image:
+      radial-gradient(65% 60% at 80% 0%, rgb(37 99 235 / 0.16), transparent 70%),
+      radial-gradient(45% 45% at 25% 0%, rgb(6 182 212 / 0.08), transparent 70%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
     color: var(--foreground);
     font-family: var(--font-sans);
     font-feature-settings: 'cv11', 'ss01';
@@ -291,6 +305,10 @@
     border-radius: var(--radius-sm);
   }
 
+  input:focus-visible, textarea:focus-visible, select:focus-visible {
+    box-shadow: 0 0 0 4px rgb(59 130 246 / 0.15), 0 0 18px -2px rgb(59 130 246 / 0.35);
+  }
+
   button, [role='button'], summary {
     cursor: pointer;
   }
@@ -301,7 +319,7 @@
   /* Slim scrollbars that stay out of the way of a data grid. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: #9ca3af transparent;
+    scrollbar-color: #94a3b8 transparent;
   }
   *::-webkit-scrollbar {
     width: 10px;
@@ -327,6 +345,90 @@
     background: var(--popover);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+  }
+
+  /* A card lit faintly from above: in the dark a thin highlight on its top edge and a lighter top. */
+  .card-lit {
+    background-image: radial-gradient(120% 80% at 100% 0%, rgb(59 130 246 / 0.06), transparent 55%);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9), var(--shadow-card);
+  }
+  .dark .card-lit {
+    background-image:
+      radial-gradient(120% 80% at 100% 0%, rgb(59 130 246 / 0.1), transparent 55%),
+      linear-gradient(180deg, rgb(96 165 250 / 0.05), transparent 45%);
+    box-shadow: inset 0 1px 0 rgb(147 197 253 / 0.1), 0 16px 32px -20px rgb(0 0 0 / 0.75);
+  }
+
+  /* A figure tile: the corner glow a little stronger, so the row of figures reads as the top of the page. */
+  .stat-lit {
+    background-image: radial-gradient(90% 90% at 100% 0%, rgb(59 130 246 / 0.1), transparent 60%);
+  }
+  .dark .stat-lit {
+    background-image:
+      radial-gradient(90% 90% at 100% 0%, rgb(59 130 246 / 0.16), transparent 60%),
+      linear-gradient(180deg, rgb(96 165 250 / 0.05), transparent 50%);
+  }
+  /* A card that is a link rises a little and catches some blue when pointed at. */
+  .card-lit-hover {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+  .card-lit-hover:hover {
+    transform: translateY(-2px);
+    border-color: rgb(59 130 246 / 0.45);
+    box-shadow: var(--shadow-lift);
+  }
+  .dark .card-lit-hover:hover {
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 0 0 1px rgb(59 130 246 / 0.15), 0 18px 36px -16px rgb(37 99 235 / 0.45);
+  }
+
+  /* The primary action: a blue gradient with a soft glow under it. */
+  .btn-glow {
+    background-image: linear-gradient(180deg, #3b82f6, #2563eb);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2), 0 6px 16px -6px rgb(37 99 235 / 0.65);
+  }
+  .btn-glow:hover {
+    background-image: linear-gradient(180deg, #2563eb, #1d4ed8);
+  }
+
+  /* The chosen tab: a blue gradient pill that glows a little. */
+  .tab-on {
+    background-image: linear-gradient(180deg, #3b82f6, #2563eb);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2), 0 6px 14px -6px rgb(37 99 235 / 0.7);
+  }
+
+  /* The sidebar, lit faintly blue from the top in the dark. */
+  .dark .sidebar-lit {
+    background-image: linear-gradient(180deg, rgb(37 99 235 / 0.08), transparent 35%);
+  }
+
+  /* A page's title: ink that deepens to blue, or white that cools to pale blue in the dark. */
+  .title-gradient {
+    background-image: linear-gradient(90deg, #0f172a 30%, #1e40af);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .dark .title-gradient {
+    background-image: linear-gradient(90deg, #ffffff 30%, #bfdbfe);
+  }
+
+  /* Chart bars cast a soft blue glow. */
+  .chart-glow .recharts-bar-rectangle path {
+    filter: drop-shadow(0 6px 12px rgb(37 99 235 / 0.28));
+  }
+  .dark .chart-glow .recharts-bar-rectangle path {
+    filter: drop-shadow(0 6px 16px rgb(59 130 246 / 0.45));
+  }
+
+  /* Blue-to-cyan lettering, for a page's eyebrow. */
+  .text-gradient {
+    background-image: linear-gradient(90deg, #2563eb, #06b6d4);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .dark .text-gradient {
+    background-image: linear-gradient(90deg, #60a5fa, #22d3ee);
   }
 }
 

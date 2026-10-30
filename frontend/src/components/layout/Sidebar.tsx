@@ -54,16 +54,16 @@ function LinkItem({ to, label, icon: Icon, collapsed }: { to: string; label: str
       <NavLink
         to={to}
         end
-        className={cn(itemBase, 'h-10', collapsed && 'justify-center px-0', isActive ? 'text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
+        className={cn(itemBase, 'h-10', collapsed && 'justify-center px-0', isActive ? 'text-foreground dark:text-slate-900' : 'text-muted-foreground hover:bg-accent hover:text-foreground')}
       >
         {isActive && (
           <motion.span
             layoutId="nav-active"
-            className="absolute inset-0 rounded-lg bg-primary-soft ring-1 ring-primary/25"
+            className="absolute inset-0 rounded-lg bg-primary-soft shadow-[0_6px_16px_-8px_rgb(37_99_235/0.5)] ring-1 ring-primary/25 dark:bg-white dark:shadow-[0_6px_20px_-8px_rgb(255_255_255/0.35)] dark:ring-0"
             transition={{ type: 'spring', stiffness: 500, damping: 38 }}
           />
         )}
-        <Icon className={cn('relative size-[18px] shrink-0', isActive && 'text-primary')} />
+        <Icon className={cn('relative size-[18px] shrink-0', isActive && 'text-primary dark:text-blue-600')} />
         {!collapsed && <span className="relative truncate">{label}</span>}
         {badge > 0 && (
           <span className={cn('tabular relative grid min-w-5 place-items-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-primary-foreground', collapsed ? 'absolute right-1.5 top-1' : 'ml-auto')} aria-label={`${badge} waiting`}>
@@ -224,7 +224,7 @@ export function Sidebar() {
         initial={false}
         animate={{ width: sidebarCollapsed ? SIDEBAR_COLLAPSED : SIDEBAR_WIDTH }}
         transition={{ type: 'spring', stiffness: 420, damping: 40 }}
-        className="fixed inset-y-0 left-0 z-30 hidden border-r border-sidebar-border bg-sidebar lg:block"
+        className="sidebar-lit fixed inset-y-0 left-0 z-30 hidden border-r border-sidebar-border bg-sidebar lg:block"
       >
         <SidebarBody collapsed={sidebarCollapsed} showToggle />
       </motion.aside>
@@ -240,7 +240,7 @@ export function Sidebar() {
               onClick={() => setMobileNav(false)}
             />
             <motion.aside
-              className="pt-safe pb-safe fixed inset-y-0 left-0 z-50 w-[min(86vw,20rem)] border-r border-sidebar-border bg-sidebar shadow-pop lg:hidden"
+              className="sidebar-lit pt-safe pb-safe fixed inset-y-0 left-0 z-50 w-[min(86vw,20rem)] border-r border-sidebar-border bg-sidebar shadow-pop lg:hidden"
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}

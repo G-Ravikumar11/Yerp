@@ -34,7 +34,7 @@ export default function TallyPage() {
   const total = (s?.vouchers ?? []).reduce((n, v) => n + v.count, 0)
   return (
     <>
-      <PageHeader eyebrow="Money" title="Tally Export" description="The period's accounts for the books in Tally Prime: import the masters first, then the vouchers." />
+      <PageHeader eyebrow="Accounts" title="Tally Export" description="The period's accounts for the books in Tally Prime: import the masters first, then the vouchers." />
       <div className="mb-5 flex flex-wrap items-end gap-3">
         <Field label="From" htmlFor="tl-from"><Input id="tl-from" type="date" className="w-40" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} /></Field>
         <Field label="To" htmlFor="tl-to"><Input id="tl-to" type="date" className="w-40" value={to} min={from} onChange={(e) => e.target.value && setTo(e.target.value)} /></Field>
