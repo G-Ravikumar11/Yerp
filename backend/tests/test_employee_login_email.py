@@ -39,24 +39,18 @@ def status_of(tenant, emp_id):
     return tenant.get(f"/api/employees/{emp_id}").json()["credentials_email_status"]
 
 
-def test_a_new_employee_is_emailed_their_login_at_the_organisation_address_only(tenant, portal, mail):
+def test_adding_an_employee_emails_nobody_until_send_is_clicked(tenant, portal, mail):
     work = org()
     e = make_employee(tenant, password=PASSWORD, org_email=work, first_name="Asha", last_name="Rao")
     assert PASSWORD not in str(e)
+    assert mail == [] and status_of(tenant, e["id"]) == ""          # an email goes out only when somebody clicks send
+    assert portal.post("/api/employee/auth/login", json={"email": work, "password": PASSWORD}).status_code == 200
+
+    r = tenant.post(f"/api/employees/{e['id']}/login-email")         # Send login email, on their page
+    assert r.status_code == 200 and r.json()["ok"] is True
     assert [m["to"] for m in mail] == [work] and e["email"] != work
-
-    m = mail[0]
-    assert m["subject"].startswith("Welcome to ") and m["subject"].endswith(" – Your Login Credentials")
-    for line in ("Hello Asha Rao,", "Your employee account has been successfully created.",
-                 "Employee ID: %s" % e["employee_id"], "Organisation Email: %s" % work, "Password: %s" % PASSWORD,
-                 "You can now log in to the application using your credentials.", "Administration Team"):
-        assert line in m["body"]
-    assert "/next/login" in m["body"]
-    assert "Given1Pass&lt;&amp;" in m["html"]                                                    # a password is not markup
+    assert "Employee ID: %s" % e["employee_id"] in mail[0]["body"] and PASSWORD not in mail[0]["body"]
     assert status_of(tenant, e["id"]) == "sent"
-
-    r = portal.post("/api/employee/auth/login", json={"email": work, "password": PASSWORD})      # what the email says works
-    assert r.status_code == 200
 
 
 def test_the_password_is_left_nowhere_but_the_hash(tenant, mail):
@@ -73,18 +67,6 @@ def test_nothing_goes_out_without_a_password_or_without_an_organisation_address(
     no_org = make_employee(tenant, password=PASSWORD)
     assert mail == []
     assert status_of(tenant, no_login["id"]) == "" and status_of(tenant, no_org["id"]) == ""
-
-
-def test_a_failed_email_keeps_the_employee_and_says_so(tenant, monkeypatch):
-    patch_app(monkeypatch, "send_email_background", lambda *a, **k: (False, "Gmail refresh token not configured"))
-    e = make_employee(tenant, password=PASSWORD, org_email=org())
-    assert status_of(tenant, e["id"]) == "failed"
-
-    def broken(*a, **k):
-        raise RuntimeError("mail server fell over")
-    patch_app(monkeypatch, "send_email_background", broken)
-    e = make_employee(tenant, password=PASSWORD, org_email=org())
-    assert status_of(tenant, e["id"]) == "failed"
 
 
 def test_a_resend_makes_no_new_employee_and_carries_a_one_time_link_not_a_password(tenant, portal, mail):
