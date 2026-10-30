@@ -1164,7 +1164,7 @@ def get_employee_profile(request: Request, db: Session = Depends(get_read_db)):
         "emergency_phone": emp.emergency_phone,
         "emergency_complete": bool((emp.emergency_contact or "").strip() and (emp.emergency_phone or "").strip()),
         # Their own details, which only they enter. Optional apart from the emergency contact.
-        "gender": emp.gender or "", "aadhaar_no": emp.aadhaar_no or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "",
+        "gender": emp.gender or "", "date_of_birth": emp.date_of_birth or "", "aadhaar_no": emp.aadhaar_no or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "",
         "esi_no": emp.esi_no or "",
         "onboarding": emp.status == "onboarding",
         "employee_id_code": emp.employee_id,
@@ -1190,6 +1190,10 @@ def update_my_details(request: Request, body: dict = None, db: Session = Depends
                                       body.get("emergency_phone", emp.emergency_phone))
         emp.emergency_contact, emp.emergency_phone = name, phone
         changed.append("emergency contact")
+    if "date_of_birth" in body:
+        from app.services.celebrations import clean_birth_date
+        emp.date_of_birth = clean_birth_date(body["date_of_birth"])
+        changed.append("date of birth")
     for key, clean, label in (("gender", clean_gender, "gender"), ("aadhaar_no", clean_aadhaar, "Aadhaar number"),
                               ("pan_no", clean_pan, "PAN"), ("uan_no", clean_uan, "UAN"), ("esi_no", clean_esi, "ESI number")):
         if key in body:

@@ -6,6 +6,7 @@ import { Badge, Skeleton, Stat, StatGrid } from '@/components/ui'
 import { useMyDashboard, useToday } from '@/api/staff'
 import { formatDate, plural } from '@/lib/format'
 import { useSession } from '@/lib/session'
+import { CelebrationsBanner } from '@/features/celebrations/CelebrationsBanner'
 import { ClockCard } from './ClockCard'
 import { PresenceCard, RecentCard, WeekCard } from './WeekCard'
 
@@ -32,6 +33,7 @@ export default function MyOverviewPage() {
   return (
     <>
       <PageHeader eyebrow={user?.department || 'My work'} title={first ? `${greeting}, ${first}` : greeting} description={today.data ? formatDate(today.data.date) : undefined} />
+      <CelebrationsBanner />
       <ClockCard />
       <StatGrid className="mt-6">
         <Stat label="Days present (30 days)" value={s?.days_present ?? 0} loading={dash.isPending} />

@@ -106,7 +106,7 @@ SITE_RATE_COLUMNS = (
     # Who an employee is, for onboarding: gender and the Aadhaar, PAN and UAN numbers (all optional).
     ("employees", "gender", "VARCHAR DEFAULT ''"), ("employees", "aadhaar_no", "VARCHAR DEFAULT ''"),
     ("employees", "pan_no", "VARCHAR DEFAULT ''"), ("employees", "uan_no", "VARCHAR DEFAULT ''"),
-    ("employees", "esi_no", "VARCHAR DEFAULT ''"),
+    ("employees", "esi_no", "VARCHAR DEFAULT ''"), ("employees", "date_of_birth", "VARCHAR DEFAULT ''"),
     # Until when a salary increment holds: the day its pay review falls due.
     ("salary_revisions", "valid_until", "VARCHAR DEFAULT ''"),
 )

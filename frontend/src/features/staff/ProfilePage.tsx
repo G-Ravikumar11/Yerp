@@ -13,7 +13,7 @@ const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say']
 /** The employee's own details. The emergency contact must be given; the Aadhaar, PAN and UAN numbers are there to fill in. Their documents (Aadhaar, PAN, UAN, a photo) are uploaded under Documents. */
 function MyDetails({ p }: { p: Profile }) {
   const qc = useQueryClient()
-  const [f, setF] = useState({ emergency_contact: p.emergency_contact ?? '', emergency_phone: p.emergency_phone ?? '', gender: p.gender ?? '', aadhaar_no: p.aadhaar_no ?? '', pan_no: p.pan_no ?? '', uan_no: p.uan_no ?? '', esi_no: p.esi_no ?? '' })
+  const [f, setF] = useState({ emergency_contact: p.emergency_contact ?? '', emergency_phone: p.emergency_phone ?? '', gender: p.gender ?? '', date_of_birth: p.date_of_birth ?? '', aadhaar_no: p.aadhaar_no ?? '', pan_no: p.pan_no ?? '', uan_no: p.uan_no ?? '', esi_no: p.esi_no ?? '' })
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
   const [tried, setTried] = useState(false)
   const contactOk = f.emergency_contact.trim() !== '' && f.emergency_phone.replace(/\D/g, '').length >= 7
@@ -28,6 +28,7 @@ function MyDetails({ p }: { p: Profile }) {
         <Field label="Emergency contact name *" htmlFor="md-name" error={tried && !f.emergency_contact.trim() ? 'Required.' : undefined}><Input id="md-name" value={f.emergency_contact} onChange={set('emergency_contact')} autoComplete="off" /></Field>
         <Field label="Emergency contact phone *" htmlFor="md-phone" error={tried && f.emergency_phone.replace(/\D/g, '').length < 7 ? 'Enter a phone number.' : undefined}><Input id="md-phone" type="tel" value={f.emergency_phone} onChange={set('emergency_phone')} autoComplete="off" /></Field>
         <Field label="Gender" htmlFor="md-gender" hint="Optional."><Select id="md-gender" value={f.gender} placeholder="Prefer not to say" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
+        <Field label="Date of birth" htmlFor="md-dob" hint="Optional. Colleagues see the day and month, and wish you on the day."><Input id="md-dob" type="date" max={new Date().toISOString().slice(0, 10)} value={f.date_of_birth} onChange={set('date_of_birth')} /></Field>
         <Field label="Aadhaar number" htmlFor="md-aadhaar" hint="12 digits."><Input id="md-aadhaar" inputMode="numeric" value={f.aadhaar_no} onChange={set('aadhaar_no')} autoComplete="off" /></Field>
         <Field label="PAN" htmlFor="md-pan" hint="Like ABCDE1234F."><Input id="md-pan" value={f.pan_no} onChange={(e) => setF((s) => ({ ...s, pan_no: e.target.value.toUpperCase() }))} autoComplete="off" /></Field>
         <Field label="UAN" htmlFor="md-uan" hint="12 digits."><Input id="md-uan" inputMode="numeric" value={f.uan_no} onChange={set('uan_no')} autoComplete="off" /></Field>
@@ -72,7 +73,7 @@ export default function ProfilePage() {
           </dl>
         </section>
       )}
-      {p && <MyDetails key={`${p.emergency_contact}|${p.emergency_phone}|${p.gender}|${p.aadhaar_no}|${p.pan_no}|${p.uan_no}`} p={p} />}
+      {p && <MyDetails key={`${p.emergency_contact}|${p.emergency_phone}|${p.gender}|${p.date_of_birth}|${p.aadhaar_no}|${p.pan_no}|${p.uan_no}`} p={p} />}
     </>
   )
 }

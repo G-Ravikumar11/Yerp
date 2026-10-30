@@ -486,6 +486,8 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     validate_employee_money(body.model_dump())
     emergency_contact, emergency_phone = clean_emergency(body.emergency_contact, body.emergency_phone)
     gender = clean_gender(body.gender)
+    from app.services.celebrations import clean_birth_date
+    date_of_birth = clean_birth_date(body.date_of_birth)
     from app.constants.hr import gender_required
     if gender_required() and not gender:
         raise HTTPException(status_code=400, detail="Gender is required. Choose one ('Prefer not to say' is an answer).")
@@ -530,7 +532,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         allowances=body.allowances, bonus=body.bonus,
         bank_name=body.bank_name, bank_account=body.bank_account,
         tax_id=body.tax_id,
-        emergency_contact=emergency_contact, emergency_phone=emergency_phone, gender=gender,
+        emergency_contact=emergency_contact, emergency_phone=emergency_phone, gender=gender, date_of_birth=date_of_birth,
         aadhaar_no=aadhaar_no, pan_no=pan_no, uan_no=uan_no, esi_no=esi_no,
         start_date=body.start_date, status="onboarding",
         password_hash=passwords.hash_password(validated_staff_password(body.password)) if body.password else "",
@@ -624,7 +626,7 @@ def _profile(emp, dept_name, manager_name, sites):
         "allowances": emp.allowances, "bonus": emp.bonus,
         "bank_name": emp.bank_name, "bank_account": emp.bank_account, "tax_id": emp.tax_id,
         "emergency_contact": emp.emergency_contact, "emergency_phone": emp.emergency_phone,
-        "gender": emp.gender or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "", "esi_no": emp.esi_no or "",
+        "gender": emp.gender or "", "date_of_birth": emp.date_of_birth or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "", "esi_no": emp.esi_no or "",
         "aadhaar_masked": ("XXXX XXXX " + emp.aadhaar_no[-4:]) if emp.aadhaar_no else "",
         "start_date": emp.start_date, "end_date": emp.end_date,
         "status": emp.status, "onboarding_complete": emp.onboarding_complete,
@@ -796,6 +798,9 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
             body.pop(key, None)                        # these numbers are HR's and the Master's to enter
     if "gender" in body:
         body["gender"] = clean_gender(body["gender"])
+    if "date_of_birth" in body:
+        from app.services.celebrations import clean_birth_date
+        body["date_of_birth"] = clean_birth_date(body["date_of_birth"])
     if "aadhaar_no" in body:
         body["aadhaar_no"] = clean_aadhaar(body["aadhaar_no"])
     if "pan_no" in body:

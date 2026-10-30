@@ -20,6 +20,7 @@ export const REDIRECTS: { from: string; to: string }[] = [
 
 export const SCREENS: Screen[] = [
   { path: '/calendar', Component: lazy(() => import('@/features/calendar/CalendarPage')) },
+  { path: '/celebrations', Component: lazy(() => import('@/features/celebrations/CelebrationsPage')) },
   { path: '/ho', Component: lazy(() => import('@/features/headoffice/HoPortalPage')) },
   { path: '/projects/boq', Component: lazy(() => import('@/features/boq/BoqListPage')) },
   { path: '/projects/boq/rates', Component: lazy(() => import('@/features/boq/SiteRatesPage')) },

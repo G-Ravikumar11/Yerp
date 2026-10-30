@@ -63,7 +63,7 @@ function ProfileForm({ e, onDone, onPassword }: { e: EmployeeDetail; onDone: () 
   const depts = useDepartments()
   const people = useEmployees('')
   const cat = useHrCatalogue()
-  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, address: e.address ?? '', job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone, gender: e.gender ?? '', uan_no: e.uan_no ?? '', esi_no: e.esi_no ?? '', aadhaar_no: '', pan_no: e.pan_no ?? '' })
+  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, address: e.address ?? '', job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone, gender: e.gender ?? '', date_of_birth: e.date_of_birth ?? '', uan_no: e.uan_no ?? '', esi_no: e.esi_no ?? '', aadhaar_no: '', pan_no: e.pan_no ?? '' })
   const { can, isHrOrMaster: hrOnly } = useSession()
   const canManage = can('people.manage')
   // The reporting line runs up the levels: the same level or above, never below.
@@ -87,6 +87,7 @@ function ProfileForm({ e, onDone, onPassword }: { e: EmployeeDetail; onDone: () 
         <Field label="First name" htmlFor="ep-first"><Input id="ep-first" value={f.first_name} onChange={set('first_name')} /></Field>
         <Field label="Last name" htmlFor="ep-last"><Input id="ep-last" value={f.last_name} onChange={set('last_name')} /></Field>
         <Field label="Gender" htmlFor="ep-gender"><Select id="ep-gender" value={f.gender} placeholder="Not given" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
+        <Field label="Date of birth" htmlFor="ep-dob" hint="Colleagues see the day and month, for birthday wishes."><Input id="ep-dob" type="date" max={new Date().toISOString().slice(0, 10)} value={f.date_of_birth} onChange={set('date_of_birth')} /></Field>
         <Field label="Personal email" htmlFor="ep-email"><Input id="ep-email" type="email" value={f.email} onChange={set('email')} /></Field>
         <Field label="Phone" htmlFor="ep-phone"><Input id="ep-phone" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Address" htmlFor="ep-address" className="sm:col-span-2 lg:col-span-3"><Textarea id="ep-address" rows={2} value={f.address} onChange={(ev) => setF((s) => ({ ...s, address: ev.target.value }))} /></Field>

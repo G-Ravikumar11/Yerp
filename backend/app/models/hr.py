@@ -76,6 +76,7 @@ class DBEmployee(Base):
 
     # Optional; the employee gives them in their own portal. Aadhaar is kept as 12 digits and shown masked to HR.
     gender = Column(String, default="")
+    date_of_birth = Column(String, default="")      # YYYY-MM-DD; only the day and month are shown to colleagues
     aadhaar_no = Column(String, default="")
     pan_no = Column(String, default="")
     uan_no = Column(String, default="")
