@@ -98,6 +98,7 @@ from app.models.hr import (
     DBCustomHoliday,
     DBSiteGeofence,
 )
+from app.models.celebrations import DBSpecialDay, DBCelebrationReaction, DBCelebrationWish
 from app.models.invoicing import (
     DBInvoice,
     DBPayment,

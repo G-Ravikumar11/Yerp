@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
+import { CelebrationsBanner } from '@/features/celebrations/CelebrationsBanner'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { AlertTriangle, ArrowUpRight, CheckCheck } from 'lucide-react'
@@ -192,6 +193,8 @@ export default function DashboardPage() {
           </>
         }
       />
+
+      <CelebrationsBanner />
 
       <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-5 lg:grid-cols-3">
         <motion.div variants={rise} className="grid grid-cols-2 gap-3 lg:col-span-3 lg:grid-cols-3 xl:grid-cols-6">

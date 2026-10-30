@@ -212,6 +212,7 @@ NOTIFY_KINDS = {
     "daily_digest": "The morning list of what needs looking at",
     "security_lock": "An account was locked after too many wrong passwords",
     "increment_due": "It is a year since somebody's last salary increment",
+    "celebration": "A birthday or a special day is being celebrated today",
 }
 # Out of the box: the bell for everything, email for the money, the digest and a locked account.
 # Nothing is emailed on its own: a company ticks the alerts it wants mailed in Settings.

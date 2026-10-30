@@ -42,6 +42,8 @@ export interface EmployeeDetail extends Employee {
   address: string
   /** Optional, and given by the employee in their own portal. Aadhaar comes back masked. */
   gender?: string
+  /** YYYY-MM-DD. Colleagues see only the day and month, on the Celebrations page. */
+  date_of_birth?: string
   pan_no?: string
   uan_no?: string
   esi_no?: string
@@ -218,6 +220,7 @@ export interface EmployeeInput {
   emergency_phone: string
   /** Optional: Male, Female, Other or Prefer not to say. */
   gender?: string
+  date_of_birth?: string
   /** Optional statutory numbers. UAN is 12 digits, Aadhaar 12 digits, ESI 10 (17 for an employer code). */
   aadhaar_no?: string
   pan_no?: string

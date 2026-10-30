@@ -145,6 +145,7 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="First name *" htmlFor="ef-first"><Input id="ef-first" value={f.first_name} onChange={set('first_name')} autoFocus /></Field>
         <Field label="Last name *" htmlFor="ef-last"><Input id="ef-last" value={f.last_name} onChange={set('last_name')} /></Field>
         <Field label="Gender *" htmlFor="ef-gender"><Select id="ef-gender" value={f.gender ?? ''} placeholder="Choose" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
+        <Field label="Date of birth" htmlFor="ef-dob" hint="Optional. Colleagues are told on the day."><Input id="ef-dob" type="date" max={new Date().toISOString().slice(0, 10)} value={f.date_of_birth ?? ''} onChange={set('date_of_birth')} /></Field>
         <Field label="Phone" htmlFor="ef-phone"><Input id="ef-phone" type="tel" value={f.phone} onChange={set('phone')} /></Field>
         <Field label="Personal email" htmlFor="ef-email"><Input id="ef-email" type="email" autoComplete="off" value={f.email} onChange={(e) => { setTyped(true); set('email')(e) }} /></Field>
         <Field label="Address" htmlFor="ef-address" className="sm:col-span-2 lg:col-span-3"><Textarea id="ef-address" rows={2} value={f.address ?? ''} onChange={(e) => setF((s) => ({ ...s, address: e.target.value }))} /></Field>

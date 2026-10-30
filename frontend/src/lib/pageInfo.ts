@@ -4,6 +4,7 @@
  */
 export const PAGE_INFO: Record<string, string> = {
   '/': 'Your front page. The money, progress and attention items across every project, and a link into each portal. For staff it is Overview: your own work, leave and what is waiting on you.',
+  '/celebrations': 'Birthdays, festivals and special days across the company. React with an emoji or write a message; HR can add a special day, and everybody is notified on the day.',
   '/calendar': 'India\'s public holidays and the days off this business has added. The Master can mark one day or a run of days; every employee has them off for leave, attendance and payslips.',
   '/ho': 'Head Office\'s front page: every site\'s vendors, work orders, BOQs and bills in one place, and what is waiting on whom.',
   '/approvals': 'Everything waiting for your decision - bills, work orders, leave and the like. Open one, look at it, and approve or send it back with a reason.',
