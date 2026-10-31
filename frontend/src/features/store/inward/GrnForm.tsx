@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link2, Plus, Trash2 } from 'lucide-react'
 import { Button, Field, Input, Select, Textarea } from '@/components/ui'
 import { useProjects, projectLabel } from '@/api/projects'
+import { get } from '@/lib/api'
 import { useAction } from '@/lib/mutate'
 import { storePost, storePut, type StoreItemOption } from '@/api/store'
 import { ItemPicker, StorePicker, UomQtyInput } from '../shared'
@@ -30,10 +31,6 @@ interface Row {
 }
 let seq = 1
 const blank = (): Row => ({ key: seq++, po_line_id: null, item: null, label: '', hint: '', qty: { qty: '', uom: '' }, rate: '', rejected: '', reason: '', batch: '', made: '', expiry: '', autoExpiry: false })
-// Cement loses strength after about ninety days: given its manufacturing date, its expiry is filled in.
-const CEMENT_DAYS = 90
-const isCement = (r: Row) => /\bcement\b/i.test(r.item?.name || r.label)
-const plusDays = (iso: string, days: number) => { const d = new Date(iso + 'T00:00'); d.setDate(d.getDate() + days); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 /** Shelf life is asked for consumables and batch-tracked items - cement, admixtures, epoxies. */
 const hasShelfLife = (r: Row) => r.item?.category === 'CONSUMABLE' || !!r.item?.batch_tracked
 const asNumber = (n: number) => (Number.isFinite(n) ? String(Math.round(n * 10000) / 10000) : '')
@@ -91,8 +88,6 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
     return l ? `Ordered ${num(l.po_qty)} ${l.po_uom}; ${num(l.pending)} ${l.base_uom} still to come` : ''
   }
   const upd = (key: number, patch: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)))
-  const madeOn = (r: Row, made: string) =>
-    upd(r.key, isCement(r) && made && (!r.expiry || r.autoExpiry) ? { made, expiry: plusDays(made, CEMENT_DAYS), autoExpiry: true } : { made })
 
   const filled = rows.filter((r) => !r.needsItem && r.qty.qty.trim() && Number(r.qty.qty) > 0)
   const save = useAction(
@@ -100,7 +95,7 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
       const body = {
         ...f, po_id: f.po_id || null, project_id: f.project_id || null, charges: charges.filter((c) => Number(c.amount) > 0),
         lines: filled.map((r) => ({ po_line_id: r.po_line_id, item_id: r.po_line_id ? null : r.item?.id, qty: r.qty.qty, uom: r.qty.uom, rate: r.rate, rejected_qty: r.rejected, reject_reason: r.reason, batch_no: r.batch,
-          manufacturing_date: hasShelfLife(r) ? r.made : '', expiry_date: hasShelfLife(r) ? r.expiry : '' })),
+          manufacturing_date: r.made, expiry_date: r.expiry })),
       }
       return doc ? storePut<Doc>('inward', `/grn/${doc.id}`, body) : storePost<Doc>('inward', '/grn', body)
     },
@@ -159,14 +154,7 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
               <Input aria-label="Rejected quantity" inputMode="decimal" placeholder="Rejected" className="text-right" value={r.rejected} onChange={(e) => upd(r.key, { rejected: e.target.value })} />
               <Input aria-label="Reason for rejection" placeholder={Number(r.rejected) ? 'Why rejected (required)' : 'Batch / remarks'} value={Number(r.rejected) ? r.reason : r.batch} onChange={(e) => (Number(r.rejected) ? upd(r.key, { reason: e.target.value }) : upd(r.key, { batch: e.target.value }))} />
               {f.po_id === 0 && <Button type="button" variant="ghost" size="sm" aria-label="Remove line" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}><Trash2 /></Button>}
-              {hasShelfLife(r) && (
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm lg:col-span-6">
-                  {Number(r.rejected) > 0 && <label className="flex items-center gap-2">Batch <Input aria-label="Batch number" className="h-9 w-32" value={r.batch} onChange={(e) => upd(r.key, { batch: e.target.value })} /></label>}
-                  <label className="flex items-center gap-2">Manufactured <Input type="date" aria-label="Manufacturing date" className="h-9 w-40" max={today()} value={r.made} onChange={(e) => madeOn(r, e.target.value)} /></label>
-                  <label className="flex items-center gap-2">Expires <Input type="date" aria-label="Expiry date" className="h-9 w-40" min={r.made || undefined} value={r.expiry} onChange={(e) => upd(r.key, { expiry: e.target.value, autoExpiry: false })} /></label>
-                  <span className="text-xs text-muted-foreground">{r.autoExpiry ? `Cement: ${CEMENT_DAYS} days from manufacture.` : isCement(r) ? `Cement expires ${CEMENT_DAYS} days from manufacture if left empty.` : 'Optional - keeps expired stock off site.'}</span>
-                </div>
-              )}
+              {r.item && <ShelfDates row={r} onChange={(patch) => upd(r.key, patch)} />}
               </>}
             </div>
           ))}
@@ -197,5 +185,26 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
         <Button type="submit" loading={save.isPending} disabled={!ready}>{doc ? 'Save changes' : 'Save as draft'}</Button>
       </div>
     </form>
+  )
+}
+
+/** The dates of a material that goes off. The sum is the server's own: manufacturing date plus the item's shelf life, unless the maker's expiry is typed in. */
+function ShelfDates({ row: r, onChange }: { row: Row; onChange: (patch: Partial<Row>) => void }) {
+  const q = useQuery({
+    queryKey: ['store', 'shelf-life', r.item?.id, r.made], enabled: !!r.item,
+    queryFn: () => get<{ applicable: boolean; days: number | null; tracked: boolean; expiry_date: string }>(`/api/store/batches/shelf-life/${r.item?.id}?made=${r.made}`),
+  })
+  const worked = q.data?.expiry_date ?? ''
+  const update = !!worked && (!r.expiry || r.autoExpiry) && r.expiry !== worked
+  useEffect(() => { if (update) onChange({ expiry: worked, autoExpiry: true }) }, [update, worked]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (!hasShelfLife(r) && !q.data?.days && !q.data?.tracked) return null
+  const days = q.data?.days
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm lg:col-span-6">
+      {Number(r.rejected) > 0 && <label className="flex items-center gap-2">Batch <Input aria-label="Batch number" className="h-9 w-32" value={r.batch} onChange={(e) => onChange({ batch: e.target.value })} /></label>}
+      <label className="flex items-center gap-2">Manufactured <Input type="date" aria-label="Manufacturing date" className="h-9 w-40" max={today()} value={r.made} onChange={(e) => onChange({ made: e.target.value })} /></label>
+      <label className="flex items-center gap-2">Expires <Input type="date" aria-label="Expiry date" className="h-9 w-40" min={r.made || undefined} value={r.expiry} onChange={(e) => onChange({ expiry: e.target.value, autoExpiry: false })} /></label>
+      <span className="text-xs text-muted-foreground">{r.autoExpiry ? `Calculated: ${days} days from manufacture. Type the maker's date to replace it.` : days ? `Expires ${days} days from manufacture if left empty.` : q.data?.tracked ? 'Required for this item.' : 'Optional - keeps expired stock off site.'}{q.data?.tracked && !r.expiry && !r.made ? ' A date is required for this item.' : ''}</span>
+    </div>
   )
 }

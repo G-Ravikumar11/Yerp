@@ -113,6 +113,15 @@ def gst_text(percent):
     return "%g%%" % percent
 
 
+def _shelf(body):
+    days = body.shelf_life_days
+    if body.shelf_life_applicable and not (days and days > 0):
+        raise HTTPException(400, "Give the shelf life in days, above nought.")
+    if days is not None and days < 0:
+        raise HTTPException(400, "The shelf life cannot be negative.")
+    return {"shelf_life_applicable": bool(body.shelf_life_applicable), "shelf_life_days": days if body.shelf_life_applicable else None, "expiry_tracking": bool(body.expiry_tracking)}
+
+
 def _fields(db, client_id, body):
     """The checked, normalised values from a request: the one place a create and an edit are both validated."""
     name = re.sub(r"\s+", " ", body.item_name or "").strip()
@@ -127,7 +136,7 @@ def _fields(db, client_id, body):
     category, subcategory = check_category(db, client_id, body.item_category, body.item_subcategory)
     # A name pasted from a long schedule is cut at a word, never through one; the whole text stays as the description.
     short = name if len(name) <= 200 else name[:200].rsplit(" ", 1)[0].rstrip(" ,.-/")
-    out = {"item_name": short, "description": (body.description or "").strip() or name, "units_of_measure": unit,
+    out = {**_shelf(body), "item_name": short, "description": (body.description or "").strip() or name, "units_of_measure": unit,
            "item_type": itype, "item_category": category, "item_subcategory": subcategory,
            "specification": (body.specification or "").strip()[:120], "hsn_code": (body.hsn_code or "").strip()[:20],
            "preferred_supplier": (body.preferred_supplier or "").strip()[:120], "remarks": (body.remarks or "").strip(),
@@ -362,6 +371,7 @@ def item_dict(item, site_count=0, stock=None):
             "preferred_supplier": item.preferred_supplier or "", "reorder_level": money(item.reorder_level),
             "remarks": item.remarks or "", "is_active": item.is_active is not False, "sites": site_count,
             "make": item.make or "", "segment": item.segment or "",
+            "shelf_life_applicable": bool(item.shelf_life_applicable), "shelf_life_days": item.shelf_life_days, "expiry_tracking": bool(item.expiry_tracking),
             "stock": money(stock) if stock is not None else None,        # None: the store holds no record of it
             "created_by": item.created_by_name or "", "updated_by": item.updated_by_name or "",
             "created_at": item.created_at or "", "updated_at": item.updated_at or ""}

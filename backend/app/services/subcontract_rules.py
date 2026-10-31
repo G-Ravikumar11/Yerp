@@ -420,7 +420,7 @@ def retention_blockers(db, client_id, pos, stage, today=None):
         name = con.company_name.strip().lower()
         ncrs = [n.number for n in db.query(models.DBNcr).filter(
             models.DBNcr.client_id == client_id, models.DBNcr.job_id == order.job_id,
-            models.DBNcr.status != "CLOSED").all() if name in (n.responsible or "").lower()]
+            models.DBNcr.status.notin_(("CLOSED", "REJECTED"))).all() if name in (n.responsible or "").lower()]
         if ncrs:
             out.append("Quality issues in their name are open on the site: %s." % ", ".join(ncrs[:5]))
     return out

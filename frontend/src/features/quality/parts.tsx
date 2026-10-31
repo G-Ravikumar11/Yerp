@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils'
 type Tone = 'success' | 'danger' | 'warning' | 'neutral' | 'info' | 'ember'
 
 export const inspectionTone = (r: string): Tone => (r === 'PASSED' ? 'success' : r === 'FAILED' ? 'danger' : 'warning')
-export const ncrTone = (status: string, overdue: boolean): Tone => (status === 'CLOSED' ? 'success' : overdue ? 'danger' : status === 'REINSPECTION' ? 'info' : status === 'OPEN' ? 'warning' : 'ember')
+export const ncrTone = (status: string, overdue: boolean): Tone => (status === 'CLOSED' ? 'success' : status === 'REJECTED' ? 'danger' : overdue ? 'danger' : status === 'REINSPECTION' ? 'info' : status === 'OPEN' ? 'warning' : 'ember')
 export const cubeTone = (s: string): Tone =>
   s === 'below grade' || s === 'rejected' ? 'danger' : s === 'accepted' ? 'success' : s === 'accepted with conditions' ? 'warning' : s === 'for engineering review' || s === 'criteria not set' ? 'info' : 'neutral'
 

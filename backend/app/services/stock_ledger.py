@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, object_session
 from app import models
 from app.core.permissions import permissions_for
 from app.models.store_core import (
-    IN_MOVEMENTS, NO_BATCH, BatchOnHoldError, CostHead, DBStore, DBStoreBatch, DBStoreBatchBalance, DBStoreControlSetting, DBStoreFreeze,
+    IN_MOVEMENTS, NO_BATCH, BatchOnHoldError, CostHead, DBStore, DBStoreBatch, DBStoreBatchBalance, DBStoreBatchHold, DBStoreControlSetting, DBStoreFreeze,
     DBStoreItemSettings, DBStoreLedgerBatch, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion,
     DBStoreUserAssignment, InsufficientStockError, InvalidMovementError, MovementType, StockLedgerEntry, StoreFrozenError,
 )
@@ -39,6 +39,9 @@ FREEZE_OPEN = frozenset({MovementType.GRN_IN, MovementType.CLIENT_SUPPLY_IN, Mov
 RATED_OUT = frozenset({MovementType.PURCHASE_RETURN_OUT})
 # Taking stock out for use passes over expired lots while anything else is left; a write-off or a count takes the oldest expiry first.
 FOR_USE = frozenset({MovementType.ISSUE_OUT, MovementType.SUBCON_ISSUE_OUT, MovementType.TRANSFER_OUT})
+# What a hold stops: going out for use, and being written off. A return to the supplier stays open, or held stock could never
+# leave; a count adjustment records what is physically there.
+HOLD_BLOCKED = FOR_USE | frozenset({MovementType.SCRAP_OUT, MovementType.WASTAGE_OUT})
 HIDDEN_LOT = "~"            # a lot with no printed number (a receipt line that only gave a shelf life) is kept as "~GRN:<line id>"
 
 
@@ -274,9 +277,18 @@ def _held_lots(db, rows, mtype):
     """The lots under a quality hold, for stock going out for use. The batch rows are locked and read fresh, so a hold
     committed a moment ago is seen, and one being placed now waits for this movement. Bulk and automatic issues all pass here."""
     ids = sorted({r.batch_id for r in rows if r.batch_id})
-    if mtype not in FOR_USE or not ids:
+    if mtype not in HOLD_BLOCKED or not ids:
         return set()
-    return {b.id for b in db.query(DBStoreBatch).filter(DBStoreBatch.id.in_(ids)).order_by(DBStoreBatch.id).populate_existing().with_for_update().all() if b.on_hold}
+    return {b.id for b in db.query(DBStoreBatch).filter(DBStoreBatch.id.in_(ids)).order_by(DBStoreBatch.id).populate_existing().with_for_update().all() if b.on_hold or b.lot_status == "REJECTED"}
+
+
+def hold_refusal(db, batch_id):
+    """The refusal for a lot on hold, saying which and why."""
+    batch = db.get(DBStoreBatch, batch_id)
+    if batch.lot_status == "REJECTED":
+        return BatchOnHoldError(lot_label(batch), "Rejected on an NCR", "LOT_REJECTED", "This material lot has been rejected and cannot be issued, transferred, or written off.")
+    why = [r for (r,) in db.query(DBStoreBatchHold.reason).filter(DBStoreBatchHold.batch_id == batch_id, DBStoreBatchHold.status == "ACTIVE").all()]
+    return BatchOnHoldError(lot_label(batch), "; ".join(x for x in why if x))
 
 
 def _take_lots(db, store, item_id, mtype, qty, wanted, rows, on_date):
@@ -289,7 +301,7 @@ def _take_lots(db, store, item_id, mtype, qty, wanted, rows, on_date):
         if q <= 0:
             continue
         if lot in held:
-            raise BatchOnHoldError("Batch %s is on quality hold and cannot be issued." % lot_label(db.get(DBStoreBatch, lot)))
+            raise hold_refusal(db, lot)
         r = _lot_row(db, store.id, item_id, lot, rows)
         if q > _dec(r.qty):
             b = db.get(DBStoreBatch, lot) if lot else None
@@ -309,7 +321,7 @@ def _take_lots(db, store, item_id, mtype, qty, wanted, rows, on_date):
         taken.append((r.batch_id, q))
         left -= q
     if left > 0 and held:
-        raise BatchOnHoldError("Only %s can be issued: the rest of this item is in a batch on quality hold." % format((qty - left).normalize(), "f"))
+        raise hold_refusal(db, sorted(held)[0])
     if left > 0:                                 # the total check comes first, so this means the lots were out of step
         raise InsufficientStockError(store.id, item_id, qty - left, qty)
     return taken

@@ -44,6 +44,7 @@ from app.services.quality import (
 
 
 from app.core.audit import log_audit  # noqa: E402
+from app.core.store_auth import store_errors  # noqa: E402
 from app.models.store_core import DBStoreBatch  # noqa: E402
 from app.services import cube_notices, store_holds  # noqa: E402
 from app.services.quality import AUTO_NCR_ORIGIN, DEFAULT_TIMEZONE, cube_failure_ncr  # noqa: E402
@@ -785,7 +786,7 @@ def _no_duplicate(db, client_id, job_id, source_type, source_id, ref, desc):
         if hit:
             raise HTTPException(409, "%s already covers this (%s)." % (hit.number, hit.status.lower().replace("_", " ")))
     else:
-        for n in q.filter(M.job_id == job_id, M.status != "CLOSED").all():
+        for n in q.filter(M.job_id == job_id, M.status.notin_(("CLOSED", "REJECTED"))).all():
             if (n.description or "").strip().lower() == desc.strip().lower():
                 raise HTTPException(409, "%s already reports exactly this and is still open." % n.number)
 
@@ -875,8 +876,8 @@ def raise_ncr(body: NcrIn, request: Request, db: Session = Depends(get_db)):
 
 
 def _live(n, *allowed):
-    if n.status == "CLOSED":
-        raise HTTPException(409, "%s is closed." % n.number)
+    if n.status in ("CLOSED", "REJECTED"):
+        raise HTTPException(409, "%s is %s." % (n.number, n.status.lower()))
     if allowed and n.status not in allowed:
         raise HTTPException(409, "%s is %s - this is not the step it is at." % (n.number, n.status.lower().replace("_", " ")))
 
@@ -985,6 +986,32 @@ def close_ncr(nid: int, body: NcrCloseIn, request: Request, db: Session = Depend
     batch_hold = store_holds.on_ncr_closed(db, client.id, n, actor_name)      # the one transaction: closed and released, or neither
     db.commit()
     return {"ncr": ncr_dict(n, job_names(db, client.id, [n.job_id])), "batch_hold": batch_hold}
+
+
+class NcrRejectIn(BaseModel):
+    reason: str = ""
+
+
+@router.post("/api/qc/ncrs/{nid}/reject")
+def reject_ncr(nid: int, body: NcrRejectIn, request: Request, db: Session = Depends(get_db)):
+    """The material is not acceptable. What is left of the lot leaves usable stock for Rejected Goods, in this one
+    transaction. The NCR row is locked and read fresh, so rejecting twice moves the stock once."""
+    client, actor_id, actor_name = wo_actor(request, db, "site.signoff")
+    ncr_or_404(db, client.id, nid)
+    n = db.query(models.DBNcr).filter(models.DBNcr.id == nid).populate_existing().with_for_update().first()
+    if n.status in ("CLOSED", "REJECTED"):
+        raise HTTPException(409, "%s is already %s." % (n.number, n.status.lower()))
+    if not n.store_batch_id:
+        raise HTTPException(409, "%s is not raised against a store lot, so there is nothing to reject." % n.number)
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Say why the material is rejected.")
+    with store_errors():
+        result = store_holds.reject_for_ncr(db, client.id, n, reason, actor_id, actor_name)
+    n.status, n.closed_on, n.closed_by, n.closure_note = "REJECTED", _today(), actor_name, reason[:2000]
+    qc_log(db, client.id, "qc.ncr.rejected", "ncr", n, "%s %s" % (reason[:200], result["message"]), actor_name, request)
+    db.commit()
+    return {"ncr": ncr_dict(n, job_names(db, client.id, [n.job_id])), "batch_hold": result}
 
 
 # ---- what is due, what failed ----------------------------------------------------------------

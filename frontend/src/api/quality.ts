@@ -156,4 +156,5 @@ export const assignNcr = (id: number, b: { responsible: string; target_date: str
 export const recordWork = (id: number, b: { corrective_done: string; root_cause: string }) => post<{ ncr: Ncr }>(`/api/qc/ncrs/${id}/work`, b)
 export const requestVerification = (id: number) => post<{ ncr: Ncr }>(`/api/qc/ncrs/${id}/request-verification`)
 export const verifyNcr = (id: number, result: 'verified' | 'rejected', note: string) => post<{ ncr: Ncr }>(`/api/qc/ncrs/${id}/verify`, { result, note })
+export const rejectNcr = (id: number, reason: string) => post<{ ncr: Ncr; batch_hold: { message: string } }>(`/api/qc/ncrs/${id}/reject`, { reason })
 export const closeNcr = (id: number, closure_note: string) => post<{ ncr: Ncr; batch_hold: { on_hold: boolean; message: string } | null }>(`/api/qc/ncrs/${id}/close`, { closure_note })

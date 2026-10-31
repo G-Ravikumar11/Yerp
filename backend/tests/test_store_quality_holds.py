@@ -99,7 +99,7 @@ def test_a_held_batch_is_shown_and_cannot_be_named_for_issue(tenant, lot):
     assert hold(tenant, lot.b1).status_code == 200
     v = lot.view(lot.b1)
     assert v["hold_status"] == "On Hold" and v["blocked"] and v["available_qty"] == "100" and v["received_qty"] == "100" and v["holds"][0]["placed_by"]
-    with pytest.raises(Exception, match="quality hold"):
+    with pytest.raises(Exception, match="on hold"):
         lot.issue(10, lot.b1)
     assert lot.view(lot.b1)["available_qty"] == "100"
 
@@ -107,7 +107,7 @@ def test_a_held_batch_is_shown_and_cannot_be_named_for_issue(tenant, lot):
 @pytest.mark.parametrize("kind", [MovementType.ISSUE_OUT, MovementType.SUBCON_ISSUE_OUT, MovementType.TRANSFER_OUT])
 def test_no_way_out_for_use_gets_past_a_hold(tenant, lot, kind):
     hold(tenant, lot.b1)
-    with pytest.raises(Exception, match="quality hold"):
+    with pytest.raises(Exception, match="on hold"):
         lot.issue(5, lot.b1, kind)
 
 
@@ -115,15 +115,85 @@ def test_an_automatic_pick_passes_over_held_stock_and_never_takes_it(tenant, lot
     hold(tenant, lot.b1)
     lot.issue(30)                                   # with no batch named it comes out of B2
     assert lot.view(lot.b2)["available_qty"] == "20" and lot.view(lot.b1)["available_qty"] == "100"
-    with pytest.raises(Exception, match="quality hold"):
+    with pytest.raises(Exception, match="on hold"):
         lot.issue(21)                               # all that is left free is 20
     assert lot.view(lot.b1)["available_qty"] == "100"
 
 
-def test_a_write_off_may_still_take_held_stock(tenant, lot):
+@pytest.mark.parametrize("kind", [MovementType.SCRAP_OUT, MovementType.WASTAGE_OUT])
+def test_a_held_lot_cannot_be_written_off(tenant, lot, kind):
+    res = hold(tenant, lot.b1)
+    assert res.status_code == 200, res.text
+    with pytest.raises(Exception, match="on hold"):
+        lot.issue(5, lot.b1, kind)
+    assert lot.view(lot.b1)["available_qty"] == "100"
+
+
+def test_a_count_and_a_return_to_the_supplier_may_still_move_it(tenant, lot):
     hold(tenant, lot.b1)
     lot.issue(5, lot.b1, MovementType.ADJUST_OUT)
-    assert lot.view(lot.b1)["available_qty"] == "95"
+    lot.issue(5, lot.b1, MovementType.PURCHASE_RETURN_OUT)
+    assert lot.view(lot.b1)["available_qty"] == "90"
+
+
+def test_the_refusal_is_a_409_in_the_agreed_shape(tenant, lot):
+    from fastapi.testclient import TestClient
+
+    from app.core.store_auth import store_errors
+    hold(tenant, lot.b1)
+
+    def route():
+        with store_errors():
+            lot.issue(1, lot.b1)
+    main.app.add_api_route("/api/_test_hold_%d" % lot.b1, route, methods=["POST"])
+    res = TestClient(main.app).post("/api/_test_hold_%d" % lot.b1)
+    body = res.json()
+    assert res.status_code == 409 and body["success"] is False and body["code"] == "LOT_ON_HOLD" and body["lotId"] == "B1" and body["holdReason"] == "Failed slump"
+    assert body["message"] == "This material lot is on hold and cannot be issued, transferred, or written off." and body["detail"] == body["message"]
+
+
+def fail_check(db, lot, line_id=901, note="Slump 180, spec 100"):
+    from app.services import store_holds as sh
+
+    class G:
+        number = "GRN-0001"
+
+    class L:
+        id, line_no = line_id, 1
+    sh.hold_for_failed_check(db, lot.cid, sh.lock_batch(db, lot.cid, lot.b1), G, L, note, "QC Engineer")
+    db.commit()
+    return L
+
+
+def test_a_failed_check_holds_the_lot_with_its_inspection(tenant, lot):
+    with main.SessionLocal() as db:
+        fail_check(db, lot, 901)
+        fail_check(db, lot, 901)                       # recorded again: still one hold
+    v = lot.view(lot.b1)
+    assert v["status_code"] == "ON_HOLD" and v["hold_reason"] == "Failed quality inspection: Slump 180, spec 100" and v["held_by"] == "QC Engineer" and v["held_at"]
+    assert len(v["holds"]) == 1 and v["holds"][0]["kind"] == "QC" and "GRN-0001 line 1" in v["holds"][0]["inspection_ref"]
+    with pytest.raises(Exception, match="on hold"):
+        lot.issue(1, lot.b1)
+    assert tenant.get("/api/store/batches?hold_status=ON_HOLD").json()["total"] == 1
+
+
+def test_passing_on_re_inspection_lifts_that_hold_only(tenant, lot):
+    from app.services import store_holds as sh
+    ncr(tenant, lot, lot.b1)
+    with main.SessionLocal() as db:
+        line = fail_check(db, lot, 902)
+        sh.lift_failed_check(db, lot.cid, line, "QC Engineer")
+        db.commit()
+    v = lot.view(lot.b1)
+    assert v["blocked"] and len(v["ncrs"]) == 1 and [h["status"] for h in v["holds"] if h["kind"] == "QC"] == ["RELEASED"]
+
+
+def test_a_failed_check_is_released_by_someone_who_signs_off_and_the_history_stays(tenant, lot):
+    with main.SessionLocal() as db:
+        fail_check(db, lot, 903)
+    r = tenant.post("/api/store/batches/%d/release" % lot.b1, json={"note": "Lab retest passed"}).json()
+    assert r["on_hold"] is False
+    assert lot.view(lot.b1)["holds"][0]["release_note"] == "Lab retest passed"
 
 
 def test_the_hub_issue_check_refuses_with_409(tenant, lot):
@@ -134,7 +204,7 @@ def test_the_hub_issue_check_refuses_with_409(tenant, lot):
         item = db.get(models.DBItem, lot.item)
         with pytest.raises(HTTPException) as e:
             _check_batch(db, lot.store, item, "B1", Decimal("1"), date.today(), "Line 1")
-        assert e.value.status_code == 409 and "quality hold" in e.value.detail
+        assert e.value.status_code == 409 and e.value.extra["code"] == "LOT_ON_HOLD" and e.value.extra["lotId"] == "B1" and e.value.extra["holdReason"] == "Failed slump"
 
 
 def test_a_hold_placed_in_another_session_is_seen_by_the_issue(tenant, lot):
@@ -142,7 +212,7 @@ def test_a_hold_placed_in_another_session_is_seen_by_the_issue(tenant, lot):
     with main.SessionLocal() as db:
         db.get(DBStoreBatch, lot.b1)                 # loaded while still free
         hold(tenant, lot.b1)
-        with pytest.raises(Exception, match="quality hold"):
+        with pytest.raises(Exception, match="on hold"):
             post_movement(db, movement_type=MovementType.ISSUE_OUT.value, store_id=lot.store, item_id=lot.item, qty=1, rate=None, txn_date=date.today(), project_id=lot.job["id"], ref_doc_type="TEST", ref_doc_id=7, ref_line_id=1, user_id=None, lots=lot.b1)
         db.rollback()
 
@@ -185,7 +255,7 @@ def test_an_ncr_against_a_lot_holds_it_at_once_and_closing_releases_it(tenant, l
     assert n["store_batch_id"] == lot.b1
     v = lot.view(lot.b1)
     assert v["blocked"] and v["ncrs"][0]["number"] == n["number"]
-    with pytest.raises(Exception, match="quality hold"):
+    with pytest.raises(Exception, match="on hold"):
         lot.issue(1, lot.b1)
     done = close(tenant, n["id"])
     assert done["batch_hold"]["on_hold"] is False and "released" in done["batch_hold"]["message"]
@@ -197,7 +267,7 @@ def test_another_open_ncr_keeps_it_held(tenant, lot):
     a, b = ncr(tenant, lot, lot.b1, "One"), ncr(tenant, lot, lot.b1, "Two")
     res = close(tenant, a["id"])
     assert res["batch_hold"]["on_hold"] is True and b["number"] in res["batch_hold"]["message"]
-    with pytest.raises(Exception, match="quality hold"):
+    with pytest.raises(Exception, match="on hold"):
         lot.issue(1, lot.b1)
     assert close(tenant, b["id"])["batch_hold"]["on_hold"] is False
 

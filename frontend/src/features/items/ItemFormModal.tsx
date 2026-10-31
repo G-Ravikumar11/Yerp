@@ -74,6 +74,9 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
     remarks: base?.remarks ?? '',
     is_active: base?.is_active ?? true,
     make: base?.make ?? '',
+    shelf_life_applicable: !!base?.shelf_life_applicable,
+    shelf_life_days: text(base?.shelf_life_days),
+    expiry_tracking: !!base?.expiry_tracking,
     segment: base?.segment ?? '',
   })
   const set = <K extends keyof ItemForm>(k: K, v: ItemForm[K]) => setF((s) => ({ ...s, [k]: v }))
@@ -129,6 +132,9 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
     remarks: f.remarks,
     is_active: f.is_active,
     make: f.make,
+    shelf_life_applicable: f.shelf_life_applicable,
+    shelf_life_days: f.shelf_life_applicable ? num(f.shelf_life_days) : null,
+    expiry_tracking: f.expiry_tracking,
     segment: f.segment,
   })
   const save = useAction((_again: boolean) => (editing && item ? updateMasterItem(item.id, body()) : createMasterItem(body())), {
@@ -211,6 +217,11 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
         <Field label="Make" htmlFor="im-make" hint={f.kind === 'RM' ? 'The brand: UltraTech, Tata Tiscon, Finolex.' : 'Optional for a work item.'}>
           <Input id="im-make" value={f.make} onChange={field('make')} placeholder="UltraTech" />
         </Field>
+        <div className="grid gap-2 text-sm sm:col-span-2">
+          <label className="flex items-center gap-2"><input type="checkbox" checked={f.shelf_life_applicable} onChange={(e) => setF((x) => ({ ...x, shelf_life_applicable: e.target.checked }))} /> This material has a shelf life</label>
+          {f.shelf_life_applicable && <Field label="Shelf life in days" htmlFor="im-shelf" hint="Counted from the manufacturing date, unless the maker's expiry is entered at receipt."><Input id="im-shelf" type="number" min={1} step={1} value={f.shelf_life_days} onChange={field('shelf_life_days')} /></Field>}
+          <label className="flex items-center gap-2"><input type="checkbox" checked={f.expiry_tracking} onChange={(e) => setF((x) => ({ ...x, expiry_tracking: e.target.checked }))} /> Track expiry: a receipt must give the date</label>
+        </div>
       </Section>
 
       <Section title="Pricing and tax">

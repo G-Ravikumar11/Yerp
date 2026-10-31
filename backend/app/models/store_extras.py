@@ -20,9 +20,12 @@ class DBStoreRejection(Base):
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
-    grn_id = Column(Integer, ForeignKey("store_grn.id"), nullable=False, index=True)
-    grn_line_id = Column(Integer, ForeignKey("store_grn_line.id"), nullable=False)
+    grn_id = Column(Integer, ForeignKey("store_grn.id"), nullable=True, index=True)
+    grn_line_id = Column(Integer, ForeignKey("store_grn_line.id"), nullable=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
+    ncr_id = Column(Integer, nullable=True, index=True)      # rejected on an NCR rather than turned away at the gate
+    batch_id = Column(Integer, nullable=True, index=True)
+    rejected_by = Column(String, default="")
     qty = Column(QTY, nullable=False, default=0)             # base unit
     reason = Column(String, default="")
     status = Column(String, nullable=False, default=REJECTION_HELD, index=True)   # HELD | RETURNED | DISPOSED | VOID

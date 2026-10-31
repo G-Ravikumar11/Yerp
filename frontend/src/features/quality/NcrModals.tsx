@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { FileText, Image } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, Select, Skeleton, Textarea } from '@/components/ui'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
-import { assignNcr, closeNcr, qcKeys, raiseNcr, recordWork, requestVerification, useNcr, verifyNcr, type Ncr } from '@/api/quality'
+import { assignNcr, closeNcr, qcKeys, raiseNcr, recordWork, rejectNcr, requestVerification, useNcr, verifyNcr, type Ncr } from '@/api/quality'
 import { uploadFiles } from '@/api/files'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -83,13 +83,14 @@ export function NcrDetail({ id, onClose, onPhotos }: { id: number | null; onClos
 
 function Body({ ncr: n, history, batch, onClose, onPhotos }: { ncr: Ncr; history?: import('@/api/quality').HistoryLine[]; batch: import('@/api/quality').NcrBatch | null; onClose: () => void; onPhotos: (n: Ncr) => void }) {
   const { can } = useSession()
-  const [step, setStep] = useState<'assign' | 'work' | 'ask' | 'verify' | 'reject' | 'close' | null>(null)
+  const [step, setStep] = useState<'assign' | 'work' | 'ask' | 'verify' | 'reject' | 'close' | 'rejectLot' | null>(null)
   const done = () => setStep(null)
   const at = STEPS.findIndex(([s]) => s === n.status)
-  const live = n.status !== 'CLOSED'
+  const live = n.status !== 'CLOSED' && n.status !== 'REJECTED'
   const refresh = { invalidate: [qcKeys.all], onSuccess: done }
   const ask = useAction(() => requestVerification(n.id), { ...refresh, success: 'Sent for verification', onError: done })
   const verify = useAction((v: { result: 'verified' | 'rejected'; note: string }) => verifyNcr(n.id, v.result, v.note), { ...refresh, success: (r) => (r.ncr.verification_result === 'verified' ? 'Verified' : 'Sent back for correction') })
+  const rejectLot = useAction((why: string) => rejectNcr(n.id, why), { ...refresh, invalidate: [qcKeys.all, ['store']], success: (r) => `${r.ncr.number} rejected. ${r.batch_hold.message}`, onError: done })
   const close = useAction((note: string) => closeNcr(n.id, note), { ...refresh, success: (r) => [`${r.ncr.number} closed.`, r.batch_hold?.message].filter(Boolean).join(' ') })
   return (
     <div className="grid gap-4">
@@ -100,7 +101,7 @@ function Body({ ncr: n, history, batch, onClose, onPhotos }: { ncr: Ncr; history
         <section aria-label="Store lot" className="rounded-lg border border-border p-3 text-[13px]">
           <div className="mb-1 flex flex-wrap items-center gap-2 font-medium">Batch {batch.batch_no} - {batch.item_name}<Badge tone={batch.blocked ? 'danger' : 'success'} dot>{batch.blocked ? 'Blocked from issue' : batch.hold_status}</Badge></div>
           <p>{batch.available_qty} {batch.uom} available.{batch.hold_reason && ` On hold: ${batch.hold_reason}`}</p>
-          {n.status !== 'CLOSED' && <p className="mt-1 text-xs text-muted-foreground">Closing this releases the batch only if no other open NCR or manual hold remains.</p>}
+          {live && <p className="mt-1 text-xs text-muted-foreground">Closing this releases the batch only if no other open NCR or manual hold remains.</p>}
         </section>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -122,8 +123,9 @@ function Body({ ncr: n, history, batch, onClose, onPhotos }: { ncr: Ncr; history
       {n.corrective_done && <Section title="Corrective work recorded"><p className="whitespace-pre-line text-[13.5px]">{n.corrective_done}</p><p className="mt-1 text-xs text-muted-foreground">{formatDate(n.corrective_on)}</p></Section>}
       {n.verification_result && <Section title="Verification"><p className="text-[13.5px]"><span className="font-medium">{n.verification_result === 'verified' ? 'Verified' : 'Rejected'}</span> by {n.verified_by} on {formatDate(n.verified_on)}{n.verification_note && <> - {n.verification_note}</>}{n.reinspection_ref && <> (reinspection {n.reinspection_ref})</>}</p></Section>}
       {n.status === 'CLOSED' && <Section title="Closure"><p className="text-[13.5px]">Closed by {n.closed_by} on {formatDate(n.closed_on)} - {n.closure_note}</p></Section>}
+      {n.status === 'REJECTED' && <Section title="Rejected"><p className="text-[13.5px]">Rejected by {n.closed_by} on {formatDate(n.closed_on)} - {n.closure_note}</p></Section>}
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
-        {(ask.error || verify.error || close.error) && <p role="alert" className="mr-auto text-[13px] text-danger">{(ask.error ?? verify.error ?? close.error)!.message}</p>}
+        {(ask.error || verify.error || close.error || rejectLot.error) && <p role="alert" className="mr-auto text-[13px] text-danger">{(ask.error ?? verify.error ?? close.error ?? rejectLot.error)!.message}</p>}
         <Button variant="outline" onClick={() => onPhotos(n)}><Image /> Evidence</Button>
         <Button variant="outline" asChild><a href={`/api/qc/ncrs/${n.id}/document.pdf`} target="_blank" rel="noopener"><FileText /> PDF</a></Button>
         {live && can('site.signoff') && ['OPEN', 'ASSIGNED', 'UNDER_CORRECTION'].includes(n.status) && <Button variant="outline" onClick={() => setStep('assign')}>{n.status === 'OPEN' ? 'Assign' : 'Reassign'}</Button>}
@@ -131,6 +133,7 @@ function Body({ ncr: n, history, batch, onClose, onPhotos }: { ncr: Ncr; history
         {live && can('site.record') && n.status === 'UNDER_CORRECTION' && <Button onClick={() => setStep('ask')}>Request verification</Button>}
         {live && can('site.signoff') && n.status === 'REINSPECTION' && n.verification_result !== 'verified' && <><Button variant="outline" className="text-danger" onClick={() => setStep('reject')}>Reject</Button><Button onClick={() => setStep('verify')}>Verify</Button></>}
         {live && can('site.signoff') && n.status === 'REINSPECTION' && n.verification_result === 'verified' && <Button onClick={() => setStep('close')}>Close the NCR</Button>}
+        {live && can('site.signoff') && !!batch && <Button variant="outline" className="text-danger" onClick={() => setStep('rejectLot')}>Reject material</Button>}
         <Button variant="ghost" onClick={onClose}>Done</Button>
       </div>
       <Section title="History"><History lines={history} /></Section>
@@ -140,6 +143,7 @@ function Body({ ncr: n, history, batch, onClose, onPhotos }: { ncr: Ncr; history
       <ConfirmDialog open={step === 'ask'} onOpenChange={(o) => !o && done()} title={`Ask for ${n.number} to be verified?`} description={n.severity === 'Minor' ? 'It goes to whoever signs off. Attach photographs of the finished work first if you have them.' : `A ${n.severity.toLowerCase()} NCR needs its root cause and photographs of the work before it can be verified.`} confirmLabel="Request verification" loading={ask.isPending} onConfirm={() => ask.mutate()} />
       <ConfirmDialog open={step === 'verify'} onOpenChange={(o) => !o && done()} title={`Verify the correction on ${n.number}`} description="Confirm the corrective work puts it right." reason={{ label: 'What you checked (optional)' }} confirmLabel="Verified" loading={verify.isPending} onConfirm={(note) => verify.mutate({ result: 'verified', note })} />
       <ConfirmDialog open={step === 'reject'} onOpenChange={(o) => !o && done()} title={`Reject the correction on ${n.number}`} description="It goes back under correction." tone="danger" reason={{ label: 'What is still not right', required: true }} confirmLabel="Reject" loading={verify.isPending} onConfirm={(note) => verify.mutate({ result: 'rejected', note })} />
+      <ConfirmDialog open={step === 'rejectLot'} onOpenChange={(o) => !o && done()} title={`Reject the material on ${n.number}?`} description="All that is left of this lot leaves usable stock for Rejected Goods. This cannot be undone." tone="danger" reason={{ label: 'Why the material is rejected', required: true }} confirmLabel="Reject material" loading={rejectLot.isPending} onConfirm={(why) => rejectLot.mutate(why)} />
       <ConfirmDialog open={step === 'close'} onOpenChange={(o) => !o && done()} title={`Close ${n.number}?`} description="It has been verified. Closing records you as the approver and cannot be undone." reason={{ label: 'What was done to put it right', required: true }} confirmLabel="Close it" loading={close.isPending} onConfirm={(note) => close.mutate(note)} />
     </div>
   )

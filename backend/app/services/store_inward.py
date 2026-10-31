@@ -292,6 +292,8 @@ def build_grn_lines(db, client_id, po, rows, grn_id=None):
         expiry = day(getattr(r, "expiry_date", ""), label + " expiry date", allow_future=True, required=False) or default_expiry(item, made)
         if made and expiry and expiry < made:
             raise HTTPException(400, "%s: the expiry date is before the manufacturing date." % label)
+        if item.expiry_tracking and not expiry:
+            raise HTTPException(400, "%s: %s tracks expiry. Give the expiry date, or the manufacturing date to work it out from." % (label, item.item_name))
         out.append({"po_line": po_line, "manufacturing_date": made, "expiry_date": expiry, "item": item, "entry_uom": uom, "entry_qty": q3(entry), "received": received, "rejected": rejected,
                     "accepted": ZERO if status == "PENDING" else received - rejected, "rate": rate, "qc_status": status, "reject_reason": reason,
                     "batch_no": text(r.batch_no, "batch", 40), "bin_id": r.bin_id or None, "remarks": text(r.remarks, "remarks", 200), "label": label})
@@ -455,6 +457,13 @@ def qc_decide(db, actor, grn, line_id, result, rejected_qty=None, note=""):
     line.qc_status, line.qc_by_name, line.qc_note = result, actor.name, note
     log(db, actor, GRN, grn.id, "qc", grn.status, grn.status, "%s line %s: %s" % (result, line.line_no, note))
     db.flush()
+    from app.services import store_holds
+    if result == "FAILED":
+        lot = grn_line_lot(db, actor.client.id, line, grn)
+        if lot:                 # a line with no batch number has no lot to hold: what failed never enters stock
+            store_holds.hold_for_failed_check(db, actor.client.id, store_holds.lock_batch(db, actor.client.id, lot), grn, line, note, actor.name)
+    else:
+        store_holds.lift_failed_check(db, actor.client.id, line, actor.name)
     _recheck_grn(db, grn, grn_lines(db, grn))
 
 

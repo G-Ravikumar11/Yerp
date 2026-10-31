@@ -26,6 +26,8 @@ from app.core.store_auth import check_not_own
 from app.services.stock_ledger import check_date, convert_to_base, entry_lots, get_balance, lot_label, post_movement, reverse_document
 from app.models.store_extras import DBStoreIndentLineNote
 from app.services import store_reservations
+from app.core.store_auth import LotOnHold
+from app.services.stock_ledger import hold_refusal
 from app.services.store_batches import batches_on_hand, find_lot, usable_qty
 from app.services.store_numbering import next_doc_number
 
@@ -204,6 +206,7 @@ def build_issue_lines(db, client_id, body, head, on_date, issue_id=None):
     pending = indent_pending(db, indent, exclude_issue=issue_id) if indent else {}
     ilines = {l.id: l for l in indent_lines(db, indent)} if indent else {}
     out, seen, asked = [], set(), {}
+    spoken = {}
     for n, r in enumerate(body.lines, 1):
         label = "Line %d" % n
         item = item_of(db, client_id, r.item_id)
@@ -254,13 +257,37 @@ def build_issue_lines(db, client_id, body, head, on_date, issue_id=None):
         if due is not None and due < on_date:
             raise HTTPException(400, "%s: the return date is before the issue date." % label)
         batch = text(getattr(r, "batch_no", ""), "batch", 40)
-        _check_batch(db, body.store_id, item, batch, qty, on_date, label)
-        out.append({"item": item, "batch_no": batch, "entry_uom": uom, "entry_qty": q3(entry), "qty": qty, "boq_item_id": boq_id, "cost_head": head_name, "chargeable": 1 if chargeable else 0,
+        fefo = text(getattr(r, "fefo_reason", ""), "reason", 300)
+        skipped = _check_batch(db, body.store_id, item, batch, qty, on_date, label, fefo, spoken.setdefault(item.id, {}))
+        if batch:
+            spoken[item.id][batch] = spoken[item.id].get(batch, 0) + qty
+        out.append({"fefo_reason": fefo if skipped else "", "fefo_skipped": skipped or "", "item": item, "batch_no": batch, "entry_uom": uom, "entry_qty": q3(entry), "qty": qty, "boq_item_id": boq_id, "cost_head": head_name, "chargeable": 1 if chargeable else 0,
                     "recovery_rate": q3(rate), "recovery_basis": basis, "handling_pct": handling, "due": due, "remarks": text(r.remarks, "remarks", 200), "label": label, "indent_line_id": il_id})
     return out
 
 
-def _check_batch(db, store_id, item, batch, qty, on_date, label):
+FEFO_WARNING = "An earlier-expiry material lot is available. Please provide a reason for selecting this later-expiry lot."
+
+
+class FefoReasonNeeded(HTTPException):
+    def __init__(self, selected, skipped):
+        super().__init__(409, FEFO_WARNING)
+        self.extra = {"success": False, "code": "FEFO_REASON_REQUIRED", "message": FEFO_WARNING, "selectedLot": selected, "skippedLot": skipped}
+
+
+def earlier_lot(db, store_id, item, batch, on_date, taken=None):
+    """The lot that should go first when `batch` is chosen: fit to issue, with stock left after `taken` (what earlier lines of
+    the same issue have spoken for), and an earlier expiry. None if there is none."""
+    taken = taken or {}
+    lots = batches_on_hand(db, store_id, item.id, on_date)
+    chosen = next((b for b in lots if b["batch_no"] == batch), None)
+    if chosen is None:
+        return None
+    return next((b for b in lots if b["batch_no"] and b["batch_no"] != batch and b["expiry_date"] and not b["on_hold"] and b["state"] != "EXPIRED"
+                 and Decimal(str(b["qty"])) > taken.get(b["batch_no"], 0) and (not chosen["expiry_date"] or b["expiry_date"] < chosen["expiry_date"])), None)
+
+
+def _check_batch(db, store_id, item, batch, qty, on_date, label, fefo_reason=None, taken=None):
     """An issue takes from a batch the store holds enough of, and not one past its expiry: expired cement or admixture is not
     used on site. With no batch named it takes the earliest expiry first, passing over expired stock - so there must be enough
     that has not expired."""
@@ -269,24 +296,28 @@ def _check_batch(db, store_id, item, batch, qty, on_date, label):
         if lot is None:
             raise HTTPException(409, "%s: the store holds no batch %s of %s." % (label, batch, item.item_name))
         if lot["on_hold"]:
-            raise HTTPException(409, "%s: batch %s of %s is on quality hold and cannot be issued." % (label, batch, item.item_name))
+            refused = hold_refusal(db, lot["lot_id"])
+            raise LotOnHold(refused.lot_id, refused.hold_reason, refused.code, str(refused))
         if lot["state"] == "EXPIRED":
             raise HTTPException(409, "%s: batch %s of %s expired on %s and is not issued. Write it off under Control, or choose another batch." % (
                 label, batch, item.item_name, lot["expiry_date"]))
         if qty > Decimal(lot["qty"]):
             raise HTTPException(409, "%s: only %s %s of batch %s is on hand; %s was asked for. Split the line over another batch." % (
                 label, lot["qty"], base_uom_of(db, item), batch, s3(qty)))
-        return
+        first = earlier_lot(db, store_id, item, batch, on_date, taken)
+        if first is not None and fefo_reason is not None and not fefo_reason.strip():
+            raise FefoReasonNeeded(batch, first["batch_no"])
+        return first["batch_no"] if first else None
     held, fit = get_balance(db, store_id, item.id).qty, usable_qty(db, store_id, item.id, on_date)
     if fit < held and qty > fit:
-        raise HTTPException(409, "%s: only %s %s of %s can be issued (%s %s is expired or on quality hold). Write the expired stock off under Control." % (
+        raise HTTPException(409, "%s: only %s %s of %s has not expired and is not on hold (%s %s is expired or held). Write the expired stock off under Control." % (
             label, s3(fit), base_uom_of(db, item), item.item_name, s3(held - fit), base_uom_of(db, item)))
 
 
 def write_issue_lines(db, issue, lines):
     db.query(DBStoreIssueLine).filter(DBStoreIssueLine.issue_id == issue.id).delete(synchronize_session=False)
     for n, l in enumerate(lines, 1):
-        db.add(DBStoreIssueLine(issue_id=issue.id, line_no=n, item_id=l["item"].id, entry_uom=l["entry_uom"], entry_qty=l["entry_qty"], qty=l["qty"], boq_item_id=l["boq_item_id"],
+        db.add(DBStoreIssueLine(fefo_reason=l.get("fefo_reason", ""), fefo_skipped=l.get("fefo_skipped", ""), issue_id=issue.id, line_no=n, item_id=l["item"].id, entry_uom=l["entry_uom"], entry_qty=l["entry_qty"], qty=l["qty"], boq_item_id=l["boq_item_id"],
                                 cost_head=l["cost_head"], chargeable=l["chargeable"], recovery_rate=l["recovery_rate"], recovery_basis=l["recovery_basis"], handling_pct=l["handling_pct"],
                                 expected_return_date=l["due"], remarks=l["remarks"], indent_line_id=l["indent_line_id"], batch_no=l["batch_no"]))
     db.flush()
@@ -351,7 +382,12 @@ def issue_post(db, actor, issue):
     mtype = MovementType.SUBCON_ISSUE_OUT if issue.issue_type == SUBCONTRACTOR else MovementType.ISSUE_OUT
     for l in issue_lines(db, issue):
         item = db.get(models.DBItem, l.item_id)
-        _check_batch(db, issue.store_id, item, l.batch_no or "", Decimal(str(l.qty)), issue.issue_date, "Line %d" % (l.line_no or 0))
+        skipped = _check_batch(db, issue.store_id, item, l.batch_no or "", Decimal(str(l.qty)), issue.issue_date, "Line %d" % (l.line_no or 0), l.fefo_reason or "")
+        l.fefo_skipped = skipped or ""
+        if skipped:
+            # Stamped as it goes out: who passed over which lot, when and why, whether or not the lots have since moved.
+            l.fefo_by, l.fefo_at = actor.name, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log(db, actor, ISSUE, issue.id, "fefo_override", "", "", "Line %s: took %s over %s. %s" % (l.line_no, l.batch_no, skipped, l.fefo_reason))
         # The batch named comes out of that batch; with none named, the earliest expiry that has not expired.
         lot = find_lot(db, issue.store_id, l.item_id, l.batch_no) if (l.batch_no or "").strip() else None
         entry = post_movement(db, movement_type=mtype, store_id=issue.store_id, item_id=l.item_id, qty=l.qty, rate=None, txn_date=issue.issue_date, project_id=issue.project_id,
@@ -645,6 +681,7 @@ def get_subcon_issues(db, subcontractor_id, upto_date) -> List[SubconIssueLine]:
     back = _taken_back(db, ids, (DocStatus.POSTED.value,))
     recs = {r.issue_line_id: r for r in db.query(DBStoreRecovery).filter(DBStoreRecovery.issue_line_id.in_(ids or [0]), DBStoreRecovery.source == "ISSUE", DBStoreRecovery.status == "OPEN").all()}
     out = []
+    spoken = {}
     for l, issue in rows:
         returned = back.get(l.id, (ZERO, ZERO))[0]
         rec = recs.get(l.id)

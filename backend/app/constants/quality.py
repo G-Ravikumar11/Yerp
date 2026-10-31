@@ -51,9 +51,9 @@ CUBE_AGES = (7, 28)           # what a set is scheduled for when the project has
 
 INSPECTION_RESULTS = ("OPEN", "PASSED", "FAILED")          # shown as Pending, Passed, Failed
 
-NCR_STATUSES = ("OPEN", "ASSIGNED", "UNDER_CORRECTION", "REINSPECTION", "CLOSED")
+NCR_STATUSES = ("OPEN", "ASSIGNED", "UNDER_CORRECTION", "REINSPECTION", "CLOSED", "REJECTED")
 NCR_LABELS = {"OPEN": "Open", "ASSIGNED": "Assigned", "UNDER_CORRECTION": "Under correction",
-              "REINSPECTION": "Reinspection", "CLOSED": "Closed"}
+              "REINSPECTION": "Reinspection", "CLOSED": "Closed", "REJECTED": "Rejected"}
 NCR_SEVERITIES = ("Minor", "Major", "Critical")
 # An NCR with a root cause required is one that is not a small matter.
 NCR_ROOT_CAUSE_FROM = ("Major", "Critical")

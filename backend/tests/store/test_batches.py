@@ -4,6 +4,11 @@ batch is not issued, and issuing uses the oldest lots up first."""
 import uuid
 from datetime import date, timedelta
 
+import pytest
+
+import main
+from app import models
+
 from store.test_cutover import _company, _hub, _leave_no_stock_behind, ok, walk  # noqa: F401
 
 TODAY = date.today()
@@ -70,3 +75,55 @@ def test_receipt_dates_are_checked(account):
     # A date given by hand is kept, not replaced by the cement rule.
     body["lines"][0]["expiry_date"] = (TODAY + timedelta(days=30)).isoformat()
     assert ok(t.post("/api/store/inward/grn", json=body))["lines"][0]["expiry_date"] == (TODAY + timedelta(days=30)).isoformat()
+
+
+def _issue_lines(t, central, w, lines):
+    return t.post("/api/store/outward/issue/direct", json={
+        "store_id": central["id"], "issue_date": TODAY.isoformat(), "project_id": w["job"], "received_by_type": "FOREMAN", "received_by_name": "Suresh",
+        "lines": [dict({"item_id": w["item"], "uom": "bag", "cost_head": "OVERHEAD"}, **l) for l in lines]})
+
+
+def test_passing_over_an_earlier_expiry_takes_a_reason_that_stays_on_the_record(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    _receive(t, central, w["item"], "E-FIRST", TODAY - timedelta(days=40))
+    _receive(t, central, w["item"], "E-LATER", TODAY - timedelta(days=5))
+
+    res = _issue_lines(t, central, w, [{"qty": "5", "batch_no": "E-LATER"}])
+    assert res.status_code == 409
+    body = res.json()
+    assert body["code"] == "FEFO_REASON_REQUIRED" and body["skippedLot"] == "E-FIRST" and body["selectedLot"] == "E-LATER"
+    assert body["message"] == "An earlier-expiry material lot is available. Please provide a reason for selecting this later-expiry lot."
+
+    assert _issue_lines(t, central, w, [{"qty": "5", "batch_no": "E-FIRST"}]).status_code == 200       # the right lot asks nothing
+    res = _issue_lines(t, central, w, [{"qty": "5", "batch_no": "E-LATER", "fefo_reason": "Pile in front, the older is under the shed"}])
+    assert res.status_code == 200, res.text
+    with main.SessionLocal() as db:
+        from app.models.store_outward import DBStoreIssueLine
+        l = db.query(DBStoreIssueLine).filter(DBStoreIssueLine.batch_no == "E-LATER").order_by(DBStoreIssueLine.id.desc()).first()
+        assert l.fefo_skipped == "E-FIRST" and l.fefo_reason.startswith("Pile in front") and l.fefo_by and l.fefo_at
+
+
+def test_one_issue_that_uses_up_a_lot_may_go_on_to_the_next_without_a_reason(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    _receive(t, central, w["item"], "M-FIRST", TODAY - timedelta(days=40))
+    _receive(t, central, w["item"], "M-LATER", TODAY - timedelta(days=5))
+    res = _issue_lines(t, central, w, [{"qty": "100", "batch_no": "M-FIRST"}, {"qty": "1", "batch_no": "M-LATER", "cost_head": "SAFETY"}])
+    assert res.status_code == 200, res.text
+
+
+def test_a_tracked_item_cannot_be_received_without_its_dates_and_the_makers_expiry_stands(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    with main.SessionLocal() as db:
+        i = db.get(models.DBItem, w["item"])
+        i.shelf_life_applicable, i.shelf_life_days, i.expiry_tracking = True, 30, True
+        db.commit()
+    made = TODAY - timedelta(days=3)
+    assert _receive(t, central, w["item"], "T-WORKED", made)["lines"][0]["expiry_date"] == (made + timedelta(days=30)).isoformat()
+    with pytest.raises(Exception):
+        _receive(t, central, w["item"], "T-NONE", None)

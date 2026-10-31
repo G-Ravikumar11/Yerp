@@ -193,7 +193,8 @@ def test_a_failure_part_way_leaves_nothing_changed(tenant, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("power cut")
     monkeypatch.setattr(item_merge.models, "DBItemMerge", boom)
-    assert tenant.post("/api/items/merge", json={"primary_id": keep["id"], "item_ids": [dup]}).status_code != 200
+    with pytest.raises(RuntimeError):        # the test client passes the crash on rather than answering 500
+        tenant.post("/api/items/merge", json={"primary_id": keep["id"], "item_ids": [dup]})
     monkeypatch.undo()
     assert balance(dup, st).qty == 5 and balance(keep["id"], st) is None
 

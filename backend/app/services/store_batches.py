@@ -23,9 +23,17 @@ def is_cement(item) -> bool:
     return bool(item is not None and _CEMENT.search(item.item_name or ""))
 
 
+def shelf_days(item):
+    """The item's own shelf life, or cement's ninety days where nobody has set one. None for anything else."""
+    if item is not None and item.shelf_life_applicable and item.shelf_life_days:
+        return int(item.shelf_life_days)
+    return CEMENT_SHELF_DAYS if is_cement(item) else None
+
+
 def default_expiry(item, manufactured):
-    """Cement's expiry when only its manufacturing date is known: ninety days on. None for anything else."""
-    return manufactured + timedelta(days=CEMENT_SHELF_DAYS) if manufactured and is_cement(item) else None
+    """Manufacturing date + shelf life, when the maker gave no expiry. Never counted from the day it was received."""
+    days = shelf_days(item)
+    return manufactured + timedelta(days=days) if manufactured and days else None
 
 
 def shelf_state(expiry, on_date):
@@ -56,7 +64,7 @@ def batches_on_hand(db, store_id, item_id, on_date=None):
                     "received_on": b.first_received.isoformat() if b is not None and b.first_received else "",
                     "manufacturing_date": b.manufacturing_date.isoformat() if b is not None and b.manufacturing_date else "",
                     "expiry_date": b.expiry_date.isoformat() if b is not None and b.expiry_date else "",
-                    "on_hold": bool(b is not None and b.on_hold), "qty": format(q.quantize(Decimal("0.001")), "f"), "state": shelf_state(b.expiry_date if b is not None else None, on_date),
+                    "on_hold": bool(b is not None and (b.on_hold or b.lot_status == "REJECTED")), "rejected": bool(b is not None and b.lot_status == "REJECTED"), "qty": format(q.quantize(Decimal("0.001")), "f"), "state": shelf_state(b.expiry_date if b is not None else None, on_date),
                     "recommended": False})
     first = next((l for l in out if l["state"] != "EXPIRED" and not l["on_hold"]), None)
     if first is not None:
@@ -67,7 +75,7 @@ def batches_on_hand(db, store_id, item_id, on_date=None):
 def usable_qty(db, store_id, item_id, on_date=None) -> Decimal:
     """What of an item a store holds that has not expired and is not on quality hold."""
     on_date = on_date or date.today()
-    return sum((q for b, q in lots_on_hand(db, store_id, item_id) if not (b is not None and b.on_hold) and not (b is not None and b.expiry_date and b.expiry_date < on_date)), ZERO)
+    return sum((q for b, q in lots_on_hand(db, store_id, item_id) if not (b is not None and (b.on_hold or b.lot_status == "REJECTED")) and not (b is not None and b.expiry_date and b.expiry_date < on_date)), ZERO)
 
 
 def find_lot(db, store_id, item_id, batch_no):

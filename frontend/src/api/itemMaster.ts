@@ -26,6 +26,9 @@ export interface MasterItem {
   is_active: boolean
   /** The brand: UltraTech, Tata Tiscon, Finolex. */
   make: string
+  shelf_life_applicable?: boolean
+  shelf_life_days?: number | null
+  expiry_tracking?: boolean
   /** The company or division the item belongs to, as the old ERP's sheet has it. */
   segment: string
   sites: number
@@ -56,6 +59,9 @@ export interface MasterItemInput {
   remarks?: string
   is_active?: boolean
   make?: string
+  shelf_life_applicable?: boolean
+  shelf_life_days?: number | null
+  expiry_tracking?: boolean
   segment?: string
 }
 

@@ -49,6 +49,7 @@ class IssueLineIn(BaseModel):
     cost_head: str = ""
     indent_line_id: Optional[int] = None  # the indent line this fills, when issued against an indent
     batch_no: str = ""                    # the batch it is taken from; an expired one is refused
+    fefo_reason: str = ""                 # why, when an earlier-expiry lot is passed over
     chargeable: bool = False              # subcontractor issue: recovered from their bill (false = free of cost)
     recovery_basis: str = ""              # CONTRACT_RATE | AVERAGE_COST (the company's usual when left out)
     recovery_rate: str = ""               # the contract rate, per base unit, when the basis is CONTRACT_RATE
@@ -241,6 +242,7 @@ def doc_dict(db, kind, doc, detail=False):
                              "cost_head": l.cost_head, "chargeable": bool(l.chargeable), "recovery_basis": l.recovery_basis or "", "handling_pct": svc.s3(l.handling_pct),
                              "recovery_rate": svc.s3(l.recovery_rate), "resolved_rate": svc.s3(recs[l.id].recovery_rate) if l.id in recs else None,
                              "expected_return_date": _iso(l.expected_return_date), "returnable": svc.is_returnable(db, l.item_id),
+                             "fefo_reason": l.fefo_reason or "", "fefo_skipped": l.fefo_skipped or "", "fefo_by": l.fefo_by or "", "fefo_at": l.fefo_at or "",
                              "outstanding": svc.s3(outstanding.get(l.id, ZERO)) if doc.status == DocStatus.POSTED.value else None, "remarks": l.remarks or "", "batch_no": l.batch_no or ""} for l in lines]
             out["warnings"] = svc.norm_warnings(db, doc)
             out["gate_passes"] = [{"id": g.id, "number": g.number, "status": g.status} for g in db.query(DBStoreGatePass).filter(DBStoreGatePass.issue_id == doc.id).order_by(DBStoreGatePass.id).all()]
