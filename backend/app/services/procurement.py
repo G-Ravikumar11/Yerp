@@ -13,6 +13,7 @@ from app.core.currency import lines_money, money, unit_rate
 from app.core.gst import gstin_valid, state_from_gstin
 from app.core.units import canonical_unit
 from app.services.store_integration import hub_debit_notes, hub_received_on_orders
+from app.services.invoicing import BILL_DEAD
 from app.services.stores import stock_movement
 
 
@@ -122,7 +123,7 @@ class OrderPrefetch:
             slot = self._received.setdefault(po_id, {})
             for line_id, qty in got.items():
                 slot[line_id] = slot.get(line_id, 0.0) + qty
-        live = {b.id: b.purchase_order_id for bs in self.all_bills.values() for b in bs if b.status != "Rejected"}
+        live = {b.id: b.purchase_order_id for bs in self.all_bills.values() for b in bs if b.status not in DEAD_BILLS}
         self._billed_lines = {}
         for bl in _in_chunks(db, models.DBBillLineItem.bill_id, live):
             key = getattr(bl, "po_line_id", None)
@@ -135,7 +136,7 @@ class OrderPrefetch:
 
     def billed(self, po_id):
         """The same answer as billed_against_po, from what was fetched."""
-        bills = [b for b in self.all_bills.get(po_id, []) if b.status != "Rejected"]
+        bills = [b for b in self.all_bills.get(po_id, []) if b.status not in DEAD_BILLS]
         return {"bills": bills,
                 "value": money(sum((b.amount if b.amount else b.total) or 0 for b in bills)),
                 "paid": money(sum(b.amount_paid or 0 for b in bills)),
@@ -356,14 +357,14 @@ def grn_apply(db, client_id, grn, action, request=None, actor_name="", comments=
 
 
 def billed_against_po(db, purchase_order_id):
-    """Value and quantity billed against an order, ignoring rejected bills.
+    """Value and quantity billed against an order, ignoring rejected and cancelled bills.
 
-    A bill that was thrown out is not a claim on anything, and counting it
-    would make an order look fully billed when nobody has been paid.
+    A bill that was thrown out or called off is not a claim on anything, and
+    counting it would make an order look fully billed when nobody has been paid.
     """
     bills = db.query(models.DBBill).filter(
         models.DBBill.purchase_order_id == purchase_order_id,
-        models.DBBill.status != "Rejected").all()
+        models.DBBill.status.notin_(DEAD_BILLS)).all()
     ids = [b.id for b in bills]
     per_line = {}
     if ids:
@@ -381,6 +382,35 @@ def billed_against_po(db, purchase_order_id):
         "paid": money(sum(b.amount_paid or 0 for b in bills)),
         "per_line": per_line,
     }
+
+
+# Bills that are no claim on an order: thrown out, or called off (the same list the bills themselves keep).
+DEAD_BILLS = BILL_DEAD
+# What the match says about a bill that must not be paid on the nod.
+AHEAD_OF_GOODS = ("OVER_BILLED", "AWAITING_RECEIPT")
+
+
+def bill_ahead_of_goods(db, bill):
+    """(verdict, note) when this bill, with the order's other live bills, claims more than has been received on its
+    order - billed with nothing received, or billed for more than arrived. None when it does not, or it is on no order.
+
+    Judged with this bill counted whatever its own status, so a draft about to be approved is weighed as the claim it
+    will become."""
+    if not getattr(bill, "purchase_order_id", None):
+        return None
+    po = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.id == bill.purchase_order_id).first()
+    if po is None:
+        return None
+    pre = OrderPrefetch(db, [po])
+    lines = pre.lines.get(po.id, [])
+    got = pre.received(po.id)
+    ordered = money(sum((l.qty or 0) * (l.price or 0) for l in lines))
+    received = money(sum(got.get(l.id, 0.0) * (l.price or 0) for l in lines))
+    others = [b for b in pre.all_bills.get(po.id, []) if b.id != bill.id and b.status not in DEAD_BILLS]
+    billed = money(sum((b.amount if b.amount else b.total) or 0 for b in others)
+                   + ((bill.amount if bill.amount else bill.total) or 0))
+    verdict, note = match_verdict(ordered, received, billed)
+    return (verdict, note) if verdict in AHEAD_OF_GOODS else None
 
 
 def match_verdict(ordered, received, billed):
@@ -528,7 +558,7 @@ def comparative_statement(db, rfq):
             "spread_percent": (round((high["rate"] - low["rate"]) / low["rate"] * 100, 1)
                                if low and low["rate"] else 0.0),
             "awarded_supplier": l.awarded_supplier or "", "awarded_rate": unit_rate(l.awarded_rate),
-            "po_id": l.po_id})
+            "po_id": l.po_id, "indent_line_id": l.indent_line_id})
     # The order each awarded line went on, by number: what the buyer looks for next; and the orders themselves, so
     # the enquiry says where its items went.
     po_ids = {r["po_id"] for r in rows if r["po_id"]}
@@ -590,7 +620,7 @@ def rfq_dict(db, r):
     job = db.query(models.DBJob).filter(models.DBJob.id == r.job_id).first() if r.job_id else None
     return {"id": r.id, "number": r.number, "title": r.title or "", "job_id": r.job_id,
             "project": ("%s %s" % (job.number, job.name)).strip() if job else "",
-            "work_order_id": r.work_order_id, "needed_by": r.needed_by or "",
+            "work_order_id": r.work_order_id, "needed_by": r.needed_by or "", "quotes_due": r.quotes_due or "",
             "status": r.status, "notes": r.notes or "", "award_reason": r.award_reason or "",
             "created_by_name": r.created_by_name or "", "awarded_at": r.awarded_at or "",
             "created_at": r.created_at or "",
@@ -661,7 +691,7 @@ def add_rfq_lines(db, rfq_id, lines):
         db.add(models.DBRfqLine(rfq_id=rfq_id, item_code=(l.get("item_code") or "").strip(),
                                 description=l["description"].strip(),
                                 uom=canonical_unit(l.get("uom")) or (l.get("uom") or ""),
-                                qty=money(l["qty"]), display_order=i))
+                                qty=money(l["qty"]), display_order=i, indent_line_id=l.get("indent_line_id") or None))
 
 
 def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, work_order_id=None):

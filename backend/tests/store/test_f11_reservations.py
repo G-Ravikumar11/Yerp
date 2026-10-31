@@ -93,3 +93,65 @@ def test_an_indent_shows_what_the_store_can_spare_and_what_must_be_bought(accoun
     draft = ok(t.post("/api/store/outward/indent", json={"store_id": central["id"], "project_id": w["job"], "activity": "Plaster", "lines": [{"item_id": w["item"], "qty": "1", "uom": "bag"}]}))
     [d] = ok(t.get("/api/store/outward/indent/%d" % draft["id"]))["lines"]
     assert d["available"] is None and d["short"] is None
+
+
+def test_an_indent_enquiry_and_order_stay_linked_and_nothing_is_bought_twice(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    _receive(t, central, w, 40)                                        # 2000 kg on hand
+    indent = _indent(t, central, w, 60)                                # wants 3000 kg: 1000 short
+    [line] = ok(t.get("/api/store/outward/indent/%d" % indent["id"]))["lines"]
+    assert (line["short"], line["on_order"], line["bought_on"]) == ("1000.000", "0.000", [])
+
+    # "Buy the short items": an enquiry line that names the indent line.
+    body = {"title": "Short for %s" % indent["number"], "job_id": w["job"],
+            "lines": [{"item_code": w["code"], "description": "Cement OPC", "uom": "kg", "qty": 1000, "indent_line_id": line["id"]}]}
+    first = ok(t.post("/api/rfqs", json=body))
+    number = first["rfq"]["number"]
+    [line] = ok(t.get("/api/store/outward/indent/%d" % indent["id"]))["lines"]
+    assert (line["short"], line["on_order"], line["bought_on"]) == ("0.000", "1000.000", [number])
+
+    # Pressed again: nothing new is raised.
+    again = t.post("/api/rfqs", json=body)
+    assert again.status_code == 409 and number in again.json()["detail"]
+
+    # Awarded: the order line carries the enquiry line and the indent line, and the indent shows the order.
+    r = t.get("/api/rfqs/%d" % first["rfq"]["id"]).json()
+    rfq_line = r["lines"][0]
+    assert rfq_line["indent_line_id"] == line["id"]
+    ok(t.post("/api/rfqs/%d/quotes" % first["rfq"]["id"], json={"supplier_name": "Shree Traders", "freight": 0,
+                                                                "lines": [{"rfq_line_id": rfq_line["rfq_line_id"], "rate": 7, "tax_percent": 18}]}))
+    award = ok(t.post("/api/rfqs/%d/award" % first["rfq"]["id"], json={"mode": "lowest_per_line"}))
+    po_number = award["orders"][0]["number"]
+    from app import db as database, models
+    with database.SessionLocal() as s:
+        [pl] = s.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == award["orders"][0]["id"]).all()
+        assert (pl.rfq_line_id, pl.indent_line_id) == (rfq_line["rfq_line_id"], line["id"])
+    [line] = ok(t.get("/api/store/outward/indent/%d" % indent["id"]))["lines"]
+    assert (line["short"], line["bought_on"]) == ("0.000", [po_number])
+    assert t.post("/api/rfqs", json=body).status_code == 409
+
+
+def test_an_enquiry_cannot_name_another_companys_indent_line(account, second_tenant):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    _receive(t, central, w, 10)
+    indent = _indent(t, central, w, 5)
+    [line] = ok(t.get("/api/store/outward/indent/%d" % indent["id"]))["lines"]
+    res = second_tenant.post("/api/rfqs", json={"title": "Not mine", "lines": [{"description": "Cement", "qty": 1, "indent_line_id": line["id"]}]})
+    assert res.status_code == 404
+
+
+def test_an_indent_nobody_is_buying_for_needs_you_until_it_is_bought(account):
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    _receive(t, central, w, 10)                                        # 500 kg
+    indent = _indent(t, central, w, 30)                                # wants 1500 kg: 1000 short
+    kinds = lambda: {i["kind"]: i for i in ok(t.get("/api/attention"))["items"]}
+    assert indent["number"] in kinds()["indents_unbought"]["detail"]
+    [line] = ok(t.get("/api/store/outward/indent/%d" % indent["id"]))["lines"]
+    ok(t.post("/api/rfqs", json={"title": "Short", "lines": [{"item_code": w["code"], "description": "Cement", "uom": "kg", "qty": 1000, "indent_line_id": line["id"]}]}))
+    assert "indents_unbought" not in kinds()

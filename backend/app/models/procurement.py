@@ -65,6 +65,9 @@ class DBPurchaseOrderLineItem(Base):
     qty = Column(Float, default=1.0)
     price = Column(Float, default=0.0)
     tax_rate = Column(String, default="20%")
+    # Where the line came from: the enquiry line it was awarded on, and the indent line that enquiry line was for.
+    rfq_line_id = Column(Integer, nullable=True, index=True)
+    indent_line_id = Column(Integer, nullable=True, index=True)
 
     order = relationship("DBPurchaseOrder", back_populates="line_items")
 
@@ -205,6 +208,12 @@ class DBRfq(Base):
     created_by_name = Column(String, default="")
     awarded_at = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    # Chasing the quotes (services/rfq_chasers.py): the date they are due, the site address the emailed links point
+    # at, when the buyer was given the L1 summary, and who opened it (to be told).
+    quotes_due = Column(String, default="")
+    link_base = Column(String, default="")
+    l1_sent_at = Column(String, default="")
+    created_by_id = Column(Integer, nullable=True)
 
 
 class DBRfqLine(Base):
@@ -220,6 +229,8 @@ class DBRfqLine(Base):
     awarded_rate = Column(Float, default=0.0)
     po_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=True)
     display_order = Column(Integer, default=0)
+    # The indent line this was raised to buy for, when it came from an indent the store could not fill.
+    indent_line_id = Column(Integer, nullable=True, index=True)
 
 
 class DBRfqQuote(Base):
@@ -264,6 +275,9 @@ class DBRfqInvite(Base):
     # A quotation sent without rates typed in (no AI to read it, or he chose not to): the buyer reads it.
     document_id = Column(Integer, nullable=True)          # a project_files row, attached as "rfq_invite"
     message = Column(Text, default="")
+    emailed_at = Column(String, default="")               # the link sent by the server
+    reminded_on = Column(String, default="")              # the last reminder's day
+    reminders = Column(Integer, default=0)
 
 
 class DBRfqQuoteLine(Base):

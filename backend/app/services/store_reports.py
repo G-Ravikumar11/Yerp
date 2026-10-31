@@ -317,13 +317,21 @@ def reorder(db, client_id, store_ids):
         if level > 0 and Decimal(str(b.qty)) <= level:
             hits.append((b, s, level, low, high))
     items = _items(db, [h[0].item_id for h in hits])
+    # What is already coming - on an open enquiry, or ordered and not yet received - is not asked for again. It is the
+    # company's, not one store's, so it is taken off the first store's suggestion for the item, then the next.
+    from app.services.buying_links import on_order
+    _by_indent, coming = on_order(db, client_id)
+    coming = dict(coming)
     rows = []
-    for b, s, level, low, high in hits:
+    for b, s, level, low, high in sorted(hits, key=lambda h: (stores[h[0].store_id].code, items[h[0].item_id].item_name or "")):
         qty = Decimal(str(b.qty))
         target = high if high > level else level * 2
+        want = max(ZERO, target - qty)
+        covered = min(want, coming.get(b.item_id, ZERO))
+        coming[b.item_id] = coming.get(b.item_id, ZERO) - covered
         rows.append({"store_id": b.store_id, "store_code": stores[b.store_id].code, "item_id": b.item_id, "item_code": items[b.item_id].item_code, "item_name": items[b.item_id].item_name,
                      "base_uom": (s.base_uom if s else items[b.item_id].units_of_measure) or "", "qty": q3(qty), "reorder_level": q3(level), "min_qty": q3(low),
-                     "suggested_qty": q3(max(ZERO, target - qty)), "below_minimum": bool(low and qty < low)})
+                     "on_order": q3(covered), "suggested_qty": q3(want - covered), "below_minimum": bool(low and qty < low)})
     rows.sort(key=lambda r: (r["store_code"], r["item_name"]))
     return {"rows": rows}
 

@@ -47,6 +47,8 @@ class MoneyIn(BaseModel):
     head: Optional[str] = ""
     # The approved payment request this payment settles, where payments need approval.
     request_id: Optional[int] = None
+    # Why a supplier bill billed ahead of the goods received is paid anyway. Refused without one.
+    override_reason: Optional[str] = ""
 
 
 class PaymentRulesIn(BaseModel):
@@ -63,6 +65,7 @@ class RequestPayIn(BaseModel):
     reference: Optional[str] = ""
     account_id: Optional[int] = None
     amount: Optional[float] = None         # less than approved, if only part is paid now
+    override_reason: Optional[str] = ""    # as on MoneyIn: paying a bill billed ahead of the goods
 
 
 class SiteCashExpenseIn(BaseModel):

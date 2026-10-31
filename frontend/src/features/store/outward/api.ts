@@ -156,7 +156,9 @@ export const headLabel = (h: string | null) => (h ? h.replace(/_/g, ' ').toLower
 /** Indents: a site engineer's request for material, approved by the project manager, then filled by issues. */
 export interface IndentLine { id: number; item_id: number; item_code: string; item_name: string; base_uom: string; entry_uom: string; entry_qty: string; qty: string; approved_qty: string | null; fulfilled: string; pending: string | null; purpose: string; reason?: string; substitute_for_line_id?: number | null
   /** Once approved: what the store can spare toward what is pending (after other indents' holds), and the rest, to be bought. */
-  available?: string | null; short?: string | null }
+  available?: string | null; short?: string | null
+  /** Already being bought for it - on an open enquiry, or ordered and not yet received - and where ("RFQ-0003", "PO-0012"). */
+  on_order?: string | null; bought_on?: string[] }
 export interface Indent {
   id: number; number: string; status: 'DRAFT' | 'SUBMITTED' | 'OPEN' | 'PARTIAL' | 'CLOSED' | 'CANCELLED'; store_id: number; store_code: string; store_name: string; date: string; required_by: string
   project_id: number; project: string; work_order_id: number | null; work_order: string; boq_item_id: number | null; boq_item: string; activity: string; remarks: string; requested_by: string

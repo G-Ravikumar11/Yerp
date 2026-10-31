@@ -89,6 +89,13 @@ export function HistoryModal({ id, onClose }: { id: number | null; onClose: () =
               <tbody>{d.history.slice().reverse().map((h, i) => <tr key={i} className={`border-t border-border ${h.current ? 'font-semibold' : 'text-muted-foreground'}`}><td className="tabular px-3 py-2">{i + 1}</td><td className="px-3 py-2 font-mono">{h.revision}</td><td className="px-3 py-2">{h.status}</td><td className="px-3 py-2">{formatDate(h.received_on)}</td><td className="px-3 py-2">{h.received_from}</td><td className="px-3 py-2">{h.remarks}</td><td className="px-3 py-2 text-right">{h.file_id && <OpenFile className="text-primary hover:underline" id={h.file_id} name={`${d.number} rev ${h.revision}`}>Open</OpenFile>}</td></tr>)}</tbody>
             </table>
           </div>
+          {(d.status_log ?? []).length > 0 && (
+            <section aria-label="Status changes" className="mt-4">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status changes</p>
+              <ul className="space-y-0.5 text-[13px]">{(d.status_log ?? []).map((l, i) => <li key={i}><span className="text-muted-foreground">{formatDate(l.at.slice(0, 10))}{l.by ? ` · ${l.by}` : ''}:</span> {l.change}</li>)}</ul>
+            </section>
+          )}
+          {d.deletable === false && <p className="mt-3 text-xs text-muted-foreground">Released Good for construction at some point, so it stays on the register: supersede it with a new revision instead of deleting it.</p>}
           {d.current_revision && <div className="mt-4 flex flex-wrap gap-2">{['For approval', 'Approved', 'Good for construction'].map((s) => <Button key={s} size="sm" variant="outline" loading={move.isPending && move.variables === s} onClick={() => move.mutate(s)}>Mark {s.toLowerCase()}</Button>)}</div>}
         </div>
       )}

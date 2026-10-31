@@ -6,7 +6,11 @@ export const drwKeys = { all: ['drawings'] as const }
 export interface Drawing { id: number; number: string; title: string; discipline: string; current_revision: string; revisions: number; status: string; received_on: string; current_file_id: number | null }
 export interface DrawingRegister { drawings: Drawing[]; disciplines: string[]; statuses: string[]; summary: { drawings: number; gfc: number; awaiting: number } }
 interface Revision { revision: string; status: string; received_on: string; received_from: string; remarks: string; file_id: number | null; current: boolean }
-export interface DrawingHistory { id: number; number: string; title: string; current_revision: string; history: Revision[] }
+export interface DrawingHistory { id: number; number: string; title: string; current_revision: string; history: Revision[]
+  /** Every status change, from the log. */
+  status_log?: { at: string; by: string; change: string }[]
+  /** False once it has ever been released Good for construction: it stays on the register. */
+  deletable?: boolean }
 
 export const useDrawings = (job: number) => useQuery({ queryKey: ['drawings', 'register', job], enabled: job > 0, queryFn: () => get<DrawingRegister>(`/api/jobs/${job}/drawings`) })
 export const useDrawing = (id: number | null) => useQuery({ queryKey: ['drawings', 'one', id], enabled: !!id, queryFn: async () => (await get<{ drawing: DrawingHistory }>(`/api/drawings/${id}`)).drawing })

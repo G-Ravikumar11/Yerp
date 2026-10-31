@@ -566,12 +566,14 @@ def indent_dict(db, indent, detail=False):
     if detail:
         items = _items(db, [l.item_id for l in lines])
         spare = _spare_stock(db, indent, lines)
+        from app.services.buying_links import on_order
+        buying, _by_item = on_order(db, indent.client_id)
         notes = {n.indent_line_id: n for n in db.query(DBStoreIndentLineNote).filter(DBStoreIndentLineNote.indent_line_id.in_([l.id for l in lines] or [0])).all()}
         out["lines"] = [{"id": l.id, "item_id": l.item_id, "item_code": items[l.item_id].item_code, "item_name": items[l.item_id].item_name, "base_uom": svc.base_uom_of(db, items[l.item_id]),
                          "entry_uom": l.entry_uom or "", "entry_qty": svc.s3(l.entry_qty), "qty": svc.s3(l.qty), "approved_qty": None if l.approved_qty is None else svc.s3(l.approved_qty),
                          "fulfilled": svc.s3(done.get(l.id, ZERO)), "pending": svc.s3(max(ZERO, Decimal(str(l.approved_qty or 0)) - done.get(l.id, ZERO))) if l.approved_qty is not None else None,
                          "purpose": l.purpose or "", "reason": notes[l.id].reason or "" if l.id in notes else "", "substitute_for_line_id": notes[l.id].substitute_for_line_id if l.id in notes else None,
-                         **_shortfall(l, done, spare)}
+                         **_shortfall(l, done, spare, buying.get(l.id))}
                         for l in lines]
         out["history"] = [{"action": h.action, "from": h.from_status, "to": h.to_status, "by": h.user_name, "at": h.at.isoformat(timespec="seconds") if h.at else "", "note": h.note or ""}
                           for h in db.query(DBStoreOutwardLog).filter(DBStoreOutwardLog.doc_type == INDENT, DBStoreOutwardLog.doc_id == indent.id).order_by(DBStoreOutwardLog.id).all()]
@@ -590,16 +592,20 @@ def _spare_stock(db, indent, lines):
     return {i: max(ZERO, held.get(i, ZERO) - others.get((indent.store_id, i), ZERO)) for i in ids}
 
 
-def _shortfall(line, done, spare):
-    """For an approved line still to be issued: what the store can spare toward it, and what it is short - the part to buy."""
+def _shortfall(line, done, spare, buying=None):
+    """For an approved line still to be issued: what the store can spare toward it, what is already being bought for it
+    (on an open enquiry, or ordered and not yet received) and where, and what is still short - the part nobody is
+    buying yet."""
     if line.approved_qty is None:
-        return {"available": None, "short": None}
+        return {"available": None, "short": None, "on_order": None, "bought_on": []}
     pending = max(ZERO, Decimal(str(line.approved_qty)) - done.get(line.id, ZERO))
     can = spare.get(line.item_id, ZERO)
     # Two lines of the same item draw on the same stock: what one takes, the next cannot.
     give = min(pending, can)
     spare[line.item_id] = can - give
-    return {"available": svc.s3(give), "short": svc.s3(pending - give)}
+    coming = min(pending - give, (buying or {}).get("qty", ZERO))
+    return {"available": svc.s3(give), "short": svc.s3(pending - give - coming), "on_order": svc.s3((buying or {}).get("qty", ZERO)),
+            "bought_on": (buying or {}).get("refs", [])}
 
 
 def _indent_values(db, actor, body):

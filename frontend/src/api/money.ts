@@ -6,6 +6,8 @@ export interface Outstanding {
   worth: number
   settled: number
   outstanding: number
+  /** A supplier bill that claims more than has been received on its order: paying it needs an override reason. */
+  ahead_of_goods?: { verdict: 'OVER_BILLED' | 'AWAITING_RECEIPT'; note: string } | null
   entries: { paid_on: string; number: string; amount: number; mode: string; reference: string; voided: boolean }[]
 }
 
@@ -35,6 +37,7 @@ export interface PaymentInput {
   reference: string
   note: string
   account_id: number | null
+  override_reason?: string
 }
 
 export const recordPayment = (p: PaymentInput) => post<{ message: string }>('/api/money/entries', p)

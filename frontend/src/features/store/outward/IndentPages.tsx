@@ -137,6 +137,7 @@ export function IndentPage() {
     { id: 'iss', header: 'Issued', align: 'right', width: '8rem', cell: (l) => `${num(l.fulfilled)} ${l.base_uom}` },
     { id: 'pen', header: 'Pending', align: 'right', width: '8rem', cell: (l) => (l.pending == null ? '-' : `${num(l.pending)} ${l.base_uom}`) },
     ...(open ? [{ id: 'short', header: 'Short in store', align: 'right' as const, width: '9rem', cell: (l: IndentLine) => (Number(l.short ?? 0) > 0 ? <span className="font-medium text-danger">{num(l.short)} {l.base_uom}</span> : <span className="text-muted-foreground">-</span>) }] : []),
+    { id: 'buying', header: 'Being bought', width: '11rem', hideBelow: 'sm', cell: (l: IndentLine) => ((l.bought_on ?? []).length ? <div><div className="text-[13px]">on {(l.bought_on ?? []).join(' / ')}</div>{Number(l.on_order ?? 0) > 0 && <div className="text-xs text-muted-foreground">{num(l.on_order)} {l.base_uom} coming</div>}</div> : <span className="text-muted-foreground">-</span>) },
     { id: 'why', header: 'Purpose', hideBelow: 'md', cell: (l) => <div>{l.purpose || '-'}{l.reason && <div className="text-xs text-warning">{l.substitute_for_line_id ? 'Substituted: ' : 'Cut back: '}{l.reason}</div>}</div> },
   ]
   const facts: [string, string][] = [['Store', `${d.store_code} - ${d.store_name}`], ['Raised', `${dmy(d.date)} by ${d.requested_by}`], ['Needed by', d.required_by ? dmy(d.required_by) : '-'], ['Project', d.project], ['Work order', d.work_order || '-'],
@@ -170,7 +171,7 @@ export function IndentPage() {
         <EnquiryFromLines title={`${d.number} - short items for ${d.activity || d.project}`} jobId={d.project_id} neededBy={d.required_by}
           notes={`Raised from indent ${d.number} (${d.store_code}): what the store could not give from stock.`}
           description={`The items ${d.store_code} is short of for ${d.number}, at the quantity still to find. Change what is needed, then ask suppliers for quotes from the enquiry.`}
-          lines={short.map((l) => ({ key: String(l.id), item_code: l.item_code, item_name: l.item_name, uom: l.base_uom, qty: String(Number(l.short)), note: `short by ${num(l.short)} ${l.base_uom} on ${d.number}`, on: true }))}
+          lines={short.map((l) => ({ key: String(l.id), item_code: l.item_code, item_name: l.item_name, uom: l.base_uom, qty: String(Number(l.short)), note: `short by ${num(l.short)} ${l.base_uom} on ${d.number}`, on: true, indent_line_id: l.id }))}
           onClose={() => setBuying(false)} />
       )}
       <Modal open={!!reason} onOpenChange={(o) => !o && setReason(null)} title={reason === 'close' ? 'Close this indent short?' : 'Cancel this indent?'} description={reason === 'close' ? 'What is still pending will not be issued.' : 'Nothing has been issued against it.'}>

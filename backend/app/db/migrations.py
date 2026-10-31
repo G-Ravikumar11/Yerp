@@ -132,6 +132,13 @@ STORE_OUTWARD_COLUMNS = (
     ("store_purchase_return_line", "rate", "NUMERIC(18,4) DEFAULT 0"), ("store_purchase_return_line", "value", "NUMERIC(18,2) DEFAULT 0"),
     ("store_purchase_return_line", "tax_pct", "NUMERIC(7,3) DEFAULT 0"), ("store_purchase_return_line", "tax_value", "NUMERIC(18,2) DEFAULT 0"),
     ("store_writeoff_request", "requested_by_id", "INTEGER"), ("purchase_order_line_items", "item_id", "INTEGER"),
+    # The thread from an indent to its enquiry and order: what each enquiry line and order line was raised for.
+    ("rfq_lines", "indent_line_id", "INTEGER"), ("purchase_order_line_items", "rfq_line_id", "INTEGER"),
+    ("purchase_order_line_items", "indent_line_id", "INTEGER"),
+    # Suppliers chased for their quotes: when they are due, where the links point, who opened it, and what was sent.
+    ("rfqs", "quotes_due", "VARCHAR DEFAULT ''"), ("rfqs", "link_base", "VARCHAR DEFAULT ''"), ("rfqs", "l1_sent_at", "VARCHAR DEFAULT ''"),
+    ("rfqs", "created_by_id", "INTEGER"), ("rfq_invites", "emailed_at", "VARCHAR DEFAULT ''"), ("rfq_invites", "reminded_on", "VARCHAR DEFAULT ''"),
+    ("rfq_invites", "reminders", "INTEGER DEFAULT 0"),
 )
 
 SUBCONTRACT_CONTROL_COLUMNS = (
@@ -171,6 +178,8 @@ BILL_GST_COLUMNS = (
     ("bills", "sgst", "DOUBLE PRECISION", "FLOAT"),
     ("bills", "igst", "DOUBLE PRECISION", "FLOAT"),
     ("bills", "itc_eligible", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
+    # A drawing ever released Good for construction stays on the register.
+    ("drawings", "ever_gfc", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
     ("bills", "reverse_charge", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
     ("eway_bills", "ewb_generated_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
 )

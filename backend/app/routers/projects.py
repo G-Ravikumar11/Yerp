@@ -885,7 +885,10 @@ def job_pnl_export(job_id: int, request: Request, db: Session = Depends(get_db))
 @router.get("/api/attention")
 def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
-    return cached_read(("attention", client.id), lambda: attention_payload(db, client.id))
+    # Buying's items (billed ahead of the goods, late deliveries, indents nobody is buying for, drawings waiting) sit
+    # beside the project list's own.
+    from app.services.attention_buying import buying_items, with_buying
+    return cached_read(("attention", client.id), lambda: with_buying(attention_payload(db, client.id), buying_items(db, client.id)))
 
 
 @router.get("/api/jobs/{job_id}/equipment")

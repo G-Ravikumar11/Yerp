@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { get } from '@/lib/api'
-import { cashFlow, type LedgerEntry } from '@/lib/cashflow'
+import { withLabels, type MonthFlow } from '@/lib/cashflow'
 
 export interface AttentionItem {
   kind: string
@@ -57,11 +57,11 @@ export const useProjectPnl = (enabled: boolean) =>
     ...opts,
   })
 
-/** The last twelve months of money in and out, from the ledger. */
+/** The last twelve months of money in and out, totalled by the server over the whole ledger. */
 export const useCashFlow = (enabled: boolean) =>
   useQuery({
     queryKey: ['dashboard', 'cashflow'],
-    queryFn: async () => cashFlow((await get<{ entries: LedgerEntry[] }>('/api/money/entries')).entries, 12),
+    queryFn: async () => withLabels((await get<{ months: Omit<MonthFlow, 'label'>[] }>('/api/money/cash-flow?months=12')).months),
     enabled,
     ...opts,
   })
@@ -70,6 +70,9 @@ export const useCashFlow = (enabled: boolean) =>
 export function attentionHref(view: string): { to: string; external: boolean } {
   const ported: Record<string, string> = {
     'subcontracts-view': '/subcontractors/work-orders',
+    'purchase-orders-view': '/store/purchase-orders',
+    'indents-view': '/store/hub/outward/indent',
+    'drawings-view': '/projects/drawings',
     'subbills-view': '/subcontractors/ra-bills',
     'vendors-view': '/subcontractors/vendors',
     'compliance-view': '/subcontractors/compliance',

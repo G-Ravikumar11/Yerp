@@ -11,11 +11,11 @@ export interface AwardPreset {
   supplier?: string
 }
 
-/** The award makes the purchase orders, as drafts. Anybody but the lowest has to be explained, so the file shows why. */
+/** The award makes the purchase orders and sends them for approval; once approved, each is emailed to its supplier. Anybody but the lowest has to be explained, so the file shows why. */
 export function AwardModal({ statement, open, preset, onClose }: { statement: Statement; open: boolean; preset: AwardPreset | null; onClose: () => void }) {
   return (
     <Modal open={open && !!preset} onOpenChange={(o) => !o && onClose()} size="lg" title={`Award ${statement.rfq.number}`}
-      description="The purchase orders are made as drafts under Purchase Orders, at the rates quoted. Nothing goes to a supplier until you send it.">
+      description="The purchase orders are made at the rates quoted and sent for approval. Once approved, each is emailed to its supplier with the PDF.">
       {open && preset && <Form statement={statement} preset={preset} onClose={onClose} />}
     </Modal>
   )

@@ -3,7 +3,7 @@ import { Check, FileText, X } from 'lucide-react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, NumField, Select, Stat, StatGrid, Tabs } from '@/components/ui'
 import { ledgerKeys, useAccounts, voucherUrl } from '@/api/ledger'
-import { PAY_MODES } from '@/api/money'
+import { PAY_MODES, useOutstanding } from '@/api/money'
 import {
   cancelPaymentRequest, decidePaymentRequest, payPaymentRequest, paymentKeys, usePaymentRequests, usePaymentRules,
   type PaymentRequest, type RequestStatus,
@@ -106,7 +106,11 @@ function PayRequestModal({ request: x, onClose }: { request: PaymentRequest; onC
   const [mode, setMode] = useState(x.mode || 'Bank transfer')
   const [ref, setRef] = useState('')
   const [account, setAccount] = useState(x.account_id ? String(x.account_id) : '')
-  const save = useAction(() => payPaymentRequest(x.id, { paid_on: on, mode, reference: ref, account_id: Number(account) || null, amount }), {
+  // A supplier bill billed ahead of the goods: paying it needs a reason, as everywhere else.
+  const bill = useOutstanding('supplier_bill', x.doc_id ?? 0, x.doc_type === 'supplier_bill' && !!x.doc_id)
+  const ahead = bill.data?.ahead_of_goods
+  const [override, setOverride] = useState('')
+  const save = useAction(() => payPaymentRequest(x.id, { paid_on: on, mode, reference: ref, account_id: Number(account) || null, amount, override_reason: override.trim() }), {
     invalidate: [paymentKeys.all, ledgerKeys.all, ['owed'], ['money'], ['projects']],
     onSuccess: (res) => { onClose(); window.open(voucherUrl(res.entry.id), '_blank', 'noopener') },
   })
@@ -119,6 +123,14 @@ function PayRequestModal({ request: x, onClose }: { request: PaymentRequest; onC
         <div><dt className="text-xs text-muted-foreground">For</dt><dd className="font-medium">{against(x) || '-'}</dd></div>
         <p className="text-xs text-muted-foreground sm:col-span-3">Approved and locked. To pay someone else or charge another project, raise a new request.</p>
       </dl>
+      {ahead && (
+        <div role="alert" className="mb-4 grid gap-3 rounded-lg border border-danger/40 bg-danger-soft p-3 text-[13.5px]">
+          <p><strong className="text-danger">{ahead.verdict === 'AWAITING_RECEIPT' ? 'Nothing received on this order yet.' : 'Billed for more than was received.'}</strong> {ahead.note}</p>
+          <Field label="Override reason" htmlFor="pr-override" hint="Why it is paid before the goods are in. Kept with the payment and in the audit trail.">
+            <Input id="pr-override" value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Advance agreed in the order terms" />
+          </Field>
+        </div>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Amount" htmlFor="pr-amount" hint={`Approved: ${formatINR(x.amount)}`}><NumField id="pr-amount" value={amount} onValue={setAmount} /></Field>
         <Field label="Date" htmlFor="pr-date"><Input id="pr-date" type="date" value={on} onChange={(e) => setOn(e.target.value)} /></Field>
@@ -129,7 +141,7 @@ function PayRequestModal({ request: x, onClose }: { request: PaymentRequest; onC
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={save.isPending} disabled={amount <= 0 || amount > x.amount + 0.009} onClick={() => save.mutate()}>Pay {formatINR(amount)} and print the voucher</Button>
+        <Button loading={save.isPending} disabled={amount <= 0 || amount > x.amount + 0.009 || (!!ahead && override.trim().length < 5)} onClick={() => save.mutate()}>Pay {formatINR(amount)} and print the voucher</Button>
       </div>
     </Modal>
   )

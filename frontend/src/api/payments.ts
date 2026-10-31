@@ -76,6 +76,6 @@ export interface RequestInput {
 export const raisePaymentRequest = (b: RequestInput) => post<{ request: PaymentRequest; message: string }>('/api/payment-requests', b)
 export const decidePaymentRequest = (id: number, decision: 'approve' | 'reject', note = '') =>
   post<{ request: PaymentRequest; message: string }>(`/api/payment-requests/${id}/decide`, { decision, note })
-export const payPaymentRequest = (id: number, b: { paid_on: string; mode: string; reference: string; account_id: number | null; amount?: number }) =>
+export const payPaymentRequest = (id: number, b: { paid_on: string; mode: string; reference: string; account_id: number | null; amount?: number; override_reason?: string }) =>
   post<{ entry: Entry; message: string }>(`/api/payment-requests/${id}/pay`, b)
 export const cancelPaymentRequest = (id: number) => post<{ message: string }>(`/api/payment-requests/${id}/cancel`, {})

@@ -306,7 +306,11 @@ def _party_positions(rows, credits, on_account, name_of):
 @router.get("/api/money/receivables")
 def receivables(request: Request, db: Session = Depends(get_read_db)):
     """What customers owe, and how long they have owed it."""
-    client = require_items_access(request, db, "bills.view_all")
+    return receivables_payload(db, require_items_access(request, db, "bills.view_all"))
+
+
+def receivables_payload(db, client):
+    """The receivables page's figures for one company - also what the morning digest reads, so the two agree."""
     today = date.today()
     rows, buckets = owed_to_us_rows(db, client, today), _empty_buckets()
     # A credit note after the money came in leaves the client in credit: we owe it back, or it comes off their next
@@ -357,7 +361,11 @@ def payables(request: Request, db: Session = Depends(get_read_db)):
     somebody signed for it - so it belongs here beside the supplier invoices
     rather than out of sight on the subcontract screen.
     """
-    client = require_items_access(request, db, "bills.view_all")
+    return payables_payload(db, require_items_access(request, db, "bills.view_all"))
+
+
+def payables_payload(db, client):
+    """The payables page's figures for one company - also what the morning digest reads, so the two agree."""
     today = date.today()
     jobs = {j.id: j for j in db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id).all()}
@@ -766,6 +774,20 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
         if amount > owed + 0.009:
             raise HTTPException(400, "%s has only %s left to settle; %s is more than that."
                                      % (doc.number, inr(owed), inr(amount)))
+        if doc_type == "supplier_bill":
+            # No money for goods that have not come: paying a bill billed ahead of what was received needs a reason,
+            # which is kept with the payment and in the audit trail.
+            from app.services.procurement import bill_ahead_of_goods
+            ahead = bill_ahead_of_goods(db, doc)
+            if ahead:
+                why = (body.override_reason or "").strip()
+                if len(why) < 5:
+                    raise HTTPException(409, "%s is billed ahead of the goods received: %s Give the reason it is paid "
+                                             "anyway (override reason) to pay it." % (doc.number, ahead[1]))
+                body.note = ("Override - %s: %s%s" % (ahead[0].replace("_", " ").lower(), why,
+                                                       (" | " + body.note) if body.note else ""))[:300]
+                log_audit(db, client.id, "bill_paid_ahead_of_goods", "bill", doc.id, doc.number or "",
+                          "%s; reason: %s" % (ahead[1], why), request)
         doc_number = doc.number or ""
     else:
         direction = (body.direction or "").upper()
@@ -958,7 +980,8 @@ def pay_payment_request(request_id: int, body: RequestPayIn, request: Request, d
         doc_type=r.doc_type, doc_id=r.doc_id, amount=body.amount or r.amount, paid_on=body.paid_on or "",
         mode=body.mode or r.mode or "Bank transfer", reference=body.reference or "",
         account_id=body.account_id or r.account_id, note=r.note or "", direction="OUT", party_type=r.party_type,
-        party_name=r.party_name, job_id=r.job_id, head=r.head, request_id=r.id)
+        party_name=r.party_name, job_id=r.job_id, head=r.head, request_id=r.id,
+        override_reason=body.override_reason or "")
     return record_money(money_body, request, db)
 
 
@@ -1616,6 +1639,54 @@ def money_book(request: Request, account_id: int = 0, date_from: str = "", date_
     return cash_book(db, client.id, account, date_from, date_to)
 
 
+def all_accounts_book(db, client_id):
+    """(opening, entries) for every account together: every live account's opening balance, and the live entries in
+    date order less what each account holds inside that balance already (and what went through a closed account)."""
+    held = {a.id: a for a in db.query(models.DBBankAccount).filter(models.DBBankAccount.client_id == client_id).all()}
+    balance = money(sum(a.opening_balance or 0 for a in held.values() if a.is_active is not False))
+    entries = []
+    for e in db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.client_id == client_id, models.DBMoneyEntry.voided.is_(False)).order_by(
+            models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all():
+        a = held.get(e.account_id) if e.account_id else None
+        if a is not None and (a.is_active is False or (opening_day(a) and (e.paid_on or "") < opening_day(a))):
+            continue
+        entries.append(e)
+    return balance, entries
+
+
+@router.get("/api/money/cash-flow")
+def cash_flow(request: Request, months: int = 12, db: Session = Depends(get_read_db)):
+    """Money in and out by month, and the balance at each month's end, for the dashboard - totalled here over every
+    entry, not the last thousand. A transfer between our own accounts is neither in nor out (its two legs still sit in
+    the balance, where they cancel); a voided entry is nothing. The balance starts from the accounts' opening balances
+    and agrees with the all-accounts cash book."""
+    client = require_items_access(request, db, "bills.view_all")
+    months = max(1, min(int(months or 12), 36))
+    today = datetime.now().date()
+    keys = []
+    for i in range(months - 1, -1, -1):
+        y, m = divmod(today.year * 12 + today.month - 1 - i, 12)
+        keys.append("%04d-%02d" % (y, m + 1))
+    rows = {k: {"month": k, "received": 0.0, "paid": 0.0, "moved": 0.0} for k in keys}
+    opening, entries = all_accounts_book(db, client.id)
+    for e in entries:
+        signed = e.amount if e.direction == "IN" else -e.amount
+        month = (e.paid_on or "")[:7]
+        if month < keys[0]:
+            opening += signed                                   # the balance the window starts from
+        elif month in rows:
+            rows[month]["moved"] += signed
+            if e.doc_type != "contra":
+                rows[month]["received" if e.direction == "IN" else "paid"] += e.amount
+    out, running = [], money(opening)
+    for k in keys:
+        r = rows[k]
+        running = money(running + r["moved"])
+        out.append({"month": k, "received": money(r["received"]), "paid": money(r["paid"]),
+                    "net": money(r["received"] - r["paid"]), "running": running})
+    return {"months": out, "opening": money(opening)}
+
+
 def cash_book(db, client_id, account, date_from="", date_to=""):
     """Every movement through one account (or all of them), in date order, with the balance after each."""
     q = db.query(models.DBMoneyEntry).filter(
@@ -1629,16 +1700,7 @@ def cash_book(db, client_id, account, date_from="", date_to=""):
         entries = q.order_by(models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all()
         balance = money(account.opening_balance)
     else:
-        # Every account together starts from every live account's opening balance, and leaves out what each holds
-        # inside that balance already (and what went through a closed account).
-        held = {a.id: a for a in db.query(models.DBBankAccount).filter(models.DBBankAccount.client_id == client_id).all()}
-        balance = money(sum(a.opening_balance or 0 for a in held.values() if a.is_active is not False))
-        entries = []
-        for e in q.order_by(models.DBMoneyEntry.paid_on, models.DBMoneyEntry.id).all():
-            a = held.get(e.account_id) if e.account_id else None
-            if a is not None and (a.is_active is False or (opening_day(a) and (e.paid_on or "") < opening_day(a))):
-                continue
-            entries.append(e)
+        balance, entries = all_accounts_book(db, client_id)
     rows = []
     for e in entries:
         signed = e.amount if e.direction == "IN" else -e.amount
@@ -1669,8 +1731,14 @@ def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = 
     client = require_items_access(request, db, "bills.view_all")
     doc, worth = _doc_for_any(db, client.id, doc_type, doc_id)
     got = already_settled(db, client.id, doc_type, doc, worth)
+    ahead = None
+    if doc_type == "supplier_bill":
+        # Said before the payment is tried: paying it needs a reason (record_money refuses it without one).
+        from app.services.procurement import bill_ahead_of_goods
+        found = bill_ahead_of_goods(db, doc)
+        ahead = {"verdict": found[0], "note": found[1]} if found else None
     return {"number": doc.number, "worth": worth, "settled": got,
-            "outstanding": money(max(0.0, worth - got)),
+            "outstanding": money(max(0.0, worth - got)), "ahead_of_goods": ahead,
             "entries": [money_entry_dict(e) for e in db.query(models.DBMoneyEntry).filter(
                 models.DBMoneyEntry.client_id == client.id,
                 models.DBMoneyEntry.doc_type == doc_type,

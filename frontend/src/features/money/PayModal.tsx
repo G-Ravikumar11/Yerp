@@ -69,13 +69,17 @@ function PayForm({
   const [ref, setRef] = useState('')
   const [account, setAccount] = useState(accounts.length === 1 ? String(accounts[0].id) : '')
   const [note, setNote] = useState('')
+  // A supplier bill billed ahead of the goods: no money goes out on it without a reason, which is kept with the payment.
+  const ahead = owed.ahead_of_goods
+  const [override, setOverride] = useState('')
+  const needsReason = !!ahead && verb === 'Pay' && override.trim().length < 5
 
   const rules = usePaymentRules()
   // Money out, where the company approves payments first and this is not the Master: it is sent for approval.
   const ask = verb === 'Pay' && mustAsk(rules.data, amount)
   const save = useAction(() => (ask
     ? raisePaymentRequest({ doc_type: docType, doc_id: docId, amount, mode, note, account_id: account ? Number(account) : null })
-    : recordPayment({ doc_type: docType, doc_id: docId, amount, paid_on: paidOn, mode, reference: ref, note, account_id: account ? Number(account) : null })), {
+    : recordPayment({ doc_type: docType, doc_id: docId, amount, paid_on: paidOn, mode, reference: ref, note, account_id: account ? Number(account) : null, override_reason: override.trim() })), {
     invalidate: [...invalidate.map((k) => [...k]), ['money'], paymentKeys.all],
     onSuccess: onDone,
   })
@@ -95,6 +99,17 @@ function PayForm({
           </ul>
         )}
       </div>
+      {ahead && verb === 'Pay' && (
+        <div role="alert" className="grid gap-3 rounded-lg border border-danger/40 bg-danger-soft p-3 text-[13.5px]">
+          <p><strong className="text-danger">{ahead.verdict === 'AWAITING_RECEIPT' ? 'Nothing received on this order yet.' : 'Billed for more than was received.'}</strong> {ahead.note}</p>
+          {!ask && (
+            <Field label="Override reason" htmlFor="pay-override" hint="Why it is paid before the goods are in. Kept with the payment and in the audit trail.">
+              <Input id="pay-override" value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Advance agreed in the order terms" />
+            </Field>
+          )}
+          {ask && <p className="text-xs text-muted-foreground">Whoever pays the approved request gives the override reason.</p>}
+        </div>
+      )}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Amount (₹)" htmlFor="pay-amount">
           <NumField id="pay-amount" value={amount} onValue={setAmount} autoFocus />
@@ -119,7 +134,8 @@ function PayForm({
         <Button variant="ghost" onClick={onDone}>
           Cancel
         </Button>
-        <Button loading={save.isPending} disabled={amount <= 0} onClick={() => save.mutate()}>
+        {save.error && <p role="alert" className="mr-auto self-center text-[13px] text-danger">{save.error.message}</p>}
+        <Button loading={save.isPending} disabled={amount <= 0 || (needsReason && !ask)} onClick={() => save.mutate()}>
           {ask ? `Send ${formatINR(amount)} for approval` : `${verb} ${formatINR(amount)}`}
         </Button>
       </div>
