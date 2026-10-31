@@ -50,6 +50,26 @@ def test_a_provider_refusal_is_reported_without_secrets(monkeypatch):
     assert not ok and "SMTPAuthenticationError" in msg and "app-password" not in msg
 
 
+def test_the_server_mailbox_sends_everything_even_with_gmail_connected_and_says_it_is_from_itself(monkeypatch):
+    send(monkeypatch)
+    monkeypatch.setattr(notifications, "get_stored_refresh_token", lambda db, client_id=None: "a-connected-gmail")
+    monkeypatch.setattr(notifications, "get_gmail_credentials", lambda **k: pytest.fail("Gmail is not used when the server has a mailbox"))
+    ok, _ = notifications.send_email_background("to@example.com", "Alert", "text", "Acme Builders <noreply@acme.example>", client_id=7)
+    frm, to, msg = FakeSMTP.sent[0]
+    assert ok and to == ["to@example.com"] and frm == "sender@example.com"
+    assert b"From: Acme Builders <sender@example.com>" in msg
+    assert notifications.server_mailbox() == "sender@example.com" and notifications.mail_ready(None, 7)
+
+
+def test_an_expired_gmail_connection_says_so(monkeypatch):
+    send(monkeypatch)
+    monkeypatch.delenv("SMTP_HOST")
+    monkeypatch.setattr(notifications, "get_stored_refresh_token", lambda db, client_id=None: "an-old-token")
+    monkeypatch.setattr(notifications, "get_gmail_credentials", lambda **k: None)
+    ok, msg = notifications.send_email_background("to@example.com", "Alert", "text", "Y ERP <a@b.c>")
+    assert not ok and "expired" in msg
+
+
 def test_without_any_mail_account_it_says_so(monkeypatch):
     send(monkeypatch)
     monkeypatch.delenv("SMTP_HOST")

@@ -76,6 +76,22 @@ signs in only addresses that already have a login here - it never creates one.
 The platform console's Google sign-in admits only addresses listed in
 `SUPERADMIN_EMAILS`.
 
+### One mailbox for every email (set once)
+
+Every email the app sends - alerts, daily reports, invoices, resets - can go out
+from one address that never needs connecting again:
+
+1. In that Google account: Security → 2-Step Verification on → App passwords →
+   make one (16 letters).
+2. Railway → Variables: `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`,
+   `SMTP_USER=<the address>`, `SMTP_PASSWORD=<the app password>`. Redeploy.
+
+Settings → Company email then says "Connected for good". When these are set
+they are used instead of any Gmail connected in Settings. The app password
+lasts until the account's own password is changed. (A Gmail connected with the
+button stops after 7 days while the Google app is still "Testing": publish it,
+step 1 above, to keep that one.)
+
 ## Many users (about a thousand)
 
 Measured with 100 simulated users clicking about four times faster than people do (roughly 400 people at once), one

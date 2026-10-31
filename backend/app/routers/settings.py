@@ -20,7 +20,7 @@ from app.core.currency import DEFAULT_CURRENCY
 from app.core.files import file_bytes
 from app.core.gst import state_from_gstin
 from app.core.identity import logo_link
-from app.core.notifications import NOTIFY_KINDS, get_stored_refresh_token, notify, notify_settings
+from app.core.notifications import NOTIFY_KINDS, mail_ready, notify, notify_settings
 from app.core.security import rate_limiter
 from app.schemas.settings import NotificationReadIn, NotificationSettingsIn, TaxRatesIn
 from app.services.settings import (
@@ -400,7 +400,7 @@ def get_notification_settings(request: Request, db: Session = Depends(get_read_d
     return {"emails": cfg["emails"], "whatsapp": cfg["whatsapp"], "channels": cfg["channels"],
             "kinds": NOTIFY_KINDS, "whatsapp_ready": cfg["whatsapp_ready"],
             "wa_phone_id": cfg["wa_phone_id"], "wa_token_set": bool(cfg["wa_token"]),
-            "email_ready": bool(get_stored_refresh_token(db, client_id=client.id)),
+            "email_ready": mail_ready(db, client.id),
             "site_reports": site_report_settings(db, client.id), "site_report_labels": SITE_REPORT_LABELS}
 
 

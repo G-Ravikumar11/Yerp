@@ -117,8 +117,31 @@ def prepare_email_message(to_email, subject, body_text, html_body, from_email, l
     return msg.as_string()
 
 
+def server_mailbox():
+    """The one mailbox set on the server (SMTP_HOST, SMTP_USER, SMTP_PASSWORD; SMTP_FROM if the address differs), or "".
+
+    Set once in the server's variables, it sends everything - alerts, reports, invoices, resets - and never needs
+    connecting again: a Gmail app password lasts until the account's password is changed."""
+    if not os.getenv("SMTP_HOST"):
+        return ""
+    return (os.getenv("SMTP_FROM") or os.getenv("SMTP_USER") or "").strip() or "the server's mail account"
+
+
+def mail_ready(db, client_id=None):
+    """Whether this company's email can go out: through its connected Gmail, or the server's own mailbox."""
+    return bool(server_mailbox() or get_stored_refresh_token(db, client_id=client_id))
+
+
+def _from_the_mailbox(from_email):
+    """Mail sent through the server's mailbox says it is from that mailbox, under the company's name. A From address the
+    account does not own is rewritten by Gmail and marked as spam by others."""
+    from email.utils import formataddr, parseaddr
+    address = (os.getenv("SMTP_FROM") or os.getenv("SMTP_USER") or "").strip()
+    return formataddr((parseaddr(from_email or "")[0], address)) if address else from_email
+
+
 def _send_via_smtp(to_email: str, raw_msg: str):
-    """Server-wide mail account (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD) for when no Gmail is connected."""
+    """Server-wide mail account (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD): the one mailbox for every email."""
     import smtplib
     import ssl
     host, port = os.getenv("SMTP_HOST", ""), int(os.getenv("SMTP_PORT", "587"))
@@ -148,20 +171,25 @@ def send_email_background(to_email: str, subject: str, body: str, from_email: st
         except Exception as e:
             logger.error(f"Failed to decode PDF: {e}")
 
-    raw_msg = prepare_email_message(to_email, subject, body, html_body or "", from_email, logo_data or "", pdf_bytes, pdf_filename)
+    def through_the_server():
+        raw = prepare_email_message(to_email, subject, body, html_body or "", _from_the_mailbox(from_email), logo_data or "", pdf_bytes, pdf_filename)
+        return _send_via_smtp(to_email, raw)
+
+    # One mailbox for everything: the server's, when it is set, never runs out the way a Gmail connection can.
+    if server_mailbox():
+        return through_the_server()
 
     with SessionLocal() as db:
         refresh_token = get_stored_refresh_token(db, client_id=client_id)
-
     if not refresh_token:
-        # No Gmail connected in the app: fall back to the server's own mail account, if one is configured.
-        if os.getenv("SMTP_HOST"):
-            return _send_via_smtp(to_email, raw_msg)
         logger.error(f"Email to {to_email} not sent: no Gmail connected and SMTP_HOST is not set")
         return False, "Gmail refresh token not configured"
 
+    raw_msg = prepare_email_message(to_email, subject, body, html_body or "", from_email, logo_data or "", pdf_bytes, pdf_filename)
     try:
         creds = get_gmail_credentials(access_token=None, refresh_token=refresh_token)
+        if creds is None:
+            return False, "Gmail connection has expired - connect Gmail again in Settings"
         service = build('gmail', 'v1', credentials=creds)
         encoded_message = base64.urlsafe_b64encode(raw_msg.encode('utf-8')).decode()
         send_result = service.users().messages().send(userId="me", body={'raw': encoded_message}).execute()
