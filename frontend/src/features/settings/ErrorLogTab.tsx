@@ -4,6 +4,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Input, Select, Stat, StatGrid } from '@/components/ui'
 import { useErrorLog, type LoggedError } from '@/api/errorLog'
 import { ERROR_CODES } from '@/lib/errorCodes'
+import { ErrorGroups } from '@/components/data/ErrorGroups'
 import { toast } from '@/stores/toast'
 
 const tone = (code: string) =>
@@ -95,6 +96,7 @@ export default function ErrorLogTab() {
           <Input aria-label="Search" placeholder="Search a ref, code, page or person" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
       </div>
+      <ErrorGroups groups={d?.groups ?? []} />
       <DataTable label="Error log" rows={d?.errors ?? []} columns={columns} rowKey={(e) => e.id} loading={log.isPending} empty={q || area ? 'No error matches.' : 'No errors in this period.'} />
     </div>
   )

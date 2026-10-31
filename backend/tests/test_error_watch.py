@@ -62,3 +62,16 @@ def test_a_spike_in_server_faults_alerts_the_platform_admin_once_an_hour(account
     assert run["status"] == "done" and "spike" in run["detail"]
     assert mails and mails[0][0] == "ops@example.com" and "/api/jobs" in mails[0][2]
     assert main.run_due_jobs(now=now, only="error_spike_alert")[0]["status"] == "already_done"     # once an hour
+
+
+def test_errors_are_grouped_by_code_and_screen(account, superadmin):
+    cid = client_id_of(account)
+    for n in (412, 9, 33):
+        fault(cid, path="/api/bills/%d/pay" % n)
+    fault(cid, path="/api/jobs")
+    groups = account["client"].get("/api/errors").json()["groups"]
+    top = groups[0]
+    assert (top["code"], top["screen"], top["count"]) == ("YE-SRV-01", "/api/bills/{id}/pay", 3)
+    assert any(g["screen"] == "/api/jobs" and g["count"] == 1 for g in groups)
+    sa = superadmin.get("/api/superadmin/errors").json()["groups"]
+    assert any(g["screen"] == "/api/bills/{id}/pay" and g["count"] >= 3 and g["company"] for g in sa)

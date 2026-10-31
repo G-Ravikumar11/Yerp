@@ -22,6 +22,30 @@ AREAS = {"AUTH": "Signing in", "ACCESS": "Access", "DATA": "Records", "FILE": "F
          "SRV": "Server faults", "NET": "No connection", "APP": "Screen faults"}
 
 
+def screen_of(path: str) -> str:
+    """The screen an error came from, with the record's number taken out: /api/bills/412/pay and /api/bills/9/pay are one."""
+    import re
+    p = (path or "").split("?")[0]
+    return re.sub(r"/\d+(?=/|$)", "/{id}", p) or "-"
+
+
+def groups_of(rows, with_company=None):
+    """The errors grouped by code and screen: how many, when last, the latest ref - the few causes behind many errors."""
+    out = {}
+    for r in rows:
+        key = (r.code or "", screen_of(r.path), r.client_id if with_company else None)
+        g = out.get(key)
+        if g is None:
+            g = out[key] = {"code": r.code or "", "screen": key[1], "count": 0, "last_at": "", "last_ref": ""}
+            if with_company:
+                g["company"] = with_company.get(r.client_id, "")
+        g["count"] += 1
+        if (r.at or "") >= g["last_at"]:
+            g["last_at"], g["last_ref"] = r.at or "", r.ref or ""
+    # The biggest first; of the same size, the most recent.
+    return sorted(out.values(), key=lambda g: (g["count"], g["last_at"]), reverse=True)
+
+
 def _area(code: str) -> str:
     parts = (code or "").split("-")
     return parts[1] if len(parts) > 1 else ""
@@ -59,6 +83,7 @@ def error_log(request: Request, area: str = "", q: str = "", days: int = 30, db:
                            | models.DBErrorLog.detail.ilike(like) | models.DBErrorLog.code.ilike(like)
                            | models.DBErrorLog.who.ilike(like))
     rows = rows.order_by(models.DBErrorLog.id.desc()).limit(300).all()
+    groups = groups_of(rows)
     name = _names(db, client, rows)
     return {"errors": [{"id": r.id, "at": r.at, "code": r.code, "title": CODES.get(r.code) or {
                             "YE-APP": "A screen hit a problem", "YE-NET": "Could not reach the server"}.get(r.code, ""),
@@ -66,7 +91,7 @@ def error_log(request: Request, area: str = "", q: str = "", days: int = 30, db:
                         "detail": r.detail or "", "who": name(r.who or ""), "trace": "",
                         # The traceback stays with the platform; the company is told one is kept, under the ref.
                         "has_trace": bool(r.trace)} for r in rows],
-            "areas": AREAS, "summary": {"total": sum(by_area.values()), "by_area": by_area, "days": days}}
+            "areas": AREAS, "groups": groups, "summary": {"total": sum(by_area.values()), "by_area": by_area, "days": days}}
 
 
 @router.get("/api/superadmin/errors")
@@ -94,7 +119,7 @@ def platform_errors(request: Request, area: str = "", q: str = "", client_id: in
     return {"errors": [{"id": r.id, "at": r.at, "code": r.code, "ref": r.ref, "status": r.status or 0, "method": r.method or "",
                         "path": r.path or "", "detail": r.detail or "", "who": r.who or "", "client_id": r.client_id,
                         "company": names.get(r.client_id, "") if r.client_id else "", "trace": r.trace or ""} for r in rows],
-            "areas": AREAS, "spike": spike(db), "days": days}
+            "areas": AREAS, "groups": groups_of(rows, names), "spike": spike(db), "days": days}
 
 
 class ScreenFault(BaseModel):

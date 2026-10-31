@@ -32,7 +32,7 @@ export default function DocControlPage() {
   ]
   return (
     <>
-      <PageHeader eyebrow="Projects" title="Document Control" description="What went to whom and what came back: transmittals, RFIs and submittals, each with a due date. The other party is reminded before it is due and while it is late."
+      <PageHeader eyebrow="Projects" title="Document Control" description="What went to whom and what came back: transmittals, RFIs and submittals, each with a due date. You are told before each is due and while it is late; Remind emails the other party."
         actions={<Button onClick={() => setCreating(true)}><Plus /> New {KINDS.find((k) => k.value === kind)!.label.replace(/s$/, '')}</Button>} />
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <Tabs label="Kind" value={kind} onChange={(v) => setKind(v as DocKind)} items={KINDS.map((k) => ({ value: k.value, label: k.label, count: s?.[k.value]?.open ?? 0 }))} />
@@ -40,24 +40,26 @@ export default function DocControlPage() {
       </div>
       <p className="mb-3 text-sm text-muted-foreground">{KINDS.find((k) => k.value === kind)!.blurb}{s?.[kind]?.overdue ? <strong className="ml-1 text-danger">{s[kind].overdue} overdue.</strong> : null}</p>
       <DataTable label={KINDS.find((k) => k.value === kind)!.label} rows={q.data?.items ?? []} columns={columns} rowKey={(d) => d.id} loading={q.isPending} onRowClick={(d) => setOpenId(d.id)} empty="Nothing here." />
-      {creating && <NewDoc kind={kind} purposes={q.data?.purposes ?? []} onClose={() => setCreating(false)} onMade={(id) => { setCreating(false); setOpenId(id) }} />}
+      {creating && <NewDoc kind={kind} purposes={q.data?.purposes ?? []} types={q.data?.submittal_types ?? []} onClose={() => setCreating(false)} onMade={(id) => { setCreating(false); setOpenId(id) }} />}
       {openId !== null && <DocModal id={openId} onClose={() => setOpenId(null)} />}
     </>
   )
 }
 
-function NewDoc({ kind, purposes, onClose, onMade }: { kind: DocKind; purposes: string[]; onClose: () => void; onMade: (id: number) => void }) {
+function NewDoc({ kind, purposes, types, onClose, onMade }: { kind: DocKind; purposes: string[]; types: string[]; onClose: () => void; onMade: (id: number) => void }) {
   const projects = useProjects()
   const [f, setF] = useState({ subject: '', to_party: '', to_email: '', job_id: 0, details: '', purpose: kind === 'TRANSMITTAL' ? 'For construction' : kind === 'SUBMITTAL' ? 'For approval' : '', due_date: '' })
   const [picked, setPicked] = useState<number[]>([])
+  const [drawingId, setDrawingId] = useState(0)
+  const [stype, setStype] = useState('')
   const [papers, setPapers] = useState('')
   const drawings = useDrawings(f.job_id)
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setF({ ...f, [k]: k === 'job_id' ? Number(e.target.value) || 0 : e.target.value })
   const label = KINDS.find((k) => k.value === kind)!.label.replace(/s$/, '')
-  const save = useAction(() => raiseDoc({ kind, ...f, job_id: f.job_id || null,
+  const save = useAction(() => raiseDoc({ kind, ...f, job_id: f.job_id || null, drawing_id: drawingId || null, submittal_type: stype,
     items: kind === 'TRANSMITTAL' ? [...picked.map((id) => ({ drawing_id: id })), ...papers.split('\n').map((t) => t.trim()).filter(Boolean).map((t) => ({ description: t }))] : [] }),
   { invalidate: [docKeys.all], success: (r) => r.message, onSuccess: (r) => onMade(r.item.id) })
-  const missing = !f.subject.trim() ? 'the subject' : !f.to_party.trim() ? 'who it is to' : kind === 'RFI' && !f.details.trim() ? 'the question' : ''
+  const missing = !f.subject.trim() ? 'the subject' : !f.to_party.trim() ? 'who it is to' : kind === 'RFI' && !f.details.trim() ? 'the question' : kind === 'SUBMITTAL' && !stype ? 'what kind of submittal it is' : ''
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title={`New ${label}`}>
       <form className="grid gap-4" onSubmit={(e) => { e.preventDefault(); if (!missing) save.mutate() }}>
@@ -67,6 +69,8 @@ function NewDoc({ kind, purposes, onClose, onMade }: { kind: DocKind; purposes: 
           <Field label="Their email" htmlFor="dc-email" hint="For the reminders."><Input id="dc-email" type="email" value={f.to_email} onChange={set('to_email')} /></Field>
           <Field label="Project" htmlFor="dc-job"><Select id="dc-job" value={f.job_id || ''} placeholder="No particular project" onChange={set('job_id')} options={(projects.data ?? []).map((p) => ({ value: p.id, label: projectLabel(p) }))} /></Field>
           <Field label="Reply due by" htmlFor="dc-due" hint="Reminded the day before, and every few days while late."><Input id="dc-due" type="date" min={today()} value={f.due_date} onChange={set('due_date')} /></Field>
+          {kind === 'SUBMITTAL' && <Field label="Kind" htmlFor="dc-stype"><Select id="dc-stype" value={stype} placeholder="Choose" onChange={(e) => setStype(e.target.value)} options={types.map((t) => ({ value: t, label: t }))} /></Field>}
+          {kind !== 'TRANSMITTAL' && f.job_id > 0 && <Field label="Drawing" htmlFor="dc-drawing"><Select id="dc-drawing" value={drawingId || ''} placeholder="No particular drawing" onChange={(e) => setDrawingId(Number(e.target.value) || 0)} options={(drawings.data?.drawings ?? []).map((d) => ({ value: d.id, label: `${d.number} - ${d.title}` }))} /></Field>}
           {kind !== 'RFI' && <Field label="Purpose" htmlFor="dc-purpose"><Select id="dc-purpose" value={f.purpose} onChange={set('purpose')} options={purposes.map((p) => ({ value: p, label: p }))} /></Field>}
         </div>
         <Field label={kind === 'RFI' ? 'The question' : kind === 'SUBMITTAL' ? 'What is submitted' : 'Cover note'} htmlFor="dc-details"><Textarea id="dc-details" rows={3} value={f.details} onChange={set('details')} /></Field>
@@ -100,8 +104,10 @@ function DocModal({ id, onClose }: { id: number; onClose: () => void }) {
   const [reply, setReply] = useState('')
   const [response, setResponse] = useState('')
   const [reason, setReason] = useState('')
+  const [by, setBy] = useState('')
+  const [on, setOn] = useState(today())
   const inv = { invalidate: [docKeys.all], success: (r: { message: string }) => r.message }
-  const answer = useAction(() => replyDoc(id, reply, response), inv)
+  const answer = useAction(() => replyDoc(id, reply, response, by, on), inv)
   const again = useAction(() => resubmitDoc(id), { ...inv, onSuccess: onClose })
   const close = useAction((cancel: boolean) => closeDoc(id, cancel, reason), inv)
   const remind = useAction(() => remindDoc(id), inv)
@@ -115,7 +121,10 @@ function DocModal({ id, onClose }: { id: number; onClose: () => void }) {
             <div><dt className="text-xs text-muted-foreground">Status</dt><dd><Badge tone={tone(d)} dot>{statusText(d.status)}</Badge></dd></div>
             <div><dt className="text-xs text-muted-foreground">Project</dt><dd>{d.project || '-'}</dd></div>
             <div><dt className="text-xs text-muted-foreground">Raised</dt><dd>{formatDate(d.created_at.slice(0, 10))} by {d.created_by_name || 'the Master'}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Reminders</dt><dd>{d.reminders ? `${d.reminders}, last ${formatDate(d.reminded_on)}` : 'none yet'}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Reminders sent</dt><dd>{d.reminders ? `${d.reminders}, last ${formatDate(d.reminded_on)}` : 'none yet'}</dd></div>
+            {d.drawing && <div><dt className="text-xs text-muted-foreground">Drawing</dt><dd className="font-mono">{d.drawing}</dd></div>}
+            {d.submittal_type && <div><dt className="text-xs text-muted-foreground">Kind</dt><dd>{d.submittal_type}</dd></div>}
+            {d.received_by && <div><dt className="text-xs text-muted-foreground">Received</dt><dd>by {d.received_by} on {formatDate(d.received_on)}</dd></div>}
           </dl>
           {d.details && <p className="whitespace-pre-wrap">{d.details}</p>}
           {(d.items ?? []).length > 0 && (
@@ -126,11 +135,17 @@ function DocModal({ id, onClose }: { id: number; onClose: () => void }) {
             <div className="grid gap-3 rounded-lg border border-border p-3">
               <p className="font-medium">Record the reply</p>
               <div className="flex flex-wrap gap-2">{d.replies.map((r) => <Button key={r} type="button" size="sm" variant={reply === r ? 'primary' : 'outline'} onClick={() => setReply(r)}>{statusText(r)}</Button>)}</div>
+              {d.kind === 'TRANSMITTAL' && reply && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Received by" htmlFor="dc-by"><Input id="dc-by" value={by} onChange={(e) => setBy(e.target.value)} placeholder="Name, at the other end" /></Field>
+                  <Field label="Received on" htmlFor="dc-on"><Input id="dc-on" type="date" max={today()} value={on} onChange={(e) => setOn(e.target.value)} /></Field>
+                </div>
+              )}
               {(d.kind === 'RFI' || reply === 'APPROVED_AS_NOTED' || reply === 'REJECTED') && <Field label={d.kind === 'RFI' ? 'The answer' : 'Their comments'} htmlFor="dc-resp"><Textarea id="dc-resp" rows={3} value={response} onChange={(e) => setResponse(e.target.value)} /></Field>}
               <div className="flex flex-wrap items-center justify-end gap-2">
                 {answer.error && <p role="alert" className="mr-auto text-[13px] text-danger">{answer.error.message}</p>}
                 {d.to_email && <Button type="button" variant="outline" loading={remind.isPending} onClick={() => remind.mutate()}><BellRing /> Remind {d.to_party} now</Button>}
-                <Button type="button" disabled={!reply} loading={answer.isPending} onClick={() => answer.mutate()}>Save the reply</Button>
+                <Button type="button" disabled={!reply || (d.kind === 'TRANSMITTAL' && !by.trim())} loading={answer.isPending} onClick={() => answer.mutate()}>Save the reply</Button>
               </div>
             </div>
           )}

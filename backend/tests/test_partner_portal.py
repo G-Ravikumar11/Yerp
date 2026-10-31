@@ -163,11 +163,17 @@ def test_a_supplier_sees_its_orders_and_sends_an_invoice(tenant, portal):
     join(portal, inv["invite_url"])
     orders = portal.get("/api/portal/orders").json()["orders"]
     assert [o["number"] for o in orders] == [po["number"]]
-    res = portal.post("/api/portal/invoices", data={"number": "ACC/991", "issue_date": "2026-09-20",
-                                                     "amount": "30000", "tax_amount": "8400",
-                                                     "po_number": po["number"]},
+    import json
+    [line] = portal.get("/api/portal/orders/%d" % po["id"]).json()["lines"]
+    # A single total is not taken: the invoice is entered against the order's lines.
+    total_only = portal.post("/api/portal/invoices", data={"number": "ACC/990", "amount": "30000", "po_number": po["number"]},
+                             files={"file": ("a.pdf", b"%PDF-1.4", "application/pdf")})
+    assert total_only.status_code == 400
+    res = portal.post("/api/portal/invoices", data={"number": "ACC/991", "issue_date": "2026-09-20", "po_number": po["number"],
+                                                     "lines": json.dumps([{"po_line_id": line["id"], "qty": 100}])},
                       files={"file": ("acc-991.pdf", b"%PDF-1.4 invoice", "application/pdf")})
     assert res.status_code == 200, res.text
+    assert res.json()["flagged"]                        # nothing has been received yet: taken, and flagged at once
     # It is in Supplier Bills as a draft with the invoice attached, nothing payable yet.
     bill = [b for b in tenant.get("/api/bills").json() if (b.get("number") == "ACC/991")] \
         if isinstance(tenant.get("/api/bills").json(), list) else \
@@ -175,11 +181,13 @@ def test_a_supplier_sees_its_orders_and_sends_an_invoice(tenant, portal):
     assert bill and bill[0]["status"] == "Draft"
     files = tenant.get("/api/files", params={"attached_type": "bill", "attached_id": bill[0]["id"]}).json()["files"]
     assert files and files[0]["name"] == "acc-991.pdf"
-    assert any(a["kind"] == "portal_invoice" for a in tenant.get("/api/alerts").json()["alerts"])
+    assert any(a["kind"] == "portal_invoice_over" for a in tenant.get("/api/alerts").json()["alerts"])
     mine = portal.get("/api/portal/bills").json()["bills"]
     assert mine[0]["where"] == "received - being checked" and mine[0]["left"] == 0
+    assert mine[0]["payment_status"] == "not payable yet" and mine[0]["payments"] == []
     # The same invoice twice is refused; so is somebody else's order number.
-    again = portal.post("/api/portal/invoices", data={"number": "acc/991", "amount": "1"},
+    again = portal.post("/api/portal/invoices", data={"number": "acc/991", "po_number": po["number"],
+                                                       "lines": json.dumps([{"po_line_id": line["id"], "qty": 1}])},
                         files={"file": ("a.pdf", b"%PDF", "application/pdf")})
     assert again.status_code == 409
 
@@ -194,7 +202,8 @@ def test_a_supplier_invoice_must_be_a_pdf_or_photo_on_its_own_order(tenant, port
     exe = portal.post("/api/portal/invoices", data={"number": "X1", "amount": "100"},
                       files={"file": ("x.exe", b"MZ", "application/octet-stream")})
     assert exe.status_code == 400
-    theirs = portal.post("/api/portal/invoices", data={"number": "X2", "amount": "100", "po_number": other["number"]},
+    theirs = portal.post("/api/portal/invoices", data={"number": "X2", "po_number": other["number"],
+                                                        "lines": '[{"po_line_id": 1, "qty": 1}]'},
                          files={"file": ("x.pdf", b"%PDF", "application/pdf")})
     assert theirs.status_code == 404
 
@@ -243,9 +252,8 @@ def test_a_supplier_sees_received_and_pending_per_line_and_bills_line_by_line(te
     send = lambda number, qty: portal.post("/api/portal/invoices", data={"number": number, "po_number": po["number"],
                                                                          "lines": json.dumps([{"po_line_id": line["id"], "qty": qty}])},
                                            files={"file": ("%s.pdf" % number, b"%PDF-1.4 invoice", "application/pdf")})
-    too_much = send("ACC/1", 70)
-    assert too_much.status_code == 409 and "60" in too_much.json()["detail"]
-    assert send("ACC/2", 50).status_code == 200
+    fine = send("ACC/2", 50)
+    assert fine.status_code == 200 and fine.json()["flagged"] == []
     [line] = portal.get("/api/portal/orders/%d" % po["id"]).json()["lines"]
     assert (line["billed"], line["to_bill"]) == (50, 10)
 
@@ -253,9 +261,13 @@ def test_a_supplier_sees_received_and_pending_per_line_and_bills_line_by_line(te
     assert bill["claimed"] == 15000                                              # 50 bags at the order's 300
     [m] = bill["lines"]
     assert (m["qty"], m["rate"], m["po_rate"], m["received"], m["verdict"]) == (50, 300, 300, 60, "MATCHED")
+    # More than received and not yet billed (10 left): taken, flagged to the supplier and on the bill's line match.
+    over = send("ACC/3", 30)
+    assert over.status_code == 200 and over.json()["flagged"] and "more than we have received" in over.json()["message"]
+    [b3] = [b for b in portal.get("/api/portal/bills").json()["bills"] if b["number"] == "ACC/3"]
+    assert b3["lines"][0]["verdict"] == "MORE_THAN_RECEIVED"
     # Office side: the bill's line names the order line, so the three-way match reads it line by line.
-    detail = tenant.get("/api/match/three-way/%d" % po["id"]).json()
-    assert detail
+    assert tenant.get("/api/match/three-way/%d" % po["id"]).status_code == 200
 
 
 def test_lines_need_the_order_they_belong_to(tenant, portal):

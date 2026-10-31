@@ -4,6 +4,7 @@ import { formatINR } from '@/lib/utils'
 import { formatDate } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
 import { adjustWallet, changePassword, deleteClient, impersonate, saKeys, saLogout, savePrice, toggleClient, useClientOverview, useGateways, useInsights, useLoginLogs, useLoginStats, usePlatformStats, usePricing, useRevenue, useSaClient, useSaClients, useSaErrors, useSaMe, useTrends, useWallets, type PriceRow, type SaClient, type WalletRow } from '@/api/superadmin'
+import { ErrorGroups } from '@/components/data/ErrorGroups'
 import { appUrl } from '@/lib/paths'
 
 const card = 'rounded-xl border border-border bg-card p-5'
@@ -223,6 +224,7 @@ function ServerErrors() {
         </select>
         <Input aria-label="Search errors" className="h-9 w-56" placeholder="Ref, path, company, trace..." value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>}>
+      <ErrorGroups groups={d?.groups ?? []} onPick={(g) => setSearch(g.screen.replace('{id}', ''))} />
       {sp && (
         <p role={sp.spiking ? 'alert' : 'status'} className={`mb-3 rounded-lg px-3 py-2 text-sm ${sp.spiking ? 'bg-danger-soft text-danger' : 'bg-muted text-muted-foreground'}`}>
           {sp.spiking ? `Spiking: ${sp.last_hour} server faults in the last hour against a usual ${sp.usual_per_hour} an hour.` : `${sp.last_hour} server faults in the last hour (usual ${sp.usual_per_hour} an hour; an alert goes at ${sp.threshold}).`}

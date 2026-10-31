@@ -201,7 +201,15 @@ def purchase_order_to_dict(db, o, include_chain=False, pre=None):
         "qty": l.qty or 0.0, "price": l.price or 0.0,
         "tax_rate": l.tax_rate or "",
         "received_qty": money(got.get(l.id, 0.0)),
+        "boq_key": getattr(l, "boq_key", "") or "",
     } for l in lines]
+    import json as _json
+    row["over_budget"] = bool(getattr(o, "over_budget", False))
+    row["budget_reason"] = getattr(o, "budget_reason", "") or ""
+    try:
+        row["rate_flags"] = _json.loads(getattr(o, "rate_flags", "") or "[]")
+    except ValueError:
+        row["rate_flags"] = []
     if include_chain:
         row["chain"] = get_approval_chain_history("purchase_order", o.id, db)
         # What the Store module has received into stock against each line, in the item's base unit (posted receipts only).
@@ -523,6 +531,14 @@ def quote_totals(q, lines, rates):
     return basic, tax, quoted, money(basic + tax + (q.freight or 0))
 
 
+def _price_history(db, client_id, item_code):
+    if not (item_code or "").strip():
+        return {"points": [], "last_by_supplier": []}
+    from app.services.po_controls import last_prices, price_points
+    points = price_points(db, client_id, item_code)
+    return {"points": points[-12:], "last_by_supplier": sorted(last_prices(points).values(), key=lambda p: p["rate"])}
+
+
 def comparative_statement(db, rfq):
     """Every line against every supplier, the lowest named, and each
     supplier's total landed at site - basic, tax and freight together,
@@ -559,7 +575,9 @@ def comparative_statement(db, rfq):
             "spread_percent": (round((high["rate"] - low["rate"]) / low["rate"] * 100, 1)
                                if low and low["rate"] else 0.0),
             "awarded_supplier": l.awarded_supplier or "", "awarded_rate": unit_rate(l.awarded_rate),
-            "po_id": l.po_id, "indent_line_id": l.indent_line_id})
+            "po_id": l.po_id, "indent_line_id": l.indent_line_id,
+            # What the item cost on approved orders before: the trend, and the last price per supplier.
+            "price_history": _price_history(db, rfq.client_id, l.item_code)})
     # The order each awarded line went on, by number: what the buyer looks for next; and the orders themselves, so
     # the enquiry says where its items went.
     po_ids = {r["po_id"] for r in rows if r["po_id"]}

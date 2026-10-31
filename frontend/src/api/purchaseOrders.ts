@@ -10,6 +10,8 @@ interface PoLine {
   price: number
   tax_rate: string
   received_qty?: number
+  /** The BOQ line or heading of the project it buys for: its budget is checked. */
+  boq_key?: string
 }
 
 /** An order for goods from a supplier: spend agreed before it is committed. */
@@ -46,6 +48,8 @@ export interface PoInput {
   job_id: number | null
   status?: string
   line_items: Omit<PoLine, 'id' | 'received_qty'>[]
+  /** Why it goes over the project's budget: needed when it does. */
+  budget_reason?: string
 }
 
 export const poKeys = { all: ['purchase-orders'] as const }

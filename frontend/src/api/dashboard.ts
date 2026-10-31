@@ -74,6 +74,7 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'indents-view': '/store/hub/outward/indent',
     'drawings-view': '/projects/drawings',
     'documents-view': '/projects/documents',
+    'rate-contracts-view': '/store/rate-contracts',
     'subbills-view': '/subcontractors/ra-bills',
     'vendors-view': '/subcontractors/vendors',
     'compliance-view': '/subcontractors/compliance',

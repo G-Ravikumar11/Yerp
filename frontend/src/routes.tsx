@@ -47,6 +47,7 @@ export const SCREENS: Screen[] = [
   { path: '/projects/boq/rates', Component: page(() => import('@/features/boq/SiteRatesPage')) },
   { path: '/projects/boq/:id', Component: page(() => import('@/features/boq/BoqPage')) },
   { path: '/store/items', Component: page(() => import('@/features/items/ItemMasterPage')) },
+  { path: '/store/rate-contracts', Component: page(() => import('@/features/items/RateContractsPage')) },
   { path: '/store/items/duplicates', Component: page(() => import('@/features/items/DuplicatesPage')) },
   { path: '/subcontractors/work-orders', Component: page(() => import('@/features/orders/OrdersPage')) },
   { path: '/subcontractors/measurement-book', Component: page(() => import('@/features/measurement/MeasurementBookPage')) },

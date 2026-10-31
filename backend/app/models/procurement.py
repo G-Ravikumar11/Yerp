@@ -44,6 +44,13 @@ class DBPurchaseOrder(Base):
     submitted_by = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     current_approval_step = Column(Integer, default=0)
     rejection_reason = Column(String, default="")
+    # Checked as it is saved (services/po_controls.py): over the project's budget (and why), and the price alerts.
+    over_budget = Column(Boolean, default=False)
+    budget_reason = Column(Text, default="")
+    rate_flags = Column(Text, default="")
+    # Chased for a late delivery (services/late_delivery.py): when last, and how many times.
+    late_chased_on = Column(String, default="")
+    late_chases = Column(Integer, default=0)
 
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -68,6 +75,8 @@ class DBPurchaseOrderLineItem(Base):
     # Where the line came from: the enquiry line it was awarded on, and the indent line that enquiry line was for.
     rfq_line_id = Column(Integer, nullable=True, index=True)
     indent_line_id = Column(Integer, nullable=True, index=True)
+    # The BOQ line or heading of the project the line buys for: what its budget is checked against.
+    boq_key = Column(String, default="")
 
     order = relationship("DBPurchaseOrder", back_populates="line_items")
 
@@ -192,6 +201,25 @@ class DBSupplier(Base):
 # answers, and a sheet that lays them side by side so the cheapest is plain
 # and the choice of anybody else is explained. That sheet is what an auditor
 # asks for, and it was being kept in a spreadsheet.
+class DBRateContract(Base):
+    """A rate agreed with a supplier for an item over a period: an order priced above it is flagged."""
+    __tablename__ = "rate_contracts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    supplier_name = Column(String, default="")
+    item_code = Column(String, default="", index=True)
+    rate = Column(Float, default=0.0)
+    valid_from = Column(String, default="")
+    valid_to = Column(String, default="")
+    reference = Column(String, default="")
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    contract_no = Column(String, default="", index=True)      # RC-0001: the items agreed together share it
+    reminded_30 = Column(Integer, default=0)                  # purchasing told it ends within 30 days
+    reminded_7 = Column(Integer, default=0)
+
+
 class DBRfq(Base):
     __tablename__ = "rfqs"
 

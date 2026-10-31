@@ -243,3 +243,30 @@ def test_only_quotation_files_and_only_this_companys_are_reached_through_the_quo
     mine = tenant.post("/api/quote-files", files={"file": ("m.xlsx", xlsx([["y", 2]]), "application/octet-stream")}).json()["file"]["id"]
     assert second_tenant.get("/api/quote-files").json()["files"] == []
     assert second_tenant.delete("/api/quote-files/%d" % mine).status_code == 404
+
+
+def test_a_quote_file_is_linked_read_and_recorded_only_when_confirmed(tenant, monkeypatch):
+    from app.ai import quote_reader
+    from app.ai.llm_client import AiResult
+    r = rfq(tenant)
+    first = r["lines"][0]["rfq_line_id"]
+    monkeypatch.setattr(quote_reader, "ask_json", lambda *a, **k: AiResult(True, data={
+        "supplier_name": "ACC Ltd", "quote_ref": "Q-77", "delivery_days": 5,
+        "lines": [{"rfq_line_id": first, "rate": 395, "tax_percent": 28}], "unmatched": [], "confidence": 0.9}, provider="test", model="test"))
+    fid = tenant.post("/api/quote-files", files={"file": ("acc.xlsx", xlsx([["OPC 53", 395]]), "application/octet-stream")},
+                      data={"supplier_name": "ACC Ltd"}).json()["file"]["id"]
+    # Not linked: nothing to read against.
+    assert tenant.post("/api/quote-files/%d/read" % fid).status_code == 409
+    assert tenant.put("/api/quote-files/%d/link" % fid, json={"rfq_id": r["rfq"]["id"]}).status_code == 200
+    [listed] = tenant.get("/api/quote-files").json()["files"]
+    assert (listed["rfq_id"], listed["rfq_number"]) == (r["rfq"]["id"], r["rfq"]["number"])
+    read = tenant.post("/api/quote-files/%d/read" % fid).json()
+    assert read["available"] is True and read["lines"][0]["rate"] == 395 and read["supplier_name"] == "ACC Ltd"
+    # Read, not saved: the comparison has no quote yet.
+    assert tenant.get("/api/rfqs/%d/statement" % r["rfq"]["id"]).json()["suppliers"] == []
+    # The buyer corrects the rate and confirms: now it is recorded, with the file as its document.
+    res = tenant.post("/api/quote-files/%d/confirm" % fid, json={"supplier_name": "ACC Ltd", "quote_ref": "Q-77", "delivery_days": 5,
+                                                                "lines": [{"rfq_line_id": first, "rate": 390, "tax_percent": 28}]})
+    assert res.status_code == 200, res.text
+    [s] = tenant.get("/api/rfqs/%d/statement" % r["rfq"]["id"]).json()["suppliers"]
+    assert s["supplier_name"] == "ACC Ltd" and s["document"]["name"] == "acc.xlsx"

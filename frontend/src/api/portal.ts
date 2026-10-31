@@ -32,6 +32,8 @@ export interface PortalBill {
   id: number; number: string; date: string; where: string; note?: string; claimed: number; gst: number; retention?: number; tds?: number
   deductions?: number; net: number; paid: number; left: number; pdf?: string; can_accept?: boolean; accepted_by?: string; accepted_at?: string
   lines?: BillLineMatch[]
+  /** The supplier's payment status for this invoice, and each payment made on it. */
+  payment_status?: string; payments?: { paid_on: string; amount: number; number: string; mode: string }[]
 }
 
 export interface PortalPayment { date?: string; paid_on: string; number: string; against: string; mode: string; reference?: string; amount: number }
@@ -58,4 +60,4 @@ export const portalLogout = () => post('/api/portal/logout')
 export const portalInvite = (token: string) => api<PortalInvite>('/api/portal/invite?token=' + encodeURIComponent(token), { quiet: true })
 export const portalAcceptInvite = (token: string, password: string) => post('/api/portal/accept-invite', { token, password })
 export const portalAcceptBill = (id: number) => post<{ message?: string }>(`/api/portal/bills/${id}/accept`)
-export const portalSendInvoice = (form: FormData) => api<{ message: string }>('/api/portal/invoices', { method: 'POST', body: form })
+export const portalSendInvoice = (form: FormData) => api<{ message: string; flagged?: string[] }>('/api/portal/invoices', { method: 'POST', body: form })

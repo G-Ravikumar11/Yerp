@@ -126,6 +126,7 @@ const NAV: NavEntry[] = [
       { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all' },
       { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage' },
       { label: 'Item Master', path: '/store/items', perm: 'items.manage' },
+      { label: 'Rate Contracts', path: '/store/rate-contracts', perm: 'purchase.manage' },
       { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all' },
       { label: 'E-way Bills', path: '/store/eway', perm: 'accounts.manage|stores.manage|stores.receive|bills.view_all|store.inward.view|store.outward.view' },
     ],

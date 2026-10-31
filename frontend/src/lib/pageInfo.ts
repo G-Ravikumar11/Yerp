@@ -26,6 +26,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/projects/programme': 'The programme: activities, sub-items and their dates as a grid and a chart. Draw it from the BOQ, record progress by quantity, save a baseline and export it to Excel or PDF.',
   '/projects/programme/:job/activity/:id': 'One activity of the programme: its dates, quantities done, and the tasks and diary entries against it.',
   '/projects/drawings': 'The drawings register. Every revision is kept, and the latest is always the one to build to.',
+  '/projects/documents': 'Transmittals, RFIs and submittals: what went to whom, what came back, and what is overdue.',
   '/projects/quality': 'Quality control: inspection checklists, cube tests and non-conformance reports (NCRs) with who must fix what and by when.',
   '/projects/safety': 'Workers and Safety. Workers: every worker screened before they start. Safety: incidents, toolbox talks, permits to work, safe days and the equipment checklists.',
   '/projects/diary': 'The site diary: one entry a day with weather, labour, plant, work done, hold-ups and visitors. A signed-off day is changed only with a reason, and the change is kept.',
@@ -59,6 +60,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/subcontractors/compliance': 'Each subcontractor\'s statutory papers - registrations, insurance, licences - with expiry dates so nothing lapses unnoticed.',
 
   '/store/items': 'The Item Master: every material and consumable with its unit, code and rate. Orders, stock and costing all use this list.',
+  '/store/rate-contracts': 'Rates agreed with a supplier for chosen items, usually for a year. Orders to that supplier pick them up, and you are told before a contract ends.',
   '/store/enquiries': 'Send an enquiry to several suppliers and compare their quotes side by side before ordering.',
   '/store/enquiries/:id': 'One enquiry: the items asked for, the suppliers asked and their quotes side by side, and the award that makes the purchase orders.',
   '/store/purchase-orders': 'Purchase orders to suppliers: what was ordered, at what rate, what has arrived and what is billed.',

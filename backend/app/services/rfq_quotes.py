@@ -116,6 +116,11 @@ def statement_for_screen(db, client_id, rfq, base=""):
     """The comparative statement, with who entered each quote, the supplier's own document beside it, and the links
     sent for quotes and how far each has got."""
     st = comparative_statement(db, rfq)                 # its suppliers carry who entered each quote, and its orders
+    # Each supplier's record with us - delivery, rejections, price, how fast they answer - beside their price.
+    from app.services.supplier_scorecard import card_for, scorecards
+    cards = scorecards(db, client_id)
+    for s in st["suppliers"]:
+        s["scorecard"] = card_for(cards, s["supplier_name"])
     docs = documents_of(db, client_id, "rfq_quote", [s["quote_id"] for s in st["suppliers"]])
     for s in st["suppliers"]:
         s["document"] = docs.get(s["quote_id"])

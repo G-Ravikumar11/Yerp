@@ -200,6 +200,8 @@ from app.models.recruitment import (
 )
 from app.models.error_log import DBErrorLog  # noqa: F401
 from app.models.doc_control import DBDocControl, DBDocControlItem  # noqa: F401
+from app.models.procurement import DBRateContract  # noqa: F401
+from app.models.files import DBDrawingTrace  # noqa: F401
 from app.models.material_voucher import DBMaterialVoucher  # noqa: F401
 from app.models.safety import (
     DBEquipmentCheck,

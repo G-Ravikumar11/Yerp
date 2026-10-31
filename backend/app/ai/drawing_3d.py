@@ -353,6 +353,12 @@ def drawing_to_3d(drawing_id: int, request: Request, db: Session = Depends(get_d
     f = db.query(models.DBFile).filter(models.DBFile.id == cur.file_id, models.DBFile.client_id == client.id).first()
     if not f:
         raise HTTPException(409, "The file for this revision is missing. Add the revision again.")
+    # Traced before - this file, or the same picture added again - and kept: no model call, after a restart too.
+    kept = _kept_trace(db, client.id, f)
+    if kept is not None:
+        kept["revision"] = cur.revision
+        _CACHE[key] = kept
+        return kept
     media = (f.content_type or "").lower()
     if media not in IMAGE_TYPES and media != "application/pdf":
         raise HTTPException(400, "Only a picture (JPG, PNG) or a PDF of a plan can be shown in 3D. DWG and DXF are not supported yet.")
@@ -384,4 +390,30 @@ def drawing_to_3d(drawing_id: int, request: Request, db: Session = Depends(get_d
     _CACHE[key] = out
     while len(_CACHE) > _CACHE_MAX:
         _CACHE.popitem(last=False)
+    _keep_trace(db, client.id, f, out)
     return out
+
+
+def _kept_trace(db, client_id, f):
+    """A trace kept for this file, or for the same bytes (by fingerprint) - the same picture added again."""
+    import json
+    q = db.query(models.DBDrawingTrace).filter(models.DBDrawingTrace.client_id == client_id)
+    row = q.filter(models.DBDrawingTrace.file_id == f.id).order_by(models.DBDrawingTrace.id.desc()).first()
+    if row is None and f.sha256:
+        row = q.filter(models.DBDrawingTrace.file_sha256 == f.sha256).order_by(models.DBDrawingTrace.id.desc()).first()
+    if row is None:
+        return None
+    try:
+        return json.loads(row.result)
+    except ValueError:
+        return None
+
+
+def _keep_trace(db, client_id, f, out):
+    import json
+    try:
+        db.add(models.DBDrawingTrace(client_id=client_id, file_id=f.id, file_sha256=f.sha256 or "", result=json.dumps(out),
+                                     model=str(out.get("model") or "")))
+        db.commit()
+    except Exception:                       # a trace that cannot be kept is still shown; it is only traced again next time
+        db.rollback()

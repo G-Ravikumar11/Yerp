@@ -52,7 +52,8 @@ from app.services.procurement import (
     supplier_payment_days,
 )
 from app.core.units import canonical_unit
-from app.services.projects import job_or_404
+from app.services.projects import job_or_404, resolve_job_id
+from app.services import late_delivery, rate_contracts, supplier_scorecard  # noqa: F401  (register their scheduled jobs)
 from app.services.store_cutover import refuse_if_moved
 from app.services.stores import material_required
 from app.services.subcontract_orders import work_order_or_404
@@ -108,7 +109,10 @@ def create_purchase_order(request: Request, body: dict = None,
             item_code=(li.get("item_code") or "")[:60],
             uom=(li.get("uom") or "")[:20],
             qty=float(li.get("qty") or 1), price=float(li.get("price") or 0),
-            tax_rate=li.get("tax_rate") or "0%"))
+            tax_rate=li.get("tax_rate") or "0%", boq_key=(li.get("boq_key") or "").strip()[:80]))
+    # Checked against the project's budget and the item's past prices before it is kept (services/po_controls.py).
+    from app.services.po_controls import check_order
+    check_order(db, client.id, order, (body.get("line_items") or [])[:50], body.get("budget_reason"))
     log_audit(db, client.id, "purchase_order_created", "purchase_order", order.id,
               order.number, f"{order.supplier_name}, {order.total}", request)
     db.commit()
@@ -131,6 +135,11 @@ def update_purchase_order(order_id: int, request: Request, body: dict = None,
                                  "sent to - not by changing its status.")
     before = (order.supplier_name, money(order.total or 0))
     apply_order_fields(db, client.id, order, body or {})
+    # The order's own lines, checked again against the budget and past prices as it now stands.
+    from app.services.po_controls import check_order
+    kept = db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == order.id).all()
+    check_order(db, client.id, order, [{"boq_key": l.boq_key, "qty": l.qty, "price": l.price, "item_code": l.item_code,
+                                        "description": l.description} for l in kept], (body or {}).get("budget_reason"))
     # An approved order that a member of staff then changes is a different
     # order from the one that was approved, and goes back to be approved again.
     if staff and order.approval_status == "approved" and \
@@ -968,9 +977,12 @@ def award_rfq(rfq_id: int, body: AwardIn, request: Request, db: Session = Depend
     r.awarded_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     r.award_reason = reason
     from app.services.po_sending import supplier_email
+    from app.services.po_controls import check_order
     for m in made:
         po = db.get(models.DBPurchaseOrder, m["id"])
         po.supplier_email = supplier_email(db, client.id, po)
+        check_order(db, client.id, po, [{"item_code": l.item_code, "price": l.price, "qty": l.qty, "description": l.description}
+                                        for l in db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).all()])
     log_audit(db, client.id, "rfq_awarded", "rfq", r.id, r.number,
               "; ".join("%s %s" % (m["number"], m["supplier"]) for m in made)
               + ((" - " + reason) if reason else ""), request)
@@ -1077,3 +1089,129 @@ def rfq_comparison_pdf(rfq_id: int, request: Request, supplier: List[str] = Quer
     if not d["suppliers"]:
         raise HTTPException(409, "No quotes yet, so there is nothing to compare.")
     return form_pdf_response(rfq_comparison_form_spec(db, client, d), "comparison_%s" % r.number)
+
+
+# --- checked before it is placed: the budget and the price -----------------------------------------------------------
+
+@router.post("/api/purchase-orders/check")
+def check_purchase_order(request: Request, body: dict = None, db: Session = Depends(get_read_db)):
+    """What an order would find, as it is filled in: each BOQ item's budget against what is spent and committed, and the
+    lines priced over the last price or a rate contract. Nothing is saved."""
+    client = require_items_access(request, db, ("purchase.manage", "bills.submit"))
+    from app.services.po_controls import budget_check, over_budget, rate_flags
+    body = body or {}
+    lines = (body.get("line_items") or [])[:50]
+    job_id = resolve_job_id(db, client.id, body.get("job_id")) if body.get("job_id") else None
+    rows = budget_check(db, client.id, job_id, lines, body.get("order_id"))
+    return {"budget": rows, "over_budget": bool(over_budget(rows)),
+            "rates": rate_flags(db, client.id, (body.get("supplier_name") or "").strip(), lines, body.get("order_id"))}
+
+
+@router.get("/api/jobs/{job_id}/budget-heads")
+def job_budget_heads(job_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The project's budgeted BOQ lines and headings, with budget and spent - what a PO line can be charged to."""
+    client = require_items_access(request, db, ("purchase.manage", "bills.submit"))
+    job = job_or_404(db, client.id, job_id)
+    from app.services.po_controls import budget_heads
+    heads = budget_heads(db, client.id, job)
+    return {"heads": [{"key": h["key"], "label": h["label"], "heading": h["heading"], "budget": h["budget"], "spent": h["spent"]}
+                      for h in heads.values()]}
+
+
+@router.get("/api/items/price-history")
+def item_price_history(item_code: str, request: Request, db: Session = Depends(get_read_db)):
+    """Every price the item was bought at (approved orders), the last per supplier, and the rate contracts on it."""
+    client = require_erp_read(request, db)
+    from app.services.po_controls import last_prices, price_points
+    points = price_points(db, client.id, item_code)
+    contracts = db.query(models.DBRateContract).filter(models.DBRateContract.client_id == client.id,
+                                                       models.DBRateContract.item_code == item_code.strip()).order_by(models.DBRateContract.id.desc()).all()
+    return {"item_code": item_code.strip(), "points": points, "last_by_supplier": sorted(last_prices(points).values(), key=lambda p: p["rate"]),
+            "contracts": [_contract_dict(c) for c in contracts]}
+
+
+def _contract_dict(c):
+    return {"id": c.id, "contract_no": c.contract_no or "", "supplier_name": c.supplier_name or "", "item_code": c.item_code or "", "rate": unit_rate(c.rate),
+            "valid_from": c.valid_from or "", "valid_to": c.valid_to or "", "reference": c.reference or ""}
+
+
+@router.get("/api/rate-contracts")
+def list_rate_contracts(request: Request, db: Session = Depends(get_read_db)):
+    client = require_erp_read(request, db)
+    return {"contracts": [_contract_dict(c) for c in db.query(models.DBRateContract).filter(
+        models.DBRateContract.client_id == client.id).order_by(models.DBRateContract.id.desc()).all()]}
+
+
+@router.post("/api/rate-contracts")
+def add_rate_contract(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """A rate contract: a supplier, a period (a year unless given), and the chosen items at their agreed rates. While it is
+    in force an order to the supplier picks those rates by itself, and one priced above them is flagged."""
+    client, _, actor_name = wo_actor(request, db, "purchase.manage")
+    from app.services.rate_contracts import make
+    no, start, end, n = make(db, client.id, actor_name, body or {})
+    log_audit(db, client.id, "rate_contract_added", "rate_contract", 0, no, "%s, %d item(s), %s to %s" % ((body or {}).get("supplier_name"), n, start, end), request)
+    db.commit()
+    return {"ok": True, "contract_no": no, "message": "%s with %s kept: %d item%s until %s." % (
+        no, (body or {}).get("supplier_name"), n, "" if n == 1 else "s", end.isoformat())}
+
+
+@router.get("/api/rate-contracts/by-contract")
+def rate_contracts_by_contract(request: Request, db: Session = Depends(get_read_db)):
+    """Every contract with its items, and whether it is in force."""
+    client = require_erp_read(request, db)
+    from app.services.rate_contracts import contracts
+    return {"contracts": contracts(db, client.id)}
+
+
+@router.get("/api/rate-contracts/active")
+def rate_contracts_active(supplier: str, request: Request, db: Session = Depends(get_read_db)):
+    """{item_code: rate} the supplier's contracts set today - what an order to them picks by itself."""
+    client = require_items_access(request, db, ("purchase.manage", "bills.submit"))
+    from app.services.rate_contracts import active_rates
+    return {"rates": active_rates(db, client.id, supplier)}
+
+
+@router.delete("/api/rate-contracts/{contract_id}")
+def remove_rate_contract(contract_id: int, request: Request, db: Session = Depends(get_db)):
+    client, _, _ = wo_actor(request, db, "purchase.manage")
+    c = db.query(models.DBRateContract).filter(models.DBRateContract.id == contract_id, models.DBRateContract.client_id == client.id).first()
+    if c is None:
+        raise HTTPException(404, "Not found")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/api/purchase-controls")
+def get_purchase_controls(request: Request, db: Session = Depends(get_read_db)):
+    client = require_erp_read(request, db)
+    from app.core.tenant_settings import tenant_setting
+    from app.services.po_controls import alert_pct
+    return {"rate_alert_pct": alert_pct(db, client.id),
+            # Purchasing's own address: the monthly supplier scorecard goes to it. Empty, no scorecard is emailed.
+            "purchasing_emails": tenant_setting(db, client.id, supplier_scorecard.PURCHASING_EMAILS_KEY, "") or "",
+            # Late deliveries: the buyer is always told; the supplier is emailed only when this is on.
+            "late_delivery_emails": late_delivery.emails_on(db, client.id)}
+
+
+@router.put("/api/purchase-controls")
+def set_purchase_controls(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """How far over the last price (or a rate contract) a PO rate may go before it is flagged."""
+    client, _, _ = wo_actor(request, db, "purchase.manage")
+    from app.core.tenant_settings import put_setting
+    from app.services.po_controls import set_alert_pct
+    body = body or {}
+    if "rate_alert_pct" in body:
+        try:
+            set_alert_pct(db, client.id, body.get("rate_alert_pct"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "The alert is a %.") from None
+    if "purchasing_emails" in body:
+        emails = [e.strip() for e in str(body.get("purchasing_emails") or "").split(",") if e.strip()]
+        if any("@" not in e or " " in e for e in emails):
+            raise HTTPException(400, "Purchasing's email: one or more addresses, separated by commas.")
+        put_setting(db, client.id, supplier_scorecard.PURCHASING_EMAILS_KEY, ",".join(emails))
+    if "late_delivery_emails" in body:
+        put_setting(db, client.id, late_delivery.EMAIL_SUPPLIERS_KEY, "1" if body.get("late_delivery_emails") else "0")
+    db.commit()
+    return get_purchase_controls(request, db)

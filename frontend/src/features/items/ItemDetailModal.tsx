@@ -4,6 +4,7 @@ import { Badge, Button, Modal, Skeleton } from '@/components/ui'
 import { useItemSites, useWhereUsed, type MasterItem, type UsageGroup } from '@/api/itemMaster'
 import { formatINR } from '@/lib/utils'
 import { purchaseRateOf, stockLabel } from './itemLogic'
+import { PriceHistorySection } from './PriceHistory'
 
 const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
@@ -113,6 +114,7 @@ export function ItemDetailModal({ item, manage, onClose, onEdit, onCopy, onToggl
             ) : <p className="text-sm text-muted-foreground">No site's BOQ uses this item yet.</p>}
           </section>
 
+          <PriceHistorySection itemCode={i.item_code} manage={manage} />
           <section aria-labelledby="d-used">
             <h3 id="d-used" className="mb-2 border-b pb-1 text-sm font-semibold">Where it is used</h3>
             {usage.isPending ? <Skeleton className="h-16 w-full" /> : usage.data && usage.data.groups.length ? <UsageList groups={usage.data.groups} /> : <p className="text-sm text-muted-foreground">Not used on any BOQ, order or store record yet.</p>}

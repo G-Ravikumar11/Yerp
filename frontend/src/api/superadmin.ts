@@ -26,7 +26,7 @@ export interface LoginLog { email: string; user_type: string; login_type: string
 
 /** Every company's errors with their tracebacks, and whether server faults are spiking (the platform admin only). */
 export interface SaError { id: number; at: string; code: string; ref: string; status: number; method: string; path: string; detail: string; who: string; client_id: number | null; company: string; trace: string }
-export interface SaErrors { errors: SaError[]; areas: Record<string, string>; days: number; spike: { last_hour: number; usual_per_hour: number; threshold: number; spiking: boolean } }
+export interface SaErrors { errors: SaError[]; areas: Record<string, string>; days: number; groups?: import('@/api/errorLog').ErrorGroup[]; spike: { last_hour: number; usual_per_hour: number; threshold: number; spiking: boolean } }
 
 const useSa = <T,>(key: string, url: string, enabled = true) => useQuery({ queryKey: ['sa', key, url], queryFn: () => get<T>(url), enabled, retry: false })
 

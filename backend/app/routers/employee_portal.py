@@ -698,7 +698,9 @@ def employee_create_purchase_order(request: Request, body: dict = None,
             item_code=(li.get("item_code") or "")[:60],
             uom=(li.get("uom") or "")[:20],
             qty=float(li.get("qty") or 1), price=float(li.get("price") or 0),
-            tax_rate=li.get("tax_rate") or "0%"))
+            tax_rate=li.get("tax_rate") or "0%", boq_key=(li.get("boq_key") or "").strip()[:80]))
+    from app.services.po_controls import check_order
+    check_order(db, emp.client_id, order, (body.get("line_items") or [])[:50], body.get("budget_reason"))
     log_audit(db, emp.client_id, "purchase_order_created", "purchase_order", order.id,
               order.number, f"Raised by {employee_name(emp)}: {order.supplier_name}",
               request, user_type="employee", user_name=employee_name(emp))

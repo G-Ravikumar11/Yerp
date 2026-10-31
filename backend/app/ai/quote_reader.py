@@ -76,8 +76,13 @@ def read_quote(rfq_id: int, request: Request, file: Optional[UploadFile] = File(
                      db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     rfq = rfq_or_404(db, client.id, rfq_id)
-    lines = _rfq_lines(db, rfq.id)
     attachments, text = inputs.take(file, text, "quotation")
+    return read_for_rfq(db, request, client, rfq, attachments, text)
+
+
+def read_for_rfq(db, request, client, rfq, attachments, text):
+    """A quotation read against an enquiry's lines: the rates and terms, for the buyer to check. Nothing is saved."""
+    lines = _rfq_lines(db, rfq.id)
     prompt = build_prompt(lines, text)
     result = guard.run_feature(db, request, client, ACTION_KEY, "Quote read %s" % rfq.number, rfq.number or "",
                                lambda: ask_json(SYSTEM, prompt, attachments, smart=True, max_tokens=3000))

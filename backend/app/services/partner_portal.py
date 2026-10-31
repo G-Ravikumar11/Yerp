@@ -185,13 +185,22 @@ def _portal_bills(db, u, party, party_name):
                  else "waiting for approval" if (b.approval_status or "") == "pending"
                  else "paid" if (b.status or "") == "Paid" else "accepted for payment")
         paid = money(max(b.amount_paid or 0, settled.get(("supplier_bill", b.id), 0.0)))
+        # Each payment on the bill: when, how much, which voucher - the supplier's own payment status, invoice by invoice.
+        payments = [{"paid_on": e.paid_on or "", "amount": money(e.amount), "number": e.number or "", "mode": e.mode or ""}
+                    for e in db.query(models.DBMoneyEntry).filter(models.DBMoneyEntry.client_id == u.client_id,
+                                                                  models.DBMoneyEntry.doc_type == "supplier_bill",
+                                                                  models.DBMoneyEntry.doc_id == b.id,
+                                                                  models.DBMoneyEntry.voided.is_(False)).order_by(models.DBMoneyEntry.paid_on).all()]
+        total = money(b.total or b.amount or 0)
+        payment_status = ("not payable yet" if rejected or (b.status or "") == "Draft" or (b.approval_status or "") == "pending"
+                          else "paid in full" if paid >= total - 0.009 and total > 0 else "part paid" if paid > 0 else "unpaid")
         out.append({"id": b.id, "number": b.number or "", "status": b.status or "", "where": where,
                     "date": b.issue_date or "", "due": b.due_date or "",
                     "claimed": money(b.amount), "gst": money(b.tax_amount), "net": money(b.total or b.amount),
                     "paid": paid, "left": 0.0 if rejected or (b.status or "") == "Draft"
                     else money(max(0.0, (b.total or b.amount or 0) - paid)),
                     "note": (b.rejection_reason or "") if rejected else "",
-                    "lines": bill_line_match(db, b)})
+                    "lines": bill_line_match(db, b), "payments": payments, "payment_status": payment_status})
     return out
 
 

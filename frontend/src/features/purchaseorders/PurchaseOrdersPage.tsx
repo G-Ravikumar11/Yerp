@@ -14,6 +14,7 @@ import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { OrderFormModal } from './OrderFormModal'
 import { SendEmailDialog } from '@/components/data/SendEmailDialog'
+import { PurchaseSettingsButton } from './PurchaseSettings'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 const tone = (o: PurchaseOrder) => (o.approval_status === 'pending' ? 'warning' : o.status === 'Approved' || o.status === 'Received' ? 'success' : o.status === 'Rejected' ? 'danger' : 'neutral') as 'warning' | 'success' | 'danger' | 'neutral'
@@ -70,7 +71,7 @@ export default function PurchaseOrdersPage() {
         eyebrow={staff ? 'Me' : 'Store'}
         title={staff ? 'My Orders' : 'Purchase Orders'}
         description={staff ? 'Get the spend agreed before you commit it.' : 'Spend agreed before it is committed. Goods can be received against an order once it is approved.'}
-        actions={<Button onClick={() => setCreating(true)}><Plus /> {staff ? 'Raise an order' : 'New order'}</Button>}
+        actions={<div className="flex flex-wrap gap-2">{!staff && <PurchaseSettingsButton />}<Button onClick={() => setCreating(true)}><Plus /> {staff ? 'Raise an order' : 'New order'}</Button></div>}
       />
       <FilterBar filters={filters} placeholder="Search by order, supplier, job or reference..." />
       <DataTable label="Purchase orders" rows={filters.filtered} columns={columns} rowKey={(o) => o.id} loading={q.isPending} empty={filters.active ? 'Nothing matches those filters.' : 'No orders yet. Raising one gets the spend agreed before it is committed.'} />

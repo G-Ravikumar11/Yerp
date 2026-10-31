@@ -180,6 +180,11 @@ def bill_exceeds_its_order(db, doc, entity_type):
     return billed > money(order.total or 0) + 0.005
 
 
+def _po_warnings(doc):
+    from app.services.po_controls import warnings_of
+    return warnings_of(doc)
+
+
 def bill_held_for_goods(db, doc, entity_type):
     """The three-way match's note when a bill claims more than has been received on its order, else None."""
     if entity_type != "bill":
@@ -313,8 +318,10 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
 
     if ahead:
         return _to_finance(db, client_id, doc, entity_type, submitted_by, request, actor, ahead, over_order)
+    # An order past the project's budget is never approved on the nod: the higher approver - the Master - signs it.
+    over_budget = entity_type == "purchase_order" and bool(getattr(doc, "over_budget", False))
 
-    if auto_below and total and total < auto_below and not over_order:
+    if auto_below and total and total < auto_below and not over_order and not over_budget:
         return finish_approval(
             db, client_id, doc, entity_type, submitted_by, request, actor,
             f"Approved automatically: under the {formatted_money(db, client_id, auto_below)} "
@@ -365,6 +372,8 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
     if not chain:
         # Nobody on the staff above them: the owner signs.
         chain = [chain_rung(None, db, client_id)]
+    if over_budget and not any(step["employee_id"] is None for step in chain):
+        chain.append(chain_rung(None, db, client_id))
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for i, step in enumerate(chain):
@@ -641,7 +650,8 @@ def approval_inbox(db, client, emp):
             mine=emp is not None or s.approver_id is None,
             waiting_on=owner_label(db, client.id) if s.approver_id is None else _person(db, s.approver_id),
             warnings=(["More than the order it settles"] if bill_exceeds_its_order(db, doc, s.entity_type) else [])
-                     + (["Billed ahead of the goods received"] if bill_held_for_goods(db, doc, s.entity_type) else [])))
+                     + (["Billed ahead of the goods received"] if bill_held_for_goods(db, doc, s.entity_type) else [])
+                     + (_po_warnings(doc) if s.entity_type == "purchase_order" else [])))
 
     # 2. Subcontract work orders waiting for approval.
     if can("subcontracts.approve"):

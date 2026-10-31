@@ -34,6 +34,10 @@ class DBDocControl(Base):
     reminded_on = Column(String, default="")
     reminders = Column(Integer, default=0)
     overdue_told = Column(Integer, default=0)                      # the raiser was told it went overdue
+    drawing_id = Column(Integer, ForeignKey("drawings.id"), nullable=True)   # the drawing an RFI is about
+    submittal_type = Column(String, default="")                    # Material approval | Shop drawing
+    received_by = Column(String, default="")                       # who at the other party received a transmittal
+    received_on = Column(String, default="")
 
 
 class DBDocControlItem(Base):

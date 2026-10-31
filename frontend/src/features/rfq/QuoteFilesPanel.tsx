@@ -5,6 +5,7 @@ import { addQuoteFile, QUOTE_FILES, quoteFileKeys, removeQuoteFile, useQuoteFile
 import { useAction } from '@/lib/mutate'
 import { formatDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { QuoteFileLink } from './QuoteFileLink'
 
 const MAX_SIDE_BY_SIDE = 4
 const shownAsIs = (f: QuoteFile) => f.content_type === 'application/pdf' || f.content_type.startsWith('image/')
@@ -89,6 +90,7 @@ export function QuoteFilesPanel() {
                     <p className="truncate font-medium">{f.supplier_name || f.name}</p>
                     <p className="flex items-center gap-1 truncate text-xs text-muted-foreground"><FileText className="size-3.5 shrink-0" /> {f.name} · {sizeText(f.size)}</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">Added {formatDate(f.added_at.slice(0, 10))}{f.added_by ? ` by ${f.added_by}` : ''}</p>
+                    <QuoteFileLink f={f} />
                   </div>
                   <div className="flex shrink-0 flex-col gap-1">
                     <a href={f.url} target="_blank" rel="noreferrer" aria-label={`Open ${f.name}`} title="Open" className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"><ExternalLink className="size-4" /></a>

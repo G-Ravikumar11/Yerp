@@ -145,6 +145,16 @@ STORE_OUTWARD_COLUMNS = (
     # The thread from an indent to its enquiry and order: what each enquiry line and order line was raised for.
     ("rfq_lines", "indent_line_id", "INTEGER"), ("purchase_order_line_items", "rfq_line_id", "INTEGER"),
     ("purchase_order_line_items", "indent_line_id", "INTEGER"),
+    # Document control: the drawing an RFI is about, what kind of submittal it is, who received a transmittal and when.
+    ("doc_control", "drawing_id", "INTEGER"), ("doc_control", "submittal_type", "VARCHAR DEFAULT ''"),
+    ("doc_control", "received_by", "VARCHAR DEFAULT ''"), ("doc_control", "received_on", "VARCHAR DEFAULT ''"),
+    # A purchase order checked against the budget and past prices: the BOQ item a line buys for, and what the check found.
+    ("purchase_order_line_items", "boq_key", "VARCHAR DEFAULT ''"), ("purchase_orders", "budget_reason", "TEXT DEFAULT ''"),
+    ("purchase_orders", "rate_flags", "TEXT DEFAULT ''"),
+    # Rate contracts held together under a number, and the expiry notices given.
+    ("rate_contracts", "contract_no", "VARCHAR DEFAULT ''"), ("rate_contracts", "reminded_30", "INTEGER DEFAULT 0"),
+    ("rate_contracts", "reminded_7", "INTEGER DEFAULT 0"),
+    ("purchase_orders", "late_chased_on", "VARCHAR DEFAULT ''"), ("purchase_orders", "late_chases", "INTEGER DEFAULT 0"),
     # Suppliers chased for their quotes: when they are due, where the links point, who opened it, and what was sent.
     ("rfqs", "quotes_due", "VARCHAR DEFAULT ''"), ("rfqs", "link_base", "VARCHAR DEFAULT ''"), ("rfqs", "l1_sent_at", "VARCHAR DEFAULT ''"),
     ("rfqs", "created_by_id", "INTEGER"), ("rfq_invites", "emailed_at", "VARCHAR DEFAULT ''"), ("rfq_invites", "reminded_on", "VARCHAR DEFAULT ''"),
@@ -190,6 +200,7 @@ BILL_GST_COLUMNS = (
     ("bills", "itc_eligible", "BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"),
     # A drawing ever released Good for construction stays on the register.
     ("drawings", "ever_gfc", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
+    ("purchase_orders", "over_budget", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
     ("bills", "reverse_charge", "BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"),
     ("eway_bills", "ewb_generated_at", "TEXT DEFAULT ''", "TEXT DEFAULT ''"),
 )

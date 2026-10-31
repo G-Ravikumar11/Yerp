@@ -1,7 +1,7 @@
 """Attached files and drawings."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, LargeBinary, String
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, LargeBinary, String, Text
 
 from app.db.session import Base
 
@@ -66,4 +66,18 @@ class DBDrawingRevision(Base):
     received_from = Column(String, default="")
     remarks = Column(String, default="")
     recorded_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBDrawingTrace(Base):
+    """A floor plan traced into walls and rooms for the 3D view, kept so the same sheet is never sent to the AI again -
+    not after a restart, and not when the same picture is added a second time (it is found by its fingerprint)."""
+    __tablename__ = "drawing_traces"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    file_sha256 = Column(String, default="", index=True)
+    file_id = Column(Integer, nullable=True)
+    result = Column(Text, default="")                 # the traced plan, as the 3D view reads it (JSON)
+    model = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, get, post, put } from '@/lib/api'
+import type { PricePoint } from '@/api/poControls'
 
 export const rfqKeys = { all: ['rfq'] as const }
 
@@ -12,7 +13,9 @@ export interface Rfq {
 /** A row of the list: how far the enquiry has got - suppliers asked, still to answer, and the best full quote so far. */
 export interface RfqRow extends Rfq { asked: number; waiting: number; best: { supplier_name: string; landed: number } | null; awarded_to: string[]; orders: number }
 interface Offer { supplier_name: string; rate: number; amount: number; tax_percent: number; remarks?: string }
-export interface RfqLine { rfq_line_id: number; description: string; item_code: string; uom: string; qty: number; spread_percent: number; awarded_supplier: string; awarded_rate: number; po_id: number | null; po_number: string; lowest: string; lowest_rate: number; offers: Offer[] }
+export interface RfqLine { rfq_line_id: number; description: string; item_code: string; uom: string; qty: number; spread_percent: number; awarded_supplier: string; awarded_rate: number; po_id: number | null; po_number: string; lowest: string; lowest_rate: number; offers: Offer[]
+  /** What the item cost on approved orders before: the trend, and the last price per supplier. */
+  price_history?: { points: PricePoint[]; last_by_supplier: PricePoint[] } }
 interface QuoteDocument { id: number; name: string; size: number }
 export interface RfqSupplier {
   quote_id: number; supplier_name: string; quote_ref: string; quote_date: string; rank?: string; is_l1: boolean; basic: number; tax: number; freight: number; landed: number
@@ -21,6 +24,8 @@ export interface RfqSupplier {
   source?: string
   /** The supplier's own quotation file, as he sent it. */
   document?: QuoteDocument | null
+  /** Their record with us: delivered on time, rejected at the gate, price against L1, days to answer. */
+  scorecard?: { on_time_pct: number | null; orders_scored: number; rejection_pct: number | null; above_l1_pct: number | null; l1_wins: number; quoted: number; response_days: number | null } | null
 }
 /** A link sent to a supplier to quote on his own: sent, opened, quoted, or his file sent without rates (document). */
 export interface RfqInvite {
@@ -112,7 +117,15 @@ export const QUOTE_FILES = '.pdf,.doc,.docx,.docm,.xls,.xlsx,.xlsm,.csv,.txt,.rt
 // --- quotation files kept on their own, to open side by side ------------------------------------------------------
 
 /** A supplier's quotation kept on its own, not on any enquiry: nothing is read from it, it is there to be looked at. */
-export interface QuoteFile { id: number; name: string; content_type: string; size: number; supplier_name: string; added_by: string; added_at: string; url: string }
+export interface QuoteFile { id: number; name: string; content_type: string; size: number; supplier_name: string; added_by: string; added_at: string; url: string
+  /** The enquiry the file is a quote for, once linked. */
+  rfq_id?: number | null; rfq_number?: string; rfq_status?: string }
+/** What the AI quote reader found on a file, against the linked enquiry's lines - for the buyer to check. Nothing is saved. */
+export interface QuoteFileRead {
+  available: boolean; message?: string; supplier_name?: string; quote_ref?: string; quote_date?: string; valid_until?: string; delivery_days?: number
+  payment_terms?: string; freight?: number; lines?: { rfq_line_id: number; rate: number; tax_percent: number | null; remarks: string }[]
+  unmatched?: string[]; low_confidence?: boolean; rfq_id?: number; rfq_number?: string
+}
 export const quoteFileKeys = { all: ['quote-files'] as const }
 export const useQuoteFiles = () => useQuery({ queryKey: quoteFileKeys.all, queryFn: () => get<{ files: QuoteFile[] }>('/api/quote-files') })
 export const addQuoteFile = (file: File, supplier: string) => {
@@ -122,6 +135,9 @@ export const addQuoteFile = (file: File, supplier: string) => {
   return api<{ message: string; file: { id: number; name: string } }>('/api/quote-files', { method: 'POST', body: form })
 }
 export const removeQuoteFile = (id: number) => api<{ ok: boolean }>(`/api/quote-files/${id}`, { method: 'DELETE' })
+export const linkQuoteFile = (id: number, rfq_id: number | null) => put<{ message: string }>(`/api/quote-files/${id}/link`, { rfq_id })
+export const readQuoteFile = (id: number) => post<QuoteFileRead>(`/api/quote-files/${id}/read`)
+export const confirmQuoteFile = (id: number, b: Record<string, unknown>) => post<{ message: string; quote_id: number }>(`/api/quote-files/${id}/confirm`, b)
 /** A Word or Excel quotation as text, for reading beside the others (a PDF or a photo is shown as it is). */
 export const useQuoteFileText = (id: number, enabled: boolean) =>
   useQuery({ queryKey: ['quote-files', 'text', id], enabled, staleTime: Infinity, queryFn: () => get<{ text: string; kind: string }>(`/api/quote-files/${id}/text`) })

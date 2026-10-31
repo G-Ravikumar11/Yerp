@@ -9,12 +9,14 @@ export interface DocItem {
   to_party: string; to_email: string; details: string; purpose: string; revision: string; due_date: string; status: string
   response: string; responded_on: string; responded_by: string; created_by_name: string; created_at: string; closed_at: string
   reminders: number; reminded_on: string; overdue: boolean; replies: string[]
+  drawing_id: number | null; drawing?: string; submittal_type: string; received_by: string; received_on: string
   items?: { id: number; drawing_id: number | null; number: string; revision: string; description: string }[]
 }
-export interface DocList { items: DocItem[]; summary: Record<DocKind, { open: number; overdue: number }>; purposes: string[] }
+export interface DocList { items: DocItem[]; summary: Record<DocKind, { open: number; overdue: number }>; purposes: string[]; submittal_types: string[] }
 export interface DocInput {
   kind: DocKind; subject: string; to_party: string; to_email?: string; job_id?: number | null; details?: string; purpose?: string
   revision?: string; due_date?: string; items?: { drawing_id?: number | null; description?: string }[]
+  drawing_id?: number | null; submittal_type?: string
 }
 
 export const docKeys = { all: ['doc-control'] as const }
@@ -25,7 +27,8 @@ export const useDoc = (id: number | null) =>
 
 type Done = { message: string; item: DocItem }
 export const raiseDoc = (b: DocInput) => post<Done>('/api/doc-control', b)
-export const replyDoc = (id: number, reply: string, response: string) => post<Done>(`/api/doc-control/${id}/reply`, { reply, response })
+export const replyDoc = (id: number, reply: string, response: string, received_by = '', received_on = '') =>
+  post<Done>(`/api/doc-control/${id}/reply`, { reply, response, received_by, received_on })
 export const resubmitDoc = (id: number) => post<Done>(`/api/doc-control/${id}/resubmit`)
 export const closeDoc = (id: number, cancel = false, reason = '') => post<Done>(`/api/doc-control/${id}/close`, { cancel, reason })
 export const remindDoc = (id: number) => post<Done>(`/api/doc-control/${id}/remind`)

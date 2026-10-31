@@ -31,11 +31,15 @@ class DocIn(BaseModel):
     revision: Optional[str] = ""
     due_date: Optional[str] = ""
     items: List[ItemIn] = []
+    drawing_id: Optional[int] = None          # an RFI's (or submittal's) drawing
+    submittal_type: Optional[str] = ""        # Material approval | Shop drawing
 
 
 class ReplyIn(BaseModel):
     reply: str
     response: Optional[str] = ""
+    received_by: Optional[str] = ""           # a transmittal: who at the other end received it
+    received_on: Optional[str] = ""
 
 
 @router.get("/api/doc-control")
@@ -55,7 +59,7 @@ def list_docs(request: Request, kind: str = "", job_id: int = 0, show: str = "op
     for k in svc.KINDS:
         mine = [r for r in rows if r["kind"] == k]
         summary[k] = {"open": len([r for r in mine if r["status"] in svc.WAITING]), "overdue": len([r for r in mine if r["overdue"]])}
-    return {"items": shown, "summary": summary, "purposes": list(svc.PURPOSES)}
+    return {"items": shown, "summary": summary, "purposes": list(svc.PURPOSES), "submittal_types": list(svc.SUBMITTAL_TYPES)}
 
 
 @router.post("/api/doc-control")
@@ -75,7 +79,8 @@ def get_doc(doc_id: int, request: Request, db: Session = Depends(get_read_db)):
 def reply_doc(doc_id: int, body: ReplyIn, request: Request, db: Session = Depends(get_db)):
     """The party's reply: acknowledged, answered, approved (with comments) or rejected."""
     client, _, actor_name = wo_actor(request, db)
-    d = svc.respond(db, client, svc.doc_or_404(db, client.id, doc_id), actor_name, body.reply, body.response, request)
+    d = svc.respond(db, client, svc.doc_or_404(db, client.id, doc_id), actor_name, body.reply, body.response, request,
+                    body.received_by, body.received_on)
     return {"ok": True, "item": svc.doc_dict(db, d, items=True), "message": "%s %s." % (d.number, d.status.replace("_", " ").lower())}
 
 

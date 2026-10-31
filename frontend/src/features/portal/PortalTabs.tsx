@@ -123,7 +123,7 @@ export function Bills({ contractor }: { contractor: boolean }) {
             <td className={td}><Badge tone={tone(b.where)}>{b.where}</Badge>{b.note && <div className="text-xs text-muted-foreground">{b.note}</div>}<LineMatch lines={b.lines ?? []} /></td>
             <td className={td + ' text-right'}>{formatINR(b.claimed)}<div className="text-xs text-muted-foreground">{contractor && (b.retention || b.tds || b.deductions) ? `retention ${formatINR(b.retention)}${b.deductions ? `, recoveries ${formatINR(b.deductions)}` : ''}, TDS ${formatINR(b.tds)}, GST ${formatINR(b.gst)}` : `GST ${formatINR(b.gst)}`}</div></td>
             <td className={td + ' text-right font-semibold'}>{formatINR(b.net)}</td>
-            <td className={td + ' text-right'}>{formatINR(b.paid)}</td>
+            <td className={td + ' text-right'}>{formatINR(b.paid)}{b.payment_status && <div><Badge tone={b.payment_status === 'paid in full' ? 'success' : b.payment_status === 'part paid' ? 'warning' : 'neutral'}>{b.payment_status}</Badge></div>}{(b.payments ?? []).map((p) => <div key={p.number} className="text-xs text-muted-foreground">{formatDate(p.paid_on)} · {p.number} · {formatINR(p.amount)}</div>)}</td>
             <td className={td + ' text-right'}>
               {formatINR(b.left)}
               {b.pdf && <div><Button size="sm" variant="outline" asChild><a href={b.pdf} target="_blank" rel="noopener noreferrer">PDF</a></Button></div>}
@@ -214,13 +214,13 @@ export function SendInvoice() {
     e.preventDefault()
     if (!file) return
     const fd = new FormData()
-    Object.entries(f).forEach(([k, v]) => (byLine && (k === 'amount' || k === 'tax_amount') ? null : fd.append(k, v)))
-    if (byLine) fd.append('lines', JSON.stringify(lines.map((l) => ({ po_line_id: l.id, qty: Number(qtyOf(l) || 0) }))))
+    Object.entries(f).forEach(([k, v]) => (k === 'amount' || k === 'tax_amount' ? null : fd.append(k, v)))
+    fd.append('lines', JSON.stringify(lines.map((l) => ({ po_line_id: l.id, qty: Number(qtyOf(l) || 0) }))))
     fd.append('file', file)
     setBusy(true)
     try {
       const r = await portalSendInvoice(fd)
-      setMsg({ ok: true, text: r.message })
+      setMsg({ ok: !(r.flagged ?? []).length, text: r.message })
       setF({ ...f, number: '', amount: '', tax_amount: '0', po_number: '', note: '' })
       setQty({})
       setFile(null)
@@ -237,23 +237,22 @@ export function SendInvoice() {
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Your invoice number" htmlFor="si-no"><Input id="si-no" required value={f.number} onChange={set('number')} /></Field>
         <Field label="Invoice date" htmlFor="si-date"><Input id="si-date" type="date" required value={f.issue_date} onChange={set('issue_date')} /></Field>
-        {!byLine && <Field label="Value before GST" htmlFor="si-amt"><Input id="si-amt" type="number" step="0.01" min="0" required value={f.amount} onChange={set('amount')} /></Field>}
-        {!byLine && <Field label="GST" htmlFor="si-gst"><Input id="si-gst" type="number" step="0.01" min="0" value={f.tax_amount} onChange={set('tax_amount')} /></Field>}
       </div>
       <Field label="Against our order" htmlFor="si-po">
-        <select id="si-po" value={f.po_number} onChange={set('po_number')} className="h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm">
-          <option value="">Not against an order</option>
+        <select id="si-po" required value={f.po_number} onChange={set('po_number')} className="h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm">
+          <option value="">Choose the order</option>
           {orders.filter((o) => !o.superseded).map((o) => <option key={o.id}>{o.number}</option>)}
         </select>
       </Field>
       {byLine && (
         <div className="grid gap-2">
           <p className="text-sm font-medium">What you are billing on {f.po_number}</p>
-          <p className="text-xs text-muted-foreground">Up to what was received and not yet billed, at the order's rates. The GST is the order's.</p>
+          <p className="text-xs text-muted-foreground">At the order's rates and GST. More than was received and not yet billed is flagged to the office and held from payment.</p>
           {lines.map((l) => (
             <label key={l.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm">
               <span className="min-w-0 flex-1">{l.description}<span className="block text-xs text-muted-foreground">received {l.received}, billed {l.billed} - can bill {l.to_bill} {l.uom} at {formatINR(l.rate)}</span></span>
-              <Input aria-label={`Quantity of ${l.description}`} type="number" step="any" min="0" max={l.to_bill} className="h-9 w-28 text-right" value={qtyOf(l)} onChange={(e) => setQty((q) => ({ ...q, [l.id!]: e.target.value }))} /> {l.uom}
+              <Input aria-label={`Quantity of ${l.description}`} type="number" step="any" min="0" className="h-9 w-28 text-right" value={qtyOf(l)} onChange={(e) => setQty((q) => ({ ...q, [l.id!]: e.target.value }))} /> {l.uom}
+              {Number(qtyOf(l) || 0) > (l.to_bill ?? 0) + 0.0005 && <span className="basis-full text-xs font-medium text-danger">More than was received and not yet billed: it will be flagged.</span>}
             </label>
           ))}
           <p className="text-right text-sm">Before GST: <strong>{formatINR(lineValue)}</strong></p>
@@ -261,7 +260,7 @@ export function SendInvoice() {
       )}
       <Field label="The invoice (PDF or a photo)" htmlFor="si-file"><input id="si-file" type="file" accept="application/pdf,image/*" required onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
       <Field label="Note" htmlFor="si-note"><Input id="si-note" placeholder="Delivery challan numbers, anything the office should know" value={f.note} onChange={set('note')} /></Field>
-      <Button type="submit" loading={busy}>Send it</Button>
+      <Button type="submit" loading={busy} disabled={!byLine || lineValue <= 0}>Send it</Button>
       {msg && <p role={msg.ok ? 'status' : 'alert'} className={msg.ok ? 'text-sm text-success' : 'text-sm text-danger'}>{msg.text}</p>}
     </form>
   )

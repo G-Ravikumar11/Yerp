@@ -38,6 +38,7 @@ from app.core.security import rate_limiter
 from app.db import get_db, get_read_db
 from app.services.crm import norm_name
 from app.services.procurement import _rfq_lines, rfq_or_404
+from app.schemas.procurement import QuoteIn
 from app.services.rfq_chasers import email_invite
 from app.services.rfq_quotes import (invite_dict, invites_of, keep_document, new_token, save_quote,
                                      statement_for_screen)
@@ -307,11 +308,76 @@ def _quote_file(db, client_id, file_id, bytes_too=False):
 def list_quote_files(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
     rows = db.query(models.DBFile.id, models.DBFile.name, models.DBFile.content_type, models.DBFile.size, models.DBFile.caption,
-                    models.DBFile.uploaded_by_name, models.DBFile.created_at).filter(
+                    models.DBFile.uploaded_by_name, models.DBFile.created_at, models.DBFile.attached_id).filter(
         models.DBFile.client_id == client.id, models.DBFile.attached_type == QUOTE_FILES).order_by(models.DBFile.id.desc()).all()
+    # A file linked to an enquiry carries its id: the enquiry it is a quote for.
+    rfqs = {r.id: r for r in db.query(models.DBRfq).filter(models.DBRfq.client_id == client.id,
+                                                           models.DBRfq.id.in_({r.attached_id for r in rows if r.attached_id} or {0})).all()}
     return {"files": [{"id": r.id, "name": r.name or "", "content_type": r.content_type or "", "size": r.size or 0,
                        "supplier_name": r.caption or "", "added_by": r.uploaded_by_name or "", "added_at": r.created_at or "",
-                       "url": "/api/files/%d" % r.id} for r in rows]}
+                       "url": "/api/files/%d" % r.id, "rfq_id": r.attached_id if r.attached_id in rfqs else None,
+                       "rfq_number": rfqs[r.attached_id].number if r.attached_id in rfqs else "",
+                       "rfq_status": rfqs[r.attached_id].status if r.attached_id in rfqs else ""} for r in rows]}
+
+
+@router.put("/api/quote-files/{file_id}/link")
+def link_quote_file(file_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Link a quotation file to the enquiry it answers (and say whose it is); or unlink it, with no enquiry."""
+    client, _, _ = wo_actor(request, db, "purchase.manage")
+    f = _quote_file(db, client.id, file_id)
+    body = body or {}
+    rfq_id = body.get("rfq_id") or 0
+    if rfq_id:
+        rfq_or_404(db, client.id, rfq_id)
+    f.attached_id = rfq_id or 0
+    if "supplier_name" in body:
+        f.caption = (body.get("supplier_name") or "").strip()[:120]
+    db.commit()
+    return {"ok": True, "message": ("%s linked." % (f.name or "The file")) if rfq_id else "%s unlinked." % (f.name or "The file")}
+
+
+@router.post("/api/quote-files/{file_id}/read")
+def read_quote_file(file_id: int, request: Request, db: Session = Depends(get_db)):
+    """The linked enquiry's items read off the file by the AI quote reader: rates and terms for the buyer to check. Nothing is
+    saved - the buyer confirms it (or corrects it first) to record the quote."""
+    from app.ai import inputs
+    from app.ai.quote_reader import read_for_rfq
+    from app.core.files import file_bytes
+    client, _, _ = wo_actor(request, db, "purchase.manage")
+    f = _quote_file(db, client.id, file_id, bytes_too=True)
+    if not f.attached_id:
+        raise HTTPException(409, "Link the file to its enquiry first: the reader matches it to that enquiry's items.")
+    rfq = rfq_or_404(db, client.id, f.attached_id)
+    attachments, text = inputs.read_bytes(file_bytes(db, f) or b"", f.name or "", f.content_type or "", "", "quotation")
+    out = read_for_rfq(db, request, client, rfq, attachments, text)
+    if out.get("available") and not out.get("supplier_name"):
+        out["supplier_name"] = f.caption or ""
+    out["rfq_id"], out["rfq_number"] = rfq.id, rfq.number
+    return out
+
+
+@router.post("/api/quote-files/{file_id}/confirm")
+def confirm_quote_file(file_id: int, body: QuoteIn, request: Request, db: Session = Depends(get_db)):
+    """The buyer has checked the rates read off the file (and corrected them): the quote is recorded on the linked enquiry,
+    and the file kept with it as the supplier's own document."""
+    from app.core.files import file_bytes, store_file
+    client, _, actor_name = wo_actor(request, db, "purchase.manage")
+    f = _quote_file(db, client.id, file_id, bytes_too=True)
+    if not f.attached_id:
+        raise HTTPException(409, "Link the file to its enquiry first.")
+    rfq = rfq_or_404(db, client.id, f.attached_id)
+    q, revised = save_quote(db, rfq, body.model_dump(), source="buyer")
+
+    class _Upload:                          # the file already kept, given to store_file as if just uploaded (shared, not copied)
+        filename, content_type = f.name or "quotation", f.content_type or "application/octet-stream"
+    store_file(db, client.id, _Upload, file_bytes(db, f) or b"", job_id=rfq.job_id, attached_type="rfq_quote", attached_id=q.id,
+               kind="quote_document", caption="Quotation for %s" % (rfq.number or ""), by=actor_name)
+    if not f.caption:
+        f.caption = q.supplier_name
+    log_audit(db, client.id, "quote_file_confirmed", "rfq", rfq.id, rfq.number or "", "%s from %s" % (q.supplier_name, f.name), request)
+    db.commit()
+    return {"ok": True, "quote_id": q.id, "rfq_id": rfq.id,
+            "message": "%s's quote %s on %s, from %s." % (q.supplier_name, "revised" if revised else "recorded", rfq.number, f.name)}
 
 
 @router.post("/api/quote-files")

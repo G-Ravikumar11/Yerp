@@ -18,7 +18,9 @@ export interface LoggedError {
   /** A traceback is kept for this one - quote the ref to the platform team. */
   has_trace?: boolean
 }
-export interface ErrorLog { errors: LoggedError[]; areas: Record<string, string>; summary: { total: number; by_area: Record<string, number>; days: number } }
+/** Errors grouped by code and screen: the few causes behind many errors. */
+export interface ErrorGroup { code: string; screen: string; count: number; last_at: string; last_ref: string; company?: string }
+export interface ErrorLog { errors: LoggedError[]; areas: Record<string, string>; groups?: ErrorGroup[]; summary: { total: number; by_area: Record<string, number>; days: number } }
 
 export const useErrorLog = (area: string, q: string, days: number) =>
   useQuery({

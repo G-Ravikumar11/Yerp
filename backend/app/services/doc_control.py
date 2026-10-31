@@ -1,10 +1,11 @@
 """Document control: transmittals, RFIs and submittals - numbered, due, answered, and chased.
 
-A transmittal sends drawings (at the revision they are at) and papers to a party, to be acknowledged. An RFI asks a
-question that needs an answer. A submittal puts material or a shop drawing up for approval: approved, approved with
-comments, or rejected (a rejected one is resubmitted as the next revision). Each has a due date: the party is emailed
-a reminder the day before it and every few days once it is overdue, the person who raised it is told when it goes
-overdue, and what is overdue is in "What needs you".
+A transmittal sends drawings (at the revision they are at) and papers to a party, to be acknowledged - by whom and on
+what day. An RFI asks a question that needs an answer, about a drawing where there is one. A submittal puts material
+or a shop drawing up for approval: approved, approved with comments, or rejected (a rejected one is resubmitted as the
+next revision). Each has a due date. The person who raised it is told the day before it is due and when it goes past
+it, and what is overdue is in "What needs you". The other party is emailed only when somebody presses Remind: nothing
+goes out of the company on its own.
 """
 from datetime import date, datetime
 
@@ -23,8 +24,8 @@ REPLIES = {"TRANSMITTAL": ("ACKNOWLEDGED",), "RFI": ("ANSWERED",), "SUBMITTAL": 
 DONE = ("CLOSED", "CANCELLED")
 WAITING = ("OPEN",)
 PURPOSES = ("For approval", "For information", "For construction", "For comments", "For tender")
+SUBMITTAL_TYPES = ("Material approval", "Shop drawing")
 OVERDUE_EVERY = 3                # days between reminders once overdue
-MAX_REMINDERS = 6
 
 
 def day(raw, what, required=False):
@@ -69,7 +70,12 @@ def doc_dict(db, d, jobs=None, items=False):
            "revision": d.revision or "", "due_date": d.due_date or "", "status": d.status, "response": d.response or "",
            "responded_on": d.responded_on or "", "responded_by": d.responded_by or "", "created_by_name": d.created_by_name or "",
            "created_at": d.created_at or "", "closed_at": d.closed_at or "", "reminders": d.reminders or 0,
-           "reminded_on": d.reminded_on or "", "overdue": overdue(d), "replies": list(REPLIES[d.kind])}
+           "reminded_on": d.reminded_on or "", "overdue": overdue(d), "replies": list(REPLIES[d.kind]),
+           "drawing_id": d.drawing_id, "submittal_type": d.submittal_type or "", "received_by": d.received_by or "",
+           "received_on": d.received_on or ""}
+    if d.drawing_id:
+        dr = db.get(models.DBDrawing, d.drawing_id)
+        out["drawing"] = "%s rev %s" % (dr.number, dr.current_revision or "-") if dr else ""
     if items:
         rows = db.query(DBDocControlItem).filter(DBDocControlItem.doc_id == d.id).order_by(DBDocControlItem.id).all()
         drawings = {x.id: x for x in db.query(models.DBDrawing).filter(models.DBDrawing.id.in_({r.drawing_id for r in rows if r.drawing_id} or {0})).all()}
@@ -100,10 +106,17 @@ def create(db, client, actor_id, actor_name, body, request=None):
     purpose = (body.get("purpose") or "").strip()
     if purpose and purpose not in PURPOSES:
         raise HTTPException(400, "Purpose: one of %s." % ", ".join(PURPOSES))
+    stype = (body.get("submittal_type") or "").strip()
+    if kind == "SUBMITTAL" and stype not in SUBMITTAL_TYPES:
+        raise HTTPException(400, "Is it a %s?" % " or a ".join(t.lower() for t in SUBMITTAL_TYPES))
+    drawing_id = body.get("drawing_id") or None
+    if drawing_id and not db.query(models.DBDrawing.id).filter(models.DBDrawing.id == drawing_id, models.DBDrawing.client_id == client.id).first():
+        raise HTTPException(404, "That drawing is not on the register.")
     d = DBDocControl(client_id=client.id, job_id=job_id, kind=kind, number=next_number(db, client.id, kind), subject=subject,
                      to_party=to_party, to_email=(body.get("to_email") or "").strip()[:120], details=(body.get("details") or "").strip(),
                      purpose=purpose, revision=(body.get("revision") or "").strip()[:20] or ("R0" if kind == "SUBMITTAL" else ""),
-                     due_date=due, status="OPEN", created_by_id=actor_id, created_by_name=actor_name)
+                     due_date=due, status="OPEN", created_by_id=actor_id, created_by_name=actor_name,
+                     drawing_id=drawing_id if kind != "TRANSMITTAL" else None, submittal_type=stype if kind == "SUBMITTAL" else "")
     db.add(d)
     db.flush()
     for it in (body.get("items") or [])[:100] if kind == "TRANSMITTAL" else []:
@@ -124,7 +137,7 @@ def create(db, client, actor_id, actor_name, body, request=None):
     return d
 
 
-def respond(db, client, d, actor_name, reply, response, request=None):
+def respond(db, client, d, actor_name, reply, response, request=None, received_by="", received_on=""):
     if d.status not in WAITING:
         raise HTTPException(409, "%s is %s already." % (d.number, d.status.replace("_", " ").lower()))
     reply = (reply or "").strip().upper()
@@ -134,6 +147,14 @@ def respond(db, client, d, actor_name, reply, response, request=None):
         raise HTTPException(400, "What was the answer?")
     if reply in ("APPROVED_AS_NOTED", "REJECTED") and not (response or "").strip():
         raise HTTPException(400, "Record the comments that came with it.")
+    if d.kind == "TRANSMITTAL":
+        # The acknowledgement says who received what was sent, and on what day.
+        if not (received_by or "").strip():
+            raise HTTPException(400, "Who received it?")
+        d.received_by = received_by.strip()[:120]
+        d.received_on = day(received_on, "day it was received") or date.today().isoformat()
+        if d.received_on > date.today().isoformat():
+            raise HTTPException(400, "It cannot have been received on a day still to come.")
     d.status, d.response = reply, (response or "").strip()
     d.responded_on, d.responded_by = date.today().isoformat(), actor_name
     log_audit(db, client.id, "doc_control_reply", "doc_control", d.id, d.number, reply.lower(), request)
@@ -150,7 +171,7 @@ def resubmit(db, client, actor_id, actor_name, d, request=None):
     nxt = "%s%d" % (head or "R", int(rev[len(head):] or 0) + 1)
     n = DBDocControl(client_id=client.id, job_id=d.job_id, kind="SUBMITTAL", number=d.number, subject=d.subject, to_party=d.to_party,
                      to_email=d.to_email, details=d.details, purpose=d.purpose, revision=nxt, due_date="", status="OPEN",
-                     created_by_id=actor_id, created_by_name=actor_name)
+                     created_by_id=actor_id, created_by_name=actor_name, drawing_id=d.drawing_id, submittal_type=d.submittal_type)
     d.status, d.closed_at = "CLOSED", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     db.add(n)
     db.flush()
@@ -179,8 +200,8 @@ def remind(db, client, d, now=None):
 
 
 def due_for_a_reminder(d, today):
-    """The day before it is due, and every OVERDUE_EVERY days once overdue - a few times at most, never twice a day."""
-    if d.status not in WAITING or not d.due_date or (d.reminders or 0) >= MAX_REMINDERS or d.reminded_on == today.isoformat():
+    """The day before it is due, and every OVERDUE_EVERY days once overdue - never twice a day."""
+    if d.status not in WAITING or not d.due_date or d.reminded_on == today.isoformat():
         return False
     try:
         due = datetime.strptime(d.due_date, "%Y-%m-%d").date()
@@ -194,22 +215,28 @@ def due_for_a_reminder(d, today):
 
 @scheduled_job("doc_control_reminders")
 def job_doc_control_reminders(db, now):
+    """Tell whoever raised it the day before it is due and every few days while it is late. The other party is not
+    emailed from here - the company's rule is that nothing leaves on its own: Remind on the item sends the email."""
     today = now.date()
     sent = told = 0
     for d in db.query(DBDocControl).filter(DBDocControl.status.in_(WAITING), DBDocControl.due_date != "").all():
-        client = db.get(models.DBClient, d.client_id)
-        if due_for_a_reminder(d, today):
-            ok, _ = remind(db, client, d, now)
-            sent += 1 if ok else 0
+        if due_for_a_reminder(d, today) and not (overdue(d, today) and not d.overdue_told):
+            text = "%s %s to %s: %s. Remind %s from the item." % (
+                KINDS[d.kind][1], d.number, d.to_party, "due tomorrow" if not overdue(d, today) else "still no reply, due %s" % d.due_date,
+                d.to_party)
+            notify(db, d.client_id, "doc_control_due", text, view="documents-view", ref_type="doc_control", ref_id=d.id, severity="action")
+            notify_employee(db, d.client_id, d.created_by_id, "Waiting: %s" % d.number, text, link="/next/projects/documents")
+            d.reminded_on = today.isoformat()
+            sent += 1
         if overdue(d, today) and not d.overdue_told:
             text = "%s %s to %s is overdue: it was due on %s." % (KINDS[d.kind][1], d.number, d.to_party, d.due_date)
             notify(db, d.client_id, "doc_control_overdue", text, view="documents-view", ref_type="doc_control", ref_id=d.id, severity="action")
             notify_employee(db, d.client_id, d.created_by_id, "Overdue: %s" % d.number, text, link="/next/projects/documents")
-            d.overdue_told = 1
+            d.overdue_told, d.reminded_on = 1, today.isoformat()
             told += 1
         db.commit()
-    logger.info("doc control: %d reminders, %d overdue notices", sent, told)
-    return "%d reminders, %d overdue notices" % (sent, told)
+    logger.info("doc control: %d due notices, %d overdue notices", sent, told)
+    return "%d due notices, %d overdue notices" % (sent, told)
 
 
 def attention_items(db, client_id, today=None):

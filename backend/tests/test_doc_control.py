@@ -1,5 +1,5 @@
-"""Document control: transmittals, RFIs and submittals - numbered per kind, answered, chased by a due date, and in
-"What needs you" when overdue. Nothing really goes out: the sender is replaced."""
+"""Document control: transmittals, RFIs and submittals - numbered per kind, answered, followed by a due date, and in
+"What needs you" when overdue. The other party is emailed only when Remind is pressed; the sender is replaced."""
 import io
 from datetime import date, datetime, timedelta
 
@@ -36,7 +36,7 @@ def run(day):
 def test_each_kind_has_its_own_series(tenant):
     assert raise_(tenant, kind="TRANSMITTAL")["number"] == "TR-0001"
     assert raise_(tenant, kind="RFI", details="Which grade at the pile caps?")["number"] == "RFI-0001"
-    assert raise_(tenant, kind="SUBMITTAL", subject="Waterproofing membrane")["number"] == "SUB-0001"
+    assert raise_(tenant, kind="SUBMITTAL", subject="Waterproofing membrane", submittal_type="Material approval")["number"] == "SUB-0001"
     assert raise_(tenant, kind="RFI", details="Second question")["number"] == "RFI-0002"
 
 
@@ -50,8 +50,11 @@ def test_a_transmittal_records_each_drawing_at_the_revision_sent(tenant):
     # A later revision does not change what was sent.
     tenant.post("/api/drawings/%d/revisions" % d["id"], files={"file": ("r2.pdf", io.BytesIO(PDF + b"2"), "application/pdf")}, data={"revision": "R2"})
     assert tenant.get("/api/doc-control/%d" % t["id"]).json()["item"]["items"][0]["revision"] == "R1"
-    ack = tenant.post("/api/doc-control/%d/reply" % t["id"], json={"reply": "ACKNOWLEDGED"})
-    assert ack.status_code == 200 and ack.json()["item"]["status"] == "ACKNOWLEDGED"
+    assert tenant.post("/api/doc-control/%d/reply" % t["id"], json={"reply": "ACKNOWLEDGED"}).status_code == 400   # by whom?
+    ack = tenant.post("/api/doc-control/%d/reply" % t["id"], json={"reply": "ACKNOWLEDGED", "received_by": "R. Menon (PMC)",
+                                                                  "received_on": date.today().isoformat()})
+    got = ack.json()["item"]
+    assert ack.status_code == 200 and (got["status"], got["received_by"], got["received_on"]) == ("ACKNOWLEDGED", "R. Menon (PMC)", date.today().isoformat())
 
 
 def test_an_rfi_needs_a_question_and_an_answer(tenant):
@@ -64,29 +67,38 @@ def test_an_rfi_needs_a_question_and_an_answer(tenant):
 
 
 def test_a_rejected_submittal_goes_up_again_as_its_next_revision(tenant):
-    s = raise_(tenant, kind="SUBMITTAL", subject="Waterproofing membrane")
-    assert s["revision"] == "R0"
+    assert tenant.post("/api/doc-control", json={"kind": "SUBMITTAL", "subject": "x", "to_party": "PMC"}).status_code == 400   # which kind?
+    s = raise_(tenant, kind="SUBMITTAL", subject="Waterproofing membrane", submittal_type="Shop drawing")
+    assert (s["revision"], s["submittal_type"]) == ("R0", "Shop drawing")
     assert tenant.post("/api/doc-control/%d/reply" % s["id"], json={"reply": "REJECTED"}).status_code == 400      # comments needed
     tenant.post("/api/doc-control/%d/reply" % s["id"], json={"reply": "REJECTED", "response": "Thickness below spec"})
     n = tenant.post("/api/doc-control/%d/resubmit" % s["id"]).json()["item"]
-    assert (n["number"], n["revision"], n["status"]) == (s["number"], "R1", "OPEN")
+    assert (n["number"], n["revision"], n["status"], n["submittal_type"]) == (s["number"], "R1", "OPEN", "Shop drawing")
     assert tenant.get("/api/doc-control/%d" % s["id"]).json()["item"]["status"] == "CLOSED"
 
 
-def test_the_party_is_reminded_before_the_due_date_and_while_overdue_and_the_raiser_is_told(tenant, sent):
+def test_the_raiser_is_told_before_the_due_date_and_when_overdue_and_only_remind_emails_the_party(tenant, sent):
     due = date.today() + timedelta(days=1)
     r = raise_(tenant, kind="RFI", details="M30 or M35?", to_email="pmc@example.com", due_date=due.isoformat())
-    run(date.today())                                                   # the day before
-    assert [m[0] for m in sent] == ["pmc@example.com"] and "RFI-0001" in sent[0][1]
-    sent.clear()
-    run(due)                                                            # on the day: nothing
-    assert sent == []
-    run(due + timedelta(days=3))                                        # three days late: reminded, and the raiser told
-    assert [m[0] for m in sent] == ["pmc@example.com"] and "was due" in sent[0][2]
     with database.SessionLocal() as db:
         cid = db.get(models.DBDocControl, r["id"]).client_id
-        alerts = db.query(models.DBAlert).filter(models.DBAlert.client_id == cid, models.DBAlert.kind == "doc_control_overdue").all()
-        assert len(alerts) == 1 and "RFI-0001" in alerts[0].title
+    kinds = lambda k: [a.title for a in database.SessionLocal().query(models.DBAlert).filter(models.DBAlert.client_id == cid, models.DBAlert.kind == k).all()]
+    run(date.today())                                                   # the day before: the raiser is told, nobody emailed
+    assert sent == [] and any("RFI-0001" in t and "due tomorrow" in t for t in kinds("doc_control_due"))
+    run(due + timedelta(days=1))                                        # late: told once that it is overdue
+    assert sent == [] and len(kinds("doc_control_overdue")) == 1
+    run(due + timedelta(days=2))
+    assert len(kinds("doc_control_overdue")) == 1
+    res = tenant.post("/api/doc-control/%d/remind" % r["id"])          # a person presses Remind: now the party is emailed
+    assert res.status_code == 200 and [m[0] for m in sent] == ["pmc@example.com"]
+
+
+def test_an_rfi_can_name_its_drawing(tenant):
+    j = job(tenant)
+    d = tenant.post("/api/jobs/%d/drawings" % j["id"], json={"number": "STR-401", "title": "Pile caps"}).json()["drawing"]
+    tenant.post("/api/drawings/%d/revisions" % d["id"], files={"file": ("r0.pdf", io.BytesIO(PDF), "application/pdf")}, data={"revision": "R0"})
+    r = raise_(tenant, kind="RFI", details="Cover to the caps?", drawing_id=d["id"])
+    assert (r["drawing_id"], r["drawing"]) == (d["id"], "STR-401 rev R0")
 
 
 def test_what_is_overdue_needs_you(tenant):

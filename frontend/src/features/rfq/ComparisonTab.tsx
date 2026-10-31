@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, FileText, Link2, Pencil, Plus, Trophy } from 'lucide-react'
 import { Button, Tabs } from '@/components/ui'
-import type { RfqSupplier, Statement } from '@/api/rfq'
+import type { RfqLine, RfqSupplier, Statement } from '@/api/rfq'
 import { compare, type Comparison } from '@/lib/rfqCompare'
 import { formatDate, formatQty } from '@/lib/format'
 import { cn, formatINR } from '@/lib/utils'
+import { PriceTrend } from '@/features/items/PriceHistory'
 import type { AwardPreset } from './AwardModal'
 import { QuoteCheckModal } from './QuoteCheck'
 
@@ -153,6 +154,7 @@ function Sheet({ d, c, onQuote }: { d: Statement; c: Comparison; onQuote: (suppl
                   <th scope="row" className={cn(label, 'py-2.5 font-normal')}>
                     <div className="font-medium">{l.description}</div>
                     <div className="text-xs text-muted-foreground">{formatQty(l.qty)} {l.uom}{l.item_code && <span className="font-mono"> · {l.item_code}</span>}</div>
+                    <LastPaid h={l.price_history} />
                   </th>
                   {sups.map((s) => {
                     const o = l.offers.find((x) => same(x.supplier_name, s.supplier_name))
@@ -188,6 +190,10 @@ function Sheet({ d, c, onQuote }: { d: Statement; c: Comparison; onQuote: (suppl
                 </td>
               ))}
             </tr>
+            <tr className="align-top border-t border-border">
+              <th scope="row" className={cn(label, 'py-2 font-normal text-muted-foreground')}>Their record<div className="text-[11px]">on time · rejected · vs L1 · reply</div></th>
+              {sups.map((s) => <td key={s.quote_id} className={cn(col, 'py-2')}><Scorecard c={s.scorecard} /></td>)}
+            </tr>
             {terms.map(([name, get]) => (
               <tr key={name} className="align-top">
                 <th scope="row" className={cn(label, 'py-1.5 font-normal text-muted-foreground')}>{name}</th>
@@ -200,5 +206,34 @@ function Sheet({ d, c, onQuote }: { d: Statement; c: Comparison; onQuote: (suppl
       {sups.some((s) => !s.complete) && <p className="border-t border-border px-4 py-2 text-xs text-muted-foreground">* A part quote: some items are not priced, so its total cannot be compared with a full one.</p>}
       {checking && <QuoteCheckModal statement={d} supplier={checking} onClose={() => setChecking(null)} />}
     </section>
+  )
+}
+
+/** Under an enquiry line: what the item last cost and from whom, and the trend - what a quote is weighed against. */
+function LastPaid({ h }: { h: RfqLine['price_history'] }) {
+  const last = h?.points.at(-1)
+  if (!h || !last) return null
+  return (
+    <div className="mt-1 text-xs text-muted-foreground">
+      Last paid <strong className="text-foreground">{formatINR(last.rate)}</strong> ({last.supplier}, {last.po})
+      {h.last_by_supplier.length > 1 && ` · lowest last ${formatINR(h.last_by_supplier[0].rate)} from ${h.last_by_supplier[0].supplier}`}
+      {h.points.length > 1 && <div className="mt-1"><PriceTrend points={h.points} height={28} /></div>}
+    </div>
+  )
+}
+
+/** A supplier's record with us, beside their price: delivered on time, rejected at the gate, how far over L1 they quote,
+ * how many days they take to answer. */
+function Scorecard({ c }: { c: RfqSupplier['scorecard'] }) {
+  if (!c) return <span className="text-xs text-muted-foreground">No record yet</span>
+  const pct = (v: number | null) => (v == null ? '-' : `${v}%`)
+  const tone = (v: number | null, limit: number, higherIsWorse: boolean) => (v == null ? '' : (higherIsWorse ? v > limit : v < limit) ? 'text-danger' : 'text-success')
+  return (
+    <ul className="grid gap-0.5 text-xs">
+      <li title={`${c.orders_scored} orders with a needed-by date`}>On time <strong className={tone(c.on_time_pct, 80, false)}>{pct(c.on_time_pct)}</strong></li>
+      <li>Rejected <strong className={tone(c.rejection_pct, 2, true)}>{pct(c.rejection_pct)}</strong></li>
+      <li title={`L1 on ${c.l1_wins} of ${c.quoted} enquiries`}>Above L1 <strong>{pct(c.above_l1_pct)}</strong> <span className="text-muted-foreground">(L1 {c.l1_wins}/{c.quoted})</span></li>
+      <li>Replies in <strong>{c.response_days == null ? '-' : `${c.response_days} days`}</strong></li>
+    </ul>
   )
 }

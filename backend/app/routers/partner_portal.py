@@ -244,9 +244,10 @@ def portal_send_invoice(request: Request, file: UploadFile = File(...),
                         amount: float = Form(0), tax_amount: float = Form(0),
                         po_number: str = Form(""), note: str = Form(""), lines: str = Form(""),
                         db: Session = Depends(get_db)):
-    """A supplier sends an invoice in. It lands in Supplier Bills as a draft,
-    with the invoice attached, for the office to check against the goods
-    received and accept - nothing is payable until somebody here has."""
+    """A supplier sends an invoice in, against the lines of one of their orders - never as a single total. It lands
+    in Supplier Bills as a draft, with the invoice attached, for the office to check against the goods received and
+    accept - nothing is payable until somebody here has. A line billed for more than has been received is taken, and
+    flagged at once: to the supplier in the answer, to the office on the bell and in the bill's note."""
     u, client, party, name = get_portal_user(request, db)
     if u.party_type != "supplier":
         raise HTTPException(403, "Your bills are drawn from the measurement book on site; the office raises them.")
@@ -254,8 +255,10 @@ def portal_send_invoice(request: Request, file: UploadFile = File(...),
     if not number:
         raise HTTPException(400, "Your invoice number.")
     billed_lines = _invoice_lines(lines)
-    if not billed_lines and ((amount or 0) <= 0 or (tax_amount or 0) < 0):
-        raise HTTPException(400, "The invoice value before tax, and the GST on it.")
+    if not (po_number or "").strip():
+        raise HTTPException(400, "Choose the order the invoice is for.")
+    if not billed_lines:
+        raise HTTPException(400, "Enter what you are billing against each line of the order.")
     on = (issue_date or date.today().isoformat())[:10]
     if not _parse_date(on):
         raise HTTPException(400, "Invoice date should be YYYY-MM-DD.")
@@ -276,33 +279,30 @@ def portal_send_invoice(request: Request, file: UploadFile = File(...),
             if norm_name(p.supplier_name) == key), None)
         if not po:
             raise HTTPException(404, "%s is not one of your orders." % po_number.strip())
-    made = []
-    if billed_lines:
-        # Billed line by line against the order: each within what was received and not yet billed, at the order's rate.
-        if po is None:
-            raise HTTPException(400, "Choose the order the invoice is for, to bill its lines.")
-        from app.services.partner_portal import po_line_position
-        pos = po_line_position(db, po)
-        po_lines = {l.id: l for l in db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).all()}
-        amount = tax = 0.0
-        for want in billed_lines:
-            pl = po_lines.get(want["po_line_id"])
-            if pl is None:
-                raise HTTPException(404, "That line is not on %s." % po.number)
-            room = pos.get(pl.id, {}).get("to_bill", 0.0)
-            if want["qty"] > room + 0.0005:
-                raise HTTPException(409, "%s: %s %s received and not yet billed, so %s cannot be billed." % (
-                    pl.description or "That line", ("%g" % room), pl.uom or "", "%g" % want["qty"]))
-            value = money(want["qty"] * (pl.price or 0))
-            rate = _rate(pl.tax_rate)
-            amount, tax = amount + value, tax + value * rate / 100.0
-            made.append((pl, want["qty"]))
-    amount, tax = money(amount), money(tax_amount or 0) if not made else money(tax)
+    # Billed line by line against the order, at the order's rate and GST. A line past what was received and not yet
+    # billed is flagged, not turned away: the supplier may have delivered what nobody has booked in yet.
+    from app.services.partner_portal import po_line_position
+    pos = po_line_position(db, po)
+    po_lines = {l.id: l for l in db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).all()}
+    made, flags = [], []
+    amount = tax = 0.0
+    for want in billed_lines:
+        pl = po_lines.get(want["po_line_id"])
+        if pl is None:
+            raise HTTPException(404, "That line is not on %s." % po.number)
+        room = pos.get(pl.id, {}).get("to_bill", 0.0)
+        if want["qty"] > room + 0.0005:
+            flags.append("%s: %g %s billed, %g received and not yet billed" % (pl.description or "a line", want["qty"], pl.uom or "", room))
+        value = money(want["qty"] * (pl.price or 0))
+        amount, tax = amount + value, tax + value * _rate(pl.tax_rate) / 100.0
+        made.append((pl, want["qty"]))
+    amount, tax = money(amount), money(tax)
     b = models.DBBill(client_id=u.client_id, number=number, vendor_name=name, vendor_email=u.email,
                       issue_date=on, due_date=days_after(on, party.payment_days or 30),
                       amount=amount, tax_amount=tax, total=money(amount + tax), amount_paid=0.0,
                       status="Draft", category="Materials", reference=po.number if po else "",
-                      notes=("Sent through the partner portal by %s on %s. %s" % (
+                      notes=(("FLAGGED - more than received: %s. " % "; ".join(flags)) if flags else "")
+                      + ("Sent through the partner portal by %s on %s. %s" % (
                           u.name or u.email, date.today().isoformat(), (note or "").strip()[:300])).strip(),
                       job_id=po.job_id if po else None, purchase_order_id=po.id if po else None)
     db.add(b)
@@ -315,11 +315,16 @@ def portal_send_invoice(request: Request, file: UploadFile = File(...),
     log_audit(db, u.client_id, "portal_invoice", "supplier_bill", b.id, number,
               "%s %s" % (name, inr(b.total)), request, user_type="partner", user_name=u.email)
     db.commit()
-    notify(db, u.client_id, "portal_invoice", "%s sent invoice %s" % (name, number),
-           "%s%s, through the partner portal. Check it and accept it in Supplier Bills." % (
-               inr(b.total), (" against " + po.number) if po else ""),
-           view="bills-view", ref_type="supplier_bill", ref_id=b.id, severity="action")
-    return {"ok": True, "message": "Invoice %s received. The office will check it against the delivery." % number}
+    notify(db, u.client_id, "portal_invoice_over" if flags else "portal_invoice",
+           ("%s sent invoice %s - more than was received" if flags else "%s sent invoice %s") % (name, number),
+           "%s against %s, through the partner portal.%s Check it and accept it in Supplier Bills." % (
+               inr(b.total), po.number, (" Billed past what was received: %s." % "; ".join(flags)) if flags else ""),
+           view="bills-view", ref_type="supplier_bill", ref_id=b.id, severity="money" if flags else "action")
+    if flags:
+        return {"ok": True, "flagged": flags,
+                "message": "Invoice %s received, and flagged: it bills more than we have received (%s). It will not be "
+                           "paid until the difference is explained or delivered." % (number, "; ".join(flags))}
+    return {"ok": True, "flagged": [], "message": "Invoice %s received. The office will check it against the delivery." % number}
 
 
 def _invoice_lines(raw):
