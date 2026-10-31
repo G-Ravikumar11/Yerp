@@ -51,7 +51,7 @@ def test_the_deduction_lines_add_up_to_the_total(tenant):
     ps = payslip_for(tenant, emp)
 
     lines = (ps["tax_amount"] + ps["insurance"] + ps["retirement"]
-             + ps["other_deductions"] + ps["standing_deduction"])
+             + ps["other_deductions"] + ps["standing_deduction"] + ps["professional_tax"])
     assert round(lines, 2) == round(ps["total_deductions"], 2)
     assert ps["standing_deduction"] == 200.0
 
@@ -62,8 +62,9 @@ def test_the_standing_deduction_is_reported(tenant):
 
     assert ps["gross_pay"] == 81500.0
     assert ps["tax_amount"] == 20375.0
-    assert ps["total_deductions"] == 20575.0
-    assert ps["net_pay"] == 60925.0
+    # 20,375 tax + 1,800 PF (12% of the basic, to 15,000) + 200 professional tax + 200 standing
+    assert ps["total_deductions"] == 22575.0
+    assert ps["net_pay"] == 58925.0
 
 
 def test_nothing_is_invented_when_there_is_no_standing_deduction(tenant):
@@ -71,7 +72,7 @@ def test_nothing_is_invented_when_there_is_no_standing_deduction(tenant):
     ps = payslip_for(tenant, emp)
     assert ps["standing_deduction"] == 0.0
     assert round(ps["tax_amount"] + ps["insurance"] + ps["retirement"]
-                 + ps["other_deductions"], 2) == round(ps["total_deductions"], 2)
+                 + ps["other_deductions"] + ps["professional_tax"], 2) == round(ps["total_deductions"], 2)
 
 
 def test_it_reconciles_alongside_the_other_deductions(tenant):
@@ -80,7 +81,7 @@ def test_it_reconciles_alongside_the_other_deductions(tenant):
                      other_deductions=30.0)
 
     lines = (ps["tax_amount"] + ps["insurance"] + ps["retirement"]
-             + ps["other_deductions"] + ps["standing_deduction"])
+             + ps["other_deductions"] + ps["standing_deduction"] + ps["professional_tax"])
     assert round(lines, 2) == round(ps["total_deductions"], 2)
     assert ps["standing_deduction"] == 150.0
     assert round(ps["gross_pay"] - ps["total_deductions"], 2) == ps["net_pay"]
@@ -91,5 +92,5 @@ def test_reading_a_payslip_back_also_reconciles(tenant):
     emp = make_employee(tenant, salary=80000.0, tax_rate=25.0, deductions=200.0)
     ps = payslip_for(tenant, emp)
     lines = (ps["tax_amount"] + ps["insurance"] + ps["retirement"]
-             + ps["other_deductions"] + ps["standing_deduction"])
+             + ps["other_deductions"] + ps["standing_deduction"] + ps["professional_tax"])
     assert round(lines, 2) == round(ps["total_deductions"], 2)

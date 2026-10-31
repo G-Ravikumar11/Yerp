@@ -38,7 +38,8 @@ function Body() {
   }, refresh)
   const v = editing?.v
   const set = (patch: ComponentInput) => setEditing((e) => (e ? { ...e, v: { ...e.v, ...patch } } : e))
-  const how = (c: SalaryComponent) => (c.basis === 'percent' ? `${c.percent}% of the monthly salary` : 'Typed on each payslip')
+  // PF and ESI are set by law whatever percentage is typed here: the payslip works them out from the basic pay and the gross.
+  const how = (c: SalaryComponent) => c.kind === 'deduction' && c.counts_as === 'pf' ? 'By law: 12% of the basic pay, up to 15,000' : c.kind === 'deduction' && c.counts_as === 'esi' ? 'By law: 0.75% of the gross, while it is 21,000 or less' : (c.basis === 'percent' ? `${c.percent}% of the monthly salary` : 'Typed on each payslip')
 
   if (q.isPending) return <Skeleton className="h-64 w-full" />
   return (

@@ -28,4 +28,10 @@ describe('the menu follows the portals a person holds', () => {
     const ids = visibleNav(everything, false).filter((e) => e.kind === 'group').map((e) => e.id)
     expect(ids).toEqual(expect.arrayContaining(['projects', 'clients', 'subcontractors', 'store', 'money', 'people']))
   })
+  it('gives everybody the Feed, which holds the celebrations, whatever they hold and wherever they land', () => {
+    const has = (entries: ReturnType<typeof visibleNav>) => entries.some((e) => e.kind === 'link' && e.path === '/feed')
+    expect(has(visibleNav(canWith(), true))).toBe(true)                    // staff with no rights at all
+    expect(has(visibleNav(canWith('ho.view_all'), true, true))).toBe(true) // head office
+    expect(has(visibleNav(() => true, false))).toBe(true)                  // the Master
+  })
 })

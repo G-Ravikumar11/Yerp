@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Download, Mail, Printer } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Modal, NumField, Skeleton } from '@/components/ui'
-import { deletePayslip, emailPayslip, markPaid, payKeys, payslipFile, reapplyStructure, reopenPayslip, savePayslipLines, usePayslip } from '@/api/payroll'
+import { deletePayslip, emailPayslip, markPaid, payKeys, payslipFile, payslipTone, reapplyStructure, reopenPayslip, savePayslipLines, usePayslip } from '@/api/payroll'
 import { useAction } from '@/lib/mutate'
 import { formatDate } from '@/lib/format'
 import { payslipHtml, printPayslip } from './print'
@@ -25,7 +25,7 @@ export function PayslipModal({ id, onClose }: { id: number | null; onClose: () =
       {!p ? <Skeleton className="h-64 w-full" /> : (
         <div>
           <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
-            <Badge tone={p.status === 'Paid' ? 'success' : 'neutral'} dot>{p.status}</Badge>
+            <Badge tone={payslipTone(p.status)} dot>{p.status}</Badge>
             {p.sent && <Badge tone="info">Emailed</Badge>}
             <span className="text-muted-foreground">{p.employee.job_title}{p.employee.department_name && ` - ${p.employee.department_name}`} - pay date {formatDate(p.pay_date) || 'not set'}</span>
           </div>

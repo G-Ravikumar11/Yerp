@@ -155,7 +155,7 @@ def test_a_rejected_cost_is_not_a_cost(portal, tenant):
 def test_labour_hours_reach_the_job(portal, tenant):
     job = make_job(tenant)
     hand = staff(tenant, hourly_rate=25.0)
-    tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7"})
+    tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7", "require_location": False})
 
     sign_in(portal, hand)
     portal.post("/api/employee/attendance/clock-in", json={})

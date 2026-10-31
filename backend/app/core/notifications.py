@@ -214,6 +214,13 @@ NOTIFY_KINDS = {
     "daily_digest": "The morning list of what needs looking at",
     "security_lock": "An account was locked after too many wrong passwords",
     "increment_due": "It is a year since somebody's last salary increment",
+    "payroll_ready": "A month's payroll was drafted and is ready to review",
+    "payroll_failed": "A month's automatic payroll could not run",
+    "payroll_check": "Something to put right before a month's payroll is approved (missing PAN, bank, UAN or ESI details, pay that looks wrong)",
+    "attendance_late_penalty": "Somebody reached the late-arrival limit for the month",
+    "probation_ending": "Somebody's probation is about to end",
+    "contract_ending": "Somebody's contract is about to end",
+    "documents_expiring": "An employee's document is about to expire, or has expired",
     "celebration": "A birthday or a special day is being celebrated today",
 }
 # Out of the box: the bell for everything, email for the money, the digest and a locked account.

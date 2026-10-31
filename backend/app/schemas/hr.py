@@ -57,6 +57,14 @@ class EmployeeCreate(BaseModel):
     pan_no: Optional[str] = ""
     uan_no: Optional[str] = ""
     esi_no: Optional[str] = ""
+    bank_ifsc: Optional[str] = ""
+    # Statutory deductions, switchable per person; PT follows the state's slab (TS or AP).
+    pf_enabled: Optional[bool] = True
+    esi_enabled: Optional[bool] = True
+    pt_enabled: Optional[bool] = True
+    pt_state: Optional[str] = "TS"
+    probation_end_date: Optional[str] = None
+    contract_end_date: Optional[str] = None
     start_date: Optional[str] = ""
     employee_id: Optional[str] = ""
     password: Optional[str] = ""

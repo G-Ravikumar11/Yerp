@@ -41,6 +41,7 @@ export const REDIRECTS: { from: string; to: string }[] = [
 
 export const SCREENS: Screen[] = [
   { path: '/calendar', Component: page(() => import('@/features/calendar/CalendarPage')) },
+  { path: '/feed', Component: page(() => import('@/features/feed/FeedPage')) },
   { path: '/celebrations', Component: page(() => import('@/features/celebrations/CelebrationsPage')) },
   { path: '/ho', Component: page(() => import('@/features/headoffice/HoPortalPage')) },
   { path: '/projects/boq', Component: page(() => import('@/features/boq/BoqListPage')) },

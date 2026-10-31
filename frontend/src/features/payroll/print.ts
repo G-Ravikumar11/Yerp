@@ -42,12 +42,14 @@ export function payslipHtml(p: PayslipDetail, { autoPrint = false } = {}): strin
   const c = p.company
   // Every column of the sheet. A head the application holds no figure for is left empty, for the office to complete.
   const own = p.lines ?? []
+  // A payslip made with paid days carries its own counts: working days, loss of pay and the days paid.
+  const counted = (p.working_days ?? 0) > 0
   const earn: [string, number | null][] = own.length ? own.filter((l) => l.kind === 'earning').map((l) => [l.name, l.amount]) : [['Basic', p.basic_salary], ['HRA', null], ['Site Allowance', null], ['Special Allownace', null], ['Mobile Allowance', null], ['Transport Allowance', null], ['Other Allowance', p.allowances]]
   if (p.overtime_pay) earn.push([`Overtime${p.overtime_hours ? ` (${p.overtime_hours}h)` : ''}`, p.overtime_pay])
   if (p.bonus) earn.push(['Bonus', p.bonus])
   const ded: [string, number | null][] = own.length
-    ? [...own.filter((l) => l.kind === 'deduction').map((l): [string, number | null] => [l.name, l.amount]), ...(p.tax_amount ? [['TDS Deduction', p.tax_amount] as [string, number | null]] : [])]
-    : [['PF', p.retirement], ['ESI', p.insurance], ['Prof Tax', null], ['Salary Advance', null], ['TDS Deduction', p.tax_amount], ['Loss Of Pay', null], ['Other Deductions', p.other_deductions]]
+    ? [...own.filter((l) => l.kind === 'deduction').map((l): [string, number | null] => [l.name, l.amount]), ...(p.professional_tax ? [['Prof Tax', p.professional_tax] as [string, number | null]] : []), ...(p.tax_amount ? [['TDS Deduction', p.tax_amount] as [string, number | null]] : [])]
+    : [['PF', p.retirement], ['ESI', p.insurance], ['Prof Tax', p.professional_tax || null], ['Salary Advance', null], ['TDS Deduction', p.tax_amount], ['Loss Of Pay', null], ['Other Deductions', p.other_deductions]]
   if (p.standing_deduction > 0) ded.push(['Standing Deduction', p.standing_deduction])
   const rows = Math.max(earn.length, ded.length, 4)
   const lines = Array.from({ length: rows }, (_, i) => `<tr><td colspan="2">${esc(earn[i]?.[0] ?? '')}</td><td class="r">${earn[i]?.[1] != null ? amt(earn[i][1] as number) : ''}</td><td colspan="2">${esc(ded[i]?.[0] ?? '')}</td><td class="r">${ded[i]?.[1] != null ? amt(ded[i][1] as number) : ''}</td></tr>`).join('')
@@ -62,10 +64,10 @@ ${info('Employee No.', e.employee_id, 'Location .', e.work_location)}
 ${info('Name.', e.full_name, 'Department.', e.department_name)}
 ${info('Bank Name.', e.bank_name, 'Designation.', e.job_title)}
 ${info('Bank Acc.No.', e.bank_account, 'Total Days.', p.days.total || '')}
-${info('Father Name.', '', 'LOP .', '')}
+${info('Father Name.', '', 'LOP .', counted ? p.lop_days : '')}
 ${info('Salary Per Month.', amt(own.length ? (p.monthly_salary ?? p.gross_pay) : p.gross_pay), 'Balance Leaves.', p.days.balance_leaves)}
-${info('DOJ.', joined(e.start_date), 'Work Days.', p.days.work || '')}
-${info('Aadhar No.', e.aadhaar_masked, 'Effective Work days.', p.days.work || '')}
+${info('DOJ.', joined(e.start_date), 'Work Days.', counted ? p.working_days : p.days.work || '')}
+${info('Aadhar No.', e.aadhaar_masked, 'Effective Work days.', counted ? p.paid_days : p.days.work || '')}
 ${info('UAN No', e.uan_no, 'ESI No', e.esi_no)}
 <tr class="h"><td colspan="3">Earnings</td><td colspan="3">Deductions</td></tr>
 ${lines}

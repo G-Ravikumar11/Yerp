@@ -90,6 +90,7 @@ export default function HoPortalPage() {
         }
       />
 
+
       {user?.type === 'employee' && (
         <div className="mb-6">
           <ClockCard />

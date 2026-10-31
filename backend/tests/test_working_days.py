@@ -112,7 +112,7 @@ def test_hr_sees_no_attendance_for_a_sign_in_that_was_not_a_shift(portal, tenant
 
 
 def test_a_second_sign_in_after_clocking_in_keeps_the_same_shift(portal, tenant, staffer):
-    tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7"})
+    tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7", "require_location": False})
     login(portal, staffer)
     first = portal.post("/api/employee/attendance/clock-in", json={}).json()["clock_in"]
     again = login(portal, staffer).json()

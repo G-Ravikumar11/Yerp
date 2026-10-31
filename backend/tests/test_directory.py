@@ -147,7 +147,7 @@ def test_validated_employee_produces_a_sane_payslip(tenant):
         "employee_id": emp["id"], "period_start": "2026-01-01",
         "period_end": "2026-01-31", "pay_date": "2026-02-01", "use_structure": False,
     }).json()
-    assert ps["net_pay"] == 2400.00
+    assert ps["net_pay"] == 2017.50       # 20% tax, 12% PF and 0.75% ESI come off the 3000
     assert ps["net_pay"] > 0
 
 

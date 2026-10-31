@@ -17,7 +17,8 @@ from app.ai.assistant_llm import llm_chat, llm_configured, llm_error_message, ll
 from app.constants.wallet_ai import ASSISTANT_SYSTEM, TOPUP_MAX_MAJOR, TOPUP_MIN_MAJOR
 from app.core.auth import get_client_user, require_payroll_editor
 from app.core.config import logger
-from app.core.currency import currency_symbol, to_major
+from app.core.currency import currency_symbol, money_text, to_major
+from app.services.employee_portal import attendance_settings_for, is_late, late_rule_for_reports
 from app.schemas.wallet_ai import AssistantQuery, TopUpIn
 from app.services.crm import invoice_overdue_days
 from app.services.wallet_ai import (
@@ -431,16 +432,17 @@ def personalize_invoice_email(request: Request, body: dict = None, db: Session =
     client_name = body["client_name"]
     invoice_number = body.get("invoice_number", "")
     total = body.get("total", 0)
+    amount_text = money_text(client.currency, total)
     due_date = body.get("due_date", "")
     is_first_time = body.get("is_first_time", False)
     tone = body.get("tone", "professional")
     messages = [
         {"role": "system", "content": f"You are a professional accounts receivable email writer. Write a short, {tone} invoice email. Include: greeting, invoice reference, amount, due date, payment link mention, and closing. Keep it under 100 words. Return ONLY the email body text, no subject line."},
-        {"role": "user", "content": f"Client: {client_name}\nInvoice: {invoice_number}\nAmount: £{total}\nDue: {due_date}\nFirst time client: {is_first_time}"}
+        {"role": "user", "content": f"Client: {client_name}\nInvoice: {invoice_number}\nAmount: {amount_text}\nDue: {due_date}\nFirst time client: {is_first_time}"}
     ]
     result = llm_chat(messages)
     if not result:
-        return {"subject": f"Invoice {invoice_number}", "body": f"Dear {client_name},\n\nPlease find invoice {invoice_number} for £{total}, due {due_date}.\n\nKind regards,\n{client.company_name or 'Accounts Team'}"}
+        return {"subject": f"Invoice {invoice_number}", "body": f"Dear {client_name},\n\nPlease find invoice {invoice_number} for {amount_text}, due {due_date}.\n\nKind regards,\n{client.company_name or 'Accounts Team'}"}
     subject = f"Invoice {invoice_number}" if invoice_number else "Invoice"
     lines = result.strip().split("\n")
     for line in lines:
@@ -461,15 +463,16 @@ def generate_followup_email(request: Request, body: dict = None, db: Session = D
     client_name = body["client_name"]
     invoice_number = body.get("invoice_number", "")
     total = body.get("total", 0)
+    amount_text = money_text(client.currency, total)
     days_overdue = body.get("days_overdue", 0)
     tone = body.get("tone", "polite")
     messages = [
         {"role": "system", "content": f"You are an accounts receivable specialist. Write a {tone} payment follow-up email for an overdue invoice. Be concise, professional, and clear about the amount owed and urgency. Keep under 80 words. Return ONLY the email body text."},
-        {"role": "user", "content": f"Client: {client_name}\nInvoice: {invoice_number}\nAmount: £{total}\nDays overdue: {days_overdue}"}
+        {"role": "user", "content": f"Client: {client_name}\nInvoice: {invoice_number}\nAmount: {amount_text}\nDays overdue: {days_overdue}"}
     ]
     result = llm_chat(messages)
     if not result:
-        return {"subject": f"Payment Reminder - {invoice_number}", "body": f"Dear {client_name},\n\nThis is a friendly reminder that invoice {invoice_number} for £{total} is now {days_overdue} days overdue.\n\nPlease arrange payment at your earliest convenience.\n\nKind regards,\n{client.company_name or 'Accounts Team'}"}
+        return {"subject": f"Payment Reminder - {invoice_number}", "body": f"Dear {client_name},\n\nThis is a friendly reminder that invoice {invoice_number} for {amount_text} is now {days_overdue} days overdue.\n\nPlease arrange payment at your earliest convenience.\n\nKind regards,\n{client.company_name or 'Accounts Team'}"}
     subject = f"Payment Reminder - {invoice_number}" if invoice_number else "Payment Reminder"
     charge_after_success(db, client.id, "ai_email_draft", 1, invoice_number)
     return {"subject": subject, "body": result}
@@ -518,6 +521,7 @@ def detect_attendance_alerts(request: Request, db: Session = Depends(get_read_db
         models.DBAttendance.client_id == client.id,
         models.DBAttendance.date >= thirty_days_ago,
     ).all()
+    rule = late_rule_for_reports(attendance_settings_for(db, client.id))      # the company's own start time and grace
     by_emp = {}
     for r in records:
         if r.employee_id not in by_emp:
@@ -535,7 +539,7 @@ def detect_attendance_alerts(request: Request, db: Session = Depends(get_read_db
         no_clockout = 0
         total_hours = 0
         for r in recs:
-            if r.clock_in and r.clock_in > "09:15:00":
+            if r.status != "absent" and is_late(r, rule):
                 late_count += 1
             if r.status == "absent" or (not r.clock_in and not r.clock_out):
                 absent_days += 1

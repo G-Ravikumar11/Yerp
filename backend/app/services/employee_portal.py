@@ -1,6 +1,7 @@
 """The rules and workings behind the employee portal endpoints."""
 from datetime import date, datetime, timedelta
 import math
+from types import SimpleNamespace
 from typing import Any, Dict, Optional, Set, Tuple
 
 from fastapi import HTTPException
@@ -64,6 +65,78 @@ def target_hours_for(settings: Optional[models.DBAttendanceSettings]) -> float:
     return 8.0
 
 
+def minutes_late(att: Any, settings: Optional[models.DBAttendanceSettings]) -> int:
+    """How many minutes after the start of the day plus the grace period this clock-in was, or 0.
+
+    Worked out from the clock-in time itself, not from the record's status: the status says "late" only until the
+    person clocks out, when end_shift marks the day "completed", so a count of statuses missed everybody who left."""
+    if not settings or not getattr(att, "clock_in", "") or not settings.work_start:
+        return 0
+    try:
+        start = datetime.strptime(settings.work_start, "%H:%M")
+        came = datetime.strptime(att.clock_in[:8], "%H:%M:%S")
+    except (TypeError, ValueError):
+        return 0
+    late_by = (came - start).total_seconds() / 60 - float(settings.grace_minutes or 0)
+    return int(round(late_by)) if late_by > 0 else 0
+
+
+def is_late(att: Any, settings: Optional[models.DBAttendanceSettings]) -> bool:
+    return minutes_late(att, settings) > 0
+
+
+# What a report calls late for a company that has never saved its attendance settings: after 09:15, as these screens
+# always did. Payroll does not use it: a company that has set no rule is not docked pay for lateness.
+REPORT_LATE_RULE = SimpleNamespace(work_start="09:00", grace_minutes=15.0)
+
+
+def late_rule_for_reports(settings: Optional[models.DBAttendanceSettings]) -> Any:
+    return settings if settings is not None else REPORT_LATE_RULE
+
+
+def minutes_since(clock_time: str, now: datetime) -> float:
+    """Minutes from a time of day (HH:MM:SS) to `now`, wrapping past midnight.
+
+    A break that begins before midnight and ends after it, or one that begins after midnight in a shift dated the day
+    before, is measured round the clock rather than against a single date, which came out negative or a day too long."""
+    start = datetime.strptime(clock_time[:8], "%H:%M:%S")
+    end = datetime.strptime(now.strftime("%H:%M:%S"), "%H:%M:%S")
+    minutes = (end - start).total_seconds() / 60
+    return round(minutes + 1440 if minutes < 0 else minutes, 3)
+
+
+def shift_limit_hours(settings: Optional[models.DBAttendanceSettings]) -> float:
+    """The longest a shift is allowed to run before it is closed for the person (the company's auto clock-out)."""
+    hours = float(getattr(settings, "auto_clockout_hours", None) or 10.0)
+    return min(max(hours, 1.0), 23.5)
+
+
+def running_shift(db: Session, emp_id: int, client_id: int, now: Optional[datetime] = None,
+                  settings: Optional[models.DBAttendanceSettings] = None) -> Optional[models.DBAttendance]:
+    """The attendance record of the shift a person is on, or failing that today's record (None if there is none).
+
+    Today's record once they have clocked in; otherwise a shift that began yesterday and has not yet run the company's
+    longest length - an evening shift carried past midnight. The nightly check closes shifts only after that length, so
+    the two never disagree about whether somebody is still working."""
+    now = now or datetime.now()
+    A = models.DBAttendance
+    today, yesterday = now.strftime("%Y-%m-%d"), (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    by_day = {r.date: r for r in db.query(A).filter(
+        A.employee_id == emp_id, A.client_id == client_id, A.date.in_((today, yesterday))).all()}
+    mine = by_day.get(today)
+    if mine and mine.clock_in:
+        return mine
+    prev = by_day.get(yesterday)
+    if prev and prev.clock_in and not prev.clock_out:
+        try:
+            began = datetime.strptime("%s %s" % (prev.date, prev.clock_in[:8]), "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return mine
+        if began + timedelta(hours=shift_limit_hours(settings or attendance_settings_for(db, client_id))) > now:
+            return prev
+    return mine
+
+
 def end_shift(db: Session, att: models.DBAttendance, client_id: int, now: Optional[datetime] = None) -> models.DBAttendance:
     """Stop the clock on an open shift: end any break, set the clock-out and work out the hours.
 
@@ -76,8 +149,7 @@ def end_shift(db: Session, att: models.DBAttendance, client_id: int, now: Option
     now_str = now.strftime("%H:%M:%S")
     if att.is_on_break:
         try:
-            break_start = datetime.strptime(today + " " + att.break_start, "%Y-%m-%d %H:%M:%S")
-            att.break_minutes = (att.break_minutes or 0) + round((now - break_start).total_seconds() / 60, 3)
+            att.break_minutes = (att.break_minutes or 0) + minutes_since(att.break_start, now)
         except Exception:
             pass
         att.is_on_break = False
@@ -124,11 +196,7 @@ def stop_the_clock(db: Session, emp_id: Optional[int], client_id: Optional[int])
     """
     if not emp_id:
         return None
-    att = db.query(models.DBAttendance).filter(
-        models.DBAttendance.employee_id == emp_id,
-        models.DBAttendance.date == datetime.now().strftime("%Y-%m-%d"),
-        models.DBAttendance.client_id == client_id,
-    ).first()
+    att = running_shift(db, emp_id, client_id)          # today's, or last night's if it is still going
     if att and att.clock_in and not att.clock_out:
         return end_shift(db, att, client_id)
     return None
@@ -293,6 +361,11 @@ def leave_balance_for(db: Session, emp: models.DBEmployee, for_year: Optional[in
 
     annual_total = float(emp.annual_leave_entitlement if emp.annual_leave_entitlement is not None else 25.0)
     sick_total = float(emp.sick_leave_entitlement if emp.sick_leave_entitlement is not None else 10.0)
+    # A company that accrues leave month by month: the year's credits so far, carried-over days included.
+    from app.services.leave_accrual import totals as accrued
+    ledger = accrued(db, emp, year)
+    if ledger is not None:
+        annual_total, sick_total = ledger["annual"], ledger["sick"]
 
     annual_taken = taken("annual", ("approved",))
     annual_pending = taken("annual", ("pending",))
@@ -410,6 +483,37 @@ def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     # Clamp to [0.0, 1.0] to eliminate domain errors
     a = max(0.0, min(1.0, a))
     return 2 * 6371000 * math.asin(math.sqrt(a))
+
+
+def check_clock_in_location(db: Session, client_id: int, settings: Optional[models.DBAttendanceSettings], lat: Any, lng: Any) -> None:
+    """Refuse a clock-in the company's location rules do not allow.
+
+    `require_location`: the clock-in must carry coordinates. Not `allow_remote`: the coordinates must also fall inside the
+    office's circle or a project site's, since a person clocking in from anywhere else is working remotely. A company
+    that never saved attendance settings is not held to either."""
+    if settings is None:
+        return                      # attendance never set up for this company: nothing has been required of anybody
+    require = True if settings.require_location is None else bool(settings.require_location)
+    remote = True if settings.allow_remote is None else bool(settings.allow_remote)
+    try:
+        point = (float(lat), float(lng)) if lat and lng else None
+    except (TypeError, ValueError):
+        point = None
+    if point is not None and not (math.isfinite(point[0]) and math.isfinite(point[1])):
+        point = None
+    if point is None:
+        if require or not remote:
+            raise HTTPException(status_code=400, detail="Your location is needed to clock in. Allow location access and try again.")
+        return
+    if remote:
+        return
+    office_set = bool(settings and settings.office_lat and settings.office_lng)
+    at_office = office_set and distance_m(settings.office_lat, settings.office_lng, *point) <= float(settings.geofence_radius or 0)
+    site, _ = site_for_point(db, client_id, *point)
+    if not (at_office or site):
+        if not office_set and not db.query(models.DBSiteGeofence.id).filter(models.DBSiteGeofence.client_id == client_id).first():
+            raise HTTPException(status_code=400, detail="Remote clock-in is off, but no office or site location has been set to check against. Ask HR to set one.")
+        raise HTTPException(status_code=400, detail="You are not at the office or on a project site. Remote clock-in is switched off.")
 
 
 def site_for_point(

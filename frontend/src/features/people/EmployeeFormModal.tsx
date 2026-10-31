@@ -9,11 +9,12 @@ import { useSession } from '@/lib/session'
 import { useDebounced } from '@/lib/hooks'
 import { AccessPicker } from './AccessPicker'
 import { DocumentPick } from './EmployeeDocuments'
+import { PayrollFields } from './PayrollFields'
 import { PASSWORD_RULE, PasswordField, passwordProblem } from '@/features/auth/PasswordField'
 
 export const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say']
 
-const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', org_email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: '', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '', aadhaar_no: '', pan_no: '', uan_no: '', esi_no: '' })
+const blank = (): EmployeeInput => ({ first_name: '', last_name: '', email: '', org_email: '', password: '', phone: '', job_title: '', department_id: null, reports_to: null, level: '', role: '', permission_role: 'staff', site_ids: [], employment_type: 'full_time', pay_frequency: 'monthly', salary: 0, tax_rate: 0, start_date: today(), emergency_contact: '', emergency_phone: '', aadhaar_no: '', pan_no: '', uan_no: '', esi_no: '', bank_name: '', bank_account: '', bank_ifsc: '', pf_enabled: true, esi_enabled: true, pt_enabled: true, pt_state: 'TS', probation_end_date: '', contract_end_date: '' })
 
 /** A new member of staff: who they are, the department they belong to, what they may do, and a login if they need one. */
 export function EmployeeFormModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -170,6 +171,7 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="Tax rate %" htmlFor="ef-tax"><NumField id="ef-tax" value={f.tax_rate} onValue={num('tax_rate')} /></Field>
         {hrOnly && <Field label="UAN" htmlFor="ef-uan" hint="Optional. 12 digits."><Input id="ef-uan" inputMode="numeric" value={f.uan_no ?? ''} onChange={set('uan_no')} autoComplete="off" /></Field>}
         {hrOnly && <Field label="ESI number" htmlFor="ef-esi" hint="Optional. 10 digits."><Input id="ef-esi" inputMode="numeric" value={f.esi_no ?? ''} onChange={set('esi_no')} onFocus={reveal('esi')} onClick={reveal('esi')} autoComplete="off" /><DocumentPick label="ESI card" file={files.esi ?? null} shown={!!shown.esi} onFile={pickFile('esi')} /></Field>}
+        {hrOnly && <PayrollFields id="ef" value={f} onChange={(patch) => setF((s) => ({ ...s, ...patch }))} />}
       </div>
       </div>
       <div hidden={step !== 2}>

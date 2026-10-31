@@ -32,6 +32,11 @@ REMINDER_LADDER = (1, 7, 14, 30)
 
 PAYROLL_EXCLUDED_STATUSES = ("terminated", "inactive")
 
+# Overtime is paid at twice the ordinary hourly wage (Factories Act, section 59), on a month's salary over 160 hours.
+# One figure for what payroll pays and what job costing assumes it costs.
+OVERTIME_MULTIPLIER = 2.0
+ORDINARY_HOURS_PER_MONTH = 160
+
 PAYSLIP_PAY_INPUTS = (
     "hours_worked", "overtime_hours", "overtime_rate", "basic_salary",
     "bonus", "allowances", "tax_amount", "insurance", "retirement", "other_deductions",

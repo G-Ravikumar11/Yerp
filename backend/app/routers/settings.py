@@ -82,6 +82,14 @@ def save_settings(request: Request, body: dict = None, db: Session = Depends(get
             raise HTTPException(403, "Only the Master changes the company's GSTIN.")
         client.gstin, client.state_code = gstin, state_from_gstin(gstin)
         body["company_abn"] = gstin
+    # The company's TAN and PAN, for Form 16: checked for shape, kept in capitals. Empty is allowed (not yet known).
+    for key, pattern, what in (("company_tan", r"[A-Z]{4}[0-9]{5}[A-Z]", "A TAN is ten characters: four letters, five digits, a letter."),
+                               ("company_pan", r"[A-Z]{5}[0-9]{4}[A-Z]", "A PAN is ten characters: five letters, four digits, a letter.")):
+        if body and key in body:
+            value = re.sub(r"\s", "", str(body[key] or "")).upper()
+            if value and not re.fullmatch(pattern, value):
+                raise HTTPException(400, what)
+            body[key] = value
     if body:
         for key, val in body.items():
             setting = db.query(models.DBSettings).filter(models.DBSettings.key == key, models.DBSettings.client_id == client.id).first()

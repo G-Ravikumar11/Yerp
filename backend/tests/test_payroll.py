@@ -21,7 +21,7 @@ def test_salaried_employee_basic_pay(tenant):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["gross_pay"] == 3000.00
-    assert body["net_pay"] == 2400.00     # 3000 less 20% tax
+    assert body["net_pay"] == 2017.50     # 3000 less 20% tax, 12% PF on the basic and 0.75% ESI on the gross
 
 
 def test_hourly_employee_is_paid_for_hours_worked(tenant):
@@ -50,8 +50,8 @@ def test_overtime_and_deductions_are_included(tenant):
     body = res.json()
     # gross = 2000 + 300 OT + 100 bonus + 50 allowances
     assert body["gross_pay"] == 2450.00
-    # deductions = 245 tax + 25 insurance + 50 standing
-    assert body["net_pay"] == 2130.00
+    # deductions = 245 tax + 25 insurance (typed) + 240 PF (12% of the 2000 basic) + 50 standing
+    assert body["net_pay"] == 1890.00
 
 
 def test_payslip_number_survives_a_delete(tenant):
@@ -103,15 +103,15 @@ def test_editing_a_payslip_recomputes_net(tenant):
         "employee_id": emp["id"], "period_start": "2026-04-01",
         "period_end": "2026-04-30", "pay_date": "2026-05-01",
     }).json()
-    assert ps["net_pay"] == 2000.00
+    assert ps["net_pay"] == 1745.00        # 2000 less 240 PF and 15 ESI
 
     res = tenant.put(f"/api/payslips/{ps['id']}", json={"bonus": 500.0})
     assert res.status_code == 200, res.text
     assert res.json()["gross_pay"] == 2500.00
-    assert res.json()["net_pay"] == 2500.00
+    assert res.json()["net_pay"] == 2241.25     # PF stays on the 2000 basic; ESI follows the 2500 gross (18.75)
 
     fetched = tenant.get(f"/api/payslips/{ps['id']}").json()
-    assert fetched["net_pay"] == 2500.00
+    assert fetched["net_pay"] == 2241.25
 
 
 def test_paid_payslip_is_protected(tenant):
@@ -190,7 +190,7 @@ def test_ytd_totals(tenant):
     assert ytd["payslip_count"] == 3
     assert ytd["gross_pay"] == 3000.00
     assert ytd["tax_amount"] == 300.00
-    assert ytd["net_pay"] == 2700.00
+    assert ytd["net_pay"] == 2317.50      # less 120 PF and 7.50 ESI a month
 
 
 def test_payslips_are_tenant_scoped(client, tenant):

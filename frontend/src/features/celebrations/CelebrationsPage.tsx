@@ -43,7 +43,7 @@ export default function CelebrationsPage() {
   )
 }
 
-function Upcoming({ u }: { u: UpcomingCelebration }) {
+export function Upcoming({ u }: { u: UpcomingCelebration }) {
   return (
     <li className="flex items-center gap-3 px-3 py-2.5">
       <span className="text-xl" aria-hidden>{u.emoji}</span>
@@ -53,7 +53,7 @@ function Upcoming({ u }: { u: UpcomingCelebration }) {
   )
 }
 
-function Card({ c, emojis }: { c: TodayCelebration; emojis: string[] }) {
+export function Card({ c, emojis }: { c: TodayCelebration; emojis: string[] }) {
   const [text, setText] = useState('')
   const refresh = { invalidate: [celebrationKeys.all], success: false as const }
   const toggle = useAction((emoji: string) => react(c.key, emoji), refresh)

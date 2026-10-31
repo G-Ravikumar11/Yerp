@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button } from '@/components/ui'
-import { payKeys, payrollRegister, setAutoPayroll, useAutoPayroll, usePayslips, type PayslipRow } from '@/api/payroll'
+import { payKeys, payrollRegister, payslipTone, setAutoPayroll, useAutoPayroll, usePayslips, type PayslipRow } from '@/api/payroll'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
@@ -12,6 +12,7 @@ import { formatINR } from '@/lib/utils'
 import { PayslipFormModal } from './PayslipFormModal'
 import { PayslipModal } from './PayslipModal'
 import { Anomalies } from './Anomalies'
+import { MonthPanel } from './MonthPanel'
 import { RunPayrollModal } from './RunPayrollModal'
 import { SalaryStructureModal } from './SalaryStructureModal'
 
@@ -51,13 +52,21 @@ export default function PayrollPage() {
     { id: 'paid', header: 'Pay date', hideBelow: 'xl', sort: (p) => p.pay_date, cell: (p) => formatDate(p.pay_date) || '-' },
     { id: 'gross', header: 'Gross', hideBelow: 'md', align: 'right', sort: (p) => p.gross_pay, cell: (p) => formatINR(p.gross_pay) },
     { id: 'ded', header: 'Deductions', hideBelow: 'lg', align: 'right', cell: (p) => formatINR(p.total_deductions) },
+    // The statutory breakdown. Employer PF is EPF and EPS together; ESI shows the person's share and the company's.
+    { id: 'pf', header: 'Employee PF', hideBelow: 'xl', align: 'right', sort: (p) => p.employee_pf ?? 0, cell: (p) => formatINR(p.employee_pf ?? 0) },
+    { id: 'epf', header: 'Employer PF', hideBelow: 'xl', align: 'right', cell: (p) => <span title={`EPF ${formatINR(p.employer_epf ?? 0)} + EPS ${formatINR(p.employer_eps ?? 0)}`}>{formatINR(p.employer_pf ?? 0)}</span> },
+    { id: 'esi', header: 'ESI (employee + employer)', hideBelow: 'xl', align: 'right', cell: (p) => (p.employee_esi || p.employer_esi) ? `${formatINR(p.employee_esi ?? 0)} + ${formatINR(p.employer_esi ?? 0)}` : '-' },
+    { id: 'pt', header: 'PT', hideBelow: 'xl', align: 'right', cell: (p) => formatINR(p.professional_tax ?? 0) },
+    { id: 'lop', header: 'LOP days', hideBelow: 'lg', align: 'right', sort: (p) => p.lop_days ?? 0, cell: (p) => (p.working_days ? p.lop_days ?? 0 : '-') },
+    { id: 'days', header: 'Paid days', hideBelow: 'lg', align: 'right', cell: (p) => (p.working_days ? `${p.paid_days ?? 0} / ${p.working_days}` : '-') },
     { id: 'net', header: 'Net pay', align: 'right', sort: (p) => p.net_pay, cell: (p) => <strong>{formatINR(p.net_pay)}</strong> },
-    { id: 'status', header: 'Status', cell: (p) => <div className="flex gap-1.5"><Badge tone={p.status === 'Paid' ? 'success' : p.status === 'Sent' ? 'info' : 'neutral'} dot>{p.status}</Badge>{p.sent && p.status !== 'Sent' && <Badge tone="info">Emailed</Badge>}</div> },
+    { id: 'status', header: 'Status', cell: (p) => <div className="flex gap-1.5"><Badge tone={payslipTone(p.status)} dot>{p.status}</Badge>{p.sent && p.status.toLowerCase() !== 'sent' && <Badge tone="info">Emailed</Badge>}{p.month_status === 'Locked' && <Badge tone="neutral">Locked</Badge>}</div> },
   ]
   return (
     <>
       <PageHeader eyebrow="People" title="Payroll" description="Payslips and payment. Run everyone's at once, or write one for a single person." actions={<>{filters.filtered.length > 0 && <Button variant="outline" asChild><a href={payrollRegister(filters.filtered.map((p) => p.id))} title="Every payslip shown below, one row each, all columns"><Download /> Excel ({filters.filtered.length})</a></Button>}<Button variant="outline" onClick={() => setStructure(true)}><ListChecks /> Salary structure</Button><Button variant="outline" onClick={() => setRunning(true)}><Play /> Run payroll</Button><Button onClick={() => setCreating(true)}><Plus /> New payslip</Button></>} />
       <AutoPayroll />
+      <MonthPanel />
       <FilterBar filters={filters} placeholder="Search by number, employee or status..." />
       <DataTable label="Payslips" rows={filters.filtered} columns={columns} rowKey={(p) => p.id} onRowClick={(p) => setOpen(p.id)} loading={q.isPending} empty={filters.active ? 'Nothing matches those filters.' : 'No payslips yet. Run payroll to create one for everybody.'} />
       <Anomalies />

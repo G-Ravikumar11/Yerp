@@ -47,15 +47,21 @@ def layout(p):
     e = p.get("employee") or {}
     days = p.get("days") or {}
     work = days.get("work") or ""
+    # A payslip made with paid days carries its own counts: the period's working days, the loss of pay, and the days paid.
+    counted = (p.get("working_days") or 0) > 0
+    if counted:
+        work = _figure(p["working_days"])
+    effective = _figure(p.get("paid_days")) if counted else work
+    lop = _figure(p.get("lop_days")) if counted else ""
     info = [
         ("Employee No.", e.get("employee_id", ""), "Location .", e.get("work_location", "")),
         ("Name.", e.get("full_name", ""), "Department.", e.get("department_name", "")),
         ("Bank Name.", e.get("bank_name", ""), "Designation.", e.get("job_title", "")),
         ("Bank Acc.No.", e.get("bank_account", ""), "Total Days.", days.get("total") or ""),
-        ("Father Name.", "", "LOP .", ""),
+        ("Father Name.", "", "LOP .", lop),
         ("Salary Per Month.", _figure(p.get("monthly_salary") if p.get("lines") else p.get("gross_pay")), "Balance Leaves.", _blank_or(days.get("balance_leaves"))),
         ("DOJ.", joined_on(e.get("start_date")), "Work Days.", work),
-        ("Aadhar No.", e.get("aadhaar_masked", ""), "Effective Work days.", work),
+        ("Aadhar No.", e.get("aadhaar_masked", ""), "Effective Work days.", effective),
         ("UAN No", e.get("uan_no", ""), "ESI No", e.get("esi_no", "")),
     ]
     own = p.get("lines") or []
@@ -75,11 +81,13 @@ def layout(p):
         earnings.append(("Bonus", p["bonus"]))
     if own:
         deductions = [(l["name"], l["amount"]) for l in own if l["kind"] == "deduction"]
+        if p.get("professional_tax"):
+            deductions.append(("Prof Tax", p["professional_tax"]))
         if p.get("tax_amount"):
             deductions.append(("TDS Deduction", p["tax_amount"]))
     else:
         deductions = [
-            ("PF", p.get("retirement")), ("ESI", p.get("insurance")), ("Prof Tax", None), ("Salary Advance", None),
+            ("PF", p.get("retirement")), ("ESI", p.get("insurance")), ("Prof Tax", p.get("professional_tax") or None), ("Salary Advance", None),
             ("TDS Deduction", p.get("tax_amount")), ("Loss Of Pay", None), ("Other Deductions", p.get("other_deductions")),
         ]
     if (p.get("standing_deduction") or 0) > 0:
@@ -289,7 +297,7 @@ def register_columns(payloads):
                 add(ded, name)
     for name in ("Overtime", "Bonus"):
         add(earn, name)
-    for name in ("TDS Deduction", "Standing Deduction"):
+    for name in ("Prof Tax", "TDS Deduction", "Standing Deduction"):
         add(ded, name)
     return LEADING_COLUMNS + INFO_COLUMNS + earn + ded + TRAILING_COLUMNS
 
@@ -306,6 +314,7 @@ def register_row(p, columns=None):
         for line in own:
             cells[line["name"]] = round(cells.get(line["name"], 0) + float(line["amount"] or 0), 2)
         cells["TDS Deduction"] = p.get("tax_amount") or None
+        cells["Prof Tax"] = p.get("professional_tax") or None
         cells["Salary Per Month."] = p.get("monthly_salary")
     else:
         for label, value in lay["earnings"] + lay["deductions"]:

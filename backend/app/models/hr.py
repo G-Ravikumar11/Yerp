@@ -70,6 +70,15 @@ class DBEmployee(Base):
     bank_name = Column(String, default="")
     bank_account = Column(String, default="")
     tax_id = Column(String, default="")
+    bank_ifsc = Column(String, default="")           # 11-character IFSC for bank transfers
+
+    # Statutory deductions, switchable per person. PT follows the state's slab: TS Telangana or AP Andhra Pradesh.
+    pf_enabled = Column(Boolean, default=True)
+    esi_enabled = Column(Boolean, default=True)
+    pt_enabled = Column(Boolean, default=True)
+    pt_state = Column(String, default="TS")
+    probation_end_date = Column(String, nullable=True)   # YYYY-MM-DD; drives the probation-ending notice
+    contract_end_date = Column(String, nullable=True)    # YYYY-MM-DD; drives the contract-expiry notice
 
     emergency_contact = Column(String, default="")
     emergency_phone = Column(String, default="")
@@ -141,6 +150,15 @@ class DBPayslip(Base):
     total_deductions = Column(Float, default=0.0)
 
     net_pay = Column(Float, default=0.0)
+
+    working_days = Column(Float, default=0.0)        # scheduled working days in the month
+    lop_days = Column(Float, default=0.0)            # loss of pay: unpaid leave and unexplained absences
+    paid_days = Column(Float, default=0.0)           # working_days - lop_days
+    professional_tax = Column(Float, default=0.0)
+    employer_pf = Column(Float, default=0.0)         # 12% in all
+    employer_epf = Column(Float, default=0.0)        # 3.67% share
+    employer_eps = Column(Float, default=0.0)        # 8.33% pension share, capped at 1,250
+    employer_esi = Column(Float, default=0.0)        # 3.25%
 
     status = Column(String, default="Draft", index=True)
     sent = Column(String, default="")
@@ -297,11 +315,41 @@ class DBAttendanceSettings(Base):
     # people clock in deliberately, so opening the portal on a day off - to
     # read a payslip or upload a document - does not record attendance.
     auto_clock_in = Column(Boolean, default=True)
+    # This many late arrivals in a month cost late_penalty_lop days of pay.
+    late_threshold = Column(Integer, default=3)
+    late_penalty_lop = Column(Float, default=0.5)
+    # Email each payslip as soon as the month is approved.
+    auto_email_on_approval = Column(Boolean, default=False)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBPayrollMonth(Base):
+    """Where a month's payroll stands: Draft, Approved, Paid, then Locked. A locked month is reopened only with a reason."""
+    __tablename__ = "payroll_months"
+    __table_args__ = (
+        UniqueConstraint('client_id', 'month', name='uq_payroll_month'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    month = Column(String, nullable=False, index=True)   # YYYY-MM
+    status = Column(String, default="Draft", index=True)
+    approved_at = Column(String, default="")
+    approved_by = Column(String, default="")
+    paid_at = Column(String, default="")
+    locked_at = Column(String, default="")
+    locked_by = Column(String, default="")
+    reopened_at = Column(String, default="")
+    reopened_by = Column(String, default="")
+    reopen_reason = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 class DBOvertimeLog(Base):
     __tablename__ = "overtime_logs"
+    __table_args__ = (
+        UniqueConstraint('employee_id', 'date', name='uq_overtime_employee_date'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
@@ -376,6 +424,31 @@ class DBLeaveRequest(Base):
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     employee = relationship("DBEmployee")
+
+
+class DBLeaveLedger(Base):
+    """One credit or debit to somebody's leave, when the company accrues leave month by month.
+
+    accrual: a month's share of the year's entitlement. carry_forward: what came over from last year. lapse: what did
+    not (negative). adjustment: HR's own correction, either way. Leave taken is not written here; it is read from the
+    approved leave requests, so cancelling a request needs nothing undone. One entry per person, kind and period, so a
+    job that runs twice credits once."""
+    __tablename__ = "leave_ledger"
+    __table_args__ = (
+        UniqueConstraint('employee_id', 'leave_type', 'kind', 'period', name='uq_leave_ledger_entry'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    leave_type = Column(String, nullable=False)          # annual | sick
+    kind = Column(String, nullable=False)                # accrual | carry_forward | lapse | adjustment
+    period = Column(String, nullable=False)              # YYYY-MM for an accrual, YYYY for the year end, a stamp for an adjustment
+    entry_date = Column(String, nullable=False, index=True)
+    days = Column(Float, default=0.0)
+    note = Column(String, default="")
+    created_by = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 class DBEmployeeSite(Base):
