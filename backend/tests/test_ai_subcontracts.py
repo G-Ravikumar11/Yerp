@@ -137,7 +137,11 @@ def test_hard_copy_check_of_a_scanned_pdf_without_a_claude_key_says_so(tenant, m
 
 
 def test_the_brief_marks_a_contractor_with_lapsed_papers_as_careful(tenant, unkeyed):
+    from datetime import date, timedelta
     order, bill = a_draft(tenant)
+    lapsed = (date.today() - timedelta(days=3)).isoformat()
+    assert tenant.post("/api/compliance/documents", json={"contractor_id": order["contractor_id"], "kind": "labour_licence",
+                                                          "valid_to": lapsed}).status_code == 200
     brief = tenant.get("/api/ai/subcontracts/contractors/%d/brief" % order["contractor_id"]).json()
     assert brief["standing"]["verdict"] == "careful" and "papers missing or lapsed" in brief["standing"]["flags"]
 
