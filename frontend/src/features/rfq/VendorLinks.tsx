@@ -2,12 +2,16 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Check, Copy, Link2, Mail, MessageCircle, UserPlus } from 'lucide-react'
 import { Button, Field, Input, Modal } from '@/components/ui'
-import { emailLink, inviteSupplier, inviteUrl, rfqKeys, useSupplierNames, whatsappLink, type RfqInvite, type Statement } from '@/api/rfq'
+import { emailInvite, emailLink, inviteSupplier, inviteUrl, rfqKeys, useSupplierNames, whatsappLink, type RfqInvite, type Statement } from '@/api/rfq'
+import { useAction } from '@/lib/mutate'
+import { formatDate } from '@/lib/format'
 import { ApiError } from '@/lib/api'
 import { useSession } from '@/lib/session'
 
-/** Send the link: WhatsApp or email with the message written, or copy it. Nothing is sent until the buyer sends it. */
+/** Send the link: the server emails it to a supplier with an address on file; or WhatsApp or the buyer's own mail with the
+ * message written; or copy it. */
 function SendButtons({ inv, statement }: { inv: RfqInvite; statement: Statement }) {
+  const send = useAction(() => emailInvite(statement.rfq.id, inv.id), { invalidate: [rfqKeys.all] })
   const { user } = useSession()
   const company = user?.company || ''
   const [copied, setCopied] = useState(false)
@@ -17,10 +21,16 @@ function SendButtons({ inv, statement }: { inv: RfqInvite; statement: Statement 
     setTimeout(() => setCopied(false), 1500)
   }
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5">
+      {inv.email && (
+        <Button size="sm" variant="outline" loading={send.isPending} onClick={() => send.mutate()} title={`The server emails ${inv.email} the link`}>
+          <Mail /> {inv.emailed_at ? 'Email the link again' : 'Email the link'}
+        </Button>
+      )}
       <Button size="sm" variant="outline" asChild><a href={whatsappLink(inv, company, statement.rfq)} target="_blank" rel="noopener"><MessageCircle /> WhatsApp</a></Button>
-      <Button size="sm" variant="outline" asChild><a href={emailLink(inv, company, statement.rfq)}><Mail /> Email</a></Button>
+      <Button size="sm" variant="outline" asChild><a href={emailLink(inv, company, statement.rfq)}><Mail /> From my mail</a></Button>
       <Button size="sm" variant="ghost" onClick={copy}>{copied ? <Check /> : <Copy />} {copied ? 'Copied' : 'Copy link'}</Button>
+      {inv.emailed_at && <span className="text-xs text-muted-foreground">Emailed {formatDate(inv.emailed_at.slice(0, 10))}{inv.reminders ? `, reminded ${inv.reminders}x` : ''}</span>}
     </div>
   )
 }

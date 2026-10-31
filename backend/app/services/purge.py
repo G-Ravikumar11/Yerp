@@ -226,6 +226,13 @@ def record(db, client_id, kind, rec_id):
 
 def delete_one(db, request, client, kind, rec_id):
     row, table, noun, label = record(db, client.id, kind, rec_id)
+    if kind == "drawing":
+        # Something may have been built to a drawing released Good for construction: it stays on the register.
+        from app.services.drawing_rules import ever_gfc
+        if ever_gfc(db, row):
+            from fastapi import HTTPException
+            raise HTTPException(409, "%s was released Good for construction, so it stays on the register. Supersede it "
+                                     "with a new revision instead." % label)
     counts = purge(db, table, [row.id])
     note = ", ".join("%d %s" % (n, k) for k, n in sorted(human(counts).items()))
     log_audit(db, client.id, "master_deleted", kind, rec_id, label, "Deleted with %s" % note if note else "Deleted", request)

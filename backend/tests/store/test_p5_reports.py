@@ -535,3 +535,19 @@ def test_the_new_reports_export_and_print(account):
         assert xl.status_code == 200 and "spreadsheetml" in xl.headers["content-type"], (report, xl.text[:200])
         pdf = tenant.get("%s/%s/print" % (API, report), params=p)
         assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF", (report, pdf.text[:200])
+
+
+def test_reorder_does_not_ask_again_for_what_is_already_on_enquiry_or_order(account):
+    tenant = account["client"]
+    w = world(account)
+    with database.SessionLocal() as s:
+        code = s.get(models.DBItem, w.item["plate"]).item_code
+    # 120 plates on an open enquiry: the suggestion (300) drops by that.
+    rfq = tenant.post("/api/rfqs", json={"title": "Plates", "lines": [{"item_code": code, "description": "Shuttering Plate", "uom": "nos", "qty": 120}]})
+    assert rfq.status_code == 200, rfq.text
+    [row] = get(tenant, "reorder")["rows"]
+    assert (row["on_order"], row["suggested_qty"]) == ("120.000", "180.000")
+    # Cancelled, it is no longer coming.
+    assert tenant.post("/api/rfqs/%d/cancel" % rfq.json()["rfq"]["id"], json={"reason": "Bought locally"}).status_code == 200
+    [row] = get(tenant, "reorder")["rows"]
+    assert (row["on_order"], row["suggested_qty"]) == ("0.000", "300.000")

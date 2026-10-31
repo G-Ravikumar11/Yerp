@@ -1,5 +1,4 @@
 """The procurement endpoints."""
-import base64
 import re
 from datetime import datetime
 from typing import List
@@ -17,7 +16,6 @@ from app.core.queries import by_id, prime
 from app.core.auth import require_erp_read, require_items_access, session_employee, wo_actor
 from app.core.currency import amount_in_words, inr, money, tax_percent_of, unit_rate
 from app.core.dates import days_after
-from app.core.notifications import default_from_email, send_email_background
 from app.core.serials import allocate_grn_number, allocate_po_number, next_sequence_number
 from app.core.sheets import sheet_response
 from app.documents import form_pdf
@@ -761,15 +759,37 @@ def list_rfqs(request: Request, db: Session = Depends(get_read_db)):
         "waiting_for_quotes": len([r for r in rows if r["status"] == "OPEN" and r["quotes"] < 3])}}
 
 
+def _quotes_due(raw, keep=""):
+    """The quotes-due date as YYYY-MM-DD, or empty. A new date cannot be in the past; one already set may stay."""
+    raw = (raw or "").strip()[:10]
+    if not raw:
+        return ""
+    try:
+        day = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "Quotes due by is not a date (use YYYY-MM-DD).") from None
+    if day < datetime.now().date() and raw != (keep or ""):
+        raise HTTPException(400, "Quotes cannot be due on a day that has gone.")
+    return raw
+
+
 @router.post("/api/rfqs")
 def create_rfq(body: RfqIn, request: Request, db: Session = Depends(get_db)):
     client, actor_id, actor_name = wo_actor(request, db, "purchase.manage")
     if not (body.title or "").strip():
         raise HTTPException(400, "Say what is being bought - \"Cement for Block A raft\".")
-    r = _make_rfq(db, client, actor_name, body.title, body.job_id, body.needed_by, body.notes,
-                  [l.dict() for l in body.lines])
+    # A line raised for an indent that is already on an enquiry or order is not asked for again: pressing "buy the
+    # short items" twice raises nothing new.
+    from app.services.buying_links import check_indent_lines
+    lines, skipped = check_indent_lines(db, client.id, [l.dict() for l in body.lines])
+    gone = "; ".join("%s on %s" % (d, " / ".join(refs)) for d, refs in skipped[:4])
+    if not lines:
+        raise HTTPException(409, "Already being bought: %s. Nothing new was raised." % gone)
+    r = _make_rfq(db, client, actor_name, body.title, body.job_id, body.needed_by, body.notes, lines)
+    r.quotes_due, r.created_by_id = _quotes_due(body.quotes_due), actor_id
     db.commit()
-    return {"ok": True, "rfq": rfq_dict(db, r), "message": "%s opened." % r.number}
+    return {"ok": True, "rfq": rfq_dict(db, r), "skipped": [d for d, _r in skipped],
+            "message": "%s opened.%s" % (r.number, (" Left out, already being bought: %s." % gone) if gone else "")}
 
 
 @router.post("/api/rfqs/from-work-order/{wo_id}")
@@ -823,6 +843,9 @@ def edit_rfq(rfq_id: int, body: RfqIn, request: Request, db: Session = Depends(g
         add_rfq_lines(db, r.id, lines)
     r.title, r.job_id = body.title.strip(), body.job_id
     r.needed_by, r.notes = (body.needed_by or "").strip(), (body.notes or "").strip()
+    due = _quotes_due(body.quotes_due, keep=r.quotes_due)
+    if due != (r.quotes_due or ""):
+        r.quotes_due, r.l1_sent_at = due, ""          # a new date: the summary is given on it
     log_audit(db, client.id, "rfq_edited", "rfq", r.id, r.number, actor_name, request)
     db.commit()
     return {"ok": True, "rfq": rfq_dict(db, r), "message": "%s saved." % r.number}
@@ -929,11 +952,11 @@ def award_rfq(rfq_id: int, body: AwardIn, request: Request, db: Session = Depend
         db.add(po)
         db.flush()
         for row, offer in picks:
+            l = lines_by_id[row["rfq_line_id"]]
             db.add(models.DBPurchaseOrderLineItem(
                 order_id=po.id, description=row["description"][:500], item_code=row["item_code"][:60],
                 uom=row["uom"][:20], qty=row["qty"], price=offer["rate"],
-                tax_rate="%g%%" % (offer["tax_percent"] or 0)))
-            l = lines_by_id[row["rfq_line_id"]]
+                tax_rate="%g%%" % (offer["tax_percent"] or 0), rfq_line_id=l.id, indent_line_id=l.indent_line_id))
             l.awarded_supplier, l.awarded_rate, l.po_id = supplier, offer["rate"], po.id
         if freight:
             db.add(models.DBPurchaseOrderLineItem(
@@ -944,13 +967,25 @@ def award_rfq(rfq_id: int, body: AwardIn, request: Request, db: Session = Depend
     r.status = "AWARDED"
     r.awarded_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     r.award_reason = reason
+    from app.services.po_sending import supplier_email
+    for m in made:
+        po = db.get(models.DBPurchaseOrder, m["id"])
+        po.supplier_email = supplier_email(db, client.id, po)
     log_audit(db, client.id, "rfq_awarded", "rfq", r.id, r.number,
               "; ".join("%s %s" % (m["number"], m["supplier"]) for m in made)
               + ((" - " + reason) if reason else ""), request)
     db.commit()
+    # Straight on for approval - the award is the decision to buy - and, once approved, to the supplier.
+    from app.services.approvals import owner_signs_own, start_approval
+    for m in made:
+        po = db.get(models.DBPurchaseOrder, m["id"])
+        went = (start_approval(db, client.id, po, "purchase_order", actor_id, request, actor=actor_name) if actor_id
+                else owner_signs_own(db, client.id, po, "purchase_order", request, actor_name))
+        m["approval"] = went.get("status", "")
     return {"ok": True, "orders": made, "comparison": comparative_statement(db, r),
             "message": "%s awarded: %s." % (r.number, ", ".join(
-                "%s to %s (%s)" % (m["number"], m["supplier"], inr(m["total"])) for m in made))}
+                "%s to %s (%s, %s)" % (m["number"], m["supplier"], inr(m["total"]),
+                                       "approved" if m["approval"] == "approved" else "sent for approval") for m in made))}
 
 
 @router.post("/api/rfqs/{rfq_id}/cancel")
@@ -995,15 +1030,8 @@ def send_purchase_order_email(order_id: int, request: Request, body: dict = None
         raise HTTPException(400, "Give a valid supplier email address to send %s to." % order.number)
     if not form_pdf.PDF_AVAILABLE:
         raise HTTPException(503, "The PDF library is not installed on this server, so the order cannot be attached.")
-    from app.ai.po_supplier_email import plain_draft
-    company = client.company_name or "Our company"
-    draft = plain_draft(purchase_order_to_dict(db, order), company)
-    subject = (body.get("subject") or draft["subject"]).strip()[:200]
-    text = (body.get("body") or draft["body"]).strip()
-    pdf = form_pdf.build_form_pdf(po_form_spec(db, client, order))
-    ok, message = send_email_background(
-        to, subject, text, "%s <%s>" % (company, default_from_email()), client_id=client.id,
-        pdf_b64=base64.b64encode(pdf).decode(), pdf_filename="%s.pdf" % re.sub(r"[^A-Za-z0-9]+", "_", order.number).strip("_"))
+    from app.services.po_sending import send_order
+    ok, message = send_order(db, client, order, to, body.get("subject"), body.get("body"))
     if not ok:
         raise HTTPException(502, "%s was not sent: %s" % (order.number, message))
     log_audit(db, client.id, "purchase_order_emailed", "purchase_order", order.id, order.number,

@@ -1,10 +1,3 @@
-export interface LedgerEntry {
-  direction: 'IN' | 'OUT' | string
-  amount: number
-  paid_on: string
-  voided?: boolean
-}
-
 export interface MonthFlow {
   /** 2026-10 */
   month: string
@@ -13,46 +6,23 @@ export interface MonthFlow {
   received: number
   paid: number
   net: number
-  /** Net summed from the first month shown. */
+  /** The balance of every account together at the month's end, from their opening balances. */
   running: number
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-/**
- * Money in and money out, month by month, from the ledger.
- *
- * Voided entries never happened and are left out. The last `months` months up
- * to and including `today`'s are always all shown, empty ones as nought, so
- * the chart's time axis is even rather than jumping over a quiet month.
- */
-export function cashFlow(entries: readonly LedgerEntry[], months = 12, today = new Date()): MonthFlow[] {
-  const out: MonthFlow[] = []
-  const at = new Map<string, MonthFlow>()
-  for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
-    const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    const row: MonthFlow = { month, label: `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`, received: 0, paid: 0, net: 0, running: 0 }
-    at.set(month, row)
-    out.push(row)
-  }
-  for (const e of entries) {
-    if (e.voided) continue
-    const row = at.get((e.paid_on ?? '').slice(0, 7))
-    if (!row) continue
-    if (e.direction === 'IN') row.received += e.amount
-    else if (e.direction === 'OUT') row.paid += e.amount
-  }
-  let running = 0
-  for (const row of out) {
-    row.received = Math.round(row.received * 100) / 100
-    row.paid = Math.round(row.paid * 100) / 100
-    row.net = Math.round((row.received - row.paid) * 100) / 100
-    running = Math.round((running + row.net) * 100) / 100
-    row.running = running
-  }
-  return out
+/** "2026-10" as "Oct 26". */
+export function monthLabel(month: string) {
+  const [y, m] = month.split('-').map(Number)
+  return `${MONTHS[(m || 1) - 1]} ${String(y).slice(2)}`
 }
+
+/**
+ * Money in and money out, month by month, as the server totals it (GET /api/money/cash-flow): over every entry, a
+ * transfer between our own accounts neither in nor out, a voided entry nothing, the balance from the opening balances.
+ */
+export const withLabels = (months: Omit<MonthFlow, 'label'>[]): MonthFlow[] => months.map((m) => ({ ...m, label: monthLabel(m.month) }))
 
 const AGE_BUCKETS = ['Not due', '0-30', '31-60', '61-90', '90+'] as const
 

@@ -66,6 +66,7 @@ class RfqLineIn(BaseModel):
     description: str
     uom: Optional[str] = ""
     qty: float
+    indent_line_id: Optional[int] = None      # raised for this indent line (the store could not fill it)
 
 
 class RfqIn(BaseModel):
@@ -73,6 +74,7 @@ class RfqIn(BaseModel):
     job_id: Optional[int] = None
     needed_by: Optional[str] = ""
     notes: Optional[str] = ""
+    quotes_due: Optional[str] = ""            # set it, and suppliers who have not quoted are reminded
     lines: List[RfqLineIn]
 
 

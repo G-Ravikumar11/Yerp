@@ -38,6 +38,7 @@ from app.core.security import rate_limiter
 from app.db import get_db, get_read_db
 from app.services.crm import norm_name
 from app.services.procurement import _rfq_lines, rfq_or_404
+from app.services.rfq_chasers import email_invite
 from app.services.rfq_quotes import (invite_dict, invites_of, keep_document, new_token, save_quote,
                                      statement_for_screen)
 
@@ -84,7 +85,39 @@ def invite_supplier(rfq_id: int, body: InviteIn, request: Request, db: Session =
         log_audit(db, client.id, "rfq_invite", "rfq", rfq.id, rfq.number, name, request)
         db.commit()
         db.refresh(inv)
+        # A supplier with an email has the link sent by the server, so nobody has to forward it.
+        if inv.email:
+            _remember_site(rfq, request)
+            ok, why = email_invite(db, client, rfq, inv)
+            db.commit()
+            return {"invite": invite_dict(inv), "emailed": ok,
+                    "message": ("Link emailed to %s (%s)." % (inv.supplier_name, inv.email)) if ok
+                    else "Link ready for %s; it could not be emailed (%s). Send it by WhatsApp or email." % (inv.supplier_name, why)}
     return {"invite": invite_dict(inv), "message": "Link ready for %s. Send it by WhatsApp or email." % inv.supplier_name}
+
+
+def _remember_site(rfq, request):
+    """Where the links point: the reminders go out from the scheduler, which has no request to read the address from."""
+    import os
+    rfq.link_base = (os.getenv("APP_BASE_URL") or str(request.base_url)).rstrip("/")
+
+
+@router.post("/api/rfqs/{rfq_id}/invites/{invite_id}/email")
+def email_invite_again(rfq_id: int, invite_id: int, request: Request, db: Session = Depends(get_db)):
+    """Email the supplier his link (again)."""
+    client, _, _ = wo_actor(request, db, "purchase.manage")
+    rfq = rfq_or_404(db, client.id, rfq_id)
+    if rfq.status != "OPEN":
+        raise HTTPException(409, "%s is %s; no more quotes are taken." % (rfq.number, rfq.status.lower()))
+    inv = db.query(models.DBRfqInvite).filter(models.DBRfqInvite.id == invite_id, models.DBRfqInvite.rfq_id == rfq.id).first()
+    if inv is None:
+        raise HTTPException(404, "That link is not on this enquiry.")
+    _remember_site(rfq, request)
+    ok, why = email_invite(db, client, rfq, inv)
+    db.commit()
+    if not ok:
+        raise HTTPException(502, "The link was not emailed: %s." % why)
+    return {"ok": True, "invite": invite_dict(inv), "message": "Link emailed to %s (%s)." % (inv.supplier_name, inv.email)}
 
 
 @router.delete("/api/rfqs/{rfq_id}/invites/{invite_id}")

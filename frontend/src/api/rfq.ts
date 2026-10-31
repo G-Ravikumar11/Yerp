@@ -6,6 +6,8 @@ export const rfqKeys = { all: ['rfq'] as const }
 export interface Rfq {
   id: number; number: string; title: string; project: string; job_id: number | null; lines: number; quotes: number; needed_by: string; status: string
   notes?: string; award_reason?: string; created_by_name?: string; created_at?: string; awarded_at?: string; work_order_id?: number | null
+  /** Suppliers who have not quoted are reminded before this, and the buyer gets the L1 summary on it. */
+  quotes_due?: string
 }
 /** A row of the list: how far the enquiry has got - suppliers asked, still to answer, and the best full quote so far. */
 export interface RfqRow extends Rfq { asked: number; waiting: number; best: { supplier_name: string; landed: number } | null; awarded_to: string[]; orders: number }
@@ -25,6 +27,8 @@ export interface RfqInvite {
   id: number; supplier_name: string; phone: string; email: string; status: 'sent' | 'opened' | 'quoted' | 'document'
   opened_at: string; submitted_at: string; quote_id: number | null; document_id: number | null; message: string; link: string; created_at: string
   document?: QuoteDocument | null
+  /** When the server emailed the link, and how many reminders have gone since. */
+  emailed_at?: string; reminders?: number
 }
 /** A purchase order the award made. */
 export interface RfqOrder { id: number; number: string; supplier_name: string; total: number; status: string }
@@ -37,8 +41,8 @@ export const useRfqs = () => useQuery({ ...fresh, queryKey: ['rfq', 'list'], que
 export const useStatement = (id: number | null) => useQuery({ ...fresh, queryKey: ['rfq', 'one', id], enabled: !!id, queryFn: () => get<Statement>(`/api/rfqs/${id}/statement`) })
 export const useSupplierNames = () => useQuery({ queryKey: ['rfq', 'suppliers'], staleTime: 5 * 60_000, queryFn: async () => ((await get<{ suppliers: { name: string; phone?: string; email?: string }[] }>('/api/suppliers')).suppliers ?? []) })
 
-export interface RfqInput { title: string; job_id: number | null; needed_by: string; notes?: string; lines: { item_code: string; description: string; uom: string; qty: number }[] }
-export const openRfq = (b: RfqInput) => post<{ rfq: { id: number }; message: string }>('/api/rfqs', b)
+export interface RfqInput { title: string; job_id: number | null; needed_by: string; notes?: string; quotes_due?: string; lines: { item_code: string; description: string; uom: string; qty: number; indent_line_id?: number | null }[] }
+export const openRfq = (b: RfqInput) => post<{ rfq: { id: number }; message: string; skipped?: string[] }>('/api/rfqs', b)
 /** Correct an open enquiry. Its items can change only until the first quote is in. */
 export const editRfq = (id: number, b: RfqInput) => put<{ rfq: Rfq; message: string }>(`/api/rfqs/${id}`, b)
 export const cancelRfq = (id: number, reason: string) => post<{ message: string }>(`/api/rfqs/${id}/cancel`, { reason })
@@ -54,6 +58,8 @@ export const keepQuoteDocument = (id: number, quoteId: number, file: File) => {
 }
 export const inviteSupplier = (id: number, b: { supplier_name: string; phone?: string; email?: string }) => post<{ invite: RfqInvite; message: string }>(`/api/rfqs/${id}/invites`, b)
 export const withdrawInvite = (id: number, inviteId: number) => api<{ message: string }>(`/api/rfqs/${id}/invites/${inviteId}`, { method: 'DELETE' })
+/** The server emails the supplier his link (again). */
+export const emailInvite = (id: number, inviteId: number) => post<{ message: string; invite: RfqInvite }>(`/api/rfqs/${id}/invites/${inviteId}/email`)
 
 /** The full address of a supplier's link, for sending. */
 export const inviteUrl = (inv: RfqInvite) => `${window.location.origin}${inv.link}`

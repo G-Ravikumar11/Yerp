@@ -7,7 +7,7 @@ import { useItems, useItemVocabulary } from '@/api/items'
 import { usePlacedOrders } from '@/api/stock'
 import { projectLabel, useProjects } from '@/api/projects'
 import { useAction } from '@/lib/mutate'
-import { formatQty } from '@/lib/format'
+import { formatQty, today } from '@/lib/format'
 
 interface Row { item_code: string; description: string; uom: string; qty: number | null }
 const blank = (): Row => ({ item_code: '', description: '', uom: '', qty: null })
@@ -38,6 +38,7 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
   const [title, setTitle] = useState(r?.title ?? '')
   const [job, setJob] = useState(r?.job_id ? String(r.job_id) : '')
   const [needed, setNeeded] = useState(r?.needed_by ?? '')
+  const [due, setDue] = useState(r?.quotes_due ?? '')
   const [notes, setNotes] = useState(r?.notes ?? '')
   const [rows, setRows] = useState<Row[]>(() => (statement?.lines ?? []).map((l) => ({ item_code: l.item_code, description: l.description, uom: l.uom, qty: l.qty })))
   const master = useMemo(() => new Map((rm.data?.items ?? []).map((i) => [i.item_code, i])), [rm.data])
@@ -62,7 +63,7 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
   const live = draft ?? rows
   const lines = live.filter((x) => (x.qty ?? 0) > 0 && (x.description.trim() || x.item_code))
   const half = live.filter((x) => (x.description.trim() || x.item_code) && !((x.qty ?? 0) > 0)).length
-  const body = () => ({ title: title.trim(), job_id: job ? Number(job) : null, needed_by: needed, notes: notes.trim(),
+  const body = () => ({ title: title.trim(), job_id: job ? Number(job) : null, needed_by: needed, notes: notes.trim(), quotes_due: due,
     lines: lines.map((x) => ({ item_code: x.item_code, description: (x.description || master.get(x.item_code)?.item_name || x.item_code).trim(), uom: x.uom, qty: x.qty ?? 0 })) })
   const save = useAction(
     () => (statement ? editRfq(statement.rfq.id, body()).then((x) => ({ ...x, id: statement.rfq.id }))
@@ -98,10 +99,11 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
         </div>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-5">
             <Field label="What is it for" htmlFor="rn-title" className="sm:col-span-2"><Input id="rn-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Cement and steel for the Block A raft" autoFocus /></Field>
             <Field label="Project" htmlFor="rn-job"><Select id="rn-job" value={job} placeholder="No particular project" onChange={(e) => setJob(e.target.value)} options={(jobs.data ?? []).map((p) => ({ value: p.id, label: projectLabel(p) }))} /></Field>
             <Field label="Needed by" htmlFor="rn-needed"><Input id="rn-needed" type="date" value={needed} onChange={(e) => setNeeded(e.target.value)} /></Field>
+            <Field label="Quotes due by" htmlFor="rn-due" hint="Optional. Suppliers who have not quoted are reminded, and you get the L1 summary on the day."><Input id="rn-due" type="date" min={today()} value={due} onChange={(e) => setDue(e.target.value)} /></Field>
           </div>
           <div>
             <div className="mb-2 flex items-baseline justify-between gap-3">

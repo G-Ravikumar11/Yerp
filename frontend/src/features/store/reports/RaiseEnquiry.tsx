@@ -9,7 +9,9 @@ import { today } from '@/lib/format'
 import { num, type Row } from './api'
 
 /** One item to ask suppliers for: `note` says where the need came from ("low in CS01", "short on IND-0004"). */
-export interface EnquiryLine { key: string; item_code: string; item_name: string; uom: string; qty: string; note: string; on: boolean }
+export interface EnquiryLine { key: string; item_code: string; item_name: string; uom: string; qty: string; note: string; on: boolean
+  /** Raised for this indent line: the enquiry and the order it becomes keep the link, and the indent shows them. */
+  indent_line_id?: number }
 
 /** The items the Reorder report shows, one line each (the same item low in two stores is one line, for both). */
 function linesOf(rows: Row[]): EnquiryLine[] {
@@ -63,7 +65,7 @@ function Form({ start, title, jobId, neededBy, notes, onClose }: { start: Enquir
   const upd = (key: string, patch: Partial<EnquiryLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
   const save = useAction(
     () => openRfq({ title: f.title.trim(), job_id: f.job_id || null, needed_by: f.needed_by, notes,
-      lines: chosen.map((l) => ({ item_code: l.item_code, description: l.item_name, uom: l.uom, qty: Number(l.qty) })) }),
+      lines: chosen.map((l) => ({ item_code: l.item_code, description: l.item_name, uom: l.uom, qty: Number(l.qty), indent_line_id: l.indent_line_id ?? null })) }),
     { success: (d) => d.message, onSuccess: (d) => { onClose(); nav(`/store/enquiries/${d.rfq.id}`) } },
   )
   return (
@@ -84,6 +86,7 @@ function Form({ start, title, jobId, neededBy, notes, onClose }: { start: Enquir
       </ul>
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
         <p className="mr-auto text-xs text-muted-foreground">{chosen.length} of {lines.length} items, {num(String(chosen.reduce((a, l) => a + Number(l.qty), 0)))} in all.</p>
+        {save.error && <p role="alert" className="basis-full text-right text-[13px] text-danger">{save.error.message}</p>}
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
         <Button type="submit" loading={save.isPending} disabled={!chosen.length || !f.title.trim()}><ShoppingCart /> Raise the enquiry</Button>
       </div>

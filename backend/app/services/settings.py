@@ -222,13 +222,16 @@ def job_morning_digest(db, now):
     sent = 0
     for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
         try:
-            items = attention_items(db, client.id)
+            from app.services.attention_buying import buying_items, money_lines
+            items = attention_items(db, client.id) + buying_items(db, client.id)
+            position = money_lines(db, client)
         except Exception as exc:
             logger.error("Digest for %s failed: %s", client.id, exc)
             continue
         if not items:
             continue
-        lines = ["- %s: %s" % (i["title"], i["detail"]) for i in items[:8]]
+        # The money first - owed to us, owed by us, cash in the banks - then what needs looking at.
+        lines = position + ["- %s: %s" % (i["title"], i["detail"]) for i in items[:8]]
         notify(db, client.id, "daily_digest",
                "%d thing%s worth a look today" % (len(items), "" if len(items) == 1 else "s"),
                "\n".join(lines), view="dashboard-view", severity="action")

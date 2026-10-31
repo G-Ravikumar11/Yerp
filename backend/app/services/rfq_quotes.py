@@ -104,6 +104,7 @@ def invite_dict(inv, base=""):
             "status": invite_status(inv), "opened_at": inv.opened_at or "", "submitted_at": inv.submitted_at or "",
             "quote_id": inv.quote_id, "document_id": inv.document_id, "message": inv.message or "",
             "created_at": inv.created_at or "", "created_by_name": inv.created_by_name or "",
+            "emailed_at": getattr(inv, "emailed_at", "") or "", "reminders": getattr(inv, "reminders", 0) or 0,
             "link": "%s/next/quote?token=%s" % (base.rstrip("/"), inv.token)}
 
 

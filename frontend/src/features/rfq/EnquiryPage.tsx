@@ -60,7 +60,7 @@ function Enquiry({ d }: { d: Statement }) {
       <PageHeader
         eyebrow={d.rfq.number}
         title={d.rfq.title}
-        description={[d.rfq.project || 'No particular project', d.rfq.needed_by && `needed by ${formatDate(d.rfq.needed_by)}`, d.rfq.created_by_name && `opened by ${d.rfq.created_by_name}`].filter(Boolean).join(' · ')}
+        description={[d.rfq.project || 'No particular project', d.rfq.needed_by && `needed by ${formatDate(d.rfq.needed_by)}`, d.rfq.quotes_due && `quotes due ${formatDate(d.rfq.quotes_due)}`, d.rfq.created_by_name && `opened by ${d.rfq.created_by_name}`].filter(Boolean).join(' · ')}
         actions={
           <>
             <Badge tone={st.tone} dot>{st.label}</Badge>

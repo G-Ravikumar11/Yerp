@@ -1,7 +1,7 @@
 """Attached files and drawings."""
 from datetime import datetime
 
-from sqlalchemy import Column, ForeignKey, Integer, LargeBinary, String
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, LargeBinary, String
 
 from app.db.session import Base
 
@@ -49,6 +49,8 @@ class DBDrawing(Base):
     discipline = Column(String, default="Structural")
     current_revision = Column(String, default="")
     status = Column(String, default="For information")           # For approval | Approved | Good for construction | Superseded | For information
+    # Released Good for construction at any time: such a drawing is never deleted (services/drawing_rules.py).
+    ever_gfc = Column(Boolean, default=False)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 

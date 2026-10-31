@@ -55,7 +55,7 @@ const CONFIG: Record<ReportKey, { filters: ('store' | 'project' | 'as_on' | 'ran
   reorder: {
     filters: ['store'],
     columns: () => [storeCol, C('item', 'Item', code), nr('qty', 'On hand', 'qty'), nr('lvl', 'Reorder level', 'reorder_level', num, { hideBelow: 'sm' }), nr('min', 'Minimum', 'min_qty', num, { hideBelow: 'md' }),
-      nr('order', 'Order about', 'suggested_qty', num), C('flag', '', (r) => (r.below_minimum ? <Badge tone="danger" dot>Below minimum</Badge> : null), { width: '9rem' })],
+      nr('coming', 'On order', 'on_order', num, { hideBelow: 'md' }), nr('order', 'Order about', 'suggested_qty', num), C('flag', '', (r) => (r.below_minimum ? <Badge tone="danger" dot>Below minimum</Badge> : null), { width: '9rem' })],
     key: (r) => `${r.store_id}-${r.item_id}`,
   },
   abc: {

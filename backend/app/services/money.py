@@ -153,14 +153,11 @@ def job_money(db, client_id, job, pre=None):
 
     # --- what is promised on top of it -----------------------------------
     pos = pre["pos"].get(job.id, [])
-    # Once a bill names the order, the spend is in `incurred`. Leaving the
-    # order in as well counted it twice and made every project look worse the
-    # closer it got to finishing.
-    billed_po_ids = {b.purchase_order_id for b in real_bills if b.purchase_order_id}
-    open_pos = [p for p in pos
-                if (p.status or "") not in ("Cancelled", "Rejected", "Closed")
-                and p.id not in billed_po_ids]
-    committed = money(sum(p.total or 0 for p in open_pos))
+    # What the orders have been billed for is in `incurred`; what they have not is still committed. Taking the whole
+    # order off once any bill named it lost a part-billed order's unbilled balance; leaving all of it in counted the
+    # billed part twice. Both before GST, as costs are.
+    from app.services.commitments import still_committed
+    committed = still_committed(pos, real_bills)
 
     subs = pre["subs"].get(job.id, [])
     # A closed order has nothing left to bill: what it never did is no longer a commitment.
@@ -239,18 +236,18 @@ def job_money(db, client_id, job, pre=None):
     by_category = {key: 0.0 for key in COST_CATEGORY_KEYS}
     by_category["labour"] = labour
     stocked = pre.get("stocked") or {}
+    from app.services.commitments import bill_cost
     for b in real_bills:
         key = cost_category_of(b.category)
-        by_category[key] = money(by_category[key]
-                                 + (b.total or b.amount or 0) * (1.0 - stocked.get(b.id, 0.0)))
+        # Before GST: the tax is input credit, not cost.
+        by_category[key] = money(by_category[key] + bill_cost(b) * (1.0 - stocked.get(b.id, 0.0)))
     by_category["materials"] = money(by_category["materials"] + c["material_from_store"]
                                      - c["material_recovered_from_contractors"])
     by_category["subcontract"] = money(by_category["subcontract"] + c["subcontractors"] + subcontracted)
     by_category["plant"] = money(by_category["plant"] + c["plant"] + c["equipment"])
     # Expense vouchers charged to the site (diesel, transport, sundries) are in incurred, so in the headings too.
     by_category["other"] = money(by_category["other"] + c.get("site_expenses", 0.0))
-    for p in open_pos:
-        by_category["materials"] = money(by_category["materials"] + (p.total or 0))
+    by_category["materials"] = money(by_category["materials"] + committed)
 
     return {
         "job_id": job.id, "number": job.number or "", "name": job.name or "",
@@ -429,7 +426,8 @@ def pay_in_full(db, request, doc_type, doc, worth, body, note=""):
         doc_type=doc_type, doc_id=doc.id, amount=outstanding,
         mode=(body.get("mode") or "Bank transfer"), reference=(body.get("reference") or ""),
         account_id=body.get("account_id"), paid_on=(body.get("paid_on") or ""),
-        note=(note or body.get("note") or body.get("comments") or "")), request, db)
+        note=(note or body.get("note") or body.get("comments") or ""),
+        override_reason=(body.get("override_reason") or "")), request, db)
 
 
 def _settle_doc(db, client_id, doc_type, doc, worth, on):

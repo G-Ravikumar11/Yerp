@@ -2,6 +2,7 @@
 if it was already below), not again on the next issue, cleared when stock is back above the level, and raised again after that. A scan raises it
 for stock that was low before."""
 import uuid
+from decimal import Decimal
 from datetime import date
 
 from app import db as database, models
@@ -41,7 +42,9 @@ def test_alert_is_raised_once_until_stock_is_back_above_the_level(account):
     _issue(t, central, w, 10)                          # 2500 kg: still low, already told
     assert _alerts(w["client_id"]) == 1
     [row] = ok(t.get("/api/store/reports/reorder"))["rows"]
-    assert row["qty"] == "2500.000" and row["reorder_level"] == "3000.000" and row["suggested_qty"] == "3500.000"
+    assert row["qty"] == "2500.000" and row["reorder_level"] == "3000.000"
+    # 3500 brings it back up; what the company's open orders still have to deliver is already coming.
+    assert Decimal(row["suggested_qty"]) == max(Decimal(0), Decimal("3500") - Decimal(row["on_order"]))
 
     _receive(t, central, w, 100)                       # 7500 kg: back above, the alert closes
     with database.SessionLocal() as s:
@@ -66,7 +69,9 @@ def test_a_store_can_have_levels_of_its_own(account):
     assert lvl["item_name"] == "Cement OPC"
     [pos] = ok(t.get("/api/store/enquiry/balances", params={"store_id": central["id"]}))["items"]
     assert pos["status"] == "REORDER" and pos["reorder_level"] == "6000.000" and pos["max_qty"] == "12000.000" and pos["min_qty"] == "500.000"
-    assert ok(t.get("/api/store/reports/reorder"))["rows"][0]["suggested_qty"] == "7000.000"   # up to the store's maximum
+    # Up to the store's maximum (7000), less what the open orders still have to deliver.
+    row = ok(t.get("/api/store/reports/reorder"))["rows"][0]
+    assert Decimal(row["suggested_qty"]) + Decimal(row["on_order"]) == Decimal("7000")
     ok(t.delete(url))
     assert t.delete(url).status_code == 404
     assert ok(t.get("/api/store/reports/reorder"))["rows"] == []

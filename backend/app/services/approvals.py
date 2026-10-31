@@ -180,6 +180,51 @@ def bill_exceeds_its_order(db, doc, entity_type):
     return billed > money(order.total or 0) + 0.005
 
 
+def bill_held_for_goods(db, doc, entity_type):
+    """The three-way match's note when a bill claims more than has been received on its order, else None."""
+    if entity_type != "bill":
+        return None
+    from app.services.procurement import bill_ahead_of_goods
+    found = bill_ahead_of_goods(db, doc)
+    return found[1] if found else None
+
+
+def _to_finance(db, client_id, doc, entity_type, submitted_by, request, actor, why, over_order=False):
+    """Send a bill billed ahead of the goods to the finance approver - whoever may release payment - however small it
+    is and whoever raised it: the reporting line first where there is one, then finance. With nobody holding that
+    right, the Master signs it."""
+    chain = []
+    if not raised_by_owner(db, client_id, submitted_by):
+        chain = hierarchy_chain(db, client_id, submitted_by, APPROVE_RIGHT.get(entity_type, "bills.approve"),
+                                getattr(doc, "job_id", None), owner_signs=False) or []
+    purse = finance_approver_for(db, client_id, {step["employee_id"] for step in chain} | {submitted_by})
+    if purse:
+        chain.append(chain_rung(purse))
+    elif not any(step["employee_id"] is None for step in chain):
+        chain.append(chain_rung(None, db, client_id))
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for i, step in enumerate(chain):
+        db.add(models.DBApprovalChain(client_id=client_id, entity_type=entity_type, entity_id=doc.id, employee_id=submitted_by,
+                                      approver_id=step["employee_id"], level=step["level"], step=i + 1, status="pending", created_at=now))
+    doc.approval_status = "pending"
+    doc.current_approval_step = 1
+    set_approval_display_status(doc, entity_type, "pending")
+    first = chain[0]["employee_id"]
+    if first is None:
+        tell_owner_approval(db, client_id, doc, entity_type)
+    else:
+        notify_employee(db, client_id, first, "Approval needed",
+                        f"{getattr(doc, 'number', 'A bill')} is waiting for your approval. {why}", link="/next/approvals")
+    log_audit(db, client_id, f"{entity_type}_submitted_for_approval", entity_type, doc.id, getattr(doc, "number", str(doc.id)),
+              f"Held for finance: {why} Chain length: {len(chain)}", request, user_name=actor)
+    db.commit()
+    message = f"Sent to {chain[0]['name']} for approval: {why}"
+    if over_order:
+        message += " It is also more than the order it settles, so it needs a look."
+    return {"ok": True, "status": "pending", "chain_length": len(chain), "next_approver": chain[0]["name"],
+            "over_order": over_order, "held_for_goods": True, "message": message}
+
+
 def finance_approver_for(db, client_id, exclude_ids):
     """Somebody whose access lets them release payment, for the extra rung on
     a large cost. Returns None when nobody holds that access, in which case the
@@ -204,7 +249,15 @@ def finish_approval(db, client_id, doc, entity_type, submitted_by, request, acto
     log_audit(db, client_id, f"{entity_type}_auto_approved", entity_type, doc.id,
               getattr(doc, "number", str(doc.id)), reason, request, user_name=actor)
     db.commit()
+    _approved(db, client_id, doc, entity_type, request)
     return {"ok": True, "status": "approved", "chain": [], "message": reason}
+
+
+def _approved(db, client_id, doc, entity_type, request):
+    """What follows a document's final approval: an order from an award goes to its supplier."""
+    if entity_type == "purchase_order":
+        from app.services.po_sending import send_when_approved
+        send_when_approved(db, client_id, doc, request)
 
 
 def owner_confirms_own(db, client_id, doc, entity_type, request, actor=""):
@@ -255,6 +308,11 @@ def start_approval(db, client_id, doc, entity_type, submitted_by, request, actor
     total = money(getattr(doc, "total", 0) or 0)
     auto_below, finance_above = approval_thresholds(db, client_id)
     over_order = bill_exceeds_its_order(db, doc, entity_type)
+    # A bill for goods not received (or for more than arrived) is never approved on the nod: finance looks at it.
+    ahead = bill_held_for_goods(db, doc, entity_type)
+
+    if ahead:
+        return _to_finance(db, client_id, doc, entity_type, submitted_by, request, actor, ahead, over_order)
 
     if auto_below and total and total < auto_below and not over_order:
         return finish_approval(
@@ -428,6 +486,7 @@ def decide_approval_step(db, step, action, notes, request, client_id, actor=""):
               doc.id, number, f"Fully approved after step {step.step}", request,
               user_name=actor)
     db.commit()
+    _approved(db, client_id, doc, step.entity_type, request)
     return {"ok": True, "status": "approved", "next_step": 0}
 
 
@@ -581,7 +640,8 @@ def approval_inbox(db, client, emp):
             note_to_approve=True,
             mine=emp is not None or s.approver_id is None,
             waiting_on=owner_label(db, client.id) if s.approver_id is None else _person(db, s.approver_id),
-            warnings=["More than the order it settles"] if bill_exceeds_its_order(db, doc, s.entity_type) else []))
+            warnings=(["More than the order it settles"] if bill_exceeds_its_order(db, doc, s.entity_type) else [])
+                     + (["Billed ahead of the goods received"] if bill_held_for_goods(db, doc, s.entity_type) else [])))
 
     # 2. Subcontract work orders waiting for approval.
     if can("subcontracts.approve"):
