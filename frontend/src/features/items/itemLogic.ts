@@ -135,6 +135,9 @@ export interface ItemForm {
   remarks: string
   is_active: boolean
   make: string
+  shelf_life_applicable: boolean
+  shelf_life_days: string
+  expiry_tracking: boolean
   segment: string
 }
 

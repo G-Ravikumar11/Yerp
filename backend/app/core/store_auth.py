@@ -46,12 +46,22 @@ def store_actor(request, db, permission) -> StoreActor:
     return StoreActor(client=client, employee=employee, name=name or client.company_name or "Account holder")
 
 
+class LotOnHold(HTTPException):
+    """409 for a lot on hold. `extra` goes into the body beside the usual fields."""
+
+    def __init__(self, lot_id, hold_reason, code="LOT_ON_HOLD", message=BatchOnHoldError.MESSAGE):
+        super().__init__(409, message)
+        self.extra = {"success": False, "code": code, "message": message, "lotId": lot_id, "holdReason": hold_reason}
+
+
 @contextmanager
 def store_errors():
     """Turn the module's errors into the HTTP answers a screen can show."""
     try:
         yield
-    except (InsufficientStockError, BatchOnHoldError) as exc:
+    except BatchOnHoldError as exc:
+        raise LotOnHold(exc.lot_id, exc.hold_reason, exc.code, str(exc)) from exc
+    except InsufficientStockError as exc:
         raise HTTPException(409, str(exc)) from exc
     except StoreFrozenError as exc:
         raise HTTPException(423, str(exc)) from exc

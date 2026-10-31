@@ -91,7 +91,7 @@ const UNITS = ['cum', 'sqm', 'rmt', 'cft', 'sqft', 'Nos', 'Sets', 'MT', 'Quintal
 const blank: ItemForm = {
   item_code: '', item_name: 'Cement - OPC 53 grade', kind: 'RM', units_of_measure: 'Bags', item_category: '', item_subcategory: '', specification: '',
   purchase_rate: '', selling_rate: '', gst_percent: '', hsn_code: '', item_type: 'Purchased', preferred_supplier: '', reorder_level: '', description: '', remarks: '', is_active: true,
-  make: '', segment: '',
+  make: '', segment: '', shelf_life_applicable: false, shelf_life_days: '', expiry_tracking: false,
 }
 
 describe('validating the item form', () => {

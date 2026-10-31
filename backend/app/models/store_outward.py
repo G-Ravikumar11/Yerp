@@ -61,6 +61,10 @@ class DBStoreIssueLine(Base):
     indent_line_id = Column(Integer, ForeignKey("store_indent_line.id"), nullable=True, index=True)
     recovery_basis = Column(String, default="")                        # CONTRACT_RATE | AVERAGE_COST, for a chargeable subcontractor line
     handling_pct = Column(PERCENT, default=0)                          # added to the recovery rate for handling
+    fefo_reason = Column(String, default="")                           # why an earlier-expiry lot was passed over
+    fefo_skipped = Column(String, default="")                          # the lot passed over
+    fefo_by = Column(String, default="")
+    fefo_at = Column(String, default="")
     batch_no = Column(String, default="")                              # the batch it was taken from, where the receipt named one
 
 

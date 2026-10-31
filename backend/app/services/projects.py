@@ -2112,7 +2112,7 @@ def attention_elsewhere(db, client_id, jobs, today):
                           "view": "quality-view", "title": "Concrete below grade",
                           "detail": ", ".join("%s %s" % (c["number"], c["location"]) for c in below[:3])})
         late = db.query(models.DBNcr).filter(models.DBNcr.client_id == client_id,
-                                             models.DBNcr.status != "CLOSED",
+                                             models.DBNcr.status.notin_(("CLOSED", "REJECTED")),
                                              models.DBNcr.target_date != "",
                                              models.DBNcr.target_date < today.isoformat()).count()
         if late:

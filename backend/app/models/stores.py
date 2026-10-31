@@ -46,6 +46,10 @@ class DBItem(Base):
     # Below this, the store is running out. Zero means nobody set one, which
     # is not the same as "never reorder" - so it simply never warns.
     reorder_level = Column(Float, default=0.0)
+    # Materials that go off. Nothing is forced on an item that does not.
+    shelf_life_applicable = Column(Boolean, default=False)
+    shelf_life_days = Column(Integer, nullable=True)
+    expiry_tracking = Column(Boolean, default=False)      # a receipt must then give the dates
     # company|kind|name|unit|specification|make, cleaned of case and spacing, on items entered through the master: the
     # unique index is what stops two people adding one item at the same moment. Empty on items made from a BOQ, where one
     # name on two contracts is two deliverables, and on a merged item.

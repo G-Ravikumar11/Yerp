@@ -13,7 +13,9 @@ from app.core.store_auth import store_actor
 from app.db import get_db, get_read_db
 from app.models.store_core import DBStoreBatch
 from app.services import store_holds as sh
+from app.core.dates import _parse_date
 from app.services.stock_ledger import HIDDEN_LOT
+from app.services.store_batches import default_expiry, shelf_days
 
 router = APIRouter(prefix="/api/store/batches", tags=["store-batches"])
 READ = ("store.enquiry.view", "site.signoff", "site.record")
@@ -39,6 +41,7 @@ def list_batches(request: Request, q: str = "", hold_status: str = "", page: int
         ids = [i for (i,) in db.query(models.DBItem.id).filter(models.DBItem.client_id == actor.client.id, models.DBItem.item_name.ilike(like)).all()]
         query = query.filter(DBStoreBatch.batch_no.ilike(like) | DBStoreBatch.item_id.in_(ids or [0]))
     rows = query.order_by(DBStoreBatch.on_hold.desc(), DBStoreBatch.id.desc()).all()
+    hold_status = {"ON_HOLD": "On Hold", "AVAILABLE": "Available", "EXPIRED": "Expired", "REJECTED": "Rejected"}.get(hold_status, hold_status)
     views = [sh.batch_view(db, b) for b in rows] if hold_status else None
     if views is not None:
         views = [v for v in views if v["hold_status"] == hold_status]
@@ -54,6 +57,18 @@ def _read_one(request, db, bid):
     if b is None:
         raise HTTPException(404, "Batch not found")
     return b
+
+
+@router.get("/shelf-life/{item_id}")
+def shelf_life(item_id: int, request: Request, made: str = "", db: Session = Depends(get_read_db)):
+    """What a receipt of this item has to give, and the expiry it comes to: the same sum as saving it."""
+    actor = store_actor(request, db, READ + ("store.inward.view", "store.inward.create"))
+    item = db.query(models.DBItem).filter(models.DBItem.id == item_id, models.DBItem.client_id == actor.client.id).first()
+    if item is None:
+        raise HTTPException(404, "Item not found")
+    day = _parse_date(made)
+    expiry = default_expiry(item, day) if day else None
+    return {"applicable": bool(item.shelf_life_applicable), "days": shelf_days(item), "tracked": bool(item.expiry_tracking), "expiry_date": expiry.isoformat() if expiry else ""}
 
 
 @router.get("/{bid}")

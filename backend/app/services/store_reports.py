@@ -456,7 +456,7 @@ RECONCILE_KINDS = (
     ("transfers", (MovementType.TRANSFER_IN, MovementType.TRANSFER_OUT)),
     ("returned", (MovementType.PURCHASE_RETURN_OUT,)),
     ("issued", (MovementType.ISSUE_OUT, MovementType.ISSUE_RETURN_IN, MovementType.SUBCON_ISSUE_OUT, MovementType.SUBCON_RETURN_IN)),
-    ("wasted", (MovementType.WASTAGE_OUT, MovementType.SCRAP_OUT)),
+    ("wasted", (MovementType.WASTAGE_OUT, MovementType.SCRAP_OUT, MovementType.REJECTED_OUT)),
     ("adjusted", (MovementType.ADJUST_IN, MovementType.ADJUST_OUT)),
 )
 GONE = ("returned", "issued", "wasted")          # shown as positive amounts that left the site

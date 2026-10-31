@@ -60,6 +60,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app import db as database  # noqa: E402
 import main  # noqa: E402
 from app import models  # noqa: E402
+from app.models.store_core import DBStoreBatch  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -135,6 +136,8 @@ def _clear_global_codes():
     session = database.SessionLocal()
     try:
         session.query(models.DBItem).delete()
+        # SQLite gives a deleted item's id to the next one: its batches are cut loose, or it would inherit them and their holds.
+        session.query(DBStoreBatch).update({DBStoreBatch.item_id: -DBStoreBatch.id}, synchronize_session=False)
         # The sequence is deliberately left where it is. Resetting it made the
         # next test reuse a code that an earlier test's work order still
         # pointed at, and the item then looked to be in use. A real sequence

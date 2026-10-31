@@ -166,11 +166,11 @@ async def keep(request: Request, status: int, code: str, ref: str, detail, trace
         logger.warning("Error log skipped for ref=%s", ref, exc_info=True)
 
 
-def _answer(status: int, detail, ref: str, headers=None) -> JSONResponse:
+def _answer(status: int, detail, ref: str, headers=None, extra=None) -> JSONResponse:
     code = error_code(status, detail)
     out = dict(headers or {})
     out["X-Error-Code"], out["X-Error-Ref"] = code, ref
-    return JSONResponse(status_code=status, content={"detail": detail, "code": code, "ref": ref}, headers=out)
+    return JSONResponse(status_code=status, content={"detail": detail, "code": code, "ref": ref, **(extra or {})}, headers=out)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -183,7 +183,7 @@ async def http_error_handler(request: Request, exc: StarletteHTTPException):
     elif code not in ("YE-DATA-01", "YE-AUTH-04"):        # "not found" and "not signed in" are everyday answers
         logger.info("%s ref=%s on %s %s: %s", code, ref, request.method, request.url.path, exc.detail)
     await keep(request, exc.status_code, code, ref, exc.detail)
-    return _answer(exc.status_code, exc.detail, ref, getattr(exc, "headers", None))
+    return _answer(exc.status_code, exc.detail, ref, getattr(exc, "headers", None), getattr(exc, "extra", None))
 
 
 @app.exception_handler(RequestValidationError)

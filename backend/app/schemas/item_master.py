@@ -23,6 +23,9 @@ class MasterItemIn(BaseModel):
     remarks: Optional[str] = ""
     is_active: Optional[bool] = True
     make: Optional[str] = ""                   # the brand: UltraTech, Tata Tiscon, Finolex
+    shelf_life_applicable: Optional[bool] = False
+    shelf_life_days: Optional[int] = None
+    expiry_tracking: Optional[bool] = False
     segment: Optional[str] = ""                # the company or division the item belongs to, as the old ERP kept it
 
 

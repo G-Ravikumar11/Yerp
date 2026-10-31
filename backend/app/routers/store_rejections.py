@@ -12,7 +12,7 @@ from app.core.audit import log_audit
 from app.core.permissions import permissions_for
 from app.core.store_auth import store_actor
 from app.db import get_db, get_read_db
-from app.models.store_core import DBStore, DBStoreUserAssignment
+from app.models.store_core import DBStoreBatch, DBStore, DBStoreUserAssignment
 from app.models.store_extras import DBStoreRejection
 from app.models.store_inward import DBStoreGrn
 from app.services import store_rejections as svc
@@ -39,6 +39,8 @@ def _dicts(db, rows, client_id):
     grns = {g.id: g for g in db.query(DBStoreGrn).filter(DBStoreGrn.id.in_([r.grn_id for r in rows] or [0])).all()}
     stores = {s.id: s for s in db.query(DBStore).filter(DBStore.client_id == client_id).all()}
     items = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_([r.item_id for r in rows] or [0])).all()}
+    ncrs = {n.id: n for n in db.query(models.DBNcr).filter(models.DBNcr.id.in_([r.ncr_id for r in rows if r.ncr_id] or [0])).all()}
+    lots = {b.id: b for b in db.query(DBStoreBatch).filter(DBStoreBatch.id.in_([r.batch_id for r in rows if r.batch_id] or [0])).all()}
     out = []
     for r in rows:
         g, it = grns.get(r.grn_id), items.get(r.item_id)
@@ -47,7 +49,8 @@ def _dicts(db, rows, client_id):
                     "grn_number": g.number if g else "", "supplier_name": (g.supplier_name if g else "") or "", "grn_date": g.grn_date.isoformat() if g and g.grn_date else "",
                     "item_id": r.item_id, "item_code": it.item_code if it else "", "item_name": it.item_name if it else "", "qty": s3(r.qty), "reason": r.reason or "",
                     "resolved_on": r.resolved_on.isoformat() if r.resolved_on else "", "resolved_by": r.resolved_by_name or "", "vehicle_no": r.vehicle_no or "",
-                    "note": r.resolution_note or "", "days_held": held})
+                    "note": r.resolution_note or "", "days_held": held, "ncr_id": r.ncr_id, "ncr_number": ncrs[r.ncr_id].number if r.ncr_id in ncrs else "",
+                    "batch_no": lots[r.batch_id].batch_no if r.batch_id in lots else "", "rejected_on": r.created_at.date().isoformat() if r.created_at else "", "rejected_by": r.rejected_by or ""})
     return out
 
 

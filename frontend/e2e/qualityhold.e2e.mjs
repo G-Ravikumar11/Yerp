@@ -22,7 +22,7 @@ await fill(page, '#bh-why', 'Failed moisture check')
 await clickText(page, '[role=dialog] button', 'Place on hold')
 await waitForToast(page, 'cannot be issued')
 await sleep(900)
-check('the hold shows with its reason and who placed it', /On Hold/.test(await text('[aria-label="Quality hold"]')) && /Failed moisture check/.test(await text('[aria-label="Hold history"]')))
+check('the hold shows ON HOLD with its reason and who placed it', /ON HOLD/.test(await text('[aria-label="Quality hold"]')) && /Held by/.test(await text('[aria-label="Quality hold"]')) && /Failed moisture check/.test(await text('[aria-label="Hold history"]')))
 const id = (await api(page, 'GET', `/api/store/batches?q=${batchNo}`)).data.batches[0].id
 const twice = await api(page, 'POST', `/api/store/batches/${id}/hold`, { reason: 'Again' })
 check('a second manual hold is refused by the server', twice.status === 409)

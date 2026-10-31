@@ -32,7 +32,7 @@ export default function DocPage() {
 
   const isIssue = kind.key === 'issue'
   const columns: TableColumn<Line>[] = [
-    { id: 'item', header: 'Item', cell: (l) => <div><div className="font-medium">{l.item_name}</div><div className="font-mono text-xs text-muted-foreground">{l.item_code}</div></div> },
+    { id: 'item', header: 'Item', cell: (l) => <div><div className="font-medium">{l.item_name}</div><div className="font-mono text-xs text-muted-foreground">{l.item_code}</div>{l.fefo_skipped && <div className="mt-0.5 text-xs text-warning">Earlier-expiry lot {l.fefo_skipped} passed over by {l.fefo_by}{l.fefo_at ? ` on ${l.fefo_at}` : ''}: {l.fefo_reason}</div>}</div> },
     ...(isIssue
       ? ([
           { id: 'qty', header: 'Issued', align: 'right', width: '9rem', cell: (l) => <div>{num(l.entry_qty)} {l.entry_uom}{l.entry_uom !== l.base_uom && <div className="text-xs text-muted-foreground">= {num(l.qty)} {l.base_uom}</div>}</div> },

@@ -42,6 +42,7 @@ class MovementType(str, enum.Enum):
     ADJUST_OUT = "ADJUST_OUT"
     WASTAGE_OUT = "WASTAGE_OUT"
     SCRAP_OUT = "SCRAP_OUT"
+    REJECTED_OUT = "REJECTED_OUT"                 # a lot rejected on an NCR: out of usable stock, into Rejected Goods
 
 
 IN_MOVEMENTS = frozenset(m for m in MovementType if m.value.endswith("_IN"))
@@ -112,7 +113,13 @@ class InsufficientStockError(StoreError):
 
 
 class BatchOnHoldError(StoreError):
-    """A batch under a quality hold cannot go out for use, however much of it is on hand."""
+    """A lot on hold cannot be issued, transferred or written off, however much of it is on hand."""
+
+    MESSAGE = "This material lot is on hold and cannot be issued, transferred, or written off."
+
+    def __init__(self, lot_id="", hold_reason="", code="LOT_ON_HOLD", message=None):
+        self.lot_id, self.hold_reason, self.code = lot_id, hold_reason, code
+        super().__init__(message or self.MESSAGE)
 
 
 class StoreFrozenError(StoreError):
@@ -304,20 +311,23 @@ class DBStoreBatch(Base):
     expiry_date = Column(Date, nullable=True)
     first_received = Column(Date, nullable=True)
     on_hold = Column(Boolean, default=False, nullable=False, index=True)     # true while any hold on it is active
+    lot_status = Column(String, default="", index=True)       # "" | REJECTED, for good, by an NCR
+    expired_noted = Column(Boolean, default=False)            # the audit trail has been told it expired
     source = Column(String, default="")                       # where it first came from: "Receipt GRN-0003"
     created_at = Column(DateTime, default=datetime.now)
 
 
 class DBStoreBatchHold(Base):
     """One reason a batch is held: placed by hand, or by an open NCR. Each stands alone, and stays as the record once
-    released. `hold_key` is unique while it is active: one manual hold on a batch, one hold for an NCR."""
+    released. `hold_key` is unique while it is active: one manual hold on a batch, one hold for an NCR or a failed check."""
     __tablename__ = "store_batch_hold"
     __table_args__ = (UniqueConstraint("hold_key", name="uq_store_batch_hold_key"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     batch_id = Column(Integer, ForeignKey("store_batch.id"), nullable=False, index=True)
-    kind = Column(String, nullable=False)                     # MANUAL | NCR
+    kind = Column(String, nullable=False)                     # MANUAL | NCR | QC
+    inspection_ref = Column(String, default="")               # the receipt and line whose quality check failed
     ncr_id = Column(Integer, nullable=True, index=True)
     hold_key = Column(String, nullable=True)
     status = Column(String, default="ACTIVE", index=True)     # ACTIVE | RELEASED

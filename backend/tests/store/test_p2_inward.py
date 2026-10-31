@@ -506,3 +506,28 @@ def test_every_document_prints_and_the_lists_export(account):
         assert res.status_code == 200 and res.content[:4] == b"%PDF" and res.headers["content-type"] == "application/pdf", (kind, res.text[:200])
         xl = tenant.get("%s/%s/export" % (API, kind))
         assert xl.status_code == 200 and openpyxl.load_workbook(io.BytesIO(xl.content)).active.max_row >= 2
+
+
+def test_a_lot_that_fails_its_check_goes_on_hold_with_its_inspection(account):
+    tenant = account["client"]
+    w = world(account)
+    g = make_grn(tenant, w, lines=[{"po_line_id": w.po_line["steel"], "qty": "500", "uom": "kg", "batch_no": "HEAT-77"}])
+    url = "%s/grn/%d/qc/%d" % (API, g["id"], g["lines"][0]["id"])
+    assert tenant.post(url, json={"result": "FAILED", "note": "wrong grade"}).status_code == 200
+    held = tenant.get("/api/store/batches?hold_status=ON_HOLD").json()["batches"]
+    lot = [b for b in held if b["batch_no"] == "HEAT-77"][0]
+    assert lot["status_code"] == "ON_HOLD" and lot["hold_reason"] == "Failed quality inspection: wrong grade" and lot["held_by"]
+    detail = tenant.get("/api/store/batches/%d" % lot["id"]).json()
+    assert g["number"] in detail["holds"][0]["inspection_ref"] and detail["holds"][0]["kind"] == "QC"
+    # Recorded again as a pass before approval: the hold goes, and the history stays.
+    assert tenant.post(url, json={"result": "PASSED"}).status_code == 200
+    detail = tenant.get("/api/store/batches/%d" % lot["id"]).json()
+    assert detail["hold_status"] == "Released" and detail["holds"][0]["status"] == "RELEASED"
+
+
+def test_a_lot_that_passes_is_not_held(account):
+    tenant = account["client"]
+    w = world(account)
+    g = make_grn(tenant, w, lines=[{"po_line_id": w.po_line["steel"], "qty": "500", "uom": "kg", "batch_no": "HEAT-88"}])
+    assert tenant.post("%s/grn/%d/qc/%d" % (API, g["id"], g["lines"][0]["id"]), json={"result": "PASSED"}).status_code == 200
+    assert not [b for b in tenant.get("/api/store/batches?hold_status=ON_HOLD").json()["batches"] if b["batch_no"] == "HEAT-88"]

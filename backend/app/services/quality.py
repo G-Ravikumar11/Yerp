@@ -394,7 +394,7 @@ def ncr_dict(n, names=None):
             "verified_by": n.verified_by or "", "verified_on": n.verified_on or "",
             "reinspection_ref": n.reinspection_ref or "",
             "needs_root_cause": (n.severity or "") in NCR_ROOT_CAUSE_FROM and not (n.root_cause or "").strip(),
-            "overdue": status != "CLOSED" and bool(n.target_date) and n.target_date < today}
+            "overdue": status not in ("CLOSED", "REJECTED") and bool(n.target_date) and n.target_date < today}
 
 
 def ncr_query(db, client_id, job_id=0, q="", status="", date_from="", date_to="", severity=""):
@@ -404,9 +404,9 @@ def ncr_query(db, client_id, job_id=0, q="", status="", date_from="", date_to=""
         query = query.filter(M.job_id == job_id)
     s = (status or "").upper()
     if s == "ACTIVE" or s == "NOT_CLOSED":
-        query = query.filter(M.status != "CLOSED")
+        query = query.filter(M.status.notin_(("CLOSED", "REJECTED")))
     elif s == "OVERDUE":
-        query = query.filter(M.status != "CLOSED", M.target_date != "", M.target_date < date.today().isoformat())
+        query = query.filter(M.status.notin_(("CLOSED", "REJECTED")), M.target_date != "", M.target_date < date.today().isoformat())
     elif s:
         query = query.filter(M.status == s)
     if severity:

@@ -646,6 +646,22 @@ def ensure_columns():
                 "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS merged_by VARCHAR DEFAULT ''",
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_erp_items_dup_key ON erp_items (dup_key)",
                 "ALTER TABLE store_batch ADD COLUMN IF NOT EXISTS on_hold BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE store_batch ADD COLUMN IF NOT EXISTS lot_status VARCHAR DEFAULT ''",
+                "ALTER TABLE store_batch ADD COLUMN IF NOT EXISTS expired_noted BOOLEAN DEFAULT FALSE",
+                "CREATE INDEX IF NOT EXISTS ix_store_batch_lot_status ON store_batch (lot_status)",
+                "ALTER TABLE store_rejection ALTER COLUMN grn_id DROP NOT NULL",
+                "ALTER TABLE store_rejection ALTER COLUMN grn_line_id DROP NOT NULL",
+                "ALTER TABLE store_rejection ADD COLUMN IF NOT EXISTS ncr_id INTEGER",
+                "ALTER TABLE store_rejection ADD COLUMN IF NOT EXISTS batch_id INTEGER",
+                "ALTER TABLE store_rejection ADD COLUMN IF NOT EXISTS rejected_by VARCHAR DEFAULT ''",
+                "ALTER TABLE store_issue_line ADD COLUMN IF NOT EXISTS fefo_reason VARCHAR DEFAULT ''",
+                "ALTER TABLE store_issue_line ADD COLUMN IF NOT EXISTS fefo_skipped VARCHAR DEFAULT ''",
+                "ALTER TABLE store_issue_line ADD COLUMN IF NOT EXISTS fefo_by VARCHAR DEFAULT ''",
+                "ALTER TABLE store_issue_line ADD COLUMN IF NOT EXISTS fefo_at VARCHAR DEFAULT ''",
+                "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS shelf_life_applicable BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS shelf_life_days INTEGER",
+                "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS expiry_tracking BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE store_batch_hold ADD COLUMN IF NOT EXISTS inspection_ref VARCHAR DEFAULT ''",
                 "CREATE INDEX IF NOT EXISTS ix_store_batch_on_hold ON store_batch (on_hold)",
                 "ALTER TABLE qc_ncrs ADD COLUMN IF NOT EXISTS origin VARCHAR DEFAULT ''",
                 "ALTER TABLE qc_ncrs ADD COLUMN IF NOT EXISTS auto_key VARCHAR",
@@ -2012,6 +2028,19 @@ def migrate_sqlite():
             add_col("employees", "credentials_email_status", "VARCHAR DEFAULT ''")
             add_col("employees", "credentials_email_at", "VARCHAR DEFAULT ''")
             add_col("store_batch", "on_hold", "BOOLEAN NOT NULL DEFAULT 0")
+            add_col("store_batch", "lot_status", "VARCHAR DEFAULT ''")
+            add_col("store_batch", "expired_noted", "BOOLEAN DEFAULT 0")
+            add_col("store_rejection", "ncr_id", "INTEGER")
+            add_col("store_rejection", "batch_id", "INTEGER")
+            add_col("store_rejection", "rejected_by", "VARCHAR DEFAULT ''")
+            add_col("store_issue_line", "fefo_reason", "VARCHAR DEFAULT ''")
+            add_col("store_issue_line", "fefo_skipped", "VARCHAR DEFAULT ''")
+            add_col("store_issue_line", "fefo_by", "VARCHAR DEFAULT ''")
+            add_col("store_issue_line", "fefo_at", "VARCHAR DEFAULT ''")
+            add_col("erp_items", "shelf_life_applicable", "BOOLEAN DEFAULT 0")
+            add_col("erp_items", "shelf_life_days", "INTEGER")
+            add_col("erp_items", "expiry_tracking", "BOOLEAN DEFAULT 0")
+            add_col("store_batch_hold", "inspection_ref", "VARCHAR DEFAULT ''")
             add_col("qc_ncrs", "origin", "VARCHAR DEFAULT ''")
             add_col("qc_ncrs", "auto_key", "VARCHAR")
             add_col("qc_ncrs", "store_batch_id", "INTEGER")

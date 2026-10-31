@@ -29,7 +29,7 @@ const STATUSES: Record<Tab, { value: string; label: string }[]> = {
   ],
   ncrs: [
     { value: 'not_closed', label: 'Not closed' }, { value: 'overdue', label: 'Overdue' }, { value: 'OPEN', label: 'Open' }, { value: 'ASSIGNED', label: 'Assigned' },
-    { value: 'UNDER_CORRECTION', label: 'Under correction' }, { value: 'REINSPECTION', label: 'Reinspection' }, { value: 'CLOSED', label: 'Closed' },
+    { value: 'UNDER_CORRECTION', label: 'Under correction' }, { value: 'REINSPECTION', label: 'Reinspection' }, { value: 'CLOSED', label: 'Closed' }, { value: 'REJECTED', label: 'Rejected' },
   ],
 }
 const SORTS: Record<Tab, { value: string; label: string }[]> = {
