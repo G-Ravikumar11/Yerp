@@ -81,8 +81,12 @@ def test_site_work_needs_the_site_right_and_approving_needs_the_approve_right():
 
 def test_a_persons_own_things_are_always_open():
     for path in ("/api/employee/attendance/clock-in", "/api/employee/auth/logout", "/api/devices", "/api/chat/threads",
-                 "/api/client/logout", "/api/leave"):
+                 "/api/client/logout", "/api/leave", "/api/celebrations/react", "/api/celebrations/wishes"):
         assert app_limits.refusal("POST", path, set()) is None, path
+    assert app_limits.refusal("DELETE", "/api/celebrations/wishes/7", set()) is None      # taking back your own wish
+    # Setting up special days is HR's and the Master's, not a person's own business.
+    assert "not available in the app" in app_limits.refusal("POST", "/api/celebrations/special-days", set())
+    assert "not available in the app" in app_limits.refusal("DELETE", "/api/celebrations/special-days/3", set())
 
 
 # ---- staff, in the app and on the website ---------------------------------------------------------------------------

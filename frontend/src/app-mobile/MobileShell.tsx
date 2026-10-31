@@ -11,10 +11,11 @@ import { useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { AddSheet } from './AddSheet'
 import { TabBar } from './TabBar'
+import './app-theme.css'
 
 /** The four places the tab bar goes to: these screens are tabs. Every other screen gets a back bar and a title. */
 const TABS = new Set(['/', '/projects', '/approvals', '/more'])
-const TAB_TITLES: Record<string, string> = { '/': 'Today', '/projects': 'Projects', '/approvals': 'Approvals', '/more': 'More' }
+const TAB_TITLES: Record<string, string> = { '/': 'Home', '/projects': 'Projects', '/approvals': 'Approvals', '/more': 'Menu' }
 
 /**
  * The frame of the phone app, in place of the website's sidebar and top bar: the screen, a bottom tab bar, and the
@@ -31,6 +32,12 @@ export default function MobileShell() {
   useEffect(() => {
     document.title = `${title || 'Y ERP'} - Y ERP`
   }, [title])
+  // The phone app's look (app-theme.css) is scoped to this class on <html>, so a dialog that opens outside this element is
+  // restyled with the rest, and it goes the moment the shell does.
+  useEffect(() => {
+    document.documentElement.classList.add('app-ui')
+    return () => document.documentElement.classList.remove('app-ui')
+  }, [])
   useEffect(() => {
     if (isAnonymous && (import.meta.env.PROD || import.meta.env.VITE_API_BASE_URL)) window.location.assign(appUrl('login'))
   }, [isAnonymous])
@@ -45,9 +52,9 @@ export default function MobileShell() {
   return (
     // --tabbar is the height of the bottom bar: shorter when the phone is turned on its side, so the screen keeps its room.
     // The sides keep clear of a camera cut-out or a fold (the safe-area insets), which only show up when turned.
-    <div className="relative isolate min-h-dvh [--tabbar:64px] [@media(max-height:480px)]:[--tabbar:56px]">
+    <div className="relative isolate min-h-dvh [--tabbar:78px] [@media(max-height:480px)]:[--tabbar:70px]">
       {!isTab && (
-        <header className="sticky top-0 z-30 flex h-12 items-center gap-1 border-b border-border bg-background pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))]">
+        <header className="sticky top-0 z-30 flex h-12 items-center gap-1 border-b border-border bg-[var(--app-glass)] backdrop-blur-xl pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))]">
           <button type="button" onClick={() => (window.history.length > 1 ? go(-1) : go('/'))} className="flex h-10 items-center gap-0.5 rounded-xl pl-1 pr-3 text-[15px] font-medium text-primary active:opacity-60">
             <ChevronLeft className="size-6" />Back
           </button>
