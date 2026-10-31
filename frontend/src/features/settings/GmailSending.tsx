@@ -7,7 +7,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { Section } from './Section'
 
-interface GmailStatus { gmail_ready: boolean; gmail_expired?: boolean; gmail_authorized_email: string | null; server_mailbox?: string }
+interface GmailStatus { gmail_ready: boolean; gmail_expired?: boolean; gmail_authorized_email: string | null }
 const KEY = ['settings', 'gmail'] as const
 
 const NOTICE: Record<string, string> = {
@@ -30,18 +30,7 @@ export function GmailSending() {
   return (
     <Section title="Company email (Gmail)" description="The Gmail account the company's emails are sent from - invoices, alerts, reminders and password resets. People receive them at whatever address they have.">
       {notice && <p role="status" className="mb-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">{notice}</p>}
-      {q.isPending || !q.data ? <Skeleton className="h-16 w-full" /> : q.data.server_mailbox ? (
-        <div className="grid gap-4">
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <Mail className="size-4 text-muted-foreground" />
-            <Badge tone="success" dot>Connected for good</Badge><span>Every email goes out from {q.data.server_mailbox}. It is set on the server and never needs connecting again.</span>
-          </div>
-          <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (to.trim()) test.mutate() }}>
-            <Field label="Send a test email to" htmlFor="gm-test" className="w-72"><Input id="gm-test" type="email" placeholder="someone@yahoo.com" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
-            <Button type="submit" variant="outline" loading={test.isPending} disabled={!to.trim()}>Send test</Button>
-          </form>
-        </div>
-      ) : (
+      {q.isPending || !q.data ? <Skeleton className="h-16 w-full" /> : (
         <div className="grid gap-4">
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <Mail className="size-4 text-muted-foreground" />

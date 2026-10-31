@@ -10,7 +10,7 @@ from app import models
 from app.db import get_db
 
 from app.core.auth import get_client_user, require_owner
-from app.core.notifications import default_from_email, get_gmail_credentials, get_stored_refresh_token, mail_ready, send_email_background, server_mailbox
+from app.core.notifications import default_from_email, get_gmail_credentials, get_stored_refresh_token, send_email_background
 from app.core.security import rate_limiter
 from app.validators.common import validate_email_address
 from app.services.email import TRACKING_PIXEL
@@ -38,11 +38,10 @@ def gmail_status(request: Request, db: Session = Depends(get_db)):
     client_id = get_client_user(request, db).id
     user = request.session.get('user')
     refresh_token = get_stored_refresh_token(db, client_id=client_id)
-    mailbox = server_mailbox()
     # Try to get the authorized Gmail email from the refresh token owner
     gmail_email = None
     expired = False
-    if refresh_token and not mailbox:
+    if refresh_token:
         try:
             creds = get_gmail_credentials(access_token=None, refresh_token=refresh_token)
             if creds and creds.valid:
@@ -50,7 +49,7 @@ def gmail_status(request: Request, db: Session = Depends(get_db)):
                 profile = service.users().getProfile(userId="me").execute()
                 gmail_email = profile.get("emailAddress")
             else:
-                expired = True             # Google no longer accepts it: connect again (or set the server's mailbox)
+                expired = True             # Google no longer accepts it: it has to be connected again
         except Exception:
             pass
     return {
@@ -61,8 +60,6 @@ def gmail_status(request: Request, db: Session = Depends(get_db)):
         "gmail_ready": bool(refresh_token) and not expired,
         "gmail_expired": expired,
         "gmail_authorized_email": gmail_email,
-        # The server's own mailbox, set once in its variables: when it is there it sends everything.
-        "server_mailbox": mailbox,
     }
 
 
@@ -91,7 +88,7 @@ def send_test_email(request: Request, body: dict = None, db: Session = Depends(g
     to = ((body or {}).get("to") or "").strip()
     if not to or not validate_email_address(to):
         raise HTTPException(status_code=400, detail="Enter a valid email address to send the test to.")
-    if not mail_ready(db, client.id):
+    if not get_stored_refresh_token(db, client_id=client.id):
         raise HTTPException(status_code=409, detail="Gmail is not connected yet. Connect it first.")
     company = client.company_name or "Y ERP"
     ok, message = send_email_background(
@@ -100,6 +97,5 @@ def send_test_email(request: Request, body: dict = None, db: Session = Depends(g
         "%s <%s>" % (company, default_from_email()), None, None, "", "", client_id=client.id)
     if not ok:
         # The provider's own words can carry details of the account; the error log has them, the screen does not.
-        raise HTTPException(status_code=502, detail=("The server's mailbox did not accept the message. Check its app password." if server_mailbox()
-                                                     else "Gmail did not accept the message. Reconnect Gmail and try again."))
+        raise HTTPException(status_code=502, detail="Gmail did not accept the message. Reconnect Gmail and try again.")
     return {"ok": True, "message": "Test email sent to %s." % to}

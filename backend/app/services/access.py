@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from app import models
 
 from app.constants.common import PORTAL_INVITE_DAYS
-from app.core.notifications import default_from_email, mail_ready, send_email_background
+from app.core.notifications import default_from_email, get_stored_refresh_token, send_email_background
 from app.core.security import _portal_token_hash
 from app.services.subcontract_billing import portal_party
 
@@ -51,7 +51,7 @@ def _invite_link(request, token):
 def _send_invite(background_tasks, db, client, u, link):
     """By email when the company's mail is connected; the link is always
     handed back as well, to send on WhatsApp or read out on the phone."""
-    if not mail_ready(db, client.id):
+    if not get_stored_refresh_token(db, client_id=client.id):
         return False
     company = client.company_name or "Our office"
     body = ("%s has given you access to its partner portal - your orders, bills, payments and "

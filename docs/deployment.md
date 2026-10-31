@@ -65,7 +65,11 @@ signs in only addresses that already have a login here - it never creates one.
 1. Google Cloud Console → APIs & Services → OAuth consent screen: External,
    app name, support email; add the scopes `openid`, `email`, `profile`
    (and `gmail.send` if mail should go out through Gmail). Publish the app
-   (or add each person as a test user while it is in testing).
+   (or add each person as a test user while it is in testing). **Publish it
+   ("In production") for Gmail sending:** while it is in Testing, Google ends
+   a Gmail connection after 7 days. Published, the Master connects Gmail once
+   in Settings and every email goes out from it until the connection is
+   removed there or in the Google account (or that account's password changes).
 2. Credentials → Create credentials → OAuth client ID → Web application.
    Authorised redirect URIs, both:
    `https://<your-app>/api/auth/google/callback` (sign-in) and
@@ -75,22 +79,6 @@ signs in only addresses that already have a login here - it never creates one.
 
 The platform console's Google sign-in admits only addresses listed in
 `SUPERADMIN_EMAILS`.
-
-### One mailbox for every email (set once)
-
-Every email the app sends - alerts, daily reports, invoices, resets - can go out
-from one address that never needs connecting again:
-
-1. In that Google account: Security → 2-Step Verification on → App passwords →
-   make one (16 letters).
-2. Railway → Variables: `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`,
-   `SMTP_USER=<the address>`, `SMTP_PASSWORD=<the app password>`. Redeploy.
-
-Settings → Company email then says "Connected for good". When these are set
-they are used instead of any Gmail connected in Settings. The app password
-lasts until the account's own password is changed. (A Gmail connected with the
-button stops after 7 days while the Google app is still "Testing": publish it,
-step 1 above, to keep that one.)
 
 ## Many users (about a thousand)
 
