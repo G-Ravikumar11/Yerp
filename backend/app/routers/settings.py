@@ -381,6 +381,10 @@ def mark_notifications_read(body: NotificationReadIn, request: Request, db: Sess
     return {"marked": n}
 
 
+# The evening site report, the missing-diary reminder and the delay alerts (their jobs register when this is imported).
+from app.services.site_reports import SITE_REPORT_LABELS, save_site_report_settings, site_report_settings  # noqa: E402
+
+
 @router.get("/api/alerts/settings")
 def get_notification_settings(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
@@ -388,7 +392,8 @@ def get_notification_settings(request: Request, db: Session = Depends(get_read_d
     return {"emails": cfg["emails"], "whatsapp": cfg["whatsapp"], "channels": cfg["channels"],
             "kinds": NOTIFY_KINDS, "whatsapp_ready": cfg["whatsapp_ready"],
             "wa_phone_id": cfg["wa_phone_id"], "wa_token_set": bool(cfg["wa_token"]),
-            "email_ready": bool(get_stored_refresh_token(db, client_id=client.id))}
+            "email_ready": bool(get_stored_refresh_token(db, client_id=client.id)),
+            "site_reports": site_report_settings(db, client.id), "site_report_labels": SITE_REPORT_LABELS}
 
 
 @router.put("/api/alerts/settings")
@@ -414,6 +419,8 @@ def save_notification_settings(body: NotificationSettingsIn, request: Request, d
         _put_setting(db, client.id, "WHATSAPP_PHONE_NUMBER_ID", body.wa_phone_id.strip())
     if body.wa_token:
         _put_setting(db, client.id, "WHATSAPP_ACCESS_TOKEN", body.wa_token.strip())
+    if body.site_reports is not None:
+        save_site_report_settings(db, client.id, body.site_reports)
     db.commit()
     return get_notification_settings(request, db)
 

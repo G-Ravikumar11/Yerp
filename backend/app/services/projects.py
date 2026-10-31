@@ -496,7 +496,7 @@ def diary_dict(db, d, detail=False):
         "day_cost": money((d.labour_cost or 0) + (d.plant_cost or 0)),
         "total_mandays": money(d.total_mandays),
         "status": d.status or "DRAFT", "prepared_by_name": d.prepared_by_name or "",
-        "submitted_at": d.submitted_at or "",
+        "submitted_at": d.submitted_at or "", "submitted_by_name": d.submitted_by_name or "",
         "amendments": [line for line in (d.amendments or "").splitlines() if line.strip()],
         "editable": (d.status or "DRAFT") == "DRAFT",
         # A day the site was rained off is worth seeing at a glance.
@@ -1274,6 +1274,30 @@ def status_after_progress(a, pct):
         a.status = "Not Started"
 
 
+def reconcile_activity(db, a):
+    """Bring an activity's start, finish and status into line with its progress reports as they stand. The latest report decides:
+    at 100 the activity is finished (on the day it was reported); anything lower opens it again, and the finish date goes -
+    an activity with a finish date counts as 100% whatever was reported after, so a lower figure would otherwise change nothing.
+    Measured activities (progress from the measurement book) are left to the book."""
+    if a.work_order_line_id:
+        return
+    db.flush()
+    reports = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
+        models.DBScheduleProgress.reported_on, models.DBScheduleProgress.id).all()
+    if not reports:
+        return
+    last = reports[-1]
+    pct = float(last.percent or 0)
+    if pct >= 100:
+        a.actual_finish = a.actual_finish or last.reported_on
+    else:
+        a.actual_finish = ""
+    started = next((r.reported_on for r in reports if (r.percent or 0) > 0), "")
+    if started and not a.actual_start:
+        a.actual_start = started
+    status_after_progress(a, pct)
+
+
 def schedule_view(db, client_id, job):
     """The activities with their planned and actual progress, the forecast
     that follows from both, and the curve."""
@@ -1327,15 +1351,29 @@ def schedule_view(db, client_id, job):
     for a in sorted(leaves, key=lambda x: ctx.dates(x)[0] or date.max):      # earliest first: their forecasts feed the later ones
         forecast(a)
     names = {a.id: a.code or a.name or "" for a in ctx.acts}
+    # Hindrances on the register against each activity (rejected ones explain nothing).
+    held = {}
+    for aid, n in db.query(models.DBHindrance.activity_id, models.DBHindrance.number).filter(
+            models.DBHindrance.client_id == client_id, models.DBHindrance.job_id == job.id,
+            models.DBHindrance.activity_id.isnot(None), models.DBHindrance.status != "Rejected").all():
+        held.setdefault(aid, []).append(n or "")
     for a in leaves:
         plan = ctx.planned(a, today)
         done = ctx.actual(a, today)
         fin = forecast(a)
         ps, pf = ctx.dates(a)
         p = ctx.prog.rows[a.id]
-        slip = (fin - pf).days if fin and pf else 0
+        # Late is measured against the baseline - what was promised - not against the plan as it stands today, which the
+        # engine moves along with every late predecessor (an activity pushed back a month would otherwise never be "late").
+        # With no baseline saved, the plan is all there is to measure against.
+        b = ctx.base.get(a.id)
+        bs, bf = (b[0], b[1]) if b else (ps, pf)
+        slip = (fin - bf).days if fin and bf else 0
+        days_late = (today - bf).days if bf and today > bf and done < 100 else 0
+        delay = max(0, slip, days_late)
+        explained = bool(held.get(a.id) or a.delay_reason)
         state = ("done" if done >= 100 else
-                 "late" if pf and today > pf else
+                 "late" if bf and today > bf else
                  "behind" if plan - done > 10 else
                  "not started" if done == 0 and plan == 0 else "on track")
         pred = by_id.get(a.depends_on_id) or (by_id.get(before[a.id][0]) if before.get(a.id) else None)
@@ -1353,8 +1391,14 @@ def schedule_view(db, client_id, job):
             "forecast_finish": fin.isoformat() if fin else "", "slip_days": slip, "state": state,
             "status": _effective_status(a, done, state, slip), "stored_status": a.status or "", "notes": a.notes or "",
             "assigned_to_id": a.assigned_to_id, "assigned_to": staff.get(a.assigned_to_id, "") if a.assigned_to_id else "",
-            "overdue": bool(pf and today > pf and done < 100), "days_late": (today - pf).days if pf and today > pf and done < 100 else 0,
-            "delayed": bool(done < 100 and (slip > 0 or (pf and today > pf))) or state == "behind",
+            "overdue": bool(days_late), "days_late": days_late,
+            "delayed": bool(done < 100 and delay > 0) or state == "behind",
+            "baseline_start": bs.isoformat() if bs else "", "baseline_finish": bf.isoformat() if bf else "",
+            "measured_against": "baseline" if b else "plan",
+            # Days behind what was promised: the forecast (or actual) finish past the baseline one, or how far past it today is.
+            "delay_days": delay, "hindrances": held.get(a.id, []), "delay_reason": a.delay_reason or "", "delay_note": a.delay_note or "",
+            # Late and nothing on record to say why: a hindrance against it, or a reason, is wanted.
+            "needs_reason": delay > 0 and not explained,
             "predecessor_code": pred.code or pred.name if pred else ""})
 
     def overall(on):
@@ -1373,6 +1417,9 @@ def schedule_view(db, client_id, job):
     plan_now, done_now = overall(today)
     project_finish = max([f for f in forecast_finish.values() if f] or [None]) if forecast_finish else None
     planned_end = max(finishes) if finishes else None
+    # The finish that was promised: the baseline's, once one is saved; the project's delay is measured from it.
+    base_ends = [ctx.base[a.id][1] for a in leaves if a.id in ctx.base]
+    promised_end = max(base_ends) if base_ends else planned_end
     return {
         "job": {"id": job.id, "number": job.number, "name": job.name, "customer_name": job.customer_name or "",
                 "site_address": job.site_address or "", "status": job.status or ""},
@@ -1392,8 +1439,12 @@ def schedule_view(db, client_id, job):
             "behind": len([r for r in rows if r["state"] == "behind"]),
             "done": len([r for r in rows if r["state"] == "done"]),
             "planned_finish": planned_end.isoformat() if planned_end else "",
+            "baseline_finish": promised_end.isoformat() if promised_end else "",
+            "measured_against": "baseline" if base_ends else "plan",
             "forecast_finish": project_finish.isoformat() if project_finish else "",
-            "slip_days": (project_finish - planned_end).days if project_finish and planned_end else 0}}
+            "slip_days": (project_finish - promised_end).days if project_finish and promised_end else 0,
+            "delayed": len([r for r in rows if r["delay_days"] > 0 and r["actual_percent"] < 100]),
+            "unexplained": len([r for r in rows if r["needs_reason"]])}}
 
 
 _MONTHS = {m.lower(): i for i, m in enumerate(
@@ -1651,7 +1702,12 @@ def activity_detail(db, client_id, a):
         models.DBScheduleProgress.reported_on.desc(), models.DBScheduleProgress.id.desc()).all()
     last = ctx.last.get(a.id, ("", ""))
     names = {a.id: ((a.code or "") + " " + (a.name or "")).strip()}
+    from app.services.hindrances import hindrance_dict
+    held = db.query(models.DBHindrance).filter(models.DBHindrance.client_id == client_id, models.DBHindrance.activity_id == a.id).order_by(
+        models.DBHindrance.from_date.desc(), models.DBHindrance.id.desc()).all()
     return {"job": {"id": job.id, "number": job.number, "name": job.name},
+            # What held it up, from the site's hindrance register: the record its delay is explained by.
+            "hindrances": [hindrance_dict(h, names) for h in held],
             "activity": dict(row, editable=not a.work_order_line_id, tasks_total=len(tasks), tasks_done=sum(1 for t in tasks if t.done),
                              tasks=[task_dict(t, names) for t in tasks], updated_on=last[0], updated_by=last[1]),
             "history": [{"on": h.reported_on or "", "percent": h.percent or 0, "qty_done": h.qty_done, "uom": a.uom or "",
@@ -1669,7 +1725,7 @@ def task_dict(t, names=None):
             "created_by_name": t.created_by_name or ""}
 
 
-def sync_progress_from_tasks(db, client_id, activity_id, actor_name, on=None):
+def sync_progress_from_tasks(db, client_id, activity_id, actor_name, on=None, diary_id=None):
     """An activity's progress follows its tasks: the share of them that are done. Each tick (or un-tick, add or removal)
     writes a dated report like any other, so the history is kept and the S-curve still reads true.
 
@@ -1691,7 +1747,7 @@ def sync_progress_from_tasks(db, client_id, activity_id, actor_name, on=None):
         models.DBScheduleProgress.reported_on.desc(), models.DBScheduleProgress.id.desc()).first()
     if last is None or abs((last.percent or 0) - pct) > 0.001:
         db.add(models.DBScheduleProgress(client_id=client_id, activity_id=a.id, reported_on=on, percent=pct,
-                                         note="From its tasks", by_name=actor_name))
+                                         note="From its tasks", by_name=actor_name, diary_id=diary_id))
     if pct > 0 and not a.actual_start:
         a.actual_start = on
     # Finished is what the tasks say: ticking the last one finishes it, un-ticking one opens it again.
@@ -1700,7 +1756,7 @@ def sync_progress_from_tasks(db, client_id, activity_id, actor_name, on=None):
     return pct
 
 
-def apply_work_updates(db, client_id, job, updates, on, actor_name):
+def apply_work_updates(db, client_id, job, updates, on, actor_name, diary_id=None):
     """Carry what a site diary says about the planned work into Planning & Progress: tasks ticked done (or put back), and
     an activity that has no tasks now so far along. Dated the diary's day, and recorded like any other progress report.
 
@@ -1726,6 +1782,16 @@ def apply_work_updates(db, client_id, job, updates, on, actor_name):
             else:
                 continue
             if want_done != bool(t.done) or abs(want_part - float(t.percent or 0.0)) > 0.001:
+                if diary_id:
+                    # Remember how the task stood before this diary touched it (the first time), so deleting the draft can put it back.
+                    change = db.query(models.DBDiaryTaskChange).filter(models.DBDiaryTaskChange.diary_id == diary_id,
+                                                                       models.DBDiaryTaskChange.task_id == t.id).first()
+                    if change is None:
+                        change = models.DBDiaryTaskChange(client_id=client_id, diary_id=diary_id, task_id=t.id, was_done=bool(t.done),
+                                                          was_percent=float(t.percent or 0.0), was_done_by_name=t.done_by_name or "",
+                                                          was_done_at=t.done_at or "")
+                        db.add(change)
+                    change.now_done, change.now_percent = want_done, want_part
                 t.done, t.percent = want_done, want_part
                 t.done_by_name = actor_name if (want_done or want_part) else ""
                 t.done_at = ("%s %s" % (on, datetime.now().strftime("%H:%M"))) if want_done else ""
@@ -1747,16 +1813,65 @@ def apply_work_updates(db, client_id, job, updates, on, actor_name):
             ctx = ScheduleContext(db, client_id, job.id)
             if abs(ctx.actual(a, _d(on) or date.today()) - pct) > 0.001:
                 db.add(models.DBScheduleProgress(client_id=client_id, activity_id=a.id, reported_on=on, percent=pct,
-                                                 note="From the site diary", by_name=actor_name))
-                if pct > 0 and not a.actual_start:
-                    a.actual_start = on
-                if pct >= 100 and not a.actual_finish:
-                    a.actual_finish = on
+                                                 note="From the site diary", by_name=actor_name, diary_id=diary_id))
+                reconcile_activity(db, a)
                 moved_activities += 1
     db.flush()
     for under in touched:
-        sync_progress_from_tasks(db, client_id, under, actor_name, on)
+        sync_progress_from_tasks(db, client_id, under, actor_name, on, diary_id)
     return moved_tasks, moved_activities
+
+
+def undo_diary_progress(db, client_id, diary):
+    """Take back what a site diary did to Planning & Progress, for a draft that is being deleted: the progress reports it made are
+    removed and the tasks it ticked go back as they were (unless somebody has changed them since - then they are left as they are).
+    The activities involved are brought back into line with the reports that remain. Returns (reports removed, tasks put back)."""
+    activity_ids, put_back = set(), 0
+    for ch in db.query(models.DBDiaryTaskChange).filter(models.DBDiaryTaskChange.diary_id == diary.id,
+                                                        models.DBDiaryTaskChange.client_id == client_id).all():
+        t = db.query(models.DBScheduleTask).filter(models.DBScheduleTask.id == ch.task_id,
+                                                   models.DBScheduleTask.client_id == client_id).first()
+        if t is not None:
+            activity_ids.add(t.activity_id)
+            if bool(t.done) == bool(ch.now_done) and abs(float(t.percent or 0.0) - float(ch.now_percent or 0.0)) < 0.001:
+                t.done, t.percent = bool(ch.was_done), float(ch.was_percent or 0.0)
+                t.done_by_name, t.done_at = ch.was_done_by_name or "", ch.was_done_at or ""
+                put_back += 1
+        db.delete(ch)
+    reports = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.diary_id == diary.id,
+                                                         models.DBScheduleProgress.client_id == client_id).all()
+    removed = len(reports)
+    days = {}
+    for r in reports:
+        activity_ids.add(r.activity_id)
+        days.setdefault(r.activity_id, set()).add(r.reported_on)
+        db.delete(r)
+    db.flush()
+    for aid in activity_ids:
+        if not aid:
+            continue
+        a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == aid,
+                                                       models.DBScheduleActivity.client_id == client_id).first()
+        if a is None or a.work_order_line_id:
+            continue
+        if db.query(models.DBScheduleTask.id).filter(models.DBScheduleTask.activity_id == a.id).first():
+            sync_progress_from_tasks(db, client_id, a.id, "", diary.diary_date)         # follows its tasks, which are back as they were
+            continue
+        left = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
+            models.DBScheduleProgress.reported_on, models.DBScheduleProgress.id).all()
+        if left:
+            reconcile_activity(db, a)
+        else:                                                                           # nothing reported any more: not started again
+            if a.actual_finish in days.get(a.id, ()):
+                a.actual_finish = ""
+            if a.actual_start in days.get(a.id, ()):
+                a.actual_start = ""
+            status_after_progress(a, 0)
+        # A start set by this diary's report goes if no earlier report stands behind it.
+        if left and a.actual_start in days.get(a.id, ()) and not any((r.percent or 0) > 0 and r.reported_on <= a.actual_start for r in left):
+            a.actual_start = next((r.reported_on for r in left if (r.percent or 0) > 0), "")
+    db.flush()
+    return removed, put_back
 
 
 def planning_note(tasks, activities):
@@ -1812,8 +1927,14 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
             models.DBScheduleTask.task_date, models.DBScheduleTask.id).all():
         by_activity.setdefault(t.activity_id, []).append(t)
 
+    def promised(a):
+        """When it was promised to finish: the baseline's finish, or the plan's with no baseline."""
+        b = ctx.base.get(a.id)
+        return b[1] if b else ctx.dates(a)[1]
+
     def row(a, bucket):
         s, f = ctx.dates(a)
+        bf = promised(a)
         mine = by_activity.get(a.id, [])
         by_end = ctx.planned(a, on)
         before = ctx.planned(a, on - timedelta(days=1))
@@ -1825,10 +1946,13 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
                 "is_milestone": bool(a.is_milestone), "progress_from": "measurement book" if a.work_order_line_id else "reported",
                 "planned_percent": by_end, "actual_percent": done,
                 "target_today": round(max(0.0, by_end - before), 1),
+                # How far it moved on the day: done by its end less done by the end of the day before.
+                "done_today": round(max(0.0, done - ctx.actual(a, on - timedelta(days=1))), 1),
                 "to_catch_up": round(max(0.0, by_end - done), 1), "remaining": round(max(0.0, 100.0 - done), 1),
                 "days_left": (f - on).days if f and bucket == "today" else None,
                 "starts_in": (s - on).days if s and bucket == "soon" else None,
-                "days_late": (on - f).days if f and bucket == "overdue" else None,
+                "days_late": (on - bf).days if bf and bucket == "overdue" and on > bf else None,
+                "baseline_finish": bf.isoformat() if bf else "",
                 "updated_on": ctx.last.get(a.id, ("", ""))[0], "updated_by": ctx.last.get(a.id, ("", ""))[1],
                 "editable": not a.work_order_line_id,
                 "tasks_total": len(mine), "tasks_done": sum(1 for t in mine if t.done),
@@ -1840,9 +1964,9 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
         done = ctx.actual(a, on)
         if not s or not f:
             others.append(row(a, "done" if done >= 100 else "later"))
-        elif s <= on <= f and done < 100:
+        elif s <= on <= f and done < 100 and not (promised(a) and promised(a) < on):
             today_rows.append(row(a, "today"))
-        elif f < on and done < 100:
+        elif (f < on or (promised(a) and promised(a) < on)) and done < 100:
             overdue.append(row(a, "overdue"))
         elif on < s <= on + timedelta(days=ahead_days):
             soon.append(row(a, "soon"))
@@ -2063,12 +2187,13 @@ def attention_elsewhere(db, client_id, jobs, today):
         })
 
     # --- the programme ---------------------------------------------------
-    late_acts, slipped = 0, []
+    late_acts, slipped, unexplained = 0, [], 0
     with_plan = {j for (j,) in db.query(models.DBScheduleActivity.job_id).filter(
         models.DBScheduleActivity.client_id == client_id).distinct().all()}
     live_jobs = [jobs[j] for j in with_plan if jobs.get(j) and (jobs[j].status or "") not in (JOB_FINISHED, "cancelled")]
     for job, s in programme_summaries(db, client_id, live_jobs):
         late_acts += s["late"]
+        unexplained += s.get("unexplained", 0)
         if s["slip_days"] > 0:
             slipped.append((s["slip_days"], job))
     if late_acts or slipped:
@@ -2079,8 +2204,31 @@ def attention_elsewhere(db, client_id, jobs, today):
             "kind": "programme", "severity": "wrong" if slipped else "action", "value": 0.0,
             "count": late_acts, "view": "schedule-view",
             "title": "The programme is slipping",
-            "detail": "%d activit%s past their planned finish%s." % (
+            "detail": "%d activit%s past their baseline finish%s." % (
                 late_acts, "y" if late_acts == 1 else "ies", worst),
+        })
+    # --- budget: headings costing more than the work done on them is worth ---
+    try:
+        from app.services.earned_value import overruns_for
+        over = overruns_for(db, client_id, live_jobs)
+    except Exception as exc:
+        logger.error("Budget overrun check failed: %s", exc)
+        over = []
+    if over:
+        over.sort(key=lambda x: -x[1]["over_by"])
+        job0, h0 = over[0]
+        items.append({
+            "kind": "budget_overrun", "severity": "wrong", "value": money(sum(h["over_by"] for _, h in over)), "count": len(over),
+            "view": "budgeting-view", "title": "Over budget for the work done",
+            "detail": "%d BOQ heading%s cost more than their budget times the share done; the worst is %s on %s, %s over." % (
+                len(over), "" if len(over) == 1 else "s", h0["description"][:60], job0.name or job0.number, inr(h0["over_by"])),
+        })
+    if unexplained:
+        items.append({
+            "kind": "delay_unexplained", "severity": "action", "value": 0.0, "count": unexplained, "view": "schedule-view",
+            "title": "Delays with no reason",
+            "detail": "%d late activit%s with no hindrance or reason recorded. Say why while it is fresh; a delay nobody explained "
+                      "is the contractor's by default." % (unexplained, "y" if unexplained == 1 else "ies"),
         })
 
     # --- plant -----------------------------------------------------------

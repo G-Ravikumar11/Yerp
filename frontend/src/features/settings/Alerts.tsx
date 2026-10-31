@@ -14,6 +14,7 @@ export function Alerts() {
   const [channels, setChannels] = useState<Record<string, string[]>>({})
   const [waId, setWaId] = useState('')
   const [waToken, setWaToken] = useState('')
+  const [reports, setReports] = useState<Record<string, boolean>>({})
   useEffect(() => {
     const d = q.data
     if (!d) return
@@ -21,9 +22,10 @@ export function Alerts() {
     setWa(d.whatsapp.join(', '))
     setChannels(d.channels)
     setWaId(d.wa_phone_id)
+    setReports(d.site_reports ?? {})
   }, [q.data])
   const save = useAction(
-    () => saveAlertSettings({ emails: split(emails), whatsapp: split(wa), channels, wa_phone_id: waId.trim(), ...(waToken.trim() ? { wa_token: waToken.trim() } : {}) }),
+    () => saveAlertSettings({ emails: split(emails), whatsapp: split(wa), channels, wa_phone_id: waId.trim(), site_reports: reports, ...(waToken.trim() ? { wa_token: waToken.trim() } : {}) }),
     { invalidate: [settingsKeys.all], success: 'Alert settings saved.', onSuccess: () => setWaToken('') },
   )
   const test = useAction(() => sendTestAlert(), { invalidate: [['alerts']] })
@@ -50,6 +52,13 @@ export function Alerts() {
             ))}
           </tbody>
         </table>
+      </div>
+      <h3 className="mb-1 mt-5 text-sm font-semibold">Site reports</h3>
+      <p className="mb-2 text-xs text-muted-foreground">After 7 pm each working day: the daily progress report is emailed, or the site is reminded that no diary was written. Each morning: activities that have gone late against their baseline.</p>
+      <div className="grid gap-1.5">
+        {Object.entries(d.site_report_labels ?? {}).map(([key, label]) => (
+          <label key={key} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!reports[key]} onChange={(e) => setReports((r) => ({ ...r, [key]: e.target.checked }))} />{label}</label>
+        ))}
       </div>
       <details className="mt-4">
         <summary className="cursor-pointer text-sm">WhatsApp Business number</summary>

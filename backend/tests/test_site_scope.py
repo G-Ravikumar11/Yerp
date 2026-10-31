@@ -106,3 +106,54 @@ def test_a_change_of_sites_takes_effect_at_once(tenant, portal):
     res = tenant.put("/api/employees/%d/permissions" % e["id"], json={"permission_role": "staff", "site_ids": [a["id"], b["id"]]})
     assert res.status_code == 200, res.text
     assert portal.get("/api/jobs/%d/schedule" % b["id"]).status_code == 200
+
+
+# --- the client's BOQ, its variations and its budgets ----------------------------------------------------------------------------
+
+def boq_with_variation(tenant, name):
+    """A project with its BOQ saved, a variation raised against it and a line budgeted. Returns (job id, boq id, variation id, line key)."""
+    from test_boq import make_boq, saved
+    jid, boq = make_boq(tenant, job_name=name)
+    lines = saved(tenant, boq)["lines"]
+    item = next(l for l in lines if l["kind"] == "item")
+    v = tenant.post("/api/boq-variations", json={"boq_id": boq["id"], "reason": "Site conditions differ",
+                                                  "lines": [{"kind": "quantity", "boq_key": item["key"], "change_qty": 5}]})
+    assert v.status_code == 200, v.text
+    put = tenant.put("/api/jobs/%d/budget/lines/%s" % (jid, item["key"]), json={"items": [
+        {"kind": "MATERIAL", "description": "Cement", "uom": "bag", "coefficient": 1, "rate": 300}]})
+    assert put.status_code == 200, put.text
+    return jid, boq["id"], v.json()["variation"]["id"], item["key"]
+
+
+def test_staff_on_one_project_see_only_that_projects_boq_variations_and_budget(tenant, portal):
+    ja, boq_a, var_a, key_a = boq_with_variation(tenant, "Alpha BOQ site")
+    jb, boq_b, var_b, key_b = boq_with_variation(tenant, "Bravo BOQ site")
+    staff_on(tenant, portal, [ja])
+
+    # Their own site's BOQ, variation and budget work as they do for anyone.
+    assert portal.get("/api/boqs/%d" % boq_a).status_code == 200
+    assert portal.get("/api/boq-variations/%d" % var_a).status_code == 200
+    assert portal.get("/api/jobs/%d/budget" % ja).status_code == 200 or portal.get("/api/jobs/%d/budget" % ja).status_code == 403   # the budget also needs reports.view
+
+    # The other site's are not there: the lists leave them out, and asking for them by number is refused.
+    assert [b["id"] for b in portal.get("/api/boqs").json()["boqs"]] == [boq_a]
+    assert [v["id"] for v in portal.get("/api/boq-variations").json()["variations"]] == [var_a]
+    assert portal.get("/api/boqs/%d" % boq_b).status_code == 404
+    assert portal.get("/api/boqs/%d/summary" % boq_b).status_code == 404
+    assert portal.get("/api/boqs/%d/tracker" % boq_b).status_code in (403, 404)
+    assert portal.get("/api/boq-variations/%d" % var_b).status_code == 404
+    assert portal.put("/api/boq-variations/%d" % var_b, json={"boq_id": boq_b, "reason": "tampered", "lines": []}).status_code in (403, 404)
+    assert portal.post("/api/boq-variations/%d/approve" % var_b, json={}).status_code in (403, 404)
+    # ... and the budget of the other site is refused, however it is asked for.
+    assert portal.get("/api/jobs/%d/budget" % jb).status_code == 403
+    assert portal.put("/api/jobs/%d/budget/lines/%s" % (jb, key_b), json={"items": []}).status_code == 403
+    # Nothing of Bravo's changed.
+    assert tenant.get("/api/boq-variations/%d" % var_b).json()["reason"] == "Site conditions differ"
+    assert tenant.get("/api/jobs/%d/budget" % jb).json()["total"]["lines_budgeted"] == 1
+
+
+def test_company_wide_staff_and_staff_on_no_site_still_see_every_boq(tenant, portal):
+    ja, boq_a, _, _ = boq_with_variation(tenant, "Alpha BOQ site")
+    jb, boq_b, _, _ = boq_with_variation(tenant, "Bravo BOQ site")
+    staff_on(tenant, portal, [])
+    assert {b["id"] for b in portal.get("/api/boqs").json()["boqs"]} == {boq_a, boq_b}
