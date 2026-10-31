@@ -45,6 +45,8 @@ os.environ.setdefault("AI_PER_MINUTE", "0")
 # Most tests add people in bulk without an emergency contact; the rule has its own tests (test_emergency_and_ids.py).
 os.environ["REQUIRE_EMERGENCY_CONTACT"] = "0"
 os.environ["REQUIRE_GENDER"] = "0"
+# The old store is retired; these suites still prove what its history rests on. test_old_store_retired closes it.
+os.environ["OLD_STORE_OPEN"] = "1"
 # Thousands of sign-ins and requests from one test address: the CAPTCHA and the flood limit are switched back on
 # in test_login_guard.py, where they are what is being tested.
 os.environ.setdefault("CAPTCHA_MODE", "off")

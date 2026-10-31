@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Download, FileUp, ListTree, Pencil, Plus, Power, Search, SlidersHorizontal, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Copy, Download, FileUp, ListTree, Pencil, Plus, Power, Search, SlidersHorizontal, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, ConfirmDialog, Field, Input, Select, Skeleton, Tabs } from '@/components/ui'
 import { bulkStatus, exportUrl, fetchItem, masterKeys, setItemActive, useCategories, useItemGaps, useMasterItems, useWhereUsed, type Gap, type ItemFilters, type MasterItem } from '@/api/itemMaster'
@@ -122,6 +123,7 @@ export default function ItemMasterPage() {
             <Button variant="outline" asChild>
               <a href={exportUrl(query)}><Download /> Export</a>
             </Button>
+            <Button variant="outline" asChild><Link to="/store/items/duplicates"><Copy /> Duplicates</Link></Button>
             {manage && (
               <>
                 <Button variant="outline" onClick={() => setManaging(true)}><ListTree /> Categories</Button>

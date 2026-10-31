@@ -16,6 +16,7 @@ from app.db import get_db, get_read_db
 from app.documents import form_pdf
 from app.documents.forms import _field_doc, _pre, form_pdf_response
 from app.services.projects import job_or_404
+from app.services.store_cutover import refuse_if_moved
 
 router = APIRouter()
 
@@ -80,6 +81,7 @@ def voucher_list(request: Request, job_id: int = 0, db: Session = Depends(get_re
 def voucher_add(body: VoucherIn, request: Request, db: Session = Depends(get_db)):
     """Record a voucher. Its Sl. No. is the next in the company's sequence."""
     client, _, actor_name = wo_actor(request, db, "site.record")
+    refuse_if_moved(db, client.id)
     job = job_or_404(db, client.id, body.job_id)
     lines = [l for l in body.lines if (l.description or "").strip()]
     if not lines:
@@ -107,6 +109,7 @@ def voucher_add(body: VoucherIn, request: Request, db: Session = Depends(get_db)
 @router.delete("/api/material-vouchers/{vid}")
 def voucher_remove(vid: int, request: Request, db: Session = Depends(get_db)):
     client, _, _ = wo_actor(request, db, "site.signoff")
+    refuse_if_moved(db, client.id)
     v = db.query(models.DBMaterialVoucher).filter(models.DBMaterialVoucher.id == vid,
                                                   models.DBMaterialVoucher.client_id == client.id).first()
     if not v or v.removed:

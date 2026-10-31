@@ -214,6 +214,9 @@ NOTIFY_KINDS = {
     "daily_digest": "The morning list of what needs looking at",
     "security_lock": "An account was locked after too many wrong passwords",
     "increment_due": "It is a year since somebody's last salary increment",
+    "plant_weekly": "The week's alerts for a machine: service, papers, hire return, no logbook",
+    "plant_breakdown": "A machine has broken down - emergency",
+    "plant_unbilled": "A hired machine has a month with no rental invoice",
     "celebration": "A birthday or a special day is being celebrated today",
 }
 # Out of the box: the bell for everything, email for the money, the digest and a locked account.

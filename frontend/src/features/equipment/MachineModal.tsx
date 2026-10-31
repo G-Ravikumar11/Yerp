@@ -37,6 +37,8 @@ function Form({ machine: a, categories, onClose }: { machine: Machine | null; ca
     lastMeter: a?.last_service_meter != null ? String(a.last_service_meter) : '',
     remMeter: a?.reminder_meter != null ? String(a.reminder_meter) : '',
     remDays: a?.reminder_days != null ? String(a.reminder_days) : '',
+    fuelNorm: a?.fuel_norm_lph != null ? String(a.fuel_norm_lph) : '',
+    tank: a?.tank_capacity_l != null ? String(a.tank_capacity_l) : '',
   })
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }))
   const num = (k: keyof typeof n) => (v: number) => setN((x) => ({ ...x, [k]: v }))
@@ -64,7 +66,7 @@ function Form({ machine: a, categories, onClose }: { machine: Machine | null; ca
     ...f, ...n, service_interval_type: type,
     location_type: where.kind || undefined, location_id: where.kind === 'Site' ? Number(where.site) : undefined,
     service_every: p.usesMeter ? n.service_every : 0, service_every_days: p.usesDays ? n.service_every_days : 0,
-    last_service_meter: toNum(opt.lastMeter), reminder_meter: p.usesMeter ? remMeter : null, reminder_days: p.usesDays ? remDays : null,
+    fuel_norm_lph: toNum(opt.fuelNorm), tank_capacity_l: toNum(opt.tank), last_service_meter: toNum(opt.lastMeter), reminder_meter: p.usesMeter ? remMeter : null, reminder_days: p.usesDays ? remDays : null,
   }), { invalidate: [eqKeys.all], success: (r) => `${r.code} ${r.name} saved`, onSuccess: onClose })
 
   return (
@@ -101,6 +103,8 @@ function Form({ machine: a, categories, onClose }: { machine: Machine | null; ca
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <Field label="Insurance until" htmlFor="mc-ins"><Input id="mc-ins" type="date" value={f.insurance_until} onChange={set('insurance_until')} /></Field>
         <Field label="Fitness until" htmlFor="mc-fit"><Input id="mc-fit" type="date" value={f.fitness_until} onChange={set('fitness_until')} /></Field>
+        <Field label="Fuel norm (litres per hour)" htmlFor="mc-norm" hint="Blank: not set"><OptNum id="mc-norm" value={opt.fuelNorm} onChange={setO('fuelNorm')} /></Field>
+        <Field label="Tank capacity (litres)" htmlFor="mc-tank" hint="Blank: not set"><OptNum id="mc-tank" value={opt.tank} onChange={setO('tank')} /></Field>
       </div>
 
       <fieldset aria-label="Maintenance schedule" className="mt-5 rounded-xl border border-border p-4">

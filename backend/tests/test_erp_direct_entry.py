@@ -43,8 +43,8 @@ def test_codes_run_in_one_sequence(tenant):
 
 
 def test_every_code_is_six_characters_from_the_alphabet(tenant):
-    for _ in range(5):
-        code = add(tenant, item_name="X").json()["item_code"]
+    for n in range(5):
+        code = add(tenant, item_name="X%d" % n).json()["item_code"]
         assert len(code) == 6
         assert not (set(code) - set(main.CODE_ALPHABET))
 
@@ -134,7 +134,7 @@ def test_the_pickers_and_the_validator_share_one_list(tenant):
     for unit in vocab["units"]:
         assert add(tenant, item_name="X", units_of_measure=unit).status_code == 200
     for itype in vocab["item_types"]:
-        assert add(tenant, item_name="X", item_type=itype).status_code == 200
+        assert add(tenant, item_name="Type " + itype, item_type=itype).status_code == 200
 
 
 def test_a_unit_that_is_not_a_unit_is_refused(tenant):

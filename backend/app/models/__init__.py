@@ -31,10 +31,17 @@ from app.models.assets import (
     DBAssetService,
     DBAssetBook,
 )
+from app.models.bbs import DBBbsEntry, DBBbsRevision
 from app.models.plant import (
+    DBFormworkHire,
+    DBFormworkPayment,
+    DBFormworkReturn,
+    DBPlantAlert,
     DBPlantAllocation,
     DBPlantExpense,
     DBPlantFuel,
+    DBPlantFuelReview,
+    DBPlantMeterEvent,
     DBPlantRental,
     DBPlantRentalExtension,
     DBPlantRentalInvoice,
@@ -168,6 +175,7 @@ from app.models.projects import (
 from app.models.quality import (
     DBInspection,
     DBCubeSet,
+    DBCubeDueNotice,
     DBCubeResult,
     DBNcr,
     DBQcChecklist,
@@ -202,6 +210,7 @@ from app.models.site_rates import (
 from app.models.stores import (
     DBItem,
     DBItemCategory,
+    DBItemMerge,
     DBCodeSequence,
     DBBomLine,
     DBStockMovement,

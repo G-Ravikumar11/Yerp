@@ -81,6 +81,7 @@ class NcrIn(BaseModel):
     source_id: Optional[int] = None
     source_ref: Optional[str] = ""
     root_cause: Optional[str] = ""
+    store_batch_id: Optional[int] = None    # raised against this store lot: it goes on hold with the NCR
 
 
 class NcrAssignIn(BaseModel):

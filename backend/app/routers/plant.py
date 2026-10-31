@@ -16,6 +16,7 @@ Every create, change, approval and removal is written to the audit trail.
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -34,6 +35,9 @@ from app.services.plant import (
     BILLING, DERIVED_CATEGORIES, EXPENSE_CATEGORIES, FUEL_TYPES, IDLE_SHARE_ALERT, MAINT_KINDS, PRIORITIES, ROLES, SHIFTS,
     check_invoice_unique, clean_day, costs, employee_card, employee_or_400, in_range, machine_hours, month_bounds, now,
     number_for, regular_hours, rental_status, shift_span, today,
+)
+from app.services.plant_checks import (
+    alert_settings, apply_correction, check_meter, following_is_approved, raise_breakdown_alert, record_replacement, resync_meter, tank_warning,
 )
 
 router = APIRouter()
@@ -407,6 +411,21 @@ def _work_out(db, client_id, a, body, skip_id=None):
             "supervisor_remarks": (body.supervisor_remarks or "").strip()[:300]}
 
 
+def day_key(asset_id, v, employee_id):
+    """One line for a machine, a day, a shift and a person. Two shifts and an operator with a helper are real; the same
+    line twice is not."""
+    return "%d|%s|%s|%s" % (asset_id, v["log_date"], v["shift"], employee_id)
+
+
+def _flush_log(db, a, v):
+    """The unique index has the last word, for two people saving the same line at once."""
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "%s already has this person's %s-shift log for %s." % (a.code, v["shift"].lower(), v["log_date"]))
+
+
 @router.post("/api/plant/logs")
 def create_log(body: LogbookIn, request: Request, db: Session = Depends(get_db)):
     """One person's shift on one machine. The employee's hours on duty and the machine's running hours are kept apart:
@@ -416,10 +435,16 @@ def create_log(body: LogbookIn, request: Request, db: Session = Depends(get_db))
     usable(a, "logging")
     e = employee_or_400(db, client.id, body.employee_id)
     v = _work_out(db, client.id, a, body)
+    replaced = check_meter(db, a, body, v)
     L = models.DBAssetLog
+    # A day put in by the old Log day is a whole day already: a logbook line beside it would count it twice.
+    older = db.query(L).filter(L.asset_id == a.id, L.log_date == v["log_date"], (L.shift == "") | L.shift.is_(None),
+                               (L.approval_status != "Rejected") | L.approval_status.is_(None)).first()
+    if older:
+        raise HTTPException(409, "%s already has an older log for %s. Review it before logging that day again." % (a.code, v["log_date"]))
     twin = db.query(L).filter(L.asset_id == a.id, L.log_date == v["log_date"], L.shift == v["shift"], L.approval_status != "Rejected").first()
     log = L(client_id=client.id, asset_id=a.id, job_id=a.current_job_id, employee_id=e.id, operator=employee_card(e)["name"],
-            recorded_by_name=actor, approval_status="Submitted", fuel_rate=0, fuel_cost=0, **v)
+            recorded_by_name=actor, approval_status="Submitted", fuel_rate=0, fuel_cost=0, day_key=day_key(a.id, v, e.id), **v)
     # Hire is charged once a machine-day-shift, whoever else logged it.
     log.hire_cost = 0.0 if twin else hire_cost_for(a, v["hours_worked"])
     if v["closing_meter"] is not None and v["closing_meter"] > (a.meter_reading or 0):
@@ -427,7 +452,10 @@ def create_log(body: LogbookIn, request: Request, db: Session = Depends(get_db))
     elif v["closing_meter"] is None and (a.meter_unit or "Hours") == "Hours" and v["hours_worked"] and not twin:
         a.meter_reading = (a.meter_reading or 0) + v["hours_worked"]
     db.add(log)
-    db.flush()
+    _flush_log(db, a, v)
+    if replaced:
+        record_replacement(db, client.id, a, replaced, log, actor)
+        audit(db, client, "plant.meter.replaced", "equipment", a.id, a.code, "On %s, %g to %g: %s" % (replaced["on"], replaced["old"], replaced["new"], replaced["reason"]), actor, request)
     audit(db, client, "plant.log.created", "plant_log", log.id, a.code, "%s %s shift %s-%s: %g h on duty, machine %g h" % (
         employee_card(e)["name"], v["shift"], v["start_time"], v["end_time"], v["attendance_hours"], v["hours_worked"]), actor, request)
     db.commit()
@@ -449,13 +477,25 @@ def correct_log(lid: int, body: LogbookIn, request: Request, db: Session = Depen
     a = asset_or_404(db, client.id, log.asset_id)
     employee_or_400(db, client.id, body.employee_id)
     v = _work_out(db, client.id, a, body, skip_id=log.id)
-    before = "%s %s-%s machine %g h duty %g h" % (log.log_date, log.start_time, log.end_time, log.hours_worked or 0, log.attendance_hours or 0)
+    replaced = check_meter(db, a, body, v, skip_id=log.id)
+    readings = {"opening": log.opening_meter, "closing": log.closing_meter}
+    if v["closing_meter"] != log.closing_meter and following_is_approved(db, a, log, log.closing_meter):
+        wo_actor(request, db, "site.signoff")       # it carries into a day somebody has approved
+    before = "%s %s-%s machine %g h duty %g h, meter %s-%s" % (log.log_date, log.start_time, log.end_time, log.hours_worked or 0, log.attendance_hours or 0, log.opening_meter, log.closing_meter)
     for k, val in v.items():
         setattr(log, k, val)
     log.employee_id = body.employee_id
+    log.day_key = day_key(a.id, v, body.employee_id)
+    if log.hire_cost:
+        log.hire_cost = hire_cost_for(a, v["hours_worked"])
     log.approval_status, log.approved_by, log.approved_on = "Submitted", "", ""
-    audit(db, client, "plant.log.corrected", "plant_log", log.id, a.code, "Was: %s. Now: %s %s-%s machine %g h duty %g h. Why: %s" % (
-        before, v["log_date"], v["start_time"], v["end_time"], v["hours_worked"], v["attendance_hours"], body.correction_reason.strip()), actor, request)
+    _flush_log(db, a, v)
+    if replaced:
+        record_replacement(db, client.id, a, replaced, log, actor)
+        audit(db, client, "plant.meter.replaced", "equipment", a.id, a.code, "On %s, %g to %g: %s" % (replaced["on"], replaced["old"], replaced["new"], replaced["reason"]), actor, request)
+    apply_correction(db, client.id, a, log, readings, actor, body.correction_reason.strip())
+    audit(db, client, "plant.log.corrected", "plant_log", log.id, a.code, "Was: %s. Now: %s %s-%s machine %g h duty %g h, meter %s-%s. Why: %s" % (
+        before, v["log_date"], v["start_time"], v["end_time"], v["hours_worked"], v["attendance_hours"], v["opening_meter"], v["closing_meter"], body.correction_reason.strip()), actor, request)
     db.commit()
     return {"ok": True, "message": "Corrected - it goes back for approval."}
 
@@ -474,6 +514,12 @@ def decide_log(lid: int, body: DecisionIn, request: Request, db: Session = Depen
     log.approved_by, log.approved_on = actor, today()
     if (body.remarks or "").strip():
         log.supervisor_remarks = body.remarks.strip()[:300]
+    if log.approval_status == "Rejected":
+        # A rejected line no longer stands: its place in the day is free, and the meter goes back to the last one that does.
+        log.day_key = None
+        db.flush()
+        a = asset_or_404(db, client.id, log.asset_id)
+        resync_meter(db, a, log.closing_meter)
     audit(db, client, "plant.log." + log.approval_status.lower(), "plant_log", log.id, "", body.remarks or "", actor, request)
     db.commit()
     return {"ok": True, "message": "Day %s." % log.approval_status.lower()}
@@ -482,24 +528,44 @@ def decide_log(lid: int, body: DecisionIn, request: Request, db: Session = Depen
 @router.get("/api/plant/settings")
 def plant_settings(request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)
-    return {"regular_hours": regular_hours(db, client.id)}
+    return {"regular_hours": regular_hours(db, client.id), **alert_settings(db, client.id)}
 
 
 @router.put("/api/plant/settings")
 def save_plant_settings(body: HoursRuleIn, request: Request, db: Session = Depends(get_db)):
     """How many hours of a shift are regular; the rest is overtime."""
     client, _, actor = wo_actor(request, db, MANAGE)
-    if not 1 <= body.regular_hours <= 16:
-        raise HTTPException(400, "Regular hours a day between 1 and 16.")
     S = models.DBSettings
-    row = db.query(S).filter(S.client_id == client.id, S.key == "plant_regular_hours").first()
-    if not row:
-        row = S(client_id=client.id, key="plant_regular_hours", description="Equipment logbook: regular hours a shift")
-        db.add(row)
-    row.value = str(body.regular_hours)
-    log_audit(db, client.id, "plant.settings.hours", entity_type="plant_settings", details="Regular hours %g" % body.regular_hours, request=request, user_name=actor)
+
+    def keep(key, value, description):
+        row = db.query(S).filter(S.client_id == client.id, S.key == key).first()
+        if not row:
+            row = S(client_id=client.id, key=key, description=description)
+            db.add(row)
+        row.value = str(value)
+
+    if body.regular_hours is not None:
+        if not 1 <= body.regular_hours <= 16:
+            raise HTTPException(400, "Regular hours a day between 1 and 16.")
+        keep("plant_regular_hours", body.regular_hours, "Equipment logbook: regular hours a shift")
+        log_audit(db, client.id, "plant.settings.hours", entity_type="plant_settings", details="Regular hours %g" % body.regular_hours, request=request, user_name=actor)
+        db.commit()
+        return {"ok": True, "regular_hours": body.regular_hours, "message": "Overtime now counts after %g hours." % body.regular_hours}
+    if body.document_alert_days is not None:
+        if not 1 <= body.document_alert_days <= 365:
+            raise HTTPException(400, "Warn between 1 and 365 days before.")
+        keep("plant_document_alert_days", body.document_alert_days, "Equipment alerts: days before insurance or fitness runs out")
+    if body.fuel_tolerance_percent is not None:
+        if not 0 <= body.fuel_tolerance_percent <= 200:
+            raise HTTPException(400, "Fuel tolerance between 0 and 200 percent.")
+        keep("plant_fuel_tolerance_percent", body.fuel_tolerance_percent, "Equipment: litres an hour over the norm before a flag")
+    if body.rental_tolerance_percent is not None:
+        if not 0 <= body.rental_tolerance_percent <= 100:
+            raise HTTPException(400, "Rental tolerance between 0 and 100 percent.")
+        keep("plant_rental_tolerance_percent", body.rental_tolerance_percent, "Equipment: difference from the agreement before a bill is flagged")
+    log_audit(db, client.id, "plant.settings.alerts", entity_type="plant_settings", details=str(body.model_dump(exclude_none=True)), request=request, user_name=actor)
     db.commit()
-    return {"ok": True, "regular_hours": body.regular_hours, "message": "Overtime now counts after %g hours." % body.regular_hours}
+    return {"ok": True, **alert_settings(db, client.id), "message": "Plant settings saved."}
 
 
 # ---- fuel ----------------------------------------------------------------------------------------
@@ -568,7 +634,8 @@ def create_fuel(body: FuelIn, request: Request, db: Session = Depends(get_db)):
     db.flush()
     audit(db, client, "plant.fuel.recorded", "plant_fuel", f.id, f.number, "%s: %g L %s at %g = %s" % (a.code, f.litres, f.fuel_type, f.rate, f.amount), actor, request)
     db.commit()
-    return {"ok": True, "fuel": fuel_dict(f, {a.id: a}, {}), "message": "%s: %g L for %s." % (f.number, f.litres, a.code)}
+    warning = tank_warning(a, f.litres)
+    return {"ok": True, "fuel": fuel_dict(f, {a.id: a}, {}), "warning": warning, "message": "%s: %g L for %s." % (f.number, f.litres, a.code)}
 
 
 @router.delete("/api/plant/fuel/{fid}")
@@ -578,6 +645,7 @@ def delete_fuel(fid: int, request: Request, db: Session = Depends(get_db)):
     if not f:
         raise HTTPException(404, "Fuel entry not found")
     audit(db, client, "plant.fuel.removed", "plant_fuel", f.id, f.number, "%g L, %s" % (f.litres, f.amount), actor, request)
+    db.query(models.DBPlantFuelReview).filter(models.DBPlantFuelReview.fuel_id == f.id).delete()
     db.delete(f)
     db.commit()
     return {"ok": True, "message": "%s removed." % f.number}
@@ -666,7 +734,9 @@ def raise_maintenance(body: MaintenanceIn, request: Request, db: Session = Depen
     _settle_status(db, a)
     audit(db, client, "plant.maintenance.raised", "plant_maintenance", s.id, s.number, "%s %s: %s" % (a.code, body.kind, s.description[:200]), actor, request)
     db.commit()
-    return {"ok": True, "id": s.id, "message": "%s raised for %s%s." % (s.number, a.code, " - off work" if a.status in DOWN else "")}
+    message = "%s raised for %s%s." % (s.number, a.code, " - off work" if a.status in DOWN else "")
+    alerted = raise_breakdown_alert(db, client.id, a, s, pr) if body.kind == "Emergency" else None
+    return {"ok": True, "id": s.id, "alert_id": alerted.id if alerted else None, "message": message}
 
 
 def _maint_or_404(db, client_id, mid):

@@ -1,7 +1,7 @@
 """Plant and equipment, the fixed asset book."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Index, Integer, String, Text
 
 from app.db.session import Base
 
@@ -29,6 +29,8 @@ class DBAsset(Base):
     hired_from = Column(String, default="")
     hire_rate = Column(Float, default=0.0)
     hire_basis = Column(String, default="Day")               # Hour | Day | Month
+    fuel_norm_lph = Column(Float, nullable=True)             # litres an hour it should burn; None = not set
+    tank_capacity_l = Column(Float, nullable=True)           # litres its tank holds; None = not set
     meter_unit = Column(String, default="Hours")             # Hours | Km
     meter_reading = Column(Float, default=0.0)
     service_every = Column(Float, default=0.0)               # meter units between services
@@ -71,6 +73,7 @@ class DBAssetLog(Base):
     """One machine, one day: hours worked and idle, diesel, the meter, and
     what it cost the site."""
     __tablename__ = "asset_logs"
+    __table_args__ = (Index("ux_asset_logs_day_key", "day_key", unique=True),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -103,6 +106,9 @@ class DBAssetLog(Base):
     approved_by = Column(String, default="")
     approved_on = Column(String, default="")
     supervisor_remarks = Column(String, default="")
+    # machine|date|shift|person while the line stands: the unique index is what stops the same line twice. Empty on a
+    # rejected line and on the older days, which are kept as they were.
+    day_key = Column(String, nullable=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 

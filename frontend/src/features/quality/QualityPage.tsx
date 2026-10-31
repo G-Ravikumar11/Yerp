@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ClipboardCheck, FileSpreadsheet, Image, Plus, Settings2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -12,6 +13,7 @@ import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 import { CubeModal, CubeSetModal } from './CubeModals'
 import { InspectionModal, NewInspectionModal } from './InspectionModal'
 import { RegisterInspectionModal } from './RegisterInspectionModal'
+import { CubeDashboard } from './CubeDashboard'
 import { NcrDetail, NcrModal, type NcrSource } from './NcrModals'
 import { SetupModal } from './SetupModal'
 import { ListBar, LoadError, Pager, cubeTone, inspectionTone, ncrTone } from './parts'
@@ -58,7 +60,9 @@ export default function QualityPage() {
   const [ncrFrom, setNcrFrom] = useState<NcrSource | 'new' | null>(null)
   const [openIns, setOpenIns] = useState<number | null>(null)
   const [openCube, setOpenCube] = useState<number | null>(null)
-  const [openNcr, setOpenNcr] = useState<number | null>(null)
+  // A link from a store batch or a failed cube test opens its NCR here.
+  const [params] = useSearchParams()
+  const [openNcr, setOpenNcr] = useState<number | null>(Number(params.get('ncr')) || null)
   const [photos, setPhotos] = useState<{ type: string; id: number; title: string } | null>(null)
 
   const go = (to: Tab, status: string) => { setTab(to); setFilters((all) => ({ ...all, [to]: { ...emptyQuery(), size: all[to].size, status } })) }
@@ -168,6 +172,7 @@ export default function QualityPage() {
       {sum.isError && <div className="mb-4"><LoadError message={sum.error.message} retry={() => sum.refetch()} /></div>}
       <div className="mb-4"><Tabs label="Quality" value={tab} onChange={setTab} items={[{ value: 'inspections', label: 'Inspections' }, { value: 'cubes', label: 'Cube tests' }, { value: 'ncrs', label: 'Non-conformances' }]} /></div>
       <ListBar key={tab} f={f} set={patch} statuses={STATUSES[tab]} sorts={SORTS[tab]} severities={tab === 'ncrs' ? ['Minor', 'Major', 'Critical'] : undefined} placeholder={{ inspections: 'Search ID, checklist, location, inspector', cubes: 'Search sample, pour, grade, supplier', ncrs: 'Search NCR, issue, location, responsible' }[tab]} />
+      {tab === 'cubes' && <CubeDashboard job={job} onNcr={setOpenNcr} />}
       {active.isError ? (
         <LoadError message={active.error.message} retry={() => active.refetch()} />
       ) : (

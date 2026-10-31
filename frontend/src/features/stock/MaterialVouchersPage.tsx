@@ -9,20 +9,23 @@ import { apiUrl } from '@/lib/api'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate, today } from '@/lib/format'
+import { OldStoreBanner, useOldStoreClosed } from '@/features/store/OldStore'
 
 type Tab = 'new' | 'register'
 const blankLine = (): VoucherLine => ({ description: '', uom: '', issued_qty: 0, returned_qty: 0, remarks: '' })
 
 /** Store > Material Issue Voucher: fill in the voucher as on paper, and keep every one in Sl. No. order. */
 export default function MaterialVouchersPage() {
+  const closed = useOldStoreClosed()
   const [tab, setTab] = useState<Tab>('new')
   return (
     <>
       <PageHeader eyebrow="Store" title="Material Issue Voucher" description="The store's voucher for material issued to a project, as on the printed form. Every voucher is kept in Sl. No. order, to print or download." />
       <div className="mb-6">
-        <Tabs size="lg" label="Material Issue Voucher" value={tab} onChange={setTab} items={[{ value: 'new', label: 'New voucher' }, { value: 'register', label: 'Voucher register' }]} />
+        {!closed && <Tabs size="lg" label="Material Issue Voucher" value={tab} onChange={setTab} items={[{ value: 'new', label: 'New voucher' }, { value: 'register', label: 'Voucher register' }]} />}
       </div>
-      {tab === 'new' ? <VoucherForm onSaved={() => setTab('register')} /> : <Register />}
+      <OldStoreBanner hub="/store/hub/outward/issue" />
+      {tab === 'new' && !closed ? <VoucherForm onSaved={() => setTab('register')} /> : <Register closed={closed} />}
     </>
   )
 }
@@ -113,7 +116,7 @@ function VoucherForm({ onSaved }: { onSaved: () => void }) {
 }
 
 /** Every voucher in Sl. No. order: open each as its PDF, or download the whole register as Excel. */
-function Register() {
+function Register({ closed }: { closed: boolean }) {
   const { can } = useSession()
   const [job, setJob] = useState(0)
   const [removing, setRemoving] = useState<Voucher | null>(null)
@@ -147,7 +150,7 @@ function Register() {
       cell: (v) => (
         <div className="flex justify-end gap-1.5">
           <Button size="sm" variant="outline" asChild><a href={apiUrl(voucherPdf(v.id))} target="_blank" rel="noopener"><FileText /> PDF</a></Button>
-          {can('site.signoff') && <Button size="icon" variant="ghost" aria-label={`Remove voucher ${v.number}`} onClick={() => setRemoving(v)}><Trash2 /></Button>}
+          {can('site.signoff') && !closed && <Button size="icon" variant="ghost" aria-label={`Remove voucher ${v.number}`} onClick={() => setRemoving(v)}><Trash2 /></Button>}
         </div>
       ),
     },
@@ -163,7 +166,7 @@ function Register() {
         <Stat label="Vouchers" value={d?.summary.vouchers ?? 0} loading={q.isPending} />
         <Stat label="Items issued" value={d?.summary.lines ?? 0} loading={q.isPending} />
       </StatGrid>
-      <DataTable label="Voucher register" rows={d?.vouchers ?? []} columns={columns} rowKey={(v) => v.id} loading={q.isPending} empty="No vouchers yet. Fill one in on New voucher." />
+      <DataTable label="Voucher register" rows={d?.vouchers ?? []} columns={columns} rowKey={(v) => v.id} loading={q.isPending} empty={closed ? 'No vouchers on record.' : 'No vouchers yet. Fill one in on New voucher.'} />
       <ConfirmDialog
         open={!!removing}
         onOpenChange={(o) => !o && setRemoving(null)}

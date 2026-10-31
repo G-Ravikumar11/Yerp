@@ -12,7 +12,12 @@ import json
 import re
 from datetime import date, datetime, timedelta
 
+from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.documents import form_pdf
@@ -37,6 +42,11 @@ from app.services.quality import (
     qc_log, schedule_for, sort_clause, unique_number,
 )
 
+
+from app.core.audit import log_audit  # noqa: E402
+from app.models.store_core import DBStoreBatch  # noqa: E402
+from app.services import cube_notices, store_holds  # noqa: E402
+from app.services.quality import AUTO_NCR_ORIGIN, DEFAULT_TIMEZONE, cube_failure_ncr  # noqa: E402
 
 router = APIRouter()
 
@@ -628,10 +638,19 @@ def create_cube_set(body: CubeSetIn, request: Request, db: Session = Depends(get
     return {"cube_set": cube_dict(db, s)}
 
 
+def _failure_ncr_of(db, client_id, s, age):
+    """The NCR covering one result of a set, as the screen shows it, or None."""
+    M = models.DBNcr
+    n = db.query(M).filter(M.client_id == client_id, M.source_type == "cube_set", M.source_id == s.id, M.source_ref == str(age)).first()
+    return {"id": n.id, "number": n.number, "status": n.status, "origin": n.origin or "", "project_id": n.job_id} if n else None
+
+
 @router.post("/api/qc/cubes/{sid}/results")
 def add_cube_result(sid: int, body: CubeResultIn, request: Request, db: Session = Depends(get_db)):
     client, _, actor_name = wo_actor(request, db, "site.record")
-    s = cube_or_404(db, client.id, sid)
+    # The set's row is held until this commits: two requests for one result are taken one at a time.
+    cube_or_404(db, client.id, sid)
+    s = db.query(models.DBCubeSet).filter(models.DBCubeSet.id == sid).populate_existing().with_for_update().first()
     vals = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", body.strengths or "")]
     if not vals or any(v <= 0 or v > 150 for v in vals):
         raise HTTPException(400, "The crushing strengths in N/mm2, one per cube: 31.2, 29.8, 30.5")
@@ -642,8 +661,11 @@ def add_cube_result(sid: int, body: CubeResultIn, request: Request, db: Session 
         raise HTTPException(400, "A test cannot be dated in the future.")
     if s.cast_on and on < s.cast_on:
         raise HTTPException(400, "The test date is before the cubes were cast (%s)." % s.cast_on)
-    if db.query(models.DBCubeResult).filter(models.DBCubeResult.set_id == s.id,
-                                            models.DBCubeResult.age_days == body.age_days).first():
+    have = db.query(models.DBCubeResult).filter(models.DBCubeResult.set_id == s.id, models.DBCubeResult.age_days == body.age_days).first()
+    if have:
+        # The same figures again is a retry (a timeout, a second click): the answer it should have had, with nothing new.
+        if have.strengths == ", ".join("%g" % v for v in vals):
+            return {"cube_set": cube_dict(db, s), "ncr": _failure_ncr_of(db, client.id, s, body.age_days), "repeat": True}
         raise HTTPException(409, "%s already has its %d-day result." % (s.number, body.age_days))
     cmap = criteria_map(db, client.id, [s.job_id])
     ev, cmin, csingle, ref = evaluate(vals, cmap.get((s.job_id, (s.grade or "").upper(), body.age_days)))
@@ -653,17 +675,25 @@ def add_cube_result(sid: int, body: CubeResultIn, request: Request, db: Session 
                             remarks=(body.remarks or "").strip(), flagged=bool(body.flag_review),
                             evaluation=ev, criteria_min=cmin, criteria_single=csingle, criteria_ref=ref)
     db.add(r)
-    db.flush()
     said = {"meets": "meets the criteria", "below": "BELOW the criteria", "no_criteria": "no criteria set"}[ev]
-    qc_log(db, client.id, "qc.cube.result", "cube_set", s, "%d days: %s N/mm2 average, %s" % (body.age_days, r.average, said), actor_name, request)
-    db.commit()
+    try:
+        db.flush()
+        n = cube_failure_ncr(db, s, r, actor_name) if ev == "below" else None
+        qc_log(db, client.id, "qc.cube.result", "cube_set", s, "%d days: %s N/mm2 average, %s" % (body.age_days, r.average, said), actor_name, request)
+        if n is not None:
+            qc_log(db, client.id, "qc.ncr.raised", "ncr", n, "%s. %s" % (AUTO_NCR_ORIGIN, n.description[:200]), actor_name, request)
+        db.commit()
+    except IntegrityError:
+        db.rollback()               # the same result, a moment earlier, from another request: that one stands
+        s = cube_or_404(db, client.id, sid)
+        return {"cube_set": cube_dict(db, s), "ncr": _failure_ncr_of(db, client.id, s, body.age_days), "repeat": True}
     d = cube_dict(db, s)
     got = [x for x in d["results"] if x["age_days"] == body.age_days][0]
     if got["evaluation"] != "meets":
         notify(db, client.id, "qc_failed", "%s %s at %d days: %s N/mm2" % (s.number, s.grade, body.age_days, got["average"]),
                "%s, cast %s. %s." % (s.location or "", s.cast_on, got["verdict"].capitalize()),
                view="quality-view", ref_type="cube_set", ref_id=s.id, severity="wrong" if ev == "below" else "action")
-    return {"cube_set": d}
+    return {"cube_set": d, "ncr": _failure_ncr_of(db, client.id, s, body.age_days)}
 
 
 @router.post("/api/qc/cubes/{sid}/flag")
@@ -792,7 +822,8 @@ def get_ncr(nid: int, request: Request, db: Session = Depends(get_read_db)):
     if src and n.source_id:
         s = db.query(src).filter(src.id == n.source_id, src.client_id == client.id).first()
         d["source_number"] = s.number if s else ""
-    return {"ncr": d, "history": history(db, client.id, "ncr", n.id)}
+    batch = db.query(DBStoreBatch).filter(DBStoreBatch.id == n.store_batch_id, DBStoreBatch.client_id == client.id).first() if n.store_batch_id else None
+    return {"ncr": d, "history": history(db, client.id, "ncr", n.id), "store_batch": store_holds.batch_view(db, batch) if batch else None}
 
 
 @router.post("/api/qc/ncrs")
@@ -801,6 +832,18 @@ def raise_ncr(body: NcrIn, request: Request, db: Session = Depends(get_db)):
     wrong from the record. One issue gets one NCR."""
     client, _, actor_name = wo_actor(request, db, "site.record")
     job_id, location, desc, ref = _ncr_source(db, client, body)
+    # The lot is locked first, so the NCR and its hold land together, ahead of any issue still to come.
+    batch = store_holds.lock_batch(db, client.id, body.store_batch_id) if body.store_batch_id else None
+    if batch is not None:
+        view = store_holds.batch_view(db, batch)
+        job_id = job_id or view["job_id"]
+        desc = desc or "Batch %s of %s is not as specified." % (view["batch_no"], view["item_name"])
+    if body.source_type == "cube_set" and body.source_id:
+        M = models.DBNcr
+        q = db.query(M).filter(M.client_id == client.id, M.source_type == "cube_set", M.source_id == body.source_id)
+        hit = (q.filter(M.source_ref == ref) if ref else q).first()
+        if hit:
+            return {"ncr": ncr_dict(hit, job_names(db, client.id, [hit.job_id])), "existing": True}
     if not job_id:
         raise HTTPException(400, "Which project is it on?")
     job = _qc_job(db, client.id, job_id)
@@ -817,10 +860,12 @@ def raise_ncr(body: NcrIn, request: Request, db: Session = Depends(get_db)):
                      raised_on=_today(), raised_by=actor_name, location=location[:200], description=desc[:3000],
                      severity=sev, responsible=(body.responsible or "").strip()[:120],
                      corrective_action=(body.corrective_action or "").strip(), target_date=target,
-                     source_type=body.source_type or "manual", source_id=body.source_id, source_ref=ref,
-                     root_cause=(body.root_cause or "").strip())
+                     source_type="store_lot" if batch is not None else (body.source_type or "manual"), source_id=batch.id if batch is not None else body.source_id, source_ref=ref,
+                     root_cause=(body.root_cause or "").strip(), store_batch_id=batch.id if batch is not None else None)
     db.add(n)
     db.flush()
+    if batch is not None:
+        store_holds.hold_for_ncr(db, client.id, batch, n, "%s: %s" % (n.number, desc[:300]), actor_name)
     qc_log(db, client.id, "qc.ncr.raised", "ncr", n, "%s: %s" % (sev, desc[:200]), actor_name, request)
     db.commit()
     notify(db, client.id, "qc_failed", "%s raised - %s" % (n.number, n.location or job.name),
@@ -926,7 +971,8 @@ def verify_ncr(nid: int, body: NcrVerifyIn, request: Request, db: Session = Depe
 def close_ncr(nid: int, body: NcrCloseIn, request: Request, db: Session = Depends(get_db)):
     """Only after the correction has been verified, and only by somebody who signs off."""
     client, _, actor_name = wo_actor(request, db, "site.signoff")
-    n = ncr_or_404(db, client.id, nid)
+    ncr_or_404(db, client.id, nid)
+    n = db.query(models.DBNcr).filter(models.DBNcr.id == nid).populate_existing().with_for_update().first()
     if n.status == "CLOSED":
         raise HTTPException(409, "%s is already closed." % n.number)
     if n.verification_result != "verified" or n.status != "REINSPECTION":
@@ -936,8 +982,122 @@ def close_ncr(nid: int, body: NcrCloseIn, request: Request, db: Session = Depend
     n.status, n.closed_on, n.closed_by = "CLOSED", _today(), actor_name
     n.closure_note = body.closure_note.strip()
     qc_log(db, client.id, "qc.ncr.closed", "ncr", n, n.closure_note[:300], actor_name, request)
+    batch_hold = store_holds.on_ncr_closed(db, client.id, n, actor_name)      # the one transaction: closed and released, or neither
     db.commit()
-    return {"ncr": ncr_dict(n, job_names(db, client.id, [n.job_id]))}
+    return {"ncr": ncr_dict(n, job_names(db, client.id, [n.job_id])), "batch_hold": batch_hold}
+
+
+# ---- what is due, what failed ----------------------------------------------------------------
+
+def _keep(row, q, grade, status):
+    return (not grade or row.get("grade") == grade) and (not status or row.get("status") == status) and (not q or q.lower() in " ".join(str(v) for v in row.values()).lower())
+
+
+@router.get("/api/qc/cube-dashboard")
+def cube_dashboard(request: Request, job_id: int = 0, q: str = "", grade: str = "", status: str = "", ncr_status: str = "", due_from: str = "", due_to: str = "",
+                   test_from: str = "", test_to: str = "", page: int = 1, per_page: int = 50, db: Session = Depends(get_read_db)):
+    """Due today, due tomorrow, failed with their NCRs, and rejected sets. Due lists come from the one rule the notices use."""
+    client = require_erp_read(request, db)
+    due = cube_notices.cube_tests_due(db, client.id, job_id).values()
+    in_due = lambda t: (not due_from or t["due_on"] >= due_from) and (not due_to or t["due_on"] <= due_to)
+    today = [t for row in due for t in row["today"] if _keep(t, q, grade, status) and in_due(t)]
+    tomorrow = [t for row in due for t in row["tomorrow"] if _keep(t, q, grade, status) and in_due(t)]
+    sets = _all_cubes(db, client.id, job_id)
+    M = models.DBNcr
+    ncrs = {(n.source_id, n.source_ref): n for n in db.query(M).filter(M.client_id == client.id, M.source_type == "cube_set").all()}
+    labels = job_names(db, client.id, {c["job_id"] for c in sets})
+    failed = []
+    for c in sets:
+        for r in c["results"]:
+            if r["failed"]:
+                n = ncrs.get((c["id"], str(r["age_days"])))
+                row = {"set_id": c["id"], "reference": "%s / %d day" % (c["number"], r["age_days"]), "project": labels.get(c["job_id"], ("", ""))[0], "grade": c["grade"], "required": r.get("criteria_min") or c.get("fck"), "actual": r["average"],
+                       "tested_on": r.get("tested_on", ""), "status": "Failed", "ncr_id": n.id if n else None, "ncr_number": n.number if n else "", "ncr_status": n.status if n else ""}
+                if _keep(row, q, grade, status) and (not ncr_status or row["ncr_status"] == ncr_status) and (not test_from or row["tested_on"] >= test_from) and (not test_to or row["tested_on"] <= test_to):
+                    failed.append(row)
+    names = {c["id"]: labels.get(c["job_id"], ("", ""))[0] for c in sets}
+    R = models.DBCubeSet
+    rejected = [{"set_id": s.id, "reference": s.number, "project": names.get(s.id, ""), "grade": s.grade, "reason": s.acceptance_note or "", "rejected_on": s.accepted_on or ""}
+                for s in db.query(R).filter(R.client_id == client.id, R.acceptance == "rejected").order_by(R.id.desc()).all()
+                if (not job_id or s.job_id == job_id) and _keep({"reference": s.number, "grade": s.grade}, q, grade, "")]
+    per_page = max(1, min(per_page, 200))
+    start = (max(1, page) - 1) * per_page
+    return {"due_today": today, "due_tomorrow": tomorrow, "failed": failed[start:start + per_page], "failed_total": len(failed), "rejected": rejected[start:start + per_page], "rejected_total": len(rejected),
+            "projects": [{"job_id": r["job_id"], "project": r["project"], "today": len(r["today"]), "tomorrow": len(r["tomorrow"])} for r in due]}
+
+
+@router.get("/api/qc/cube-notices")
+def list_cube_notices(request: Request, job_id: int = 0, status: str = "", page: int = 1, per_page: int = 25, db: Session = Depends(get_read_db)):
+    client, _, _ = wo_actor(request, db, ("site.record", "site.signoff"))
+    N = models.DBCubeDueNotice
+    query = db.query(N).filter(N.client_id == client.id)
+    if job_id:
+        query = query.filter(N.job_id == job_id)
+    if status:
+        query = query.filter(N.status == status)
+    per_page = max(1, min(per_page, 100))
+    return {"notices": [cube_notices.notice_dict(n) for n in query.order_by(N.id.desc()).offset((max(1, page) - 1) * per_page).limit(per_page).all()], "total": query.count(), "page": page, "per_page": per_page}
+
+
+@router.post("/api/qc/cube-notices/{nid}/retry")
+def retry_cube_notice(nid: int, request: Request, db: Session = Depends(get_db)):
+    """Sends only to whoever did not get it."""
+    client, _, _ = wo_actor(request, db, "site.signoff")
+    N = models.DBCubeDueNotice
+    n = db.query(N).filter(N.id == nid, N.client_id == client.id).first()
+    if not n:
+        raise HTTPException(404, "Notice not found")
+    if n.status != "Failed":
+        raise HTTPException(409, "Only a failed notice can be sent again.")
+    cube_notices.deliver(db, n)
+    return {"notice": cube_notices.notice_dict(n), "message": "Sent." if n.status == "Sent" else "It could not be sent: %s" % (n.error or "try again")}
+
+
+@router.get("/api/qc/cube-notices/settings")
+def cube_notice_settings(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
+    client = require_erp_read(request, db)
+    job = db.query(models.DBJob).filter(models.DBJob.id == job_id, models.DBJob.client_id == client.id).first() if job_id else None
+    return {"hour": cube_notices.send_hour(db, client.id), "timezone": (job.timezone or "") if job else "", "default_timezone": DEFAULT_TIMEZONE, "emails": ", ".join(cube_notices.project_emails(db, client.id, job_id)) if job_id else ""}
+
+
+class CubeNoticeSettingsIn(BaseModel):
+    hour: int = 8
+    job_id: int = 0
+    timezone: Optional[str] = ""
+    emails: Optional[str] = ""
+
+
+@router.put("/api/qc/cube-notices/settings")
+def save_cube_notice_settings(body: CubeNoticeSettingsIn, request: Request, db: Session = Depends(get_db)):
+    client, _, actor = wo_actor(request, db, "site.signoff")
+    if not 0 <= body.hour <= 23:
+        raise HTTPException(400, "The hour is between 0 and 23.")
+    S = models.DBSettings
+
+    def keep(key, value):
+        row = db.query(S).filter(S.client_id == client.id, S.key == key).first()
+        if not row:
+            row = S(client_id=client.id, key=key, description="Cube test notices")
+            db.add(row)
+        row.value = value
+
+    keep("cube_notice_hour", str(body.hour))
+    if body.job_id:
+        job = _qc_job(db, client.id, body.job_id)
+        name = (body.timezone or "").strip()
+        if name:
+            try:
+                ZoneInfo(name)
+            except (ZoneInfoNotFoundError, ValueError):
+                raise HTTPException(400, "%s is not a time zone. Use a name such as Asia/Kolkata." % name)
+        job.timezone = name
+        emails = [x.strip() for x in (body.emails or "").replace(";", ",").split(",") if x.strip()]
+        if any("@" not in x for x in emails):
+            raise HTTPException(400, "One of those is not an email address.")
+        keep("cube_notice_emails:%d" % job.id, ", ".join(emails))
+    log_audit(db, client.id, "qc.cube_notice.settings", entity_type="qc", details=str(body.model_dump())[:500], request=request, user_name=actor)
+    db.commit()
+    return {"ok": True, "message": "Notice settings saved."}
 
 
 # ---- registers and forms ---------------------------------------------------------------------

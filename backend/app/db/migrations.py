@@ -640,6 +640,30 @@ def ensure_columns():
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS org_email VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS credentials_email_status VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS credentials_email_at VARCHAR DEFAULT ''",
+                "ALTER TABLE assets ADD COLUMN IF NOT EXISTS fuel_norm_lph DOUBLE PRECISION",
+                "ALTER TABLE assets ADD COLUMN IF NOT EXISTS tank_capacity_l DOUBLE PRECISION",
+                "ALTER TABLE asset_logs ADD COLUMN IF NOT EXISTS day_key VARCHAR",
+                "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verification_status VARCHAR DEFAULT ''",
+                "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS expected_at_review DOUBLE PRECISION",
+                "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verified_by VARCHAR DEFAULT ''",
+                "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verified_on VARCHAR DEFAULT ''",
+                "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verification_note TEXT DEFAULT ''",
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_logs_day_key ON asset_logs (day_key)",
+                "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS dup_key VARCHAR",
+                "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS merged_into_id INTEGER",
+                "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS merged_at VARCHAR DEFAULT ''",
+                "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS merged_by VARCHAR DEFAULT ''",
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_erp_items_dup_key ON erp_items (dup_key)",
+                "ALTER TABLE store_batch ADD COLUMN IF NOT EXISTS on_hold BOOLEAN NOT NULL DEFAULT FALSE",
+                "CREATE INDEX IF NOT EXISTS ix_store_batch_on_hold ON store_batch (on_hold)",
+                "ALTER TABLE qc_ncrs ADD COLUMN IF NOT EXISTS origin VARCHAR DEFAULT ''",
+                "ALTER TABLE qc_ncrs ADD COLUMN IF NOT EXISTS auto_key VARCHAR",
+                "ALTER TABLE qc_ncrs ADD COLUMN IF NOT EXISTS store_batch_id INTEGER",
+                "CREATE INDEX IF NOT EXISTS ix_qc_ncrs_store_batch_id ON qc_ncrs (store_batch_id)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_qc_ncr_auto_key ON qc_ncrs (auto_key)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_cube_result_age ON qc_cube_results (set_id, age_days)",
+                "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS timezone VARCHAR DEFAULT ''",
+                "CREATE INDEX IF NOT EXISTS ix_erp_items_merged_into_id ON erp_items (merged_into_id)",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_location VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS gender VARCHAR DEFAULT ''",
                 "ALTER TABLE employees ADD COLUMN IF NOT EXISTS aadhaar_no VARCHAR DEFAULT ''",
@@ -1996,6 +2020,38 @@ def migrate_sqlite():
             add_col("employees", "org_email", "VARCHAR DEFAULT ''")
             add_col("employees", "credentials_email_status", "VARCHAR DEFAULT ''")
             add_col("employees", "credentials_email_at", "VARCHAR DEFAULT ''")
+            add_col("store_batch", "on_hold", "BOOLEAN NOT NULL DEFAULT 0")
+            add_col("qc_ncrs", "origin", "VARCHAR DEFAULT ''")
+            add_col("qc_ncrs", "auto_key", "VARCHAR")
+            add_col("qc_ncrs", "store_batch_id", "INTEGER")
+            add_col("jobs", "timezone", "VARCHAR DEFAULT ''")
+            for statement in ("CREATE UNIQUE INDEX IF NOT EXISTS uq_qc_ncr_auto_key ON qc_ncrs (auto_key)",
+                              "CREATE UNIQUE INDEX IF NOT EXISTS uq_cube_result_age ON qc_cube_results (set_id, age_days)"):
+                try:
+                    conn.execute(text(statement))
+                except Exception:
+                    pass
+            add_col("erp_items", "dup_key", "VARCHAR")
+            add_col("erp_items", "merged_into_id", "INTEGER")
+            add_col("erp_items", "merged_at", "VARCHAR DEFAULT ''")
+            add_col("erp_items", "merged_by", "VARCHAR DEFAULT ''")
+            try:
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_erp_items_dup_key ON erp_items (dup_key)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_erp_items_merged_into_id ON erp_items (merged_into_id)"))
+            except Exception:
+                pass
+            add_col("assets", "fuel_norm_lph", "FLOAT")
+            add_col("assets", "tank_capacity_l", "FLOAT")
+            add_col("asset_logs", "day_key", "VARCHAR")
+            add_col("plant_rental_invoices", "verification_status", "VARCHAR DEFAULT ''")
+            add_col("plant_rental_invoices", "expected_at_review", "FLOAT")
+            add_col("plant_rental_invoices", "verified_by", "VARCHAR DEFAULT ''")
+            add_col("plant_rental_invoices", "verified_on", "VARCHAR DEFAULT ''")
+            add_col("plant_rental_invoices", "verification_note", "TEXT DEFAULT ''")
+            try:
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_logs_day_key ON asset_logs (day_key)"))
+            except Exception:
+                pass                                   # an older database with no logbook yet: create_all makes it with the index
 
             # Job costing: what each document was for.
             add_col("invoices", "job_id", "INTEGER")

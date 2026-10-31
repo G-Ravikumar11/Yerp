@@ -26,6 +26,7 @@ class DBJob(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    timezone = Column(String, default="")                       # where the site is; "" = the company default
     number = Column(String, index=True)
     name = Column(String, nullable=False)
 

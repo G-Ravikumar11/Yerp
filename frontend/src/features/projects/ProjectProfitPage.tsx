@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Input, Stat, StatGrid } from '@/components/ui'
 import { usePnl, type PnlRow } from '@/api/costs'
+import { ProjectPlantCosts } from '@/features/equipment/PlantChecks'
 import { cn, compactINR } from '@/lib/utils'
 import { alphabetical, percent, rupees } from './figures'
 
@@ -127,6 +128,7 @@ export default function ProjectProfitPage() {
       </div>
 
       <DataTable label="Project profit" rows={rows} columns={columns} rowKey={(r) => r.job_id} loading={q.isPending} empty={all.length ? 'No project matches that.' : 'No projects yet.'} />
+      <ProjectPlantCosts />
     </>
   )
 }

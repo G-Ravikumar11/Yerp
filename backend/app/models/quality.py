@@ -1,7 +1,7 @@
 """Inspections, cube tests and non-conformances."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 
 from app.db.session import Base
 
@@ -73,6 +73,7 @@ class DBCubeSet(Base):
 
 class DBCubeResult(Base):
     __tablename__ = "qc_cube_results"
+    __table_args__ = (UniqueConstraint("set_id", "age_days", name="uq_cube_result_age"),)
 
     id = Column(Integer, primary_key=True, index=True)
     set_id = Column(Integer, ForeignKey("qc_cube_sets.id"), nullable=False, index=True)
@@ -97,6 +98,7 @@ class DBNcr(Base):
     """A non-conformance: work that is not what was specified, who owns
     putting it right, by when, and how it was closed."""
     __tablename__ = "qc_ncrs"
+    __table_args__ = (UniqueConstraint("auto_key", name="uq_qc_ncr_auto_key"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
@@ -116,6 +118,10 @@ class DBNcr(Base):
     closed_on = Column(String, default="")
     closure_note = Column(Text, default="")
     closed_by = Column(String, default="")
+    origin = Column(String, default="")                         # "" (raised by hand) | Automatic Cube Test Failure
+    # cube:<set>:<age>, on an NCR raised by a failed result. Unique: one failure, one NCR, however many times it is sent.
+    auto_key = Column(String, nullable=True)
+    store_batch_id = Column(Integer, nullable=True, index=True)  # the store lot it is raised against
     source_ref = Column(String, default="")                     # which result of the source, e.g. "28" days
     root_cause = Column(Text, default="")
     assigned_by = Column(String, default="")
@@ -164,4 +170,27 @@ class DBQcCriteria(Base):
     approved_by = Column(String, default="")
     approved_on = Column(String, default="")
     is_active = Column(Boolean, default=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBCubeDueNotice(Base):
+    """The day's notice of cube tests due for one project, what it listed, and how delivery went. One a project a day."""
+    __tablename__ = "qc_cube_due_notices"
+    __table_args__ = (UniqueConstraint("job_id", "run_date", name="uq_cube_due_notice"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    run_date = Column(String, nullable=False, index=True)       # the project's own today
+    project = Column(String, default="")
+    subject = Column(String, default="")
+    body = Column(Text, default="")
+    tests = Column(Text, default="{}")
+    test_count = Column(Integer, default=0)
+    status = Column(String, default="Pending", index=True)      # Pending | Sending | Sent | Failed
+    attempts = Column(Integer, default=0)
+    bell_sent = Column(Boolean, default=False)
+    sent_to = Column(String, default="")                        # who has it: a retry leaves them out
+    sent_at = Column(String, default="")
+    error = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))

@@ -2,7 +2,7 @@
 and what else the machines cost. The register itself, the daily log and the services are in assets.py."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 
 from app.db.session import Base
 
@@ -127,6 +127,12 @@ class DBPlantRentalInvoice(Base):
     paid_on = Column(String, default="")
     payment_ref = Column(String, default="")
     recorded_by = Column(String, default="")
+    # Finance's word on a bill that differs from the agreement. The amount above stays what the owner billed.
+    verification_status = Column(String, default="")      # "" | Approved | Disputed
+    expected_at_review = Column(Float, nullable=True)     # what the agreement came to when it was reviewed
+    verified_by = Column(String, default="")
+    verified_on = Column(String, default="")
+    verification_note = Column(Text, default="")
     created_at = Column(String, default=_now)
 
 
@@ -151,5 +157,123 @@ class DBPlantExpense(Base):
     payment_ref = Column(String, default="")
     approval_status = Column(String, default="Pending")    # Pending | Approved | Rejected
     approved_by = Column(String, default="")
+    recorded_by = Column(String, default="")
+    created_at = Column(String, default=_now)
+
+
+class DBPlantMeterEvent(Base):
+    """What happened to a machine's meter besides running: replaced, a reading corrected, a gap in the readings explained."""
+    __tablename__ = "plant_meter_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    asset_id = Column(Integer, nullable=False, index=True)
+    log_id = Column(Integer, nullable=True, index=True)
+    kind = Column(String, default="", index=True)          # Replaced | Corrected | GapResolved
+    on_date = Column(String, default="", index=True)
+    to_date = Column(String, default="")                   # the far end of a gap
+    field = Column(String, default="")                     # opening | closing, on a correction
+    old_reading = Column(Float, nullable=True)
+    new_reading = Column(Float, nullable=True)
+    reason = Column(Text, default="")
+    by_name = Column(String, default="")
+    created_at = Column(String, default=_now)
+
+
+class DBPlantFuelReview(Base):
+    """Somebody's look into a fuel flag. The flags themselves are worked out from the records each time, so a corrected
+    record clears its own flag; only the decision is stored."""
+    __tablename__ = "plant_fuel_reviews"
+    __table_args__ = (UniqueConstraint("fuel_id", "reason", name="uq_plant_fuel_review"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    fuel_id = Column(Integer, nullable=False, index=True)
+    reason = Column(String, default="")                    # above_norm | over_tank | no_hours
+    status = Column(String, default="Under review")        # Under review | Resolved | Dismissed
+    note = Column(Text, default="")
+    by_name = Column(String, default="")
+    updated_at = Column(String, default=_now)
+
+
+class DBPlantAlert(Base):
+    """One plant alert and how it was delivered. `dedupe_key` is unique: a machine's week, a breakdown, an unbilled month
+    can be raised once however many workers try."""
+    __tablename__ = "plant_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    kind = Column(String, default="", index=True)          # weekly | emergency | unbilled
+    dedupe_key = Column(String, nullable=False, unique=True)
+    asset_id = Column(Integer, nullable=True, index=True)
+    rental_id = Column(Integer, nullable=True, index=True)
+    period = Column(String, default="", index=True)        # 2026-W44 | 2026-10 | the breakdown's date
+    title = Column(String, default="")
+    body = Column(Text, default="")
+    severity = Column(String, default="warning")
+    status = Column(String, default="Open", index=True)    # Open | Reviewed | Resolved
+    office_alert_id = Column(Integer, nullable=True)       # its line on the bell
+    delivery_status = Column(String, default="Pending")    # Pending | Delivered | Failed
+    sent_to = Column(String, default="")
+    reviewed_by = Column(String, default="")
+    reviewed_at = Column(String, default="")
+    review_note = Column(Text, default="")
+    created_at = Column(String, default=_now, index=True)
+
+
+class DBFormworkHire(Base):
+    """Shuttering or scaffolding hired for one project, on one rate. What it has cost is worked out from its returns."""
+    __tablename__ = "formwork_hires"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)        # FWH-0001
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    kind = Column(String, default="Shuttering", index=True)  # Shuttering | Scaffolding
+    provider_id = Column(Integer, ForeignKey("plant_rental_providers.id"), nullable=False, index=True)
+    description = Column(String, default="")
+    quantity = Column(Float, default=0.0)
+    uom = Column(String, default="")
+    start_date = Column(String, default="", index=True)
+    expected_return = Column(String, default="")
+    daily_rate = Column(Float, default=0.0)
+    replacement_cost = Column(Float, default=0.0)          # a unit, for what never comes back
+    remarks = Column(Text, default="")
+    created_by = Column(String, default="")
+    created_at = Column(String, default=_now)
+
+
+class DBFormworkReturn(Base):
+    """One return, with the charges as they stood that day. `return_key` is unique: one form saved twice is one return."""
+    __tablename__ = "formwork_returns"
+    __table_args__ = (UniqueConstraint("client_id", "return_key", name="uq_formwork_return_key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    hire_id = Column(Integer, ForeignKey("formwork_hires.id"), nullable=False, index=True)
+    return_key = Column(String, nullable=False)
+    returned_on = Column(String, default="", index=True)
+    returned_qty = Column(Float, default=0.0)
+    damaged_qty = Column(Float, default=0.0)
+    lost_qty = Column(Float, default=0.0)
+    billable_days = Column(Integer, default=0)
+    hire_charge = Column(Float, default=0.0)
+    loss_charge = Column(Float, default=0.0)
+    damage_charge = Column(Float, default=0.0)
+    remarks = Column(Text, default="")
+    recorded_by = Column(String, default="")
+    created_at = Column(String, default=_now)
+
+
+class DBFormworkPayment(Base):
+    """Paid to the supplier against a hire."""
+    __tablename__ = "formwork_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    hire_id = Column(Integer, ForeignKey("formwork_hires.id"), nullable=False, index=True)
+    paid_on = Column(String, default="")
+    amount = Column(Float, default=0.0)
+    reference = Column(String, default="")
     recorded_by = Column(String, default="")
     created_at = Column(String, default=_now)

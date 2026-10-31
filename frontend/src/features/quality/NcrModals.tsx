@@ -76,12 +76,12 @@ export function NcrDetail({ id, onClose, onPhotos }: { id: number | null; onClos
     <Modal open={!!id} onOpenChange={(o) => !o && onClose()} title={n ? `${n.number}${n.location ? ` - ${n.location}` : ''}` : 'Non-conformance'} size="xl">
       {q.isPending && <Skeleton className="h-48 w-full" />}
       {q.isError && <p role="alert" className="text-[13px] text-danger">{q.error.message}</p>}
-      {n && <Body key={`${n.id}-${n.status}-${n.verification_result}`} ncr={n} history={q.data?.history} onClose={onClose} onPhotos={onPhotos} />}
+      {n && <Body key={`${n.id}-${n.status}-${n.verification_result}`} ncr={n} history={q.data?.history} batch={q.data?.store_batch ?? null} onClose={onClose} onPhotos={onPhotos} />}
     </Modal>
   )
 }
 
-function Body({ ncr: n, history, onClose, onPhotos }: { ncr: Ncr; history?: import('@/api/quality').HistoryLine[]; onClose: () => void; onPhotos: (n: Ncr) => void }) {
+function Body({ ncr: n, history, batch, onClose, onPhotos }: { ncr: Ncr; history?: import('@/api/quality').HistoryLine[]; batch: import('@/api/quality').NcrBatch | null; onClose: () => void; onPhotos: (n: Ncr) => void }) {
   const { can } = useSession()
   const [step, setStep] = useState<'assign' | 'work' | 'ask' | 'verify' | 'reject' | 'close' | null>(null)
   const done = () => setStep(null)
@@ -90,12 +90,19 @@ function Body({ ncr: n, history, onClose, onPhotos }: { ncr: Ncr; history?: impo
   const refresh = { invalidate: [qcKeys.all], onSuccess: done }
   const ask = useAction(() => requestVerification(n.id), { ...refresh, success: 'Sent for verification', onError: done })
   const verify = useAction((v: { result: 'verified' | 'rejected'; note: string }) => verifyNcr(n.id, v.result, v.note), { ...refresh, success: (r) => (r.ncr.verification_result === 'verified' ? 'Verified' : 'Sent back for correction') })
-  const close = useAction((note: string) => closeNcr(n.id, note), { ...refresh, success: (r) => `${r.ncr.number} closed` })
+  const close = useAction((note: string) => closeNcr(n.id, note), { ...refresh, success: (r) => [`${r.ncr.number} closed.`, r.batch_hold?.message].filter(Boolean).join(' ') })
   return (
     <div className="grid gap-4">
       <ol aria-label="Progress" className="flex flex-wrap items-center gap-1.5 text-xs">
         {STEPS.map(([s, label], k) => <li key={s} aria-current={k === at ? 'step' : undefined} className={`rounded-md px-2.5 py-1 ring-1 ring-inset ${k === at ? 'bg-primary-soft font-semibold text-primary ring-primary/25' : k < at ? 'text-foreground ring-border' : 'text-muted-foreground ring-border'}`}>{k < at ? '✓ ' : ''}{label}</li>)}
       </ol>
+      {batch && (
+        <section aria-label="Store lot" className="rounded-lg border border-border p-3 text-[13px]">
+          <div className="mb-1 flex flex-wrap items-center gap-2 font-medium">Batch {batch.batch_no} - {batch.item_name}<Badge tone={batch.blocked ? 'danger' : 'success'} dot>{batch.blocked ? 'Blocked from issue' : batch.hold_status}</Badge></div>
+          <p>{batch.available_qty} {batch.uom} available.{batch.hold_reason && ` On hold: ${batch.hold_reason}`}</p>
+          {n.status !== 'CLOSED' && <p className="mt-1 text-xs text-muted-foreground">Closing this releases the batch only if no other open NCR or manual hold remains.</p>}
+        </section>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={ncrTone(n.status, n.overdue)} dot>{n.overdue ? 'Late - ' : ''}{n.status_label}</Badge>
         <Badge tone={n.severity === 'Minor' ? 'neutral' : 'danger'}>{n.severity}</Badge>

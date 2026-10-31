@@ -111,6 +111,10 @@ class InsufficientStockError(StoreError):
         super().__init__("Only %s on hand in store %s for item %s; %s was asked for." % (available, store_id, item_id, requested))
 
 
+class BatchOnHoldError(StoreError):
+    """A batch under a quality hold cannot go out for use, however much of it is on hand."""
+
+
 class StoreFrozenError(StoreError):
     """The store is frozen (a stock count is on): nothing may move in or out until it is unfrozen."""
 
@@ -299,8 +303,31 @@ class DBStoreBatch(Base):
     manufacturing_date = Column(Date, nullable=True)
     expiry_date = Column(Date, nullable=True)
     first_received = Column(Date, nullable=True)
+    on_hold = Column(Boolean, default=False, nullable=False, index=True)     # true while any hold on it is active
     source = Column(String, default="")                       # where it first came from: "Receipt GRN-0003"
     created_at = Column(DateTime, default=datetime.now)
+
+
+class DBStoreBatchHold(Base):
+    """One reason a batch is held: placed by hand, or by an open NCR. Each stands alone, and stays as the record once
+    released. `hold_key` is unique while it is active: one manual hold on a batch, one hold for an NCR."""
+    __tablename__ = "store_batch_hold"
+    __table_args__ = (UniqueConstraint("hold_key", name="uq_store_batch_hold_key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    batch_id = Column(Integer, ForeignKey("store_batch.id"), nullable=False, index=True)
+    kind = Column(String, nullable=False)                     # MANUAL | NCR
+    ncr_id = Column(Integer, nullable=True, index=True)
+    hold_key = Column(String, nullable=True)
+    status = Column(String, default="ACTIVE", index=True)     # ACTIVE | RELEASED
+    reason = Column(String, default="")
+    remarks = Column(String, default="")
+    placed_by = Column(String, default="")
+    placed_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    released_by = Column(String, default="")
+    released_at = Column(String, default="")
+    release_note = Column(String, default="")
 
 
 class DBStoreBatchBalance(Base):

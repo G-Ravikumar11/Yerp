@@ -26,6 +26,9 @@ export const OLD_SCREENS = [
   { label: 'Material Used vs Costed', path: '/store/old/material-costing' },
 ]
 
+/** The old store takes nothing new. Read-only until the server says otherwise, so nothing flashes up to be clicked while it answers. */
+export const useOldStoreClosed = () => useQuery({ queryKey: [...KEY, 'closed'], staleTime: 60_000, queryFn: async () => (await get<{ closed: boolean }>('/api/stock/cutover?brief=true')).closed }).data ?? true
+
 /** On the Hub's front page: the old store, and - until it has moved - the way to move it. */
 export function OldStoreCard() {
   const { can } = useSession()
@@ -135,11 +138,10 @@ function MoveForm({ onDone }: { onDone: () => void }) {
 
 /** Above an old store screen once the store has moved: say it is a record, and where the work is done now. */
 export function OldStoreBanner({ hub }: { hub: string }) {
-  const done = useCutover()
-  if (!done.data) return null
+  if (!useOldStoreClosed()) return null
   return (
     <p role="status" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-warning-soft px-3 py-2 text-[13px]">
-      <Archive className="size-4 text-warning" /> The old store moved into the Store Hub on {formatDate(done.data.cutover_date)}. This is its record; nothing new can be entered here.
+      <Archive className="size-4 text-warning" /> This is a legacy store module. Transactions are available in read-only mode.
       <Link to={hub} className="font-medium text-primary hover:underline">Go to the Store Hub</Link>
     </p>
   )

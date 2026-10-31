@@ -197,6 +197,7 @@ def get_stock_issue(issue_id: int, request: Request, db: Session = Depends(get_d
 def update_stock_issue(issue_id: int, body: StockIssueIn, request: Request,
                        db: Session = Depends(get_db)):
     client, _, _ = wo_actor(request, db, "site.record")
+    refuse_if_moved(db, client.id)
     issue = issue_or_404(db, client.id, issue_id)
     if (issue.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "A posted issue cannot be changed. "
@@ -286,6 +287,7 @@ def cancel_stock_issue(issue_id: int, request: Request, body: dict = None,
                        db: Session = Depends(get_db)):
     """A posted issue is reversed by putting the material back, not erased."""
     client, actor_id, actor_name = wo_actor(request, db, "stores.manage")
+    refuse_if_moved(db, client.id)
     issue = issue_or_404(db, client.id, issue_id)
     if (issue.status or "DRAFT") == "CANCELLED":
         raise HTTPException(409, "Already cancelled.")
@@ -311,6 +313,7 @@ def adjust_stock(body: AdjustmentIn, request: Request,
                  db: Session = Depends(get_db)):
     """A physical count. The difference is posted, the history is left alone."""
     client, actor_id, actor_name = wo_actor(request, db, "stores.manage")
+    refuse_if_moved(db, client.id)
     code = (body.item_code or "").strip()
     bal = stock_balances(db, client.id, item_code=code).get(code, {})
     on_hand = money(bal.get("on_hand", 0))
@@ -445,6 +448,7 @@ def transfer_stock(body: TransferIn, request: Request, db: Session = Depends(get
     the same bags.
     """
     client, actor_id, actor_name = wo_actor(request, db, "stores.manage")
+    refuse_if_moved(db, client.id)
     src, dst = (body.from_store or "").strip(), (body.to_store or "").strip()
     if not src or not dst:
         raise HTTPException(400, "Say where it is coming from and where it is going.")
@@ -532,7 +536,7 @@ def cutover_status(request: Request, brief: bool = False, db: Session = Depends(
     store's closing stock, what stops it, and the Hub stores it can go to. `brief` answers only whether it has moved."""
     client = require_erp_read(request, db)
     if brief:
-        return {"done": store_cutover.cutover_dict(store_cutover.cutover_of(db, client.id))}
+        return {"done": store_cutover.cutover_dict(store_cutover.cutover_of(db, client.id)), "closed": store_cutover.old_store_closed()}
     return store_cutover.preview(db, client.id)
 
 
