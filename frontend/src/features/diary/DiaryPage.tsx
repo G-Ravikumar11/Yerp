@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileSpreadsheet, Image, Plus } from 'lucide-react'
+import { FileSpreadsheet, FileText, Image, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilesModal } from '@/components/data/FilesModal'
@@ -35,6 +35,7 @@ export default function DiaryPage() {
         <div className="flex justify-end gap-1.5">
           <Button size="sm" variant="outline" onClick={() => setPhotos(r)}><Image /> Photos</Button>
           <Button size="sm" variant="outline" asChild><a href={`/api/diary/${r.id}/export.xlsx`} title="The daily progress report as a workbook"><FileSpreadsheet /> DPR</a></Button>
+          <Button size="sm" variant="outline" asChild><a href={`/api/diary/${r.id}/report.pdf`} target="_blank" rel="noreferrer" title="The daily progress report on the letterhead, with the plan against the day, hindrances and photos"><FileText /> PDF</a></Button>
         </div>
       ),
     },

@@ -29,6 +29,7 @@ new drawing code.
     {"type": "banner", "lines": [(text, style)]}       centred title lines, as a sheet's head
     {"type": "grid", "widths": [mm], "rows": [[cell]], "head": n, "spans": [(c0, r0, c1, r1)],
                      "size": "small"}                  any ruled sheet, cell for cell
+    {"type": "photos", "items": [(image bytes, caption)], "per_row": 3}   photographs, captioned, in a ruled grid
     {"type": "page_break"}
 
 The page is A4, the grid black, the type Helvetica - it prints the same on the
@@ -280,6 +281,37 @@ def _picture(value, max_w, max_h):
         return Image(io.BytesIO(raw), width=w * scale, height=h * scale)
     except Exception:
         return None
+
+
+def _photo(raw, max_w, max_h):
+    """A photograph from its bytes, scaled into its cell. One that will not decode is left out."""
+    try:
+        from reportlab.lib.utils import ImageReader
+        from reportlab.platypus import Image
+        w, h = ImageReader(io.BytesIO(raw)).getSize()
+        if not w or not h:
+            return None
+        scale = min(max_h / float(h), max_w / float(w))
+        return Image(io.BytesIO(raw), width=w * scale, height=h * scale)
+    except Exception:
+        return None
+
+
+def _photos(block, st):
+    per = max(1, int(block.get("per_row") or 3))
+    w = _W() / per
+    cells = []
+    for raw, caption in block.get("items") or []:
+        pic = _photo(raw, w - 6 * mm, 52 * mm) if raw else None
+        if pic is None:
+            continue
+        pic.hAlign = "CENTER"
+        cells.append([pic, Paragraph(_esc(caption or ""), st["centre"])])
+    if not cells:
+        return None
+    rows = [cells[i:i + per] for i in range(0, len(cells), per)]
+    rows[-1] += [""] * (per - len(rows[-1]))
+    return _box(rows, [w] * per, [("ALIGN", (0, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")])
 
 
 def _signatures(block, st):
@@ -555,6 +587,10 @@ def _flow(blocks, st):
                 out.append(KeepTogether([sig]))
         elif kind == "numbered":
             out.append(_numbered(b, st))
+        elif kind == "photos":
+            pics = _photos(b, st)
+            if pics is not None:
+                out.append(pics)
         elif kind == "page_break":
             out.append(PageBreak())
     return out

@@ -30,6 +30,25 @@ class JobStateIn(BaseModel):
     state_code: str
 
 
+class HindranceIn(BaseModel):
+    """A hindrance as the register's form sends it. Left out (None) on a change keeps what it was."""
+    activity_id: Optional[int] = None
+    diary_id: Optional[int] = None
+    cause: Optional[str] = None
+    description: Optional[str] = None
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
+    responsibility: Optional[str] = None
+    impact_days: Optional[float] = None
+    notice_date: Optional[str] = None
+    status: Optional[str] = None
+
+
+class DelayReasonIn(BaseModel):
+    reason: Optional[str] = ""
+    note: Optional[str] = ""
+
+
 class ReopenIn(BaseModel):
     reason: Optional[str] = ""
 

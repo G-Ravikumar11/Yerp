@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { del, get, post, put } from '@/lib/api'
+import type { Hindrance } from './hindrances'
 
 export const schKeys = { all: ['schedule'] as const }
 
@@ -42,6 +43,18 @@ export interface Activity extends Placing {
   status?: string
   stored_status?: string
   notes?: string
+  /** What was promised: the saved baseline's dates (the plan's, when none is saved). Late is counted from these. */
+  baseline_start?: string
+  baseline_finish?: string
+  measured_against?: 'baseline' | 'plan'
+  /** Days behind the promised finish. */
+  delay_days?: number
+  /** Hindrances against it on the register (their numbers). */
+  hindrances?: string[]
+  delay_reason?: string
+  delay_note?: string
+  /** Late, with no hindrance or reason to say why. */
+  needs_reason?: boolean
 }
 export interface Employee { id: number; name: string }
 export interface CurvePoint { week: string; planned: number | null; actual: number | null }
@@ -51,7 +64,7 @@ export interface Schedule {
   curve: CurvePoint[]
   employees?: Employee[]
   team_scope?: string
-  summary: { start?: string; end?: string; duration_days?: number; overdue?: number; milestones?: number; milestones_done?: number; activities: number; planned_percent: number; actual_percent: number; variance: number; late: number; behind: number; done: number; planned_finish: string; forecast_finish: string; slip_days: number }
+  summary: { start?: string; end?: string; duration_days?: number; overdue?: number; milestones?: number; milestones_done?: number; activities: number; planned_percent: number; actual_percent: number; variance: number; late: number; behind: number; done: number; planned_finish: string; forecast_finish: string; slip_days: number; baseline_finish?: string; measured_against?: 'baseline' | 'plan'; delayed?: number; unexplained?: number }
 }
 export interface ActivityInput { name: string; code: string; planned_start: string; planned_finish: string; weight: number; depends_on_id: number | null; work_order_line_id: number | null; is_milestone: boolean; assigned_to_id?: number | null; status?: string; notes?: string }
 export interface WoLite { id: number; number: string; job_id: number; status: string }
@@ -121,6 +134,8 @@ export interface ActivityDetail {
   activity: Activity & Pick<DayRow, 'editable' | 'tasks_total' | 'tasks_done' | 'tasks' | 'updated_on' | 'updated_by'> & { planned_start: string; planned_finish: string }
   /** qty_done: the quantity done so far when it was reported that way */
   history: { on: string; percent: number; qty_done?: number | null; uom?: string; note: string; by: string }[]
+  /** What held it up, from the site's hindrance register. */
+  hindrances: Hindrance[]
 }
 export const useActivity = (id: number) => useQuery({ queryKey: ['schedule', 'activity', id], enabled: id > 0, queryFn: () => get<ActivityDetail>(`/api/schedule/activities/${id}`) })
 export const useSchedule = (job: number) => useQuery({ queryKey: ['schedule', job], enabled: job > 0, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<Schedule>(`/api/jobs/${job}/schedule`) })

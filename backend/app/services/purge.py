@@ -176,7 +176,7 @@ LABELS = {
     "subcontract_orders": "work orders", "purchase_orders": "purchase orders", "goods_receipts": "goods receipts", "bills": "supplier bills",
     "invoices": "invoices", "quotes": "quotes", "rfqs": "enquiries", "rfq_quotes": "supplier quotes", "rfq_invites": "quote links", "boqs": "BOQs", "drawings": "drawings",
     "site_diaries": "site diary days", "qc_inspections": "inspections", "qc_cube_sets": "cube sets", "qc_ncrs": "NCRs",
-    "safety_incidents": "incidents", "toolbox_talks": "toolbox talks", "work_permits": "permits", "schedule_activities": "activities",
+    "safety_incidents": "incidents", "hindrances": "hindrances", "toolbox_talks": "toolbox talks", "work_permits": "permits", "schedule_activities": "activities",
     "stock_issues": "stock issues", "stock_movements": "stock movements", "eway_bills": "e-way bills", "project_threads": "chat threads",
     "project_messages": "chat messages", "project_budgets": "budgets", "project_files": "photos and files", "attendance": "timesheet entries",
     "variation_orders": "variation orders", "boq_variations": "BOQ variations", "retention_releases": "retention releases",

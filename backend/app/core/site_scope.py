@@ -22,13 +22,15 @@ from app import models
 from app.core.auth import ACTING_EMPLOYEE
 from app.core.cache import cached_read
 
-# Records that belong to a project (job_id), and the Projects portal screens that show them. A record with no project
+# Records that belong to a project (job_id): the Projects portal screens, and the client's BOQ with its variations and budgets. A record with no project
 # (a checklist template, a file kept on no site) is the company's and stays visible.
 SCOPED = (
     models.DBSiteDiary, models.DBScheduleActivity, models.DBScheduleLink, models.DBScheduleTask, models.DBScheduleBaseline,
     models.DBScheduleCalendar, models.DBScheduleHoliday, models.DBWorkerScreening, models.DBSafetyIncident,
     models.DBToolboxTalk, models.DBWorkPermit, models.DBEquipmentCheck, models.DBDrawing, models.DBCubeSet,
-    models.DBInspection, models.DBNcr, models.DBQcChecklist, models.DBQcCriteria, models.DBFile,
+    models.DBInspection, models.DBNcr, models.DBQcChecklist, models.DBQcCriteria, models.DBFile, models.DBHindrance,
+    # The client's BOQ for a site, the variations raised against it, and the budgets priced on it (lines and revisions hang off the BOQ).
+    models.DBBoq, models.DBBoqVariation, models.DBBoqBudget, models.DBBoqBudgetItem, models.DBProjectBudget,
 )
 BUSY = "site_scope_busy"
 

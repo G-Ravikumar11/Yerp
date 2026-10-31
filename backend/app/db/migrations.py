@@ -111,6 +111,16 @@ SITE_RATE_COLUMNS = (
     ("salary_revisions", "valid_until", "VARCHAR DEFAULT ''"),
 )
 
+SITE_PLAN_COLUMNS = (
+    # (table, column, type) - Planning & Progress: which site diary made a progress report (so deleting the draft diary takes it back).
+    ("schedule_progress", "diary_id", "INTEGER"),
+    # Why an activity is late against its baseline, when no hindrance explains it.
+    ("schedule_activities", "delay_reason", "VARCHAR DEFAULT ''"),
+    ("schedule_activities", "delay_note", "TEXT DEFAULT ''"),
+    # Who signed a site diary day off (when was already kept), for the daily progress report.
+    ("site_diaries", "submitted_by_name", "VARCHAR DEFAULT ''"),
+)
+
 STORE_OUTWARD_COLUMNS = (
     # (table, column, type) - what the outward slice added to its own tables after they were first made (indents, who received the issue, the
     # recovery basis, damaged returns). create_all makes new tables but never adds a column to one that exists, so a database that already has
@@ -1883,7 +1893,7 @@ def ensure_columns():
             # The Store module's outward tables: columns added after the tables were first made. A database that has no store tables yet is not an error.
             try:
                 have = {r[0] for r in conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")).fetchall()}
-                for table, column, typedef in STORE_OUTWARD_COLUMNS:
+                for table, column, typedef in STORE_OUTWARD_COLUMNS + SITE_PLAN_COLUMNS:
                     if table in have:
                         conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
                 conn.commit()
@@ -2022,7 +2032,7 @@ def migrate_sqlite():
             add_col("subcontract_items", "material", "VARCHAR DEFAULT ''")
             add_col("subcontract_items", "heading_level", "INTEGER DEFAULT 0")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
-            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS + SITE_RATE_COLUMNS:
+            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS + SITE_RATE_COLUMNS + SITE_PLAN_COLUMNS:
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
             try:
                 conn.execute(text(SCHEDULE_BACKFILL))

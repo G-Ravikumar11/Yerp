@@ -145,9 +145,12 @@ export interface AlertSettings {
   wa_phone_id: string
   wa_token_set: boolean
   email_ready: boolean
+  /** The evening site report, the missing-diary reminder and the delay alerts: each on or off. */
+  site_reports?: Record<string, boolean>
+  site_report_labels?: Record<string, string>
 }
 export const useAlertSettings = () => useQuery({ queryKey: k('alerts'), queryFn: () => get<AlertSettings>('/api/alerts/settings') })
-export const saveAlertSettings = (b: { emails: string[]; whatsapp: string[]; channels: Record<string, string[]>; wa_phone_id: string; wa_token?: string }) => put<AlertSettings>('/api/alerts/settings', b)
+export const saveAlertSettings = (b: { emails: string[]; whatsapp: string[]; channels: Record<string, string[]>; wa_phone_id: string; wa_token?: string; site_reports?: Record<string, boolean> }) => put<AlertSettings>('/api/alerts/settings', b)
 export const sendTestAlert = () => post<{ message?: string }>('/api/alerts/test')
 
 export interface BackupInfo {

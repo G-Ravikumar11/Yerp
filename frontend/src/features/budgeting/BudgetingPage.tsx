@@ -11,6 +11,7 @@ import { useSession } from '@/lib/session'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { plural } from '@/lib/format'
 import { BudgetLineModal } from './BudgetLineModal'
+import { EarnedValueView } from './EarnedValue'
 
 type Show = 'all' | 'todo' | 'loss'
 /** A table row: a priced BOQ line, or one of the BOQ's section headings standing above the lines of its section. */
@@ -24,6 +25,8 @@ export default function BudgetingPage() {
   const job = Number(params.get('job')) || 0
   const setJob = (id: number) => setParams((p) => { const q = new URLSearchParams(p); if (id) q.set('job', String(id)); else q.delete('job'); return q }, { replace: true })
   const [show, setShow] = useState<Show>('all')
+  // The budget as priced, or the budget against what has been spent and done (earned value).
+  const [view, setView] = useState<'budget' | 'actual'>('budget')
   const [editing, setEditing] = useState<BudgetRow | null>(null)
   // Sections start folded; the arrow on a heading opens it and a second click folds it again. Keyed by the heading, which stays the same.
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -78,10 +81,12 @@ export default function BudgetingPage() {
       <PageHeader eyebrow="Projects" title="Budgeting" description="Price each line of the client's BOQ with our own cost - material, labour and the rest - and see the profit before the work is bought."
         actions={<Button variant="outline" disabled={!b?.boq} onClick={() => window.open(budgetFileUrl(job), '_blank')}><Download /> Excel</Button>} />
       <div className="mb-4 flex flex-wrap items-end gap-4"><ProjectPicker value={job} onChange={setJob} id="bud-job" /></div>
+      {job > 0 && b?.boq && <div className="mb-4 max-w-sm"><Tabs label="Budgeting views" value={view} onChange={setView} items={[{ value: 'budget', label: 'Budget' }, { value: 'actual', label: 'Against actual' }]} /></div>}
+      {job > 0 && b?.boq && view === 'actual' && <EarnedValueView job={job} />}
       {job > 0 && !q.isPending && !b?.boq && (
         <Card className="p-6 text-sm text-muted-foreground">This project has no BOQ yet. Add one under Clients &gt; BOQ and its lines will appear here to be priced.</Card>
       )}
-      {(job === 0 || q.isPending || b?.boq) && (<>
+      {view === 'budget' && (job === 0 || q.isPending || b?.boq) && (<>
         <StatGrid>
           <Stat label="BOQ value" value={compactINR(t?.boq_value)} sub={t ? `${plural(t.lines, 'line')}, ${t.lines_budgeted} budgeted` : undefined} loading={q.isPending && job > 0} />
           <Stat label="Material" value={compactINR(t?.material)} loading={q.isPending && job > 0} />
