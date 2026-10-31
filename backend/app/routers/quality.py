@@ -1041,15 +1041,18 @@ def list_cube_notices(request: Request, job_id: int = 0, status: str = "", page:
 
 @router.post("/api/qc/cube-notices/{nid}/retry")
 def retry_cube_notice(nid: int, request: Request, db: Session = Depends(get_db)):
-    """Sends only to whoever did not get it."""
+    """Emails the notice to the project's addresses that have not had it - the hourly run only rings the bell, so this is
+    the button that sends it. Sends only to whoever did not get it."""
     client, _, _ = wo_actor(request, db, "site.signoff")
     N = models.DBCubeDueNotice
     n = db.query(N).filter(N.id == nid, N.client_id == client.id).first()
     if not n:
         raise HTTPException(404, "Notice not found")
-    if n.status != "Failed":
-        raise HTTPException(409, "Only a failed notice can be sent again.")
-    cube_notices.deliver(db, n)
+    if n.status == "Sending":
+        raise HTTPException(409, "It is being sent now.")
+    if n.status != "Failed" and not cube_notices.unsent_to(db, n):
+        raise HTTPException(409, "It has gone to every address set for this project. Add an address in the notice settings to send it on.")
+    cube_notices.deliver(db, n, email=True)
     return {"notice": cube_notices.notice_dict(n), "message": "Sent." if n.status == "Sent" else "It could not be sent: %s" % (n.error or "try again")}
 
 

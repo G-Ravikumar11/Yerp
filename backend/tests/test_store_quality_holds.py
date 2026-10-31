@@ -486,7 +486,11 @@ def test_one_notice_for_each_project_grouped_with_the_message(tenant, monkeypatc
     assert len(rows) == 2 and {r["status"] for r in rows} == {"Sent"} and all(r["sent_at"] for r in rows)
     one = [r for r in rows if r["job_id"] == a["id"]][0]
     assert one["test_count"] == 2 and one["subject"] == "Cube Tests Due – Alpha"
+    assert sent == [], "the hourly run rings the bell; it emails nobody"
+    res = tenant.post("/api/qc/cube-notices/%d/retry" % one["id"])                # Send email, pressed
+    assert res.status_code == 200, res.text
     assert sent == [("site@acme.example", one["subject"], sent[0][2])]
+    assert tenant.post("/api/qc/cube-notices/%d/retry" % one["id"]).status_code == 409   # every address has had it
     for bit in ("Dear Project Team,", "Due Today:", "Due Tomorrow:", "Regards,\nConstruction ERP System"):
         assert bit in sent[0][2]
     with main.SessionLocal() as db:
@@ -513,8 +517,11 @@ def test_a_failed_delivery_is_recorded_and_a_retry_reaches_only_who_missed_it(te
     cubes(tenant, j, cast=day(-7), test_ages="7")
     tenant.put("/api/qc/cube-notices/settings", json={"hour": 8, "job_id": j["id"], "emails": "a@x.example, b@x.example"})
     run(company(j))
+    assert calls == []                                                # the run itself emails nobody
     n = notices(tenant)["notices"][0]
-    assert n["status"] == "Failed" and n["sent_to"] == "a@x.example" and n["sent_at"] == ""
+    first = tenant.post("/api/qc/cube-notices/%d/retry" % n["id"]).json()                # Send email, pressed
+    n = first["notice"]
+    assert n["status"] == "Failed" and n["sent_to"] == "a@x.example" and n["sent_at"] != ""
     res = tenant.post("/api/qc/cube-notices/%d/retry" % n["id"]).json()
     assert res["notice"]["status"] == "Sent" and calls == ["a@x.example", "b@x.example", "b@x.example"]
     assert tenant.post("/api/qc/cube-notices/%d/retry" % n["id"]).status_code == 409
@@ -537,7 +544,10 @@ def test_overlapping_runs_send_once(tenant, monkeypatch):
     ts = [threading.Thread(target=go) for _ in range(3)]
     [t.start() for t in ts]
     [t.join() for t in ts]
-    assert sent == ["a@x.example"] and notices(tenant)["total"] == 1
+    assert sent == [] and notices(tenant)["total"] == 1
+    nid = notices(tenant)["notices"][0]["id"]
+    with main.SessionLocal() as db:                                   # the bell rung once, not once a run
+        assert db.query(models.DBAlert).filter(models.DBAlert.kind == "cube_tests_due_bell", models.DBAlert.ref_id == nid).count() == 1
 
 
 def test_the_job_is_on_the_scheduler(tenant):

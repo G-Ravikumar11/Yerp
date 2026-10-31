@@ -85,16 +85,20 @@ def _create(db, client_id, row):
         return None
 
 
-def deliver(db, n):
+def deliver(db, n, email=False):
     """Send what has not gone yet. The status change is the claim: two runs cannot both hold it. A retry goes only to those
-    who did not get it, and the bell is rung once."""
+    who did not get it, and the bell is rung once.
+
+    The hourly run rings the bell and tells the site's staff; it emails nobody. The project's addresses are emailed only
+    when somebody presses Send (`email`)."""
     N = models.DBCubeDueNotice
-    if not db.query(N).filter(N.id == n.id, N.status.in_(("Pending", "Failed"))).update({"status": "Sending", "attempts": N.attempts + 1}, synchronize_session=False):
+    claimable = ("Pending", "Failed", "Sent") if email else ("Pending", "Failed")      # a sent notice can still be emailed
+    if not db.query(N).filter(N.id == n.id, N.status.in_(claimable)).update({"status": "Sending", "attempts": N.attempts + 1}, synchronize_session=False):
         db.rollback()
         return False
     db.commit()
     db.refresh(n)
-    cfg_to = project_emails(db, n.client_id, n.job_id)
+    cfg_to = project_emails(db, n.client_id, n.job_id) if email else []
     done = [x for x in (n.sent_to or "").split(", ") if x]
     errors = []
     if not n.bell_sent:
@@ -125,6 +129,12 @@ def deliver(db, n):
         n.sent_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     db.commit()
     return not errors
+
+
+def unsent_to(db, n):
+    """The project's addresses this notice has not been emailed to."""
+    done = {x for x in (n.sent_to or "").split(", ") if x}
+    return [to for to in project_emails(db, n.client_id, n.job_id) if to not in done]
 
 
 def run_for_client(db, client_id, now=None):

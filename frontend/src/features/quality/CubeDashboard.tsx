@@ -93,7 +93,13 @@ function NoticesModal({ job, onClose }: { job: number; onClose: () => void }) {
               <td className={td}>{[...(n.tests.today ?? []), ...(n.tests.tomorrow ?? [])].map((t) => t.reference).join(', ')}</td>
               <td className={td}><Badge tone={TONE[n.status] ?? 'info'} dot>{n.status}</Badge>{n.error && <div className="text-xs text-danger">{n.error}</div>}</td>
               <td className={td}>{n.sent_at || '-'}<div className="text-xs text-muted-foreground">{n.sent_to}</div></td>
-              <td className={td}>{n.status === 'Failed' && can('site.signoff') && <Button size="sm" variant="outline" loading={retry.isPending} disabled={retry.isPending} onClick={() => retry.mutate(n.id)}>Retry</Button>}</td>
+              <td className={td}>
+                {can('site.signoff') && (
+                  <Button size="sm" variant="outline" loading={retry.isPending} disabled={retry.isPending} title="Email this notice to the project's addresses that have not had it" onClick={() => retry.mutate(n.id)}>
+                    {n.status === 'Failed' ? 'Retry' : 'Send email'}
+                  </Button>
+                )}
+              </td>
             </tr>
           )) : <tr><td colSpan={7} className="px-3 py-4 text-center text-muted-foreground">No notices yet.</td></tr>}</tbody>
         </table></div>

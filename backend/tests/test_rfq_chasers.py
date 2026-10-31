@@ -58,7 +58,7 @@ def test_the_link_can_be_emailed_again(tenant, sent):
     assert res.status_code == 200 and len(sent) == 2
 
 
-def test_suppliers_who_have_not_quoted_are_reminded_two_days_before_and_on_the_day(tenant, sent):
+def test_the_buyer_is_told_who_has_not_quoted_two_days_before_and_on_the_day_and_no_supplier_is_emailed(tenant, sent):
     due = date.today() + timedelta(days=2)
     r = rfq(tenant, quotes_due=due.isoformat())
     invite(tenant, r, "ACC Cement", "sales@acc.example.com")
@@ -70,13 +70,21 @@ def test_suppliers_who_have_not_quoted_are_reminded_two_days_before_and_on_the_d
         inv.submitted_at = "2026-01-01 10:00:00"
         db.commit()
     sent.clear()
+    waiting = lambda: [a.body for a in _alerts("rfq_waiting", r)]
     run(date.today())
-    assert [s[0] for s in sent] == ["sales@acc.example.com"] and sent[0][1].startswith("Reminder:")
-    sent.clear()
+    assert sent == [], "suppliers are emailed only when the buyer presses the reminder"
+    assert len(waiting()) == 1 and "ACC Cement" in waiting()[0] and "UltraTech" not in waiting()[0]
     run(date.today() + timedelta(days=1))                          # nothing the day between
-    assert sent == []
+    assert len(waiting()) == 1
     run(due)                                                        # and again on the day
-    assert [s[0] for s in sent] == ["sales@acc.example.com"]
+    assert len(waiting()) == 2 and sent == []
+
+
+def _alerts(kind, r):
+    from app import db as database, models
+    with database.SessionLocal() as db:
+        rfq_row = db.get(models.DBRfq, r["rfq"]["id"])
+        return db.query(models.DBAlert).filter(models.DBAlert.kind == kind, models.DBAlert.client_id == rfq_row.client_id).all()
 
 
 def test_on_the_due_date_the_buyer_gets_the_l1_summary_once(tenant, sent):

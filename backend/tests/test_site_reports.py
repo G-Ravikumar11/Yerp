@@ -60,9 +60,15 @@ def diary(tenant, job, signed=False):
     return d
 
 
+def test_nothing_is_emailed_until_the_company_turns_it_on(tenant, sent):
+    job, pm, _ = site(tenant)
+    diary(tenant, job, signed=True)
+    assert run_evening(job["id"]) == {"reports": 0, "reminders": 0} and sent == []
+
+
 def test_a_draft_day_goes_to_the_manager_only(tenant, sent):
     job, pm, _ = site(tenant)
-    tenant.put("/api/alerts/settings", json={"site_reports": {"email_client": True}})
+    tenant.put("/api/alerts/settings", json={"site_reports": {"email_client": True, "email_manager": True}})
     diary(tenant, job)
     assert run_evening(job["id"]) == {"reports": 1, "reminders": 0}
     assert [m["to"] for m in sent] == [pm["email"]]
@@ -74,6 +80,7 @@ def test_a_draft_day_goes_to_the_manager_only(tenant, sent):
 
 def test_a_signed_off_day_goes_to_the_client_too_when_the_company_says_so(tenant, sent):
     job, pm, _ = site(tenant)
+    tenant.put("/api/alerts/settings", json={"site_reports": {"email_manager": True}})
     diary(tenant, job, signed=True)
     run_evening(job["id"])
     assert [m["to"] for m in sent] == [pm["email"]], "the client is not emailed until the company turns it on"
