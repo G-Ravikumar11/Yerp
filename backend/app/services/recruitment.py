@@ -22,9 +22,9 @@ def job_interview_reminders(db, now):
     did not. Candidates no-show when nobody reminds them, and an interviewer
     who has forgotten is worse than one who cancels.
 
-    Off unless INTERVIEW_REMINDERS_ENABLED=1: an email goes out only when someone clicks send.
+    On unless INTERVIEW_REMINDERS_ENABLED=0.
     """
-    if os.getenv("INTERVIEW_REMINDERS_ENABLED", "0") != "1":
+    if os.getenv("INTERVIEW_REMINDERS_ENABLED", "1") == "0":
         return "interview reminders are off"
     horizon = now + timedelta(hours=INTERVIEW_REMINDER_HOURS)
     sent = 0

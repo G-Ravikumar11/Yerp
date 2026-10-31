@@ -17,8 +17,8 @@ from app.core.config import logger
 from app.core.scheduler import scheduled_job
 
 LIVE = ("won", "in_progress")
-# Nothing is emailed unless the company ticks it: the reminders and alerts are on-screen notices.
-SITE_REPORT_DEFAULTS = {"email_client": False, "email_manager": False, "remind_missing": True, "delay_alerts": True}
+# The project manager gets the evening report unless the company turns it off; the client only when it is turned on.
+SITE_REPORT_DEFAULTS = {"email_client": False, "email_manager": True, "remind_missing": True, "delay_alerts": True}
 SITE_REPORT_LABELS = {
     "email_client": "Email the evening report to the client's contact (signed-off days only)",
     "email_manager": "Email the evening report to the project manager",

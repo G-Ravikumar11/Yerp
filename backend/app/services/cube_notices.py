@@ -89,8 +89,8 @@ def deliver(db, n, email=False):
     """Send what has not gone yet. The status change is the claim: two runs cannot both hold it. A retry goes only to those
     who did not get it, and the bell is rung once.
 
-    The hourly run rings the bell and tells the site's staff; it emails nobody. The project's addresses are emailed only
-    when somebody presses Send (`email`)."""
+    The hourly run rings the bell, tells the site's staff and emails the addresses set for the project; Send email on a
+    notice sends it to any of them it has not reached."""
     N = models.DBCubeDueNotice
     claimable = ("Pending", "Failed", "Sent") if email else ("Pending", "Failed")      # a sent notice can still be emailed
     if not db.query(N).filter(N.id == n.id, N.status.in_(claimable)).update({"status": "Sending", "attempts": N.attempts + 1}, synchronize_session=False):
@@ -144,14 +144,14 @@ def run_for_client(db, client_id, now=None):
     N = models.DBCubeDueNotice
     # Those that failed an earlier run first: one that fails below waits for the next hour, not the next line.
     for n in db.query(N).filter(N.client_id == client_id, N.status == "Failed", N.attempts < MAX_ATTEMPTS).all():
-        deliver(db, n)
+        deliver(db, n, email=True)
     for row in cube_tests_due(db, client_id, now=now).values():
         job = db.get(models.DBJob, row["job_id"])
         if now.astimezone(zone_of(job.timezone)).hour < hour:
             continue
         n = _create(db, client_id, row)
         if n is not None:
-            deliver(db, n)
+            deliver(db, n, email=True)
             sent += 1
     return sent
 

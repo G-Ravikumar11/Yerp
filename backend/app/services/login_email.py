@@ -75,6 +75,15 @@ def deliver_login_email(client_id, emp_id, company, to, mail):
         db.commit()
 
 
+def welcome_email(request, db, company, emp):
+    """The welcome for somebody just added: their login and a one-time link to set their own password (never the
+    password itself). Written in the request, where the link is issued; sent after it."""
+    token = issue_reset_token(db, "employee", emp.id, request.client.host if request.client else "", minutes=LOGIN_LINK_HOURS * 60)
+    link = f"{_base_url(request)}/next/reset-password?token={token}&portal=employee"
+    name = f"{emp.first_name} {emp.last_name}".strip()
+    return login_email(company, name, emp.employee_id, emp.org_email, login_url(request), set_password_link=link)
+
+
 def resend_login_email(request, db, company, emp):
     """A one-time link in place of the password, which nobody has any more. Whether it went."""
     client_id, emp_id, to = emp.client_id, emp.id, emp.org_email

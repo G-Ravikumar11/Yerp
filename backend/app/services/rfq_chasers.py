@@ -76,8 +76,8 @@ def l1_summary(db, rfq):
 
 @scheduled_job("rfq_chasers")
 def job_rfq_chasers(db, now):
-    """Tell the buyer which suppliers have not quoted as the due date nears, and give the L1 summary on the due date.
-    Suppliers are emailed only when the buyer presses the reminder on the enquiry: nothing goes out on its own."""
+    """Remind the suppliers who have not quoted (by email, where they have an address) as the due date nears, tell the
+    buyer who is still awaited, and give the L1 summary on the due date."""
     today = now.date() if isinstance(now, datetime) else date.today()
     reminded = summaries = 0
     for rfq in db.query(models.DBRfq).filter(models.DBRfq.status == "OPEN", models.DBRfq.quotes_due.isnot(None),
@@ -89,9 +89,13 @@ def job_rfq_chasers(db, now):
         if left in REMIND_DAYS_LEFT:
             waiting = [inv for inv in db.query(models.DBRfqInvite).filter(models.DBRfqInvite.rfq_id == rfq.id).all()
                        if not answered(inv) and (inv.reminded_on or "") != today.isoformat()]
+            client = db.get(models.DBClient, rfq.client_id)
+            for inv in waiting:
+                if EMAIL.match(inv.email or ""):
+                    email_invite(db, client, rfq, inv, reminder=True)
             if waiting:
                 names = ", ".join((inv.supplier_name or inv.email or "a supplier") for inv in waiting[:6])
-                text = "%d supplier%s %s not quoted on %s, due %s: %s. Remind them from the enquiry." % (
+                text = "%d supplier%s %s not quoted on %s, due %s: %s. Those with an email have been reminded." % (
                     len(waiting), "" if len(waiting) == 1 else "s", "has" if len(waiting) == 1 else "have", rfq.number,
                     "today" if left == 0 else "in %d day%s" % (left, "" if left == 1 else "s"), names)
                 notify(db, rfq.client_id, "rfq_waiting", "Quotes awaited: %s" % rfq.number, text, view="enquiries",

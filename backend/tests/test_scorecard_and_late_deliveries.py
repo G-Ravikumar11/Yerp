@@ -70,12 +70,15 @@ def test_a_late_order_is_chased_until_goods_arrive(tenant, sent):
     tenant.post("/api/suppliers", json={"name": "ACC Cement", "email": "sales@acc.example.com"})
     run("late_deliveries", date.today())
     late = [a for a in tenant.get("/api/alerts").json()["alerts"] if a["kind"] == "late_delivery"]
-    assert len(late) == 1 and po["number"] in late[0]["title"] and sent == []          # the buyer is told; supplier emails are off
-    assert tenant.put("/api/purchase-controls", json={"late_delivery_emails": True}).json()["late_delivery_emails"] is True
+    assert len(late) == 1 and po["number"] in late[0]["title"]                        # the buyer is told
+    assert [m[0] for m in sent] == ["sales@acc.example.com"] and po["number"] in sent[0][1]   # and the supplier emailed
+    sent.clear()
     run("late_deliveries", date.today() + timedelta(days=1))                          # the day after: not yet (every 3 days)
     assert sent == []
     run("late_deliveries", date.today() + timedelta(days=3))
     assert [m[0] for m in sent] == ["sales@acc.example.com"] and po["number"] in sent[0][1]
+    # A company can turn the supplier emails off; the buyer is still told.
+    assert tenant.put("/api/purchase-controls", json={"late_delivery_emails": False}).json()["late_delivery_emails"] is False
     deliver(tenant, po, 4)                                                            # something has come: chasing stops
     sent.clear()
     run("late_deliveries", date.today() + timedelta(days=6))

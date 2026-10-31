@@ -19,7 +19,7 @@ EMAIL_SUPPLIERS_KEY = "late_delivery_emails"
 
 
 def emails_on(db, client_id):
-    return (tenant_setting(db, client_id, EMAIL_SUPPLIERS_KEY, "0") or "0") == "1"
+    return (tenant_setting(db, client_id, EMAIL_SUPPLIERS_KEY, "1") or "1") == "1"
 
 
 def _late_days(po, today):

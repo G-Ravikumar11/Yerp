@@ -136,8 +136,15 @@ def test_another_tenant_cannot_read_them(client, tenant):
         f"/api/recruitment/interviews/{iv['id']}/reminders").status_code == 404
 
 
-def test_nothing_is_mailed_on_its_own(client, tenant, monkeypatch):
-    monkeypatch.delenv("INTERVIEW_REMINDERS_ENABLED")
+def test_the_reminders_can_be_switched_off(client, tenant, monkeypatch):
+    monkeypatch.setenv("INTERVIEW_REMINDERS_ENABLED", "0")
     from app.services.recruitment import job_interview_reminders
     with main.SessionLocal() as db:
         assert "off" in job_interview_reminders(db, datetime.now())
+
+
+def test_they_are_on_unless_switched_off(client, tenant, monkeypatch):
+    monkeypatch.delenv("INTERVIEW_REMINDERS_ENABLED")
+    from app.services.recruitment import job_interview_reminders
+    with main.SessionLocal() as db:
+        assert "off" not in job_interview_reminders(db, datetime.now())

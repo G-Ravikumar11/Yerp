@@ -60,10 +60,15 @@ def diary(tenant, job, signed=False):
     return d
 
 
-def test_nothing_is_emailed_until_the_company_turns_it_on(tenant, sent):
+def test_the_manager_is_emailed_unless_the_company_turns_it_off(tenant, sent):
     job, pm, _ = site(tenant)
     diary(tenant, job, signed=True)
-    assert run_evening(job["id"]) == {"reports": 0, "reminders": 0} and sent == []
+    assert run_evening(job["id"]) == {"reports": 1, "reminders": 0} and [m["to"] for m in sent] == [pm["email"]]
+    job2, pm2, _ = site(tenant, "Quiet Towers")
+    tenant.put("/api/alerts/settings", json={"site_reports": {"email_manager": False}})
+    diary(tenant, job2, signed=True)
+    sent.clear()
+    assert run_evening(job2["id"]) == {"reports": 0, "reminders": 0} and sent == []
 
 
 def test_a_draft_day_goes_to_the_manager_only(tenant, sent):

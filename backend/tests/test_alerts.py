@@ -98,7 +98,7 @@ def test_the_morning_digest_waits_for_seven_and_goes_once(tenant, sent):
 
 def test_a_test_message_says_where_it_went(tenant, sent):
     out = tenant.post("/api/alerts/test").json()
-    assert "bell" in out["message"]
+    assert out["sent_to"] and "@" in out["sent_to"]          # with nobody named, the Master's own address
     tenant.put("/api/alerts/settings", json={"emails": ["site@yprojects.co.in"]})
     out = tenant.post("/api/alerts/test").json()
     assert out["sent_to"] == "site@yprojects.co.in"
@@ -107,3 +107,13 @@ def test_a_test_message_says_where_it_went(tenant, sent):
 def test_another_company_sees_none_of_it(tenant, second_tenant, sent):
     certified_bill(tenant)
     assert second_tenant.get("/api/alerts").json()["alerts"] == []
+
+
+def test_the_masters_own_alerts_reach_the_master_when_nobody_is_named(tenant, sent):
+    from app.core.notifications import notify
+    with database.SessionLocal() as db:
+        cid = db.query(main.models.DBClient.id).order_by(main.models.DBClient.id.desc()).first()[0]
+        master = db.query(main.models.DBClient.email).filter(main.models.DBClient.id == cid).scalar()
+        notify(db, cid, "security_lock", "Repeated wrong passwords for x@example.com", "Locked for 15 minutes.")
+        notify(db, cid, "money_in", "Money received", "5,000")                      # not one of the Master's own: not mailed
+    assert [s[0] for s in sent["email"]] == [master]

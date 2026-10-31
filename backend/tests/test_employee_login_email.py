@@ -39,18 +39,16 @@ def status_of(tenant, emp_id):
     return tenant.get(f"/api/employees/{emp_id}").json()["credentials_email_status"]
 
 
-def test_adding_an_employee_emails_nobody_until_send_is_clicked(tenant, portal, mail):
+def test_a_new_employee_is_welcomed_at_the_organisation_address_with_a_link_never_the_password(tenant, portal, mail):
     work = org()
     e = make_employee(tenant, password=PASSWORD, org_email=work, first_name="Asha", last_name="Rao")
     assert PASSWORD not in str(e)
-    assert mail == [] and status_of(tenant, e["id"]) == ""          # an email goes out only when somebody clicks send
-    assert portal.post("/api/employee/auth/login", json={"email": work, "password": PASSWORD}).status_code == 200
-
-    r = tenant.post(f"/api/employees/{e['id']}/login-email")         # Send login email, on their page
-    assert r.status_code == 200 and r.json()["ok"] is True
     assert [m["to"] for m in mail] == [work] and e["email"] != work
-    assert "Employee ID: %s" % e["employee_id"] in mail[0]["body"] and PASSWORD not in mail[0]["body"]
+    body = mail[0]["body"]
+    assert "Hello Asha Rao," in body and "Employee ID: %s" % e["employee_id"] in body
+    assert PASSWORD not in body and "token=" in body                    # a link to set it, never the password
     assert status_of(tenant, e["id"]) == "sent"
+    assert portal.post("/api/employee/auth/login", json={"email": work, "password": PASSWORD}).status_code == 200
 
 
 def test_the_password_is_left_nowhere_but_the_hash(tenant, mail):
@@ -62,11 +60,11 @@ def test_the_password_is_left_nowhere_but_the_hash(tenant, mail):
         assert PASSWORD not in " ".join(str(v) for v in vars(row).values())
 
 
-def test_nothing_goes_out_without_a_password_or_without_an_organisation_address(tenant, mail):
-    no_login = make_employee(tenant, org_email=org())
+def test_nothing_goes_out_without_an_organisation_address(tenant, mail):
     no_org = make_employee(tenant, password=PASSWORD)
-    assert mail == []
-    assert status_of(tenant, no_login["id"]) == "" and status_of(tenant, no_org["id"]) == ""
+    assert mail == [] and status_of(tenant, no_org["id"]) == ""
+    no_password = make_employee(tenant, org_email=org())              # a link lets them set one
+    assert len(mail) == 1 and status_of(tenant, no_password["id"]) == "sent"
 
 
 def test_a_resend_makes_no_new_employee_and_carries_a_one_time_link_not_a_password(tenant, portal, mail):

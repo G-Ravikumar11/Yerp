@@ -5,7 +5,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import and_, case, delete as sa_delete, func, func as sqlfunc, or_, select, update
 from sqlalchemy.orm import Session, aliased, joinedload, undefer
 
@@ -34,7 +34,7 @@ from app.core.permissions import (
     permissions_for,
 )
 from app.core.security import rate_limiter, validate_password_strength
-from app.services.login_email import resend_login_email
+from app.services.login_email import deliver_login_email, resend_login_email, welcome_email
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.store_staff import release_on_leaving
 from app.services.employee_portal import leave_balance_for
@@ -473,7 +473,7 @@ def _access_detail(old_role, new_role, before, after):
 
 
 @router.post("/api/employees")
-def create_employee(request: Request, body: EmployeeCreate, db: Session = Depends(get_db)):
+def create_employee(request: Request, body: EmployeeCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """A new member of staff, with their checklist, document requests, sites and access, in one
     transaction. Every step is a trip to a database across an ocean, so nothing is looked up twice,
     nothing is looked for that cannot be there yet, and the answer is built before the one commit."""
@@ -557,13 +557,19 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         "id": emp.id, "employee_id": emp_number,
         "first_name": first_name, "last_name": last_name,
         "email": email, "org_email": org_email or "", "status": "onboarding", "level": level or "", "role": role,
-        # Nothing is emailed on its own: the login email goes when somebody clicks Send login email on their page.
-        "credentials_email_status": "",
+        "credentials_email_status": "sending" if org_email else "",
         "permission_role": permission_role or DEFAULT_PERMISSION_ROLE,
         "department_id": dept_id, "reports_to": reports_to,
         "message": "Employee created. Onboarding checklist generated.",
     }
+    # With an organisation address, they are emailed their login and a link to set their own password.
+    mail = None
+    if org_email:
+        emp.credentials_email_status = "sending"
+        mail = welcome_email(request, db, client.company_name or "Our office", emp)
     db.commit()
+    if mail:
+        background_tasks.add_task(deliver_login_email, client.id, emp.id, client.company_name or "Our office", org_email, mail)
     return out
 
 

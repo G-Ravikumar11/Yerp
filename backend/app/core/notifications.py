@@ -220,8 +220,10 @@ NOTIFY_KINDS = {
     "celebration": "A birthday or a special day is being celebrated today",
 }
 # Out of the box: the bell for everything, email for the money, the digest and a locked account.
-# Nothing is emailed on its own: a company ticks the alerts it wants mailed in Settings.
-NOTIFY_DEFAULT_EMAIL = set()
+# Emailed unless the company turns them off: the Master's own alerts, which go to the Master's address when the company
+# has named nobody for alerts. Everything else is emailed only where the company ticks it in Settings.
+NOTIFY_DEFAULT_EMAIL = {"daily_digest", "security_lock"}
+TO_THE_MASTER = {"daily_digest", "security_lock"}
 
 
 def notify_settings(db, client_id):
@@ -281,6 +283,9 @@ def notify(db, client_id, kind, title, body="", view="", ref_type="", ref_id=Non
         cfg = notify_settings(db, client_id)
         wanted = cfg["channels"].get(kind, [])
         emails = cfg["emails"] if "email" in wanted else []
+        if "email" in wanted and not emails and kind in TO_THE_MASTER:
+            master = db.query(models.DBClient.email).filter(models.DBClient.id == client_id).scalar()
+            emails = [master] if master else []
         numbers = cfg["whatsapp"] if ("whatsapp" in wanted and cfg["whatsapp_ready"]) else []
         n.sent_to = ", ".join(emails + ["+" + x for x in numbers])
         db.add(n)
