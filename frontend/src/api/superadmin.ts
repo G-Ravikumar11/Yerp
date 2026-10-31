@@ -24,6 +24,10 @@ export interface Trends { months: string[]; revenue: number[]; active_users: num
 export interface LoginStats { today_logins: number; week_logins: number; failed_logins: number; clients_never_logged_in: number }
 export interface LoginLog { email: string; user_type: string; login_type: string; ip_address?: string; status: string; created_at?: string }
 
+/** Every company's errors with their tracebacks, and whether server faults are spiking (the platform admin only). */
+export interface SaError { id: number; at: string; code: string; ref: string; status: number; method: string; path: string; detail: string; who: string; client_id: number | null; company: string; trace: string }
+export interface SaErrors { errors: SaError[]; areas: Record<string, string>; days: number; spike: { last_hour: number; usual_per_hour: number; threshold: number; spiking: boolean } }
+
 const useSa = <T,>(key: string, url: string, enabled = true) => useQuery({ queryKey: ['sa', key, url], queryFn: () => get<T>(url), enabled, retry: false })
 
 export const useSaMe = () => useQuery({ queryKey: ['sa', 'me'], queryFn: () => api<SaMe>('/api/superadmin/me', { quiet: true }).catch(() => null), retry: false })
@@ -38,6 +42,7 @@ export const useSaClient = (id: number) => useSa<SaClientDetail>('client', `/api
 export const useClientOverview = (id: number) => useSa<ClientOverview>('overview', `/api/superadmin/clients/${id}/overview`, id > 0)
 export const useTrends = () => useSa<Trends>('trends', '/api/superadmin/trends')
 export const useLoginStats = () => useSa<LoginStats>('loginstats', '/api/superadmin/login-stats')
+export const useSaErrors = (area: string, q: string) => useSa<SaErrors>('errors', `/api/superadmin/errors?days=7${area ? `&area=${area}` : ''}${q ? `&q=${encodeURIComponent(q)}` : ''}`)
 export const useLoginLogs = () => useSa<LoginLog[]>('loginlogs', '/api/superadmin/login-logs?limit=100')
 
 export const saKeys = { all: ['sa'] as const }

@@ -1,5 +1,8 @@
 """Settings > Error log: every error the app answered with, for the Master to see - and screen crashes reported from
-the browser. What each code means is in app/core/errors.py (CODES) and docs/error-codes.md."""
+the browser. What each code means is in app/core/errors.py (CODES) and docs/error-codes.md.
+
+The traceback of a fault is the platform's own code: the company sees that one is kept (quote the ref), the platform
+admin reads it - every company's, under /api/superadmin/errors, with the spike watch (services/error_watch.py)."""
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -7,10 +10,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import models
-from app.core.auth import get_client_user, require_owner
+from app.core.auth import get_client_user, require_owner, require_superadmin
 from app.core.errors import CODES, new_ref
 from app.db import get_db, get_read_db
 from app.core.security import rate_limiter
+from app.services.error_watch import spike   # importing it also registers the hourly spike watch
 
 router = APIRouter()
 
@@ -59,8 +63,38 @@ def error_log(request: Request, area: str = "", q: str = "", days: int = 30, db:
     return {"errors": [{"id": r.id, "at": r.at, "code": r.code, "title": CODES.get(r.code) or {
                             "YE-APP": "A screen hit a problem", "YE-NET": "Could not reach the server"}.get(r.code, ""),
                         "ref": r.ref, "status": r.status or 0, "method": r.method or "", "path": r.path or "",
-                        "detail": r.detail or "", "who": name(r.who or ""), "trace": r.trace or ""} for r in rows],
+                        "detail": r.detail or "", "who": name(r.who or ""), "trace": "",
+                        # The traceback stays with the platform; the company is told one is kept, under the ref.
+                        "has_trace": bool(r.trace)} for r in rows],
             "areas": AREAS, "summary": {"total": sum(by_area.values()), "by_area": by_area, "days": days}}
+
+
+@router.get("/api/superadmin/errors")
+def platform_errors(request: Request, area: str = "", q: str = "", client_id: int = 0, days: int = 7,
+                    db: Session = Depends(get_read_db)):
+    """Every company's errors with their tracebacks, newest first, and whether server faults are spiking. The platform
+    admin only."""
+    require_superadmin(request)
+    days = max(1, min(int(days or 7), 90))
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = db.query(models.DBErrorLog).filter(models.DBErrorLog.at >= since)
+    if client_id:
+        rows = rows.filter(models.DBErrorLog.client_id == client_id)
+    if area:
+        rows = rows.filter(models.DBErrorLog.code.like("YE-%s%%" % area.upper()))
+    words = (q or "").strip()
+    if words:
+        like = "%%%s%%" % words
+        rows = rows.filter(models.DBErrorLog.ref.ilike(like) | models.DBErrorLog.path.ilike(like)
+                           | models.DBErrorLog.detail.ilike(like) | models.DBErrorLog.code.ilike(like)
+                           | models.DBErrorLog.trace.ilike(like))
+    rows = rows.order_by(models.DBErrorLog.id.desc()).limit(300).all()
+    names = {c.id: (c.company_name or c.email or "") for c in db.query(models.DBClient).filter(
+        models.DBClient.id.in_({r.client_id for r in rows if r.client_id} or {0})).all()}
+    return {"errors": [{"id": r.id, "at": r.at, "code": r.code, "ref": r.ref, "status": r.status or 0, "method": r.method or "",
+                        "path": r.path or "", "detail": r.detail or "", "who": r.who or "", "client_id": r.client_id,
+                        "company": names.get(r.client_id, "") if r.client_id else "", "trace": r.trace or ""} for r in rows],
+            "areas": AREAS, "spike": spike(db), "days": days}
 
 
 class ScreenFault(BaseModel):

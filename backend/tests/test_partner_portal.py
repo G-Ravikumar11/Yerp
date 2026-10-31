@@ -226,3 +226,43 @@ def test_a_contractor_sees_its_released_retention_as_passed_for_payment(tenant, 
     rows = [b for b in portal.get("/api/portal/bills").json()["bills"] if b["number"] == rel["number"]]
     assert rows and rows[0]["left"] == rel["net_amount"]
     assert portal.get("/api/portal/summary").json()["retention_held"] == 0
+
+
+def test_a_supplier_sees_received_and_pending_per_line_and_bills_line_by_line(tenant, portal):
+    import json
+    from test_goods_receipt import post as post_grn, receipt, set_lines
+    s, po = supplier_setup(tenant)
+    grn = receipt(tenant, po)
+    set_lines(tenant, grn, [{"received_qty": 60, "accepted_qty": 60}])          # 60 of the 100 bags in
+    post_grn(tenant, grn)
+    inv = invite(tenant, "supplier", s["id"], "lines@acc.in")
+    join(portal, inv["invite_url"])
+    [line] = portal.get("/api/portal/orders/%d" % po["id"]).json()["lines"]
+    assert (line["received"], line["pending"], line["billed"], line["to_bill"]) == (60, 40, 0, 60)
+
+    send = lambda number, qty: portal.post("/api/portal/invoices", data={"number": number, "po_number": po["number"],
+                                                                         "lines": json.dumps([{"po_line_id": line["id"], "qty": qty}])},
+                                           files={"file": ("%s.pdf" % number, b"%PDF-1.4 invoice", "application/pdf")})
+    too_much = send("ACC/1", 70)
+    assert too_much.status_code == 409 and "60" in too_much.json()["detail"]
+    assert send("ACC/2", 50).status_code == 200
+    [line] = portal.get("/api/portal/orders/%d" % po["id"]).json()["lines"]
+    assert (line["billed"], line["to_bill"]) == (50, 10)
+
+    [bill] = [b for b in portal.get("/api/portal/bills").json()["bills"] if b["number"] == "ACC/2"]
+    assert bill["claimed"] == 15000                                              # 50 bags at the order's 300
+    [m] = bill["lines"]
+    assert (m["qty"], m["rate"], m["po_rate"], m["received"], m["verdict"]) == (50, 300, 300, 60, "MATCHED")
+    # Office side: the bill's line names the order line, so the three-way match reads it line by line.
+    detail = tenant.get("/api/match/three-way/%d" % po["id"]).json()
+    assert detail
+
+
+def test_lines_need_the_order_they_belong_to(tenant, portal):
+    import json
+    s, po = supplier_setup(tenant)
+    inv = invite(tenant, "supplier", s["id"], "nolines@acc.in")
+    join(portal, inv["invite_url"])
+    res = portal.post("/api/portal/invoices", data={"number": "ACC/9", "lines": json.dumps([{"po_line_id": 1, "qty": 1}])},
+                      files={"file": ("x.pdf", b"%PDF-1.4", "application/pdf")})
+    assert res.status_code == 400

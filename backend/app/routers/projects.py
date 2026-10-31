@@ -888,7 +888,8 @@ def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
     # Buying's items (billed ahead of the goods, late deliveries, indents nobody is buying for, drawings waiting) sit
     # beside the project list's own.
     from app.services.attention_buying import buying_items, with_buying
-    return cached_read(("attention", client.id), lambda: with_buying(attention_payload(db, client.id), buying_items(db, client.id)))
+    from app.services.doc_control import attention_items as doc_attention
+    return cached_read(("attention", client.id), lambda: with_buying(attention_payload(db, client.id), buying_items(db, client.id) + doc_attention(db, client.id)))
 
 
 @router.get("/api/jobs/{job_id}/equipment")

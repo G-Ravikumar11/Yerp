@@ -3,7 +3,7 @@ import { Button, Field, Input, Modal, Stat, StatGrid } from '@/components/ui'
 import { formatINR } from '@/lib/utils'
 import { formatDate } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
-import { adjustWallet, changePassword, deleteClient, impersonate, saKeys, saLogout, savePrice, toggleClient, useClientOverview, useGateways, useInsights, useLoginLogs, useLoginStats, usePlatformStats, usePricing, useRevenue, useSaClient, useSaClients, useSaMe, useTrends, useWallets, type PriceRow, type SaClient, type WalletRow } from '@/api/superadmin'
+import { adjustWallet, changePassword, deleteClient, impersonate, saKeys, saLogout, savePrice, toggleClient, useClientOverview, useGateways, useInsights, useLoginLogs, useLoginStats, usePlatformStats, usePricing, useRevenue, useSaClient, useSaClients, useSaErrors, useSaMe, useTrends, useWallets, type PriceRow, type SaClient, type WalletRow } from '@/api/superadmin'
 import { appUrl } from '@/lib/paths'
 
 const card = 'rounded-xl border border-border bg-card p-5'
@@ -41,6 +41,7 @@ export default function SuperadminPage() {
         <Billing />
         <Trends />
         <Logins />
+        <ServerErrors />
         <Clients />
       </main>
       <PasswordModal open={passwordOpen} onClose={() => setPasswordOpen(false)} />
@@ -199,6 +200,52 @@ function Logins() {
           <tbody className="divide-y divide-border">
             {shown.length === 0 && <tr><td colSpan={6} className="px-2 py-6 text-center text-muted-foreground">No login activity yet</td></tr>}
             {shown.map((l, i) => <tr key={i}><td className="px-2 py-2 font-medium">{l.email}</td><td className="px-2 py-2 text-muted-foreground">{l.user_type}</td><td className="px-2 py-2">{l.login_type === 'google' ? 'Google' : 'Password'}</td><td className="px-2 py-2 font-mono text-xs text-muted-foreground">{l.ip_address || '-'}</td><td className={`px-2 py-2 font-semibold ${l.status === 'success' ? 'text-success' : l.status === 'failed' ? 'text-danger' : 'text-warning'}`}>{l.status}</td><td className="px-2 py-2 text-xs text-muted-foreground">{l.created_at}</td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </Section>
+  )
+}
+
+/** Every company's errors of the last week, with the traceback a company never sees, and the spike watch. */
+function ServerErrors() {
+  const [area, setArea] = useState('SRV')
+  const [search, setSearch] = useState('')
+  const [open, setOpen] = useState<number | null>(null)
+  const d = useSaErrors(area, search).data
+  const sp = d?.spike
+  return (
+    <Section title="Server errors" aside={
+      <div className="flex flex-wrap gap-2">
+        <select aria-label="Which errors" className="h-9 rounded-md border border-input bg-card px-2 text-sm" value={area} onChange={(e) => setArea(e.target.value)}>
+          <option value="">All</option>
+          {Object.entries(d?.areas ?? { SRV: 'Server faults' }).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+        <Input aria-label="Search errors" className="h-9 w-56" placeholder="Ref, path, company, trace..." value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>}>
+      {sp && (
+        <p role={sp.spiking ? 'alert' : 'status'} className={`mb-3 rounded-lg px-3 py-2 text-sm ${sp.spiking ? 'bg-danger-soft text-danger' : 'bg-muted text-muted-foreground'}`}>
+          {sp.spiking ? `Spiking: ${sp.last_hour} server faults in the last hour against a usual ${sp.usual_per_hour} an hour.` : `${sp.last_hour} server faults in the last hour (usual ${sp.usual_per_hour} an hour; an alert goes at ${sp.threshold}).`}
+        </p>
+      )}
+      <div className="overflow-x-auto rounded-xl border border-border bg-card">
+        <table aria-label="Server errors" className="w-full text-sm">
+          <thead className="border-b border-border"><tr>{['When', 'Company', 'Code / ref', 'What happened'].map((h) => <th key={h} className={th}>{h}</th>)}</tr></thead>
+          <tbody className="divide-y divide-border">
+            {(d?.errors ?? []).length === 0 && <tr><td colSpan={4} className="px-2 py-6 text-center text-muted-foreground">No errors in the last {d?.days ?? 7} days</td></tr>}
+            {(d?.errors ?? []).map((e) => (
+              <tr key={e.id} className="align-top">
+                <td className="whitespace-nowrap px-2 py-2 text-xs text-muted-foreground">{e.at}</td>
+                <td className="px-2 py-2">{e.company || '-'}</td>
+                <td className="px-2 py-2"><div className="font-mono text-xs">{e.code}</div><div className="font-mono text-xs text-muted-foreground">{e.ref}</div></td>
+                <td className="px-2 py-2">
+                  <div className="text-[13px]">{e.detail || '-'}</div>
+                  <div className="font-mono text-[11px] text-muted-foreground">{e.method} {e.path}</div>
+                  {e.trace && <button type="button" className="mt-1 text-xs text-primary hover:underline" onClick={() => setOpen(open === e.id ? null : e.id)}>{open === e.id ? 'Hide the traceback' : 'Show the traceback'}</button>}
+                  {open === e.id && <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-muted p-3 text-[11px] leading-snug">{e.trace}</pre>}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

@@ -91,6 +91,49 @@ def _portal_orders(db, u, party, party_name):
             if norm_name(p.supplier_name) == key]
 
 
+def po_line_position(db, po):
+    """{po_line_id: {"received", "billed", "pending", "to_bill"}} for one order: what arrived at the gate, what the live
+    bills have billed of it, what is still to come, and what can still be billed (received, not yet billed)."""
+    from app.services.procurement import OrderPrefetch
+    pre = OrderPrefetch(db, [po])
+    got = pre.received(po.id)
+    billed = pre.billed(po.id)["per_line"]
+    out = {}
+    for l in pre.lines.get(po.id, []):
+        r, b = got.get(l.id, 0.0), billed.get(l.id, 0.0)
+        out[l.id] = {"received": round(r, 3), "billed": round(b, 3), "pending": round(max(0.0, (l.qty or 0) - r), 3),
+                     "to_bill": round(max(0.0, r - b), 3)}
+    return out
+
+
+def bill_line_match(db, b):
+    """A supplier bill's lines, each matched against its order line: [{description, qty, rate, po_rate, received,
+    billed, verdict}]. MATCHED when everything billed on the line so far is within what was received and at the
+    order's rate; MORE_THAN_RECEIVED or RATE_DIFFERS when not; NO_ORDER_LINE for a line naming none."""
+    lines = db.query(models.DBBillLineItem).filter(models.DBBillLineItem.bill_id == b.id).order_by(models.DBBillLineItem.id).all()
+    if not lines or not b.purchase_order_id:
+        return []
+    po = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.id == b.purchase_order_id).first()
+    if po is None:
+        return []
+    pos = po_line_position(db, po)
+    po_lines = {l.id: l for l in db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).all()}
+    out = []
+    for l in lines:
+        pl = po_lines.get(l.po_line_id)
+        if pl is None:
+            out.append({"description": l.description or "", "qty": l.qty or 0, "rate": money(l.price), "po_rate": None,
+                        "received": None, "billed": None, "verdict": "NO_ORDER_LINE"})
+            continue
+        p = pos.get(pl.id, {"received": 0.0, "billed": 0.0})
+        verdict = ("MORE_THAN_RECEIVED" if p["billed"] > p["received"] + 0.001
+                   else "RATE_DIFFERS" if abs((l.price or 0) - (pl.price or 0)) > 0.005 else "MATCHED")
+        out.append({"description": l.description or pl.description or "", "qty": l.qty or 0, "uom": pl.uom or "",
+                    "rate": money(l.price), "po_rate": money(pl.price), "ordered": pl.qty or 0,
+                    "received": p["received"], "billed": p["billed"], "verdict": verdict})
+    return out
+
+
 def _portal_bills(db, u, party, party_name):
     settled = settled_amounts(db, u.client_id)
     if u.party_type == "contractor":
@@ -147,7 +190,8 @@ def _portal_bills(db, u, party, party_name):
                     "claimed": money(b.amount), "gst": money(b.tax_amount), "net": money(b.total or b.amount),
                     "paid": paid, "left": 0.0 if rejected or (b.status or "") == "Draft"
                     else money(max(0.0, (b.total or b.amount or 0) - paid)),
-                    "note": (b.rejection_reason or "") if rejected else ""})
+                    "note": (b.rejection_reason or "") if rejected else "",
+                    "lines": bill_line_match(db, b)})
     return out
 
 

@@ -13,7 +13,10 @@ export interface LoggedError {
   path: string
   detail: string
   who: string
+  /** Empty for a company: the traceback is the platform's, read by its admin. */
   trace: string
+  /** A traceback is kept for this one - quote the ref to the platform team. */
+  has_trace?: boolean
 }
 export interface ErrorLog { errors: LoggedError[]; areas: Record<string, string>; summary: { total: number; by_area: Record<string, number>; days: number } }
 

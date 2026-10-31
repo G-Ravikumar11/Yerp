@@ -4,7 +4,7 @@ import { Badge, Button, Field, Input, Stat, StatGrid } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
-import { portalAcceptBill, portalSendInvoice, usePortal, type PortalBill, type PortalOrder, type PortalOrderDetail, type PortalPayment, type PortalStatement, type PortalSummary } from '@/api/portal'
+import { portalAcceptBill, portalSendInvoice, usePortal, type BillLineMatch, type PortalBill, type PortalOrder, type PortalOrderDetail, type PortalPayment, type PortalStatement, type PortalSummary } from '@/api/portal'
 
 const th = 'px-2 py-2 text-left text-xs font-semibold uppercase text-muted-foreground'
 const td = 'px-2 py-2 align-top'
@@ -72,9 +72,25 @@ export function Orders() {
       {open > 0 && detail.data && (
         <div className="grid gap-3">
           <h2 className="text-lg font-semibold">{detail.data.order.number} - items</h2>
-          <Table label="Order items" head={['Item', 'Qty', 'Rate', 'Amount']} empty="No items." right={[1, 2, 3]}>
-            {detail.data.lines.map((l, i) => <tr key={i}><td className={td}>{l.code && <span className="font-mono">{l.code} </span>}{l.description}</td><td className={td + ' text-right'}>{l.qty} {l.uom}</td><td className={td + ' text-right'}>{formatINR(l.rate)}</td><td className={td + ' text-right'}>{formatINR(l.amount)}</td></tr>)}
-          </Table>
+          {detail.data.lines.some((l) => l.received !== undefined) ? (
+            <Table label="Order items" head={['Item', 'Ordered', 'Received', 'Pending', 'Billed', 'Can bill', 'Rate']} empty="No items." right={[1, 2, 3, 4, 5, 6]}>
+              {detail.data.lines.map((l, i) => (
+                <tr key={i}>
+                  <td className={td}>{l.code && <span className="font-mono">{l.code} </span>}{l.description}</td>
+                  <td className={td + ' text-right'}>{l.qty} {l.uom}</td>
+                  <td className={td + ' text-right'}>{l.received}</td>
+                  <td className={td + ' text-right'}>{Number(l.pending) > 0 ? <span className="font-medium text-warning">{l.pending}</span> : 0}</td>
+                  <td className={td + ' text-right'}>{l.billed}</td>
+                  <td className={td + ' text-right font-semibold'}>{l.to_bill}</td>
+                  <td className={td + ' text-right'}>{formatINR(l.rate)}</td>
+                </tr>
+              ))}
+            </Table>
+          ) : (
+            <Table label="Order items" head={['Item', 'Qty', 'Rate', 'Amount']} empty="No items." right={[1, 2, 3]}>
+              {detail.data.lines.map((l, i) => <tr key={i}><td className={td}>{l.code && <span className="font-mono">{l.code} </span>}{l.description}</td><td className={td + ' text-right'}>{l.qty} {l.uom}</td><td className={td + ' text-right'}>{formatINR(l.rate)}</td><td className={td + ' text-right'}>{formatINR(l.amount)}</td></tr>)}
+            </Table>
+          )}
         </div>
       )}
     </div>
@@ -104,7 +120,7 @@ export function Bills({ contractor }: { contractor: boolean }) {
         {(q.data?.bills ?? []).map((b) => (
           <tr key={b.id}>
             <td className={td}><span className="font-mono">{b.number}</span><div className="text-xs text-muted-foreground">{formatDate(b.date)}</div></td>
-            <td className={td}><Badge tone={tone(b.where)}>{b.where}</Badge>{b.note && <div className="text-xs text-muted-foreground">{b.note}</div>}</td>
+            <td className={td}><Badge tone={tone(b.where)}>{b.where}</Badge>{b.note && <div className="text-xs text-muted-foreground">{b.note}</div>}<LineMatch lines={b.lines ?? []} /></td>
             <td className={td + ' text-right'}>{formatINR(b.claimed)}<div className="text-xs text-muted-foreground">{contractor && (b.retention || b.tds || b.deductions) ? `retention ${formatINR(b.retention)}${b.deductions ? `, recoveries ${formatINR(b.deductions)}` : ''}, TDS ${formatINR(b.tds)}, GST ${formatINR(b.gst)}` : `GST ${formatINR(b.gst)}`}</div></td>
             <td className={td + ' text-right font-semibold'}>{formatINR(b.net)}</td>
             <td className={td + ' text-right'}>{formatINR(b.paid)}</td>
@@ -117,6 +133,26 @@ export function Bills({ contractor }: { contractor: boolean }) {
         ))}
       </Table>
     </div>
+  )
+}
+
+const VERDICT: Record<BillLineMatch['verdict'], [string, 'success' | 'danger' | 'warning' | 'neutral']> = {
+  MATCHED: ['matches the order and delivery', 'success'], MORE_THAN_RECEIVED: ['more than was received', 'danger'],
+  RATE_DIFFERS: ['rate differs from the order', 'warning'], NO_ORDER_LINE: ['not on the order', 'neutral'],
+}
+
+/** Each line of an invoice set against the order line it bills: rate, and what was received. */
+function LineMatch({ lines }: { lines: BillLineMatch[] }) {
+  if (!lines.length) return null
+  return (
+    <ul className="mt-1.5 space-y-0.5 text-xs">
+      {lines.map((l, i) => (
+        <li key={i} className="flex flex-wrap items-center gap-1.5">
+          <Badge tone={VERDICT[l.verdict][1]}>{VERDICT[l.verdict][0]}</Badge>
+          <span>{l.description}: {l.qty} {l.uom} at {formatINR(l.rate)}{l.received != null && ` (received ${l.received}, billed in all ${l.billed})`}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -164,19 +200,29 @@ export function SendInvoice() {
   const [f, setF] = useState({ number: '', issue_date: today(), amount: '', tax_amount: '0', po_number: '', note: '' })
   const [file, setFile] = useState<File | null>(null)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  // Against an order, the invoice is billed line by line: what was received and not yet billed, at the order's rates.
+  const chosen = orders.find((o) => o.number === f.po_number)
+  const order = usePortal<PortalOrderDetail>('order', `/api/portal/orders/${chosen?.id ?? 0}`, !!chosen)
+  const lines = chosen ? (order.data?.lines ?? []).filter((l) => l.id && l.to_bill !== undefined) : []
+  const [qty, setQty] = useState<Record<number, string>>({})
+  const byLine = lines.length > 0
+  const qtyOf = (l: (typeof lines)[number]) => qty[l.id!] ?? String(l.to_bill ?? 0)
+  const lineValue = lines.reduce((t, l) => t + Number(qtyOf(l) || 0) * l.rate, 0)
   const [busy, setBusy] = useState(false)
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((x) => ({ ...x, [k]: e.target.value }))
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!file) return
     const fd = new FormData()
-    Object.entries(f).forEach(([k, v]) => fd.append(k, v))
+    Object.entries(f).forEach(([k, v]) => (byLine && (k === 'amount' || k === 'tax_amount') ? null : fd.append(k, v)))
+    if (byLine) fd.append('lines', JSON.stringify(lines.map((l) => ({ po_line_id: l.id, qty: Number(qtyOf(l) || 0) }))))
     fd.append('file', file)
     setBusy(true)
     try {
       const r = await portalSendInvoice(fd)
       setMsg({ ok: true, text: r.message })
       setF({ ...f, number: '', amount: '', tax_amount: '0', po_number: '', note: '' })
+      setQty({})
       setFile(null)
       await qc.invalidateQueries({ queryKey: ['portal', 'bills'] })
     } catch (err) {
@@ -191,8 +237,8 @@ export function SendInvoice() {
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Your invoice number" htmlFor="si-no"><Input id="si-no" required value={f.number} onChange={set('number')} /></Field>
         <Field label="Invoice date" htmlFor="si-date"><Input id="si-date" type="date" required value={f.issue_date} onChange={set('issue_date')} /></Field>
-        <Field label="Value before GST" htmlFor="si-amt"><Input id="si-amt" type="number" step="0.01" min="0" required value={f.amount} onChange={set('amount')} /></Field>
-        <Field label="GST" htmlFor="si-gst"><Input id="si-gst" type="number" step="0.01" min="0" value={f.tax_amount} onChange={set('tax_amount')} /></Field>
+        {!byLine && <Field label="Value before GST" htmlFor="si-amt"><Input id="si-amt" type="number" step="0.01" min="0" required value={f.amount} onChange={set('amount')} /></Field>}
+        {!byLine && <Field label="GST" htmlFor="si-gst"><Input id="si-gst" type="number" step="0.01" min="0" value={f.tax_amount} onChange={set('tax_amount')} /></Field>}
       </div>
       <Field label="Against our order" htmlFor="si-po">
         <select id="si-po" value={f.po_number} onChange={set('po_number')} className="h-10 w-full rounded-md border border-input bg-transparent px-3 text-sm">
@@ -200,6 +246,19 @@ export function SendInvoice() {
           {orders.filter((o) => !o.superseded).map((o) => <option key={o.id}>{o.number}</option>)}
         </select>
       </Field>
+      {byLine && (
+        <div className="grid gap-2">
+          <p className="text-sm font-medium">What you are billing on {f.po_number}</p>
+          <p className="text-xs text-muted-foreground">Up to what was received and not yet billed, at the order's rates. The GST is the order's.</p>
+          {lines.map((l) => (
+            <label key={l.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm">
+              <span className="min-w-0 flex-1">{l.description}<span className="block text-xs text-muted-foreground">received {l.received}, billed {l.billed} - can bill {l.to_bill} {l.uom} at {formatINR(l.rate)}</span></span>
+              <Input aria-label={`Quantity of ${l.description}`} type="number" step="any" min="0" max={l.to_bill} className="h-9 w-28 text-right" value={qtyOf(l)} onChange={(e) => setQty((q) => ({ ...q, [l.id!]: e.target.value }))} /> {l.uom}
+            </label>
+          ))}
+          <p className="text-right text-sm">Before GST: <strong>{formatINR(lineValue)}</strong></p>
+        </div>
+      )}
       <Field label="The invoice (PDF or a photo)" htmlFor="si-file"><input id="si-file" type="file" accept="application/pdf,image/*" required onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
       <Field label="Note" htmlFor="si-note"><Input id="si-note" placeholder="Delivery challan numbers, anything the office should know" value={f.note} onChange={set('note')} /></Field>
       <Button type="submit" loading={busy}>Send it</Button>

@@ -63,6 +63,7 @@ export default function ErrorLogTab() {
           <div className="line-clamp-2 text-[13px]">{e.detail || '-'}</div>
           <div className="truncate font-mono text-[11px] text-muted-foreground">{e.method} {e.path}</div>
           {open === e.id && e.trace && <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-muted p-3 text-[11px] leading-snug">{e.trace}</pre>}
+          {e.has_trace && !e.trace && <div className="mt-0.5 text-[11px] text-muted-foreground">Technical details are kept with the platform team: quote ref {e.ref}.</div>}
         </div>
       ),
     },

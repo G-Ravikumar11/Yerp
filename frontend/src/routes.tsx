@@ -84,6 +84,7 @@ export const SCREENS: Screen[] = [
   { path: '/projects/chart', Component: page(() => import('@/features/chart/ChartPage')) },
   { path: '/projects/equipment', Component: page(() => import('@/features/equipment/EquipmentPage')) },
   { path: '/projects/drawings', Component: page(() => import('@/features/drawings/DrawingsPage')) },
+  { path: '/projects/documents', Component: page(() => import('@/features/doccontrol/DocControlPage')) },
   { path: '/projects', Component: page(() => import('@/features/projects/ProjectsPage')) },
   { path: '/projects/:id', Component: page(() => import('@/features/projects/ProjectPage')) },
   { path: '/projects/costs', Component: page(() => import('@/features/projects/CostByProjectPage')) },

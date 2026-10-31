@@ -164,8 +164,13 @@ def portal_order(order_id: int, request: Request, db: Session = Depends(get_read
                  for i in db.query(models.DBSubcontractItem).filter(
                      models.DBSubcontractItem.order_id == order_id).order_by(models.DBSubcontractItem.id).all()]
     else:
-        lines = [{"code": i.item_code or "", "description": i.description or "", "uom": i.uom or "",
-                  "qty": i.qty or 0, "rate": money(i.price), "amount": money((i.qty or 0) * (i.price or 0))}
+        # Each line with what arrived at the gate, what is still to come, what has been billed, and what can be billed.
+        from app.services.partner_portal import po_line_position
+        po = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.id == order_id).first()
+        pos = po_line_position(db, po)
+        lines = [{"id": i.id, "code": i.item_code or "", "description": i.description or "", "uom": i.uom or "",
+                  "qty": i.qty or 0, "rate": money(i.price), "amount": money((i.qty or 0) * (i.price or 0)),
+                  "tax_rate": i.tax_rate or "", **pos.get(i.id, {"received": 0.0, "billed": 0.0, "pending": i.qty or 0, "to_bill": 0.0})}
                  for i in db.query(models.DBPurchaseOrderLineItem).filter(
                      models.DBPurchaseOrderLineItem.order_id == order_id).order_by(
                          models.DBPurchaseOrderLineItem.id).all()]
@@ -236,8 +241,8 @@ def portal_statement_export(request: Request, date_from: str = "", date_to: str 
 @router.post("/api/portal/invoices")
 def portal_send_invoice(request: Request, file: UploadFile = File(...),
                         number: str = Form(...), issue_date: str = Form(""),
-                        amount: float = Form(...), tax_amount: float = Form(0),
-                        po_number: str = Form(""), note: str = Form(""),
+                        amount: float = Form(0), tax_amount: float = Form(0),
+                        po_number: str = Form(""), note: str = Form(""), lines: str = Form(""),
                         db: Session = Depends(get_db)):
     """A supplier sends an invoice in. It lands in Supplier Bills as a draft,
     with the invoice attached, for the office to check against the goods
@@ -248,7 +253,8 @@ def portal_send_invoice(request: Request, file: UploadFile = File(...),
     number = (number or "").strip()[:60]
     if not number:
         raise HTTPException(400, "Your invoice number.")
-    if (amount or 0) <= 0 or (tax_amount or 0) < 0:
+    billed_lines = _invoice_lines(lines)
+    if not billed_lines and ((amount or 0) <= 0 or (tax_amount or 0) < 0):
         raise HTTPException(400, "The invoice value before tax, and the GST on it.")
     on = (issue_date or date.today().isoformat())[:10]
     if not _parse_date(on):
@@ -270,7 +276,28 @@ def portal_send_invoice(request: Request, file: UploadFile = File(...),
             if norm_name(p.supplier_name) == key), None)
         if not po:
             raise HTTPException(404, "%s is not one of your orders." % po_number.strip())
-    amount, tax = money(amount), money(tax_amount or 0)
+    made = []
+    if billed_lines:
+        # Billed line by line against the order: each within what was received and not yet billed, at the order's rate.
+        if po is None:
+            raise HTTPException(400, "Choose the order the invoice is for, to bill its lines.")
+        from app.services.partner_portal import po_line_position
+        pos = po_line_position(db, po)
+        po_lines = {l.id: l for l in db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).all()}
+        amount = tax = 0.0
+        for want in billed_lines:
+            pl = po_lines.get(want["po_line_id"])
+            if pl is None:
+                raise HTTPException(404, "That line is not on %s." % po.number)
+            room = pos.get(pl.id, {}).get("to_bill", 0.0)
+            if want["qty"] > room + 0.0005:
+                raise HTTPException(409, "%s: %s %s received and not yet billed, so %s cannot be billed." % (
+                    pl.description or "That line", ("%g" % room), pl.uom or "", "%g" % want["qty"]))
+            value = money(want["qty"] * (pl.price or 0))
+            rate = _rate(pl.tax_rate)
+            amount, tax = amount + value, tax + value * rate / 100.0
+            made.append((pl, want["qty"]))
+    amount, tax = money(amount), money(tax_amount or 0) if not made else money(tax)
     b = models.DBBill(client_id=u.client_id, number=number, vendor_name=name, vendor_email=u.email,
                       issue_date=on, due_date=days_after(on, party.payment_days or 30),
                       amount=amount, tax_amount=tax, total=money(amount + tax), amount_paid=0.0,
@@ -280,6 +307,9 @@ def portal_send_invoice(request: Request, file: UploadFile = File(...),
                       job_id=po.job_id if po else None, purchase_order_id=po.id if po else None)
     db.add(b)
     db.flush()
+    for pl, qty in made:
+        db.add(models.DBBillLineItem(bill_id=b.id, po_line_id=pl.id, description=pl.description or "", qty=qty,
+                                     price=pl.price or 0, tax_rate=pl.tax_rate or "0%"))
     store_file(db, u.client_id, file, data, job_id=b.job_id, attached_type="bill", attached_id=b.id,
                kind="document", caption="Invoice %s from %s" % (number, name), by="%s (portal)" % (u.name or u.email))
     log_audit(db, u.client_id, "portal_invoice", "supplier_bill", b.id, number,
@@ -290,6 +320,27 @@ def portal_send_invoice(request: Request, file: UploadFile = File(...),
                inr(b.total), (" against " + po.number) if po else ""),
            view="bills-view", ref_type="supplier_bill", ref_id=b.id, severity="action")
     return {"ok": True, "message": "Invoice %s received. The office will check it against the delivery." % number}
+
+
+def _invoice_lines(raw):
+    """The lines a supplier billed, sent as JSON: [{"po_line_id", "qty"}], the empty ones left out."""
+    if not (raw or "").strip():
+        return []
+    import json
+    try:
+        rows = json.loads(raw)
+        out = [{"po_line_id": int(r["po_line_id"]), "qty": float(r.get("qty") or 0)} for r in rows]
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(400, "The invoice lines could not be read.") from None
+    if any(r["qty"] < 0 for r in out):
+        raise HTTPException(400, "A quantity cannot be below nothing.")
+    return [r for r in out if r["qty"] > 0]
+
+
+def _rate(text):
+    import re
+    m = re.search(r"[\d.]+", text or "")
+    return float(m.group()) if m else 0.0
 
 
 @router.get("/api/portal/orders/{order_id}/document.pdf")

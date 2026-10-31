@@ -68,6 +68,7 @@ const NAV: NavEntry[] = [
       { label: 'Projects', path: '/projects', perm: 'reports.view' },
       { label: 'Planning & Progress', path: '/projects/programme' },
       { label: 'Drawings', path: '/projects/drawings' },
+      { label: 'Document Control', path: '/projects/documents' },
       { label: 'Quality', path: '/projects/quality' },
       { label: 'Workers and Safety', path: '/projects/safety' },
       { label: 'Site Diary', path: '/projects/diary' },

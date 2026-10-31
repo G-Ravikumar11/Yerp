@@ -22,11 +22,16 @@ export interface PortalSummary {
 }
 
 export interface PortalOrder { id: number; number: string; project: string; subject?: string; value: number; from?: string; to?: string; superseded?: boolean }
-export interface PortalOrderDetail { order: { number: string }; lines: { code?: string; description: string; qty: number; uom: string; rate: number; amount: number }[] }
+/** An order's lines; a supplier's carry what arrived, what is still to come, what is billed and what can still be billed. */
+export interface PortalOrderLine { id?: number; code?: string; description: string; qty: number; uom: string; rate: number; amount: number; tax_rate?: string; received?: number; pending?: number; billed?: number; to_bill?: number }
+export interface PortalOrderDetail { order: { number: string }; lines: PortalOrderLine[] }
+/** One line of a supplier's invoice, matched against the order line it bills. */
+export interface BillLineMatch { description: string; qty: number; uom?: string; rate: number; po_rate: number | null; ordered?: number; received: number | null; billed: number | null; verdict: 'MATCHED' | 'MORE_THAN_RECEIVED' | 'RATE_DIFFERS' | 'NO_ORDER_LINE' }
 
 export interface PortalBill {
   id: number; number: string; date: string; where: string; note?: string; claimed: number; gst: number; retention?: number; tds?: number
   deductions?: number; net: number; paid: number; left: number; pdf?: string; can_accept?: boolean; accepted_by?: string; accepted_at?: string
+  lines?: BillLineMatch[]
 }
 
 export interface PortalPayment { date?: string; paid_on: string; number: string; against: string; mode: string; reference?: string; amount: number }
@@ -45,7 +50,7 @@ export const portalKeys = { me: ['portal', 'me'] as const, all: ['portal'] as co
 export const usePortalMe = () =>
   useQuery({ queryKey: portalKeys.me, queryFn: () => api<PortalMe>('/api/portal/me', { quiet: true }).catch(() => null), retry: false, staleTime: 60_000 })
 
-export const usePortal = <T,>(key: string, url: string) => useQuery({ queryKey: ['portal', key, url], queryFn: () => get<T>(url) })
+export const usePortal = <T,>(key: string, url: string, enabled = true) => useQuery({ queryKey: ['portal', key, url], queryFn: () => get<T>(url), enabled })
 
 export const portalLogin = (email: string, password: string, check?: { captcha_token: string; captcha_answer: string } | null) =>
   api('/api/portal/login', { method: 'POST', body: { email, password, ...(check ?? {}) }, quiet: true })
