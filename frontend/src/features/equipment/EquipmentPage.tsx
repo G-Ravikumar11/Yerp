@@ -21,6 +21,7 @@ import { Allocations, Logbook } from './PlantPeople'
 import { Fuel, Maintenance } from './PlantFuelMaint'
 import { Expenses, Rentals } from './PlantRentals'
 import { PlantAlerts } from './PlantChecks'
+import { FormworkHire } from './PlantFormwork'
 import { PlantReports } from './PlantReports'
 import { ServiceBadge, StatusBadge, usePaged } from './plantParts'
 import { ServiceDoneModal } from './ServiceDoneModal'
@@ -28,10 +29,10 @@ import { formatDate } from '@/lib/format'
 
 const SERVICE_ORDER = ['Overdue', 'Service due', 'Due soon', 'Upcoming', 'Incomplete', 'Not scheduled']
 
-type Tab = 'dashboard' | 'register' | 'allocation' | 'logbook' | 'fuel' | 'maintenance' | 'rentals' | 'expenses' | 'alerts' | 'reports'
+type Tab = 'dashboard' | 'register' | 'allocation' | 'logbook' | 'fuel' | 'maintenance' | 'rentals' | 'expenses' | 'formwork' | 'alerts' | 'reports'
 const TABS: { value: Tab; label: string }[] = [
   { value: 'dashboard', label: 'Dashboard' }, { value: 'register', label: 'Register' }, { value: 'allocation', label: 'Allocation' }, { value: 'logbook', label: 'Logbook' },
-  { value: 'fuel', label: 'Fuel' }, { value: 'maintenance', label: 'Maintenance' }, { value: 'rentals', label: 'Rentals' }, { value: 'expenses', label: 'Expenses' }, { value: 'alerts', label: 'Alerts' }, { value: 'reports', label: 'Reports' },
+  { value: 'fuel', label: 'Fuel' }, { value: 'maintenance', label: 'Maintenance' }, { value: 'rentals', label: 'Rentals' }, { value: 'expenses', label: 'Expenses' }, { value: 'formwork', label: 'Shuttering & Scaffolding' }, { value: 'alerts', label: 'Alerts' }, { value: 'reports', label: 'Reports' },
 ]
 
 /** Where each machine is, who works it, what it did, what it burned and when it is due - and what it costs. */
@@ -52,6 +53,7 @@ export default function EquipmentPage() {
       {tab === 'maintenance' && <Maintenance />}
       {tab === 'rentals' && <Rentals />}
       {tab === 'expenses' && <Expenses />}
+      {tab === 'formwork' && <FormworkHire />}
       {tab === 'alerts' && <PlantAlerts />}
       {tab === 'reports' && <PlantReports />}
     </>

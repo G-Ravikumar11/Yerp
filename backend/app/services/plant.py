@@ -356,6 +356,17 @@ def plant_cost_breakdown(db, client_id, date_from="", date_to="", lines=False):
         if e.amount and in_range(e.spent_on, date_from, date_to):
             add(e.job_id, "expenses", "Plant expense", e.number, e.spent_on, e.asset_id, ("%s: %s" % (e.category, e.description or ""))[:120], e.amount)
 
+    # Shuttering and scaffolding: what each return came to, on the day it went back. What is still out is an estimate.
+    H, R = models.DBFormworkHire, models.DBFormworkReturn
+    for h in db.query(H).filter(H.client_id == client_id).all():
+        back = db.query(R).filter(R.hire_id == h.id).all()
+        for r in back:
+            if in_range(r.returned_on, date_from, date_to):
+                add(h.job_id, "hire", "%s hire" % h.kind, h.number, r.returned_on, None, (h.description or "")[:120], (r.hire_charge or 0) + (r.loss_charge or 0) + (r.damage_charge or 0))
+        out_qty = (h.quantity or 0) - sum((r.returned_qty or 0) + (r.damaged_qty or 0) + (r.lost_qty or 0) for r in back)
+        if out_qty > 0:
+            row(h.job_id)["unbilled_hire_estimate"] += out_qty * (h.daily_rate or 0) * max(1, (date.today() - _parse_date(h.start_date)).days + 1)
+
     for r in out.values():
         for k in ("fuel", "rental", "hire", "maintenance", "expenses", "duplicates_excluded", "unbilled_hire_estimate"):
             r[k] = money(r[k])

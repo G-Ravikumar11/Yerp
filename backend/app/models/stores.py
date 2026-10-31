@@ -1,7 +1,7 @@
 """Items, serial codes, bills of materials and stock."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 
 from app.db.session import Base
 
@@ -26,6 +26,7 @@ class DBItem(Base):
         # from one global sequence, so one code is one item everywhere and a
         # code read off a delivery note never means two different things.
         UniqueConstraint('item_code', name='uq_item_code'),
+        Index('ux_erp_items_dup_key', 'dup_key', unique=True),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -45,6 +46,14 @@ class DBItem(Base):
     # Below this, the store is running out. Zero means nobody set one, which
     # is not the same as "never reorder" - so it simply never warns.
     reorder_level = Column(Float, default=0.0)
+    # company|kind|name|unit|specification|make, cleaned of case and spacing, on items entered through the master: the
+    # unique index is what stops two people adding one item at the same moment. Empty on items made from a BOQ, where one
+    # name on two contracts is two deliverables, and on a merged item.
+    dup_key = Column(String, nullable=True)
+    # Folded into another item: kept, switched off, saying where it went.
+    merged_into_id = Column(Integer, ForeignKey("erp_items.id"), nullable=True, index=True)
+    merged_at = Column(String, default="")
+    merged_by = Column(String, default="")
     # Where an item made from a BOQ line came from: that BOQ and the line's key. A reference only; nothing matches on it alone.
     source_boq_id = Column(Integer, nullable=True)
     source_boq_key = Column(String, default="")
@@ -66,6 +75,23 @@ class DBItem(Base):
     created_by_name = Column(String, default="")
     updated_by_name = Column(String, default="")
     updated_at = Column(String, default="")
+
+
+class DBItemMerge(Base):
+    """One item folded into another: both ids, what the duplicate was called, and every table's rows that moved."""
+    __tablename__ = "item_merges"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    primary_item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
+    primary_code = Column(String, default="")
+    merged_item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
+    merged_code = Column(String, default="")
+    merged_name = Column(String, default="")
+    moved = Column(String, default="{}")
+    reason = Column(String, default="")
+    merged_by = Column(String, default="")
+    merged_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 class DBItemCategory(Base):

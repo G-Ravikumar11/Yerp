@@ -31,6 +31,7 @@ export interface CubeSet {
   acceptance: string; acceptance_note: string; accepted_by: string; accepted_on: string
   ncrs?: { id: number; number: string; status: string; source_ref: string }[]
 }
+export interface NcrBatch { id: number; batch_no: string; item_name: string; uom: string; available_qty: string; hold_status: string; blocked: boolean; hold_reason: string }
 export interface Ncr {
   id: number; job_id: number; project: string; number: string; severity: string; raised_on: string; raised_by: string; location: string; description: string
   responsible: string; target_date: string; corrective_action: string; root_cause: string; status: string; status_label: string; overdue: boolean
@@ -104,7 +105,7 @@ export const useNcrs = (f: ListQuery) =>
 
 export const useInspection = (id: number | null) => useQuery({ queryKey: [...qcKeys.all, 'inspection', id], enabled: !!id, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<{ inspection: Inspection; history: HistoryLine[] }>(`/api/qc/inspections/${id}`) })
 export const useCube = (id: number | null) => useQuery({ queryKey: [...qcKeys.all, 'cube', id], enabled: !!id, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<{ cube_set: CubeSet; history: HistoryLine[] }>(`/api/qc/cubes/${id}`) })
-export const useNcr = (id: number | null) => useQuery({ queryKey: [...qcKeys.all, 'ncr', id], enabled: !!id, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<{ ncr: Ncr; history: HistoryLine[] }>(`/api/qc/ncrs/${id}`) })
+export const useNcr = (id: number | null) => useQuery({ queryKey: [...qcKeys.all, 'ncr', id], enabled: !!id, staleTime: 0, refetchOnMount: 'always', queryFn: () => get<{ ncr: Ncr; history: HistoryLine[]; store_batch: NcrBatch | null }>(`/api/qc/ncrs/${id}`) })
 
 export const useTemplates = (job: number, manage = false) =>
   useQuery({ queryKey: [...qcKeys.all, 'checklists', job, manage], staleTime: 60_000, queryFn: async () => (await get<{ templates: Template[] }>(`/api/qc/checklists?job_id=${job}${manage ? '&manage=true' : ''}`)).templates })
@@ -143,7 +144,8 @@ export const deleteCriteria = (id: number) => del<{ message: string }>(`/api/qc/
 
 export interface CubeForm { job_id: number; grade: string; cast_on: string; location: string; pour_ref: string; cube_ids: string; supplier: string; docket: string; slump_mm: number; test_ages: string; remarks: string }
 export const logCubes = (b: CubeForm) => post<{ cube_set: CubeSet }>('/api/qc/cubes', b)
-export const cubeResult = (id: number, b: { age_days: number; strengths: string; tested_on: string; lab: string; remarks: string; flag_review: boolean }) => post<{ cube_set: CubeSet }>(`/api/qc/cubes/${id}/results`, b)
+export interface RaisedNcr { id: number; number: string; status: string; origin: string; project_id: number }
+export const cubeResult = (id: number, b: { age_days: number; strengths: string; tested_on: string; lab: string; remarks: string; flag_review: boolean }) => post<{ cube_set: CubeSet; ncr: RaisedNcr | null }>(`/api/qc/cubes/${id}/results`, b)
 export const flagCube = (id: number, note: string) => post<{ cube_set: CubeSet }>(`/api/qc/cubes/${id}/flag`, { note })
 export const decideCube = (id: number, decision: string, note: string) => post<{ cube_set: CubeSet }>(`/api/qc/cubes/${id}/decision`, { decision, note })
 
@@ -154,4 +156,4 @@ export const assignNcr = (id: number, b: { responsible: string; target_date: str
 export const recordWork = (id: number, b: { corrective_done: string; root_cause: string }) => post<{ ncr: Ncr }>(`/api/qc/ncrs/${id}/work`, b)
 export const requestVerification = (id: number) => post<{ ncr: Ncr }>(`/api/qc/ncrs/${id}/request-verification`)
 export const verifyNcr = (id: number, result: 'verified' | 'rejected', note: string) => post<{ ncr: Ncr }>(`/api/qc/ncrs/${id}/verify`, { result, note })
-export const closeNcr = (id: number, closure_note: string) => post<{ ncr: Ncr }>(`/api/qc/ncrs/${id}/close`, { closure_note })
+export const closeNcr = (id: number, closure_note: string) => post<{ ncr: Ncr; batch_hold: { on_hold: boolean; message: string } | null }>(`/api/qc/ncrs/${id}/close`, { closure_note })

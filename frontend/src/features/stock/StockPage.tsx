@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { FileText, FileSpreadsheet, Send } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { OldStoreBanner, useCutover } from '@/features/store/OldStore'
+import { OldStoreBanner, useOldStoreClosed } from '@/features/store/OldStore'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { PromptModal } from '@/components/data/PromptModal'
 import { Badge, Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
@@ -18,7 +18,7 @@ import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** What is in the store, what went to site, and what it cost. The store's balance is the sum of its movements. */
 export default function StockPage() {
-  const moved = !!useCutover().data
+  const moved = useOldStoreClosed()
   const { can } = useSession()
   const [low, setLow] = useState(false)
   const stock = useStock(low)
@@ -44,7 +44,7 @@ export default function StockPage() {
     { id: 'hand', header: 'On hand', align: 'right', sort: (r) => r.on_hand, cell: (r) => <div className={`font-bold ${r.negative ? 'text-danger' : r.below_level ? 'text-warning' : ''}`}>{r.on_hand} {r.uom}{r.below_level && <div className="text-[11px] font-normal">below {r.reorder_level}</div>}{r.negative && <div className="text-[11px] font-normal">more issued than received</div>}</div> },
     { id: 'rate', header: 'Rate', hideBelow: 'lg', align: 'right', cell: (r) => formatINR(r.rate) },
     { id: 'val', header: 'Value', align: 'right', sort: (r) => r.value, cell: (r) => <strong>{formatINR(r.value)}</strong> },
-    { id: 'act', header: '', align: 'right', cell: (r) => <div className="flex justify-end gap-1.5"><Button size="sm" variant="outline" onClick={() => setLedger(r.item_code)}>Ledger</Button>{manage && <Button size="sm" variant="outline" onClick={() => setCounting(r)}>Count</Button>}</div> },
+    { id: 'act', header: '', align: 'right', cell: (r) => <div className="flex justify-end gap-1.5"><Button size="sm" variant="outline" onClick={() => setLedger(r.item_code)}>Ledger</Button>{manage && !moved && <Button size="sm" variant="outline" onClick={() => setCounting(r)}>Count</Button>}</div> },
   ]
   const notes: TableColumn<Issue>[] = [
     { id: 'no', header: 'Note', cell: (i) => <span className="font-mono font-semibold">{i.number}</span> },
@@ -60,8 +60,8 @@ export default function StockPage() {
       cell: (i) => (
         <div className="flex flex-wrap justify-end gap-1.5">
           <Button size="sm" variant="outline" asChild><a href={`/api/stock-issues/${i.id}/document.pdf`} target="_blank" rel="noopener"><FileText /> Slip</a></Button>
-          {i.status === 'DRAFT' && <Button size="sm" loading={post.isPending && post.variables?.id === i.id} onClick={() => post.mutate({ id: i.id, force: false })}>Post it</Button>}
-          {i.status !== 'CANCELLED' && manage && <Button size="sm" variant="outline" onClick={() => setCancelling(i)}>Cancel</Button>}
+          {i.status === 'DRAFT' && !moved && <Button size="sm" loading={post.isPending && post.variables?.id === i.id} onClick={() => post.mutate({ id: i.id, force: false })}>Post it</Button>}
+          {i.status !== 'CANCELLED' && manage && !moved && <Button size="sm" variant="outline" onClick={() => setCancelling(i)}>Cancel</Button>}
         </div>
       ),
     },

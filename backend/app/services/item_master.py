@@ -205,19 +205,38 @@ def similar_items(db, client_id, name, code="", exclude_id=None, limit=5):
     return out[:limit]
 
 
+def dup_key(client_id, kind, fields):
+    """The same item entered twice: one company, kind, name, unit, specification and make, whatever the case or spacing."""
+    clean = lambda v: re.sub(r"\s+", " ", (v or "").strip()).lower()
+    unit = fields.get("units_of_measure")
+    return "|".join([str(client_id), kind, clean(fields.get("item_name")), clean(canonical_unit(unit, "") or unit), clean(fields.get("specification")), clean(fields.get("make"))])
+
+
+def refuse_duplicate(db, client_id, kind, key, except_id=None):
+    """409, naming the item already there. Items from before the check have no key, so they are compared as well."""
+    name = key.split("|")[2]
+    pool = db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.kind == kind, models.DBItem.merged_into_id.is_(None),
+                                          models.DBItem.source_boq_id.is_(None), models.DBItem.item_name.ilike("%" + name.split(" ")[0].replace("%", "").replace("_", "") + "%")).all()
+    for other in pool:
+        if other.id != except_id and (other.dup_key or dup_key(client_id, other.kind, {"item_name": other.item_name, "units_of_measure": other.units_of_measure, "specification": other.specification, "make": other.make})) == key:
+            raise HTTPException(409, "This item already exists as %s, %s (%s)." % (other.item_code, other.item_name, other.units_of_measure or "no unit"))
+
+
 def create_master_item(db, client_id, body, who, taken=None):
     """A new item, or a clear refusal: a code already in use is never made a second time. Does not commit."""
     kind = (body.kind or "FG").upper()
     if kind not in ITEM_KINDS:
         raise HTTPException(400, "kind must be RM or FG")
     fields = _fields(db, client_id, body)
+    key = dup_key(client_id, kind, fields)
+    refuse_duplicate(db, client_id, kind, key)
     code = clean_code(body.item_code)
     if code:
         raise_if_code_taken(db, client_id, code)
     else:
         code = issue_item_code(db, taken)
     item = models.DBItem(client_id=client_id, kind=kind, item_code=code, category=CATEGORY_BY_KIND[kind], sub_category=kind,
-                         is_active=body.is_active is not False, created_by_name=who, updated_by_name=who, updated_at=now(),
+                         dup_key=key, is_active=body.is_active is not False, created_by_name=who, updated_by_name=who, updated_at=now(),
                          **fields)
     db.add(item)
     db.flush()
@@ -239,7 +258,13 @@ def update_master_item(db, item, body, who):
     turning = "kind" in body.model_fields_set and (body.kind or "").upper() != item.kind
     if turning:
         refuse_kind_change_in_use(db, item.client_id, [item])
-    for key, value in _fields(db, item.client_id, body).items():
+    fields = _fields(db, item.client_id, body)
+    if item.source_boq_id is None and not item.merged_into_id:
+        kind = (body.kind or item.kind).upper() if turning else item.kind
+        key = dup_key(item.client_id, kind, fields)
+        refuse_duplicate(db, item.client_id, kind, key, item.id)
+        item.dup_key = key
+    for key, value in fields.items():
         setattr(item, key, value)
     if turning:
         set_kind(item, body.kind)

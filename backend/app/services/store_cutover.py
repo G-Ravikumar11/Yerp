@@ -9,6 +9,7 @@ Its history is not copied. It stays readable, and its issues keep counting in pr
 opening stock and never repeat what the old store already charged to a job.
 """
 import json
+import os
 from collections import OrderedDict
 from datetime import date, datetime
 from decimal import Decimal
@@ -31,8 +32,16 @@ def cutover_of(db, client_id):
     return seen[client_id]
 
 
+def old_store_closed():
+    """The old store takes no new entries, for any company. OLD_STORE_OPEN=1 opens it for one purpose: a company that has
+    not moved yet and has to put its figures right before it can."""
+    return (os.getenv("OLD_STORE_OPEN") or "").strip() not in ("1", "true")
+
+
 def refuse_if_moved(db, client_id):
-    """409 once the old store has moved into the Hub: it is a record now, and stock changes only in the Hub."""
+    """409: the old store is a record, and stock changes only in the Hub."""
+    if old_store_closed():
+        raise HTTPException(409, "This is a legacy store module. Transactions are available in read-only mode. Record this in the Store Hub.")
     c = cutover_of(db, client_id)
     if c is not None:
         raise HTTPException(409, "The old store moved into the Store Hub on %s and is kept as a record only. "

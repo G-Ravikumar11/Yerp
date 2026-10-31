@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, object_session
 from app import models
 from app.core.permissions import permissions_for
 from app.models.store_core import (
-    IN_MOVEMENTS, NO_BATCH, CostHead, DBStore, DBStoreBatch, DBStoreBatchBalance, DBStoreControlSetting, DBStoreFreeze,
+    IN_MOVEMENTS, NO_BATCH, BatchOnHoldError, CostHead, DBStore, DBStoreBatch, DBStoreBatchBalance, DBStoreControlSetting, DBStoreFreeze,
     DBStoreItemSettings, DBStoreLedgerBatch, DBStoreStockBalance, DBStoreStockLedger, DBStoreUomConversion,
     DBStoreUserAssignment, InsufficientStockError, InvalidMovementError, MovementType, StockLedgerEntry, StoreFrozenError,
 )
@@ -270,14 +270,26 @@ def _pick_order(db, rows, mtype, on_date):
     return sorted(rows, key=key)
 
 
+def _held_lots(db, rows, mtype):
+    """The lots under a quality hold, for stock going out for use. The batch rows are locked and read fresh, so a hold
+    committed a moment ago is seen, and one being placed now waits for this movement. Bulk and automatic issues all pass here."""
+    ids = sorted({r.batch_id for r in rows if r.batch_id})
+    if mtype not in FOR_USE or not ids:
+        return set()
+    return {b.id for b in db.query(DBStoreBatch).filter(DBStoreBatch.id.in_(ids)).order_by(DBStoreBatch.id).populate_existing().with_for_update().all() if b.on_hold}
+
+
 def _take_lots(db, store, item_id, mtype, qty, wanted, rows, on_date):
     """Take `qty` out of the lots: the ones named in `wanted` ([(lot id, qty)]), the rest by _pick_order. Returns [(lot id, qty)]."""
     taken = []
     left = qty
+    held = _held_lots(db, rows, mtype)
     for lot, q in wanted or []:
         q = left if not q.is_finite() else _q(q, _QTY)       # a lot named alone gives all of it
         if q <= 0:
             continue
+        if lot in held:
+            raise BatchOnHoldError("Batch %s is on quality hold and cannot be issued." % lot_label(db.get(DBStoreBatch, lot)))
         r = _lot_row(db, store.id, item_id, lot, rows)
         if q > _dec(r.qty):
             b = db.get(DBStoreBatch, lot) if lot else None
@@ -289,13 +301,15 @@ def _take_lots(db, store, item_id, mtype, qty, wanted, rows, on_date):
         left -= q
     if left < 0:
         raise InvalidMovementError("The batches add up to more than the quantity.")
-    for r in _pick_order(db, [r for r in rows if _dec(r.qty) > 0], mtype, on_date):
+    for r in _pick_order(db, [r for r in rows if _dec(r.qty) > 0 and r.batch_id not in held], mtype, on_date):
         if left <= 0:
             break
         q = min(_dec(r.qty), left)
         r.qty = _dec(r.qty) - q
         taken.append((r.batch_id, q))
         left -= q
+    if left > 0 and held:
+        raise BatchOnHoldError("Only %s can be issued: the rest of this item is in a batch on quality hold." % format((qty - left).normalize(), "f"))
     if left > 0:                                 # the total check comes first, so this means the lots were out of step
         raise InsufficientStockError(store.id, item_id, qty - left, qty)
     return taken

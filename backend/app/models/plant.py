@@ -219,3 +219,61 @@ class DBPlantAlert(Base):
     reviewed_at = Column(String, default="")
     review_note = Column(Text, default="")
     created_at = Column(String, default=_now, index=True)
+
+
+class DBFormworkHire(Base):
+    """Shuttering or scaffolding hired for one project, on one rate. What it has cost is worked out from its returns."""
+    __tablename__ = "formwork_hires"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    number = Column(String, default="", index=True)        # FWH-0001
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    kind = Column(String, default="Shuttering", index=True)  # Shuttering | Scaffolding
+    provider_id = Column(Integer, ForeignKey("plant_rental_providers.id"), nullable=False, index=True)
+    description = Column(String, default="")
+    quantity = Column(Float, default=0.0)
+    uom = Column(String, default="")
+    start_date = Column(String, default="", index=True)
+    expected_return = Column(String, default="")
+    daily_rate = Column(Float, default=0.0)
+    replacement_cost = Column(Float, default=0.0)          # a unit, for what never comes back
+    remarks = Column(Text, default="")
+    created_by = Column(String, default="")
+    created_at = Column(String, default=_now)
+
+
+class DBFormworkReturn(Base):
+    """One return, with the charges as they stood that day. `return_key` is unique: one form saved twice is one return."""
+    __tablename__ = "formwork_returns"
+    __table_args__ = (UniqueConstraint("client_id", "return_key", name="uq_formwork_return_key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    hire_id = Column(Integer, ForeignKey("formwork_hires.id"), nullable=False, index=True)
+    return_key = Column(String, nullable=False)
+    returned_on = Column(String, default="", index=True)
+    returned_qty = Column(Float, default=0.0)
+    damaged_qty = Column(Float, default=0.0)
+    lost_qty = Column(Float, default=0.0)
+    billable_days = Column(Integer, default=0)
+    hire_charge = Column(Float, default=0.0)
+    loss_charge = Column(Float, default=0.0)
+    damage_charge = Column(Float, default=0.0)
+    remarks = Column(Text, default="")
+    recorded_by = Column(String, default="")
+    created_at = Column(String, default=_now)
+
+
+class DBFormworkPayment(Base):
+    """Paid to the supplier against a hire."""
+    __tablename__ = "formwork_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    hire_id = Column(Integer, ForeignKey("formwork_hires.id"), nullable=False, index=True)
+    paid_on = Column(String, default="")
+    amount = Column(Float, default=0.0)
+    reference = Column(String, default="")
+    recorded_by = Column(String, default="")
+    created_at = Column(String, default=_now)

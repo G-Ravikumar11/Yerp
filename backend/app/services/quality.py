@@ -2,6 +2,7 @@
 import json
 import re
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
 from sqlalchemy import or_
@@ -200,6 +201,10 @@ def sort_clause(model, sorts, key, direction):
 
 # ---- concrete cubes ----------------------------------------------------------------------------
 
+DEFAULT_TIMEZONE = "Asia/Kolkata"
+AUTO_NCR_ORIGIN = "Automatic Cube Test Failure"
+
+
 def parse_ages(text):
     ages = []
     for x in re.findall(r"\d+", text or ""):
@@ -272,7 +277,19 @@ def cube_verdict(s, results, cmap=None):
     return out
 
 
-def cube_dict(db, s, results=None, cmap=None):
+def zone_of(name):
+    try:
+        return ZoneInfo((name or "").strip() or DEFAULT_TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo(DEFAULT_TIMEZONE)
+
+
+def project_today(timezone):
+    """Today where the site is, not where the server is."""
+    return datetime.now(zone_of(timezone)).date()
+
+
+def cube_dict(db, s, results=None, cmap=None, today=None):
     if results is None:
         results = db.query(models.DBCubeResult).filter(models.DBCubeResult.set_id == s.id).order_by(
             models.DBCubeResult.age_days).all()
@@ -280,7 +297,8 @@ def cube_dict(db, s, results=None, cmap=None):
         cmap = criteria_map(db, s.client_id, [s.job_id])
     v = cube_verdict(s, results, cmap)
     ages = schedule_for(s, cmap)
-    today = date.today()
+    if today is None:
+        today = project_today(db.query(models.DBJob.timezone).filter(models.DBJob.id == s.job_id).scalar())
     try:
         cast = datetime.strptime((s.cast_on or "")[:10], "%Y-%m-%d").date()
     except ValueError:
@@ -291,7 +309,8 @@ def cube_dict(db, s, results=None, cmap=None):
         done = age in v
         state = "tested" if done else ("overdue" if on and on < today else "due" if on and on == today else "upcoming")
         schedule.append({"age_days": age, "due_on": on.isoformat() if on else "", "state": state})
-        if not done and on:
+        # The one rule for every due list, count and notice: a rejected set has no tests left to do.
+        if not done and on and s.acceptance != "rejected":
             due.append({"age_days": age, "due_on": on.isoformat(), "overdue": on < today, "today": on == today})
     res = list(v.values())
     stale = len(res) > (s.reviewed_results or 0)
@@ -345,7 +364,8 @@ def cube_dicts(db, client_id, sets):
             models.DBCubeResult.age_days).all():
         by_set.setdefault(r.set_id, []).append(r)
     cmap = criteria_map(db, client_id, [s.job_id for s in sets])
-    return [cube_dict(db, s, by_set.get(s.id, []), cmap) for s in sets]
+    zones = dict(db.query(models.DBJob.id, models.DBJob.timezone).filter(models.DBJob.id.in_({s.job_id for s in sets} or {0})).all())
+    return [cube_dict(db, s, by_set.get(s.id, []), cmap, project_today(zones.get(s.job_id))) for s in sets]
 
 
 def criteria_dict(c):
@@ -365,6 +385,7 @@ def ncr_dict(n, names=None):
             "severity": n.severity or "Minor", "responsible": n.responsible or "",
             "corrective_action": n.corrective_action or "", "target_date": n.target_date or "",
             "source_type": n.source_type or "", "source_id": n.source_id, "source_ref": n.source_ref or "",
+            "origin": n.origin or "", "store_batch_id": n.store_batch_id,
             "status": status, "status_label": NCR_LABELS.get(status, status),
             "closed_on": n.closed_on or "", "closure_note": n.closure_note or "", "closed_by": n.closed_by or "",
             "root_cause": n.root_cause or "", "assigned_by": n.assigned_by or "", "assigned_on": n.assigned_on or "",
@@ -428,3 +449,21 @@ def page_of(total, page, size):
 # Names this module only needs once it is running. They come from modules that in turn need this one,
 # so they are imported last, after everything above has been defined.
 from app.services.projects import job_or_404
+
+
+def cube_failure_ncr(db, s, r, who):
+    """The NCR for a failed result, in the transaction that records the result. One failure, one NCR: the unique key
+    settles two requests at once, and an NCR already raised by hand for this result stands instead."""
+    M = models.DBNcr
+    key = "cube:%d:%d" % (s.id, r.age_days)
+    have = db.query(M).filter(M.client_id == s.client_id, M.source_type == "cube_set", M.source_id == s.id, M.source_ref == str(r.age_days)).first()
+    if have:
+        return have
+    required = r.criteria_min or s.fck or 0
+    text_ = "%s %s cast %s, sample %s: %d-day average %s N/mm2 against %s required (cubes %s, tested %s). Docket %s. %s" % (
+        s.number, s.grade, s.cast_on, s.pour_ref or s.cube_ids or "-", r.age_days, r.average, required, r.strengths, r.tested_on, s.docket or "-", (r.remarks or "").strip())
+    n = M(client_id=s.client_id, job_id=s.job_id, number=unique_number(db, M, s.client_id, "NCR"), raised_on=date.today().isoformat(), raised_by=who, location=(s.location or "")[:200],
+          description=text_.strip()[:3000], severity="Major", source_type="cube_set", source_id=s.id, source_ref=str(r.age_days), status="OPEN", origin=AUTO_NCR_ORIGIN, auto_key=key)
+    db.add(n)
+    db.flush()
+    return n

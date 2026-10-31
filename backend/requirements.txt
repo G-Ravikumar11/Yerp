@@ -29,3 +29,5 @@ xlrd==2.0.1
 holidays==0.106
 # Reading the passwords one earlier release stored as Argon2id (app/core/passwords.py).
 argon2-cffi==25.1.0
+# Time zones where the system has none of its own (Windows); each project reads its own today.
+tzdata

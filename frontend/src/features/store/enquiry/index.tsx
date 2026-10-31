@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom'
 import { StoreShell } from '../StoreShell'
+import BatchesPage from './BatchesPage'
 import StockCardPage from './StockCardPage'
 import StockPositionPage from './StockPositionPage'
 
@@ -10,6 +11,7 @@ export default function EnquiryIndex() {
       <Routes>
         <Route index element={<StockPositionPage />} />
         <Route path="card" element={<StockCardPage />} />
+        <Route path="batches" element={<BatchesPage />} />
       </Routes>
     </StoreShell>
   )
