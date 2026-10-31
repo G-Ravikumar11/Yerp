@@ -194,7 +194,9 @@ export const useBoqSummary = (id: number, gst: number, enabled: boolean, rev?: n
   })
 /** Every material or grade already put on a BOQ line: what the Material dropdown offers besides its standard list. */
 export const useBoqMaterials = () => useQuery({ queryKey: ['boq', 'materials'], queryFn: () => get<{ materials: string[] }>('/api/boqs/materials') })
-export const useAvailable = (id: number) => useQuery({ queryKey: boqKeys.available(id), enabled: id > 0, queryFn: () => get<{ boq: BoqHead; lines: AvailableLine[] }>(`/api/boqs/${id}/available`) })
+// Read afresh each time the picker opens: the BOQ, what other orders have taken and the budget all change elsewhere.
+export const useAvailable = (id: number) =>
+  useQuery({ queryKey: boqKeys.available(id), enabled: id > 0, staleTime: 0, gcTime: 0, queryFn: () => get<{ boq: BoqHead; lines: AvailableLine[] }>(`/api/boqs/${id}/available`) })
 export const useBoqChanges = (id: number, from: number, enabled: boolean) => useQuery({ queryKey: ['boq', 'changes', id, from], enabled: enabled && id > 0, queryFn: () => get<BoqChanges>(`/api/boqs/${id}/changes?frm=${from}`) })
 
 export const createBoq = (jobId: number, title: string) => post<{ boq: BoqHead; message: string }>('/api/boqs', { job_id: jobId, title })

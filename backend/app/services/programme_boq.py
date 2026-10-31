@@ -58,12 +58,17 @@ def boq_tree(lines):
         return n
 
     if not numbered:
-        section = None
+        # Headings nest as the sheet nests them: a sub-heading under its main heading, each line under the nearest.
+        from app.services.boq_outline import boq_outline
+        _heads, path, _ = boq_outline(lines)
+        made = {}
         for l in lines:
             if l.kind == "section":
-                section = add(l, None, "")
+                above = path.get(l.key) or []
+                made[l.key] = add(l, made.get(above[-1]) if above else None, "")
             elif l.kind in BOQ_PRICED:
-                add(l, section, "")
+                above = path.get(l.key) or []
+                add(l, made.get(above[-1]) if above else None, "")
     else:
         part, stack, lettered, parts_seen = None, [], None, 0
         for l in lines:

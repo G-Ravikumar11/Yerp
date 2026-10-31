@@ -263,3 +263,59 @@ def test_lines_already_on_the_schedule_are_made_cumulative_and_split_back(tenant
     assert {r["item_description"]: r["quantity"] for r in lines}["Flooring"] == 764
     assert [r["item_description"] for r in back if r["is_header"]] == ["PLAIN CEMENT CONCRETE", "REINFORCED CEMENT CONCRETE",
                                                                          "Basement-02(Grade Slab Lvl)", "Basement-01(1st slab Lvl)"]
+
+
+# --- the same headings and grades on every screen that reads the BOQ ------------------------------------------------------
+
+def test_split_gives_each_line_back_its_own_rate_even_after_saving(tenant):
+    _, _, by = sheet_boq(tenant)
+    order = draft(tenant, job_id=job_of_key(by["Footings"]["key"]))
+    rows = pull(tenant, order, lines=[{"key": by["Footings"]["key"], "quantity": 277, "rate": 600},
+                                      {"key": by["Flooring"]["key"], "quantity": 764, "rate": 650}])["rows"]
+    url = "/api/wo/orders/%d/schedule/cumulative" % order["id"]
+    one = tenant.post(url, json={"rows": rows, "level": 0}).json()["rows"]
+    saved = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": one}).json()["order"]["items"]
+    back = tenant.post(url, json={"rows": saved, "split": True}).json()["rows"]
+    assert {r["item_description"]: r["unit_rate"] for r in back if not r["is_header"]} == {"Footings": 600, "Flooring": 650}
+
+
+def test_a_sheet_read_in_comes_with_its_headings_and_under_the_boqs(tenant):
+    from test_boq import sheet
+    _, _, by = sheet_boq(tenant)
+    order = draft(tenant, job_id=job_of_key(by["Footings"]["key"]))
+    book = sheet([["Activity", "Description", "Unit", "Qty", "Rate"],
+                  ["", "My concrete heading", "", None, None],
+                  ["", "Footings", "Cum.", 100, 600],
+                  ["", "Tower Columns(Found to Plinth)", "Cum", 61, 950]])
+    res = tenant.post("/api/wo/orders/%d/boq/import" % order["id"], files={"file": ("s.xlsx", book)})
+    assert res.status_code == 200, res.text
+    got = [(r["item_description"], r.get("is_header", False), r.get("material", "")) for r in res.json()["lines"]]
+    # Every line is on the BOQ, so its headings stand in for the sheet's own, and each line has its grade.
+    assert got == [("PLAIN CEMENT CONCRETE", True, ""), ("Footings", False, "M10"), ("REINFORCED CEMENT CONCRETE", True, ""),
+                   ("Basement-02(Grade Slab Lvl)", True, ""), ("Tower Columns(Found to Plinth)", False, "M60")]
+    # Off a project's BOQ, the sheet's own heading stays a heading rather than a line at nothing.
+    loose = sheet([["Description", "Unit", "Qty", "Rate"], ["Earthwork", "", None, None], ["Pit digging", "cum", 10, 300]])
+    lines = tenant.post("/api/wo/orders/%d/boq/import" % draft(tenant)["id"], files={"file": ("l.xlsx", loose)}).json()["lines"]
+    assert [l.get("is_header", False) for l in lines] == [True, False]
+
+
+def test_budgeting_planning_and_site_pricing_see_the_sub_headings_under_their_main_heading(tenant):
+    jid, _, by = sheet_boq(tenant)
+    budget = tenant.get("/api/jobs/%d/budget" % jid).json()
+    heads = {h["description"]: h for h in budget["headings"]}
+    assert heads["Basement-02(Grade Slab Lvl)"]["level"] == 1 and heads["Basement-02(Grade Slab Lvl)"]["path"] == [by["REINFORCED CEMENT CONCRETE"]["key"]]
+    assert {r["description"]: r["grade"] for r in budget["rows"]}["Footings"] == "M10"
+    tree = {n["name"]: n for n in tenant.get("/api/jobs/%d/programme/boq" % jid).json()["items"]}
+    rcc = next(n for n in tree.values() if n["key"] == by["REINFORCED CEMENT CONCRETE"]["key"])
+    b02 = next(n for n in tree.values() if n["key"] == by["Basement-02(Grade Slab Lvl)"]["key"])
+    assert b02["parent"] == rcc["id"] and b02["level"] == rcc["level"] + 1
+    rows = {r["description"]: r for r in tenant.get("/api/sites/%d/boq-items" % jid).json()["rows"]}
+    assert rows["Tower Columns(Found to Plinth)"]["section"] == "REINFORCED CEMENT CONCRETE › Basement-02(Grade Slab Lvl)"
+    assert rows["Footings"]["specification"] == "M10"
+
+
+def test_a_bill_names_each_line_with_its_grade():
+    from app.services.boq_outline import with_grade
+    assert with_grade("Tower Columns", "M60") == "Tower Columns (M60)"
+    assert with_grade("RCC M60 columns", "M60") == "RCC M60 columns"
+    assert with_grade("Footings", "") == "Footings"
