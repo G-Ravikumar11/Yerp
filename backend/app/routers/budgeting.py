@@ -11,6 +11,7 @@ from app.core.sheets import sheet_response
 from app.db import get_db, get_read_db
 from app.services.boq import boq_lines_of_job
 from app.services.budgeting import (KIND_LABEL, budget_view, replace_items, save_settings, suggest_items)
+from app.services.earned_value import earned_value
 from app.services.projects import job_or_404
 
 router = APIRouter()
@@ -70,6 +71,41 @@ def budget_materials(request: Request, q: str = "", db: Session = Depends(get_re
     """Materials from the item master with the rate we last paid, to start a line's cost from."""
     client = require_items_access(request, db, "reports.view")
     return suggest_items(db, client.id, q)
+
+
+@router.get("/api/jobs/{job_id}/budget/earned-value")
+def job_earned_value(job_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """Budget against actual by BOQ line and heading: planned value, earned value, actual cost, CPI and SPI."""
+    client = require_items_access(request, db, "reports.view")
+    return earned_value(db, client.id, job_or_404(db, client.id, job_id))
+
+
+@router.get("/api/jobs/{job_id}/budget/earned-value.xlsx")
+def job_earned_value_export(job_id: int, request: Request, db: Session = Depends(get_read_db)):
+    client = require_items_access(request, db, "reports.view")
+    job = job_or_404(db, client.id, job_id)
+    ev = earned_value(db, client.id, job)
+    t = ev["total"]
+    blank = lambda v: "" if v is None else v
+    preamble = [("BUDGET AGAINST ACTUAL - EARNED VALUE", client.company_name or ""),
+                ("Project", "%s %s" % (job.number or "", job.name or ""), "As of", ev["as_of"]),
+                ("Budget", t["budget"], "Planned value", t["pv"], "Earned value", t["ev"], "Actual cost", t["ac"]),
+                ("CPI", blank(t["cpi"]), "SPI", blank(t["spi"]), "Cost at completion", blank(t["eac"])), ()]
+    heads = {h["key"]: h for h in ev["headings"]}
+    rows = []
+    for h in ev["headings"]:
+        rows.append(("  " * h["level"] + (h["item_no"] + " " if h["item_no"] else "") + h["description"], "", h["budget"], h["planned_percent"],
+                     h["done_percent"], h["pv"], h["ev"], h["ac"], h["variance"], blank(h["cpi"]), blank(h["spi"]), "OVER" if h["overrun"] else ""))
+    rows.append(())
+    for l in ev["lines"]:
+        rows.append(((l["item_no"] + " " if l["item_no"] else "") + (l["description"] or "")[:120],
+                     " > ".join(heads[k]["description"][:30] for k in l["path"] if k in heads), l["budget"], l["planned_percent"], l["done_percent"],
+                     l["pv"], l["ev"], l["ac"], l["variance"], blank(l["cpi"]), blank(l["spi"]), "OVER" if l["overrun"] else ""))
+    na = ev["not_against_a_line"]
+    closing = [(), ("Cost not against a BOQ line", "", "", "", "", "", "", na["material"] + na["subcontract"]),
+               ("Total", "", t["budget"], t["planned_percent"], t["done_percent"], t["pv"], t["ev"], t["ac"], t["variance"], blank(t["cpi"]), blank(t["spi"]))]
+    return sheet_response(("Heading / line", "Under", "Budget", "Planned %", "Done %", "Planned value", "Earned value", "Actual cost",
+                           "EV - AC", "CPI", "SPI", ""), rows, "earned_value_%s.xlsx" % (job.number or "project"), preamble=preamble, closing=closing)
 
 
 @router.get("/api/jobs/{job_id}/budget.xlsx")

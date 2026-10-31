@@ -101,7 +101,7 @@ export function QuoteFilesPanel() {
         )}
 
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title="Remove this quotation file?" description={removing ? `${removing.name}${removing.supplier_name ? ` from ${removing.supplier_name}` : ''} is taken off the list for good.` : ''}
-        confirmLabel="Remove" tone="danger" loading={remove.isPending} onConfirm={() => removing && remove.mutate(removing)} />
+        confirmLabel="Remove" tone="danger" loading={remove.isPending} onConfirm={() => { if (removing) remove.mutate(removing) }} />
     </div>
   )
 }

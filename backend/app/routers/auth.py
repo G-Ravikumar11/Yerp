@@ -11,7 +11,7 @@ from app import models
 from app.core import identity as identity_core, login_guard, passwords
 from app.db import get_db, get_read_db
 
-from app.constants.common import ALLOW_SELF_REGISTRATION, GOOGLE_SIGNIN_SCOPES
+from app.constants.common import ALLOW_SELF_REGISTRATION, GMAIL_SCOPES, GOOGLE_SIGNIN_SCOPES
 from app.core.audit import log_audit, log_login
 from app.core import app_limits
 from app.core.auth import current_role, end_every_session, get_client_user, set_session_lifetime
@@ -235,10 +235,15 @@ async def login(request: Request, role: str = "client", portal: str = None):
     request.session['oauth_role'] = role
     if portal:
         request.session['oauth_portal'] = portal
-    redirect_uri = str(request.url_for('auth_callback'))
+    # GOOGLE_REDIRECT_URI is sent exactly as written: the address registered on the Google client (a laptop behind the
+    # dev proxy, say). Without it the address is worked out from the request, as on the live site.
+    redirect_uri = (os.getenv("GOOGLE_REDIRECT_URI") or "").strip() or str(request.url_for('auth_callback'))
     if redirect_uri.startswith('http://') and 'localhost' not in redirect_uri:
         redirect_uri = redirect_uri.replace('http://', 'https://', 1)
-    return await oauth.google.authorize_redirect(request, redirect_uri, access_type='offline', prompt='consent')
+    # Connecting Gmail asks only to send mail (GMAIL_SCOPES). The platform console's sign-in asks only who somebody is,
+    # since it is their email that says whether they are an admin.
+    scope = GOOGLE_SIGNIN_SCOPES if role == "superadmin" else " ".join(GMAIL_SCOPES)
+    return await oauth.google.authorize_redirect(request, redirect_uri, scope=scope, access_type='offline', prompt='consent')
 
 
 @router.get("/api/auth/callback")

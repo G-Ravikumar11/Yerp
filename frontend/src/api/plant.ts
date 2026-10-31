@@ -78,7 +78,35 @@ export const reassign = (id: number, employee_id: number, on: string, reason: st
 export const saveLog = (id: number | null, b: Record<string, unknown>) => (id ? put<Msg>(`/api/plant/logs/${id}`, b) : post<Msg>('/api/plant/logs', b))
 export const decideLog = (id: number, decision: 'approve' | 'reject', remarks: string) => post<Msg>(`/api/plant/logs/${id}/decision`, { decision, remarks })
 export const saveHoursRule = (regular_hours: number) => put<Msg>('/api/plant/settings', { regular_hours })
-export const recordFuel = (b: Record<string, unknown>) => post<Msg>('/api/plant/fuel', b)
+export const recordFuel = (b: Record<string, unknown>) => post<Msg & { warning?: string }>('/api/plant/fuel', b)
+
+// ---- what the module checks for itself ----
+export interface MeterGap { asset_id: number; code: string; machine: string; from: string; to: string; days_without_reading: number; last_closing: number; next_opening: number | null; unlogged_meter: number; unit: string; resolved: boolean; note: string; resolved_by: string }
+export interface MeterEntry { type: string; date: string; shift: string; opening: number | null; closing: number | null; hours: number | null; status: string; project: string; by: string; approved_by: string; note: string; log_id: number | null }
+export interface MonitorRow { asset_id: number; code: string; name: string; litres: number; operating_hours: number; actual_lph: number; fuel_norm_lph: number | null; expected_litres: number; tank_capacity_l: number | null; over_norm: boolean; open_flags: number }
+export interface FuelFlag { fuel_id: number; number: string; date: string; asset_id: number; code: string; machine: string; project: string; litres: number; reason: string; label: string; detail: string; status: string; note: string; reviewed_by: string; reviewed_at: string }
+export interface RentalCheck {
+  rental_id: number; number: string; agreement_no: string; code: string; machine: string; supplier: string; project: string; billing: string; rate: number; overtime_rate: number; min_billable_hours: number
+  kind: 'invoice' | 'missing'; invoice_id: number | null; invoice_no: string; month: string; period_from: string; period_to: string; days_on_hire: number; minimum_hours: number; actual_hours: number; overtime_hours: number
+  expected: number; actual: number | null; difference: number | null; status: string; detail: string; verification_status: string; verified_by: string; verification_note: string
+}
+export interface AlertRow { id: number; kind: string; period: string; asset_id: number | null; code: string; machine: string; title: string; body: string; severity: string; status: string; delivery_status: string; sent_to: string; reviewed_by: string; review_note: string; created_at: string }
+export interface PlantCostLine { category: string; source: string; ref: string; date: string; code: string; machine: string; description: string; amount: number }
+export interface PlantCostRow { job_id: number; project: string; fuel: number; rental: number; hire: number; maintenance: number; expenses: number; total: number; duplicates_excluded: number; unbilled_hire_estimate: number; lines: PlantCostLine[] }
+export interface PlantSettings { regular_hours: number; document_alert_days: number; fuel_tolerance_percent: number; rental_tolerance_percent: number }
+
+export const useMeterGaps = (asset: number) => useQuery({ queryKey: ['equipment', 'gaps', asset], queryFn: () => get<{ gaps: MeterGap[] }>(`/api/plant/meter-gaps?asset_id=${asset}`) })
+export const useMeterHistory = (id: number) => useQuery({ queryKey: ['equipment', 'meter', id], queryFn: () => get<{ history: MeterEntry[]; unit: string; reading: number }>(`/api/plant/machines/${id}/meter-history`) })
+export const useFuelMonitor = (r: { date_from: string; date_to: string; asset_id: number }) => useQuery({ queryKey: ['equipment', 'fuel-monitor', r], queryFn: () => get<{ machines: MonitorRow[]; flags: FuelFlag[]; tolerance_percent: number }>(`/api/plant/fuel-monitor?date_from=${r.date_from}&date_to=${r.date_to}&asset_id=${r.asset_id}`) })
+export const useRentalVerification = (month: string) => useQuery({ queryKey: ['equipment', 'rental-check', month], queryFn: () => get<{ rows: RentalCheck[]; tolerance_percent: number; summary: Record<'Matched' | 'Mismatch' | 'Duplicate' | 'Missing' | 'Incomplete', number> }>(`/api/plant/rental-verification?month=${month}`) })
+export const useAlerts = (kind: string, status: string) => useQuery({ queryKey: ['equipment', 'alerts', kind, status], queryFn: () => get<{ alerts: AlertRow[]; open: number }>(`/api/plant/alerts?kind=${kind}&status=${status}`) })
+export const useProjectPlantCosts = () => useQuery({ queryKey: ['equipment', 'project-costs'], queryFn: () => get<{ projects: PlantCostRow[] }>('/api/plant/project-costs') })
+export const usePlantSettings = () => useQuery({ queryKey: ['equipment', 'settings'], queryFn: () => get<PlantSettings>('/api/plant/settings') })
+export const resolveGap = (b: { asset_id: number; from_date: string; to_date: string; note: string }) => post<Msg>('/api/plant/meter-gaps/resolve', b)
+export const reviewFuelFlag = (b: { fuel_id: number; reason: string; decision: string; note: string }) => post<Msg>('/api/plant/fuel-flags/review', b)
+export const verifyInvoice = (id: number, decision: string, note: string) => post<Msg>(`/api/plant/rental-invoices/${id}/verify`, { decision, note })
+export const reviewAlert = (id: number, status: string, note: string) => post<Msg>(`/api/plant/alerts/${id}/review`, { status, note })
+export const saveAlertSettings = (b: { document_alert_days: number; fuel_tolerance_percent: number; rental_tolerance_percent: number }) => put<Msg>('/api/plant/settings', b)
 export const removeFuel = (id: number) => del<Msg>(`/api/plant/fuel/${id}`)
 export const raiseMaint = (b: Record<string, unknown>) => post<Msg>('/api/plant/maintenance', b)
 export const updateMaint = (id: number, b: Record<string, unknown>) => put<Msg>(`/api/plant/maintenance/${id}`, b)

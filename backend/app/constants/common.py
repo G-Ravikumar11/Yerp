@@ -21,6 +21,12 @@ BUDGET_REPORT_HEADERS = ["Ordered Items", "RM code - Description", "Quantity",
 # Keeping them apart means granting one never quietly grants the other.
 GOOGLE_SIGNIN_SCOPES = "openid email profile"
 
+# What connecting the company's Gmail asks for: permission to send mail, and nothing else - not to read it, and not
+# who the account belongs to.
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.send",
+]
+
 # Days past due at which a chase goes out. Each rung is sent at most once.
 REMINDER_LADDER = (1, 7, 14, 30)
 

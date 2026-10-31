@@ -132,14 +132,45 @@ export interface Tracker {
 export interface AvailableLine {
   kind: BoqKind
   key?: string
+  item_no?: string
   group_code: string
   description: string
+  /** A heading: how deep it sits (0 a main heading, 1 the sub-heading under it ...). */
+  level?: number
+  /** The headings above it, outermost first. */
+  path?: string[]
+  /** A heading: the text written under it on the sheet. */
+  notes?: string
   uom?: string
+  material?: string
+  remarks?: string
   item_code?: string
   quantity?: number
   rate?: number
   given?: number
   left?: number
+  /** A contractor rate to start from: the budget's labour and plant per unit, else the rate last given. */
+  suggested_rate?: number
+  rate_from?: '' | 'budget' | 'last given'
+}
+
+/** A schedule line as the server lays it out (the screen's own line, from the BOQ or typed in). */
+export interface ScheduleRow {
+  activity_no: string
+  item_code: string
+  item_description: string
+  technical_spec: string
+  uom: string
+  quantity: number
+  unit_rate: number
+  tolerance_percent: number
+  budget_id: number | string | null
+  is_header: boolean
+  boq_key: string
+  boq_parts: { key: string; qty: number }[]
+  material: string
+  heading_level: number
+  rate_from?: string
 }
 
 export const boqKeys = {
@@ -163,7 +194,9 @@ export const useBoqSummary = (id: number, gst: number, enabled: boolean, rev?: n
   })
 /** Every material or grade already put on a BOQ line: what the Material dropdown offers besides its standard list. */
 export const useBoqMaterials = () => useQuery({ queryKey: ['boq', 'materials'], queryFn: () => get<{ materials: string[] }>('/api/boqs/materials') })
-export const useAvailable = (id: number) => useQuery({ queryKey: boqKeys.available(id), enabled: id > 0, queryFn: () => get<{ boq: BoqHead; lines: AvailableLine[] }>(`/api/boqs/${id}/available`) })
+// Read afresh each time the picker opens: the BOQ, what other orders have taken and the budget all change elsewhere.
+export const useAvailable = (id: number) =>
+  useQuery({ queryKey: boqKeys.available(id), enabled: id > 0, staleTime: 0, gcTime: 0, queryFn: () => get<{ boq: BoqHead; lines: AvailableLine[] }>(`/api/boqs/${id}/available`) })
 export const useBoqChanges = (id: number, from: number, enabled: boolean) => useQuery({ queryKey: ['boq', 'changes', id, from], enabled: enabled && id > 0, queryFn: () => get<BoqChanges>(`/api/boqs/${id}/changes?frm=${from}`) })
 
 export const createBoq = (jobId: number, title: string) => post<{ boq: BoqHead; message: string }>('/api/boqs', { job_id: jobId, title })
@@ -175,12 +208,43 @@ export function importBoq(id: number, file: File) {
   form.append('file', file)
   return api<BoqImport>(`/api/boqs/${id}/import`, { method: 'POST', body: form })
 }
-/** `lines` are BOQ lines taken one by one; `groups` are headings taken as one line each (their quantities added up at one rate). */
+export interface BoqGroupPick {
+  /** The heading it stands for: the line goes where that heading is, under the headings above it. */
+  heading_key: string
+  description: string
+  group_code: string
+  /** Left out, the rate the budget (or the last order) suggests, weighted by quantity. */
+  rate?: number
+  parts: { key: string; quantity: number }[]
+}
+
+/**
+ * `lines` are BOQ lines taken one by one; `groups` are headings taken as one line each (their quantities added up at one
+ * rate). With `current` (the schedule on screen), `rows` is the whole schedule with them in it, laid out like the sheet.
+ */
 export const pullBoqLines = (
   orderId: number,
-  lines: { key: string; quantity: number; rate: number }[],
-  groups: { description: string; group_code: string; rate: number; parts: { key: string; quantity: number }[] }[] = [],
-) => post<{ lines: Record<string, unknown>[]; warnings: string[] }>(`/api/wo/orders/${orderId}/boq-lines`, { lines, groups })
+  lines: { key: string; quantity: number; rate?: number }[],
+  groups: BoqGroupPick[] = [],
+  current?: Partial<ScheduleRow>[],
+) =>
+  post<{ lines: ScheduleRow[]; headings: ScheduleRow[]; rows?: ScheduleRow[]; warnings: string[] }>(`/api/wo/orders/${orderId}/boq-lines`, {
+    lines,
+    groups,
+    ...(current ? { current } : {}),
+  })
+
+/**
+ * The schedule on screen made cumulative: its BOQ lines added up into one line per heading at `level` (0 the main
+ * headings, 1 the sub-headings), per unit and, with `keep_grades`, per grade - or with `split` put back as BOQ lines.
+ * The order's value does not move; each line keeps the BOQ lines it adds up.
+ */
+export const cumulativeSchedule = (orderId: number, rows: Partial<ScheduleRow>[], opts: { level?: number; keep_grades?: boolean; split?: boolean }) =>
+  post<{ rows: ScheduleRow[] }>(`/api/wo/orders/${orderId}/schedule/cumulative`, { rows, ...opts })
+
+/** The schedule on screen in the BOQ's order, under its headings, numbered (the blank numbers, or all with `renumber`). */
+export const arrangeSchedule = (orderId: number, rows: Partial<ScheduleRow>[], renumber: boolean) =>
+  post<{ rows: ScheduleRow[] }>(`/api/wo/orders/${orderId}/schedule/arrange`, { rows, renumber })
 
 /* --- Variations to the BOQ -------------------------------------------------------------------- */
 

@@ -40,10 +40,10 @@ _LABELS = {
     APP_EXCEL: "Download Excel reports in the app",
 }
 
-# A person's own business, open whatever they hold: signing in and out, their clock-in and leave, chat, the phone's
-# push token, the public pages, and the app's own update check.
+# A person's own business, open whatever they hold: signing in and out, their clock-in and leave, chat, reacting to and
+# writing a celebration wish, the phone's push token, the public pages, and the app's own update check.
 _OWN = re.compile(
-    r"^/api/(client/(login|logout|forgot-password|reset-password)|employee/|devices|chat|attendance|leave|auth/|public/|app/)")
+    r"^/api/(client/(login|logout|forgot-password|reset-password)|employee/|devices|chat|attendance|leave|celebrations/(react|wishes)|auth/|public/|app/)")
 
 # Site work: what a site engineer does from the site.
 _SITE = re.compile(

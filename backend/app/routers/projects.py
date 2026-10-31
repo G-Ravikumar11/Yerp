@@ -27,6 +27,7 @@ from app.core.sheets import sheet_response
 from app.routers.files import list_files
 from app.schemas.projects import (
     ActivityIn,
+    DelayReasonIn,
     DiaryIn,
     FromBoqIn,
     DrawingIn,
@@ -70,6 +71,8 @@ from app.services.projects import (
     project_pnl,
     activity_detail,
     apply_work_updates,
+    reconcile_activity,
+    undo_diary_progress,
     schedule_from_boq,
     schedule_import_confirm,
     schedule_import_preview,
@@ -588,7 +591,7 @@ def create_diary(body: DiaryIn, request: Request, db: Session = Depends(get_db))
     db.add(diary)
     db.flush()
     _replace_diary_lines(db, diary, body.labour, body.plant)
-    moved = apply_work_updates(db, client.id, job, body.work_updates, on, actor_name)
+    moved = apply_work_updates(db, client.id, job, body.work_updates, on, actor_name, diary.id)
     db.commit()
     db.refresh(diary)
     return {"ok": True, "diary": diary_dict(db, diary, detail=True), "planning": {"tasks": moved[0], "activities": moved[1]},
@@ -624,7 +627,7 @@ def update_diary(diary_id: int, body: DiaryIn, request: Request,
     if body.work_order_id is not None:
         diary.work_order_id = owned_or_404(db, models.DBWorkOrder, client.id, body.work_order_id, "Work order")
     _replace_diary_lines(db, diary, body.labour, body.plant)
-    moved = apply_work_updates(db, client.id, job_or_404(db, client.id, diary.job_id), body.work_updates, diary.diary_date, actor_name)
+    moved = apply_work_updates(db, client.id, job_or_404(db, client.id, diary.job_id), body.work_updates, diary.diary_date, actor_name, diary.id)
     db.commit()
     db.refresh(diary)
     return {"ok": True, "diary": diary_dict(db, diary, detail=True), "planning": {"tasks": moved[0], "activities": moved[1]},
@@ -643,6 +646,7 @@ def submit_diary(diary_id: int, request: Request, db: Session = Depends(get_db))
                  "a diary entry.")
     diary.status = "SUBMITTED"
     diary.submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    diary.submitted_by_name = actor_name
     log_audit(db, client.id, "diary_submitted", "site_diary", diary.id,
               diary.diary_date or "", actor_name, request)
     db.commit()
@@ -666,6 +670,7 @@ def reopen_diary(diary_id: int, body: ReopenIn, request: Request, db: Session = 
     diary.amendments = ((diary.amendments or "").rstrip("\n") + "\n" if diary.amendments else "") + "%s - %s: %s" % (stamp, actor_name, reason[:300])
     diary.status = "DRAFT"
     diary.submitted_at = ""
+    diary.submitted_by_name = ""
     log_audit(db, client.id, "diary_reopened", "site_diary", diary.id, diary.diary_date or "", "%s: %s" % (actor_name, reason[:300]), request)
     db.commit()
     db.refresh(diary)
@@ -683,9 +688,18 @@ def delete_diary(diary_id: int, request: Request, db: Session = Depends(get_db))
         models.DBDiaryLabour.site_diary_id == diary.id).delete()
     db.query(models.DBDiaryPlant).filter(
         models.DBDiaryPlant.site_diary_id == diary.id).delete()
+    # What this draft reported on the plan goes with it: the progress it made is taken back, the tasks it ticked go back as they were.
+    removed, put_back = undo_diary_progress(db, client.id, diary)
+    db.query(models.DBHindrance).filter(models.DBHindrance.diary_id == diary.id).update({"diary_id": None}, synchronize_session=False)
     db.delete(diary)
     db.commit()
-    return {"ok": True, "message": "Draft diary removed."}
+    bits = []
+    if removed:
+        bits.append("%d progress report%s" % (removed, "" if removed == 1 else "s"))
+    if put_back:
+        bits.append("%d task%s" % (put_back, "" if put_back == 1 else "s"))
+    return {"ok": True, "message": "Draft diary removed." + ((" Taken back from Planning & Progress: %s." % " and ".join(bits)) if bits else ""),
+            "undone": {"reports": removed, "tasks": put_back}}
 
 
 @router.get("/api/diary-labour/{job_id}")
@@ -784,6 +798,18 @@ def diary_export(diary_id: int, request: Request, db: Session = Depends(get_read
                           preamble=preamble, closing=closing)
 
 
+@router.get("/api/diary/{diary_id}/report.pdf")
+def diary_report_pdf(diary_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The daily progress report on the letterhead: the day's weather, labour and plant, the plan against what was done that day,
+    what held the work up, the photographs, and who signed it off (with any change made after)."""
+    from fastapi.responses import Response
+    from app.documents.dpr_pdf import dpr_pdf
+    client = require_erp_read(request, db)
+    d = diary_or_404(db, client.id, diary_id)
+    body, name = dpr_pdf(db, client, d)
+    return Response(body, media_type="application/pdf", headers={"Content-Disposition": 'inline; filename="%s"' % name})
+
+
 @router.get("/api/jobs/{job_id}/pnl")
 def job_pnl(job_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_items_access(request, db, "reports.view")
@@ -868,6 +894,7 @@ def job_pnl_export(job_id: int, request: Request, db: Session = Depends(get_db))
         ("Material from the store", c["material_from_store"]),
         ("Labour", c["labour"]),
         ("Plant", c["plant"]),
+        ("Equipment & plant", c["equipment"]),
         ("Incurred", c["incurred"]),
         ("Committed, not yet billed", c["committed_not_yet_billed"]),
         ("Forecast cost", c["forecast"]),
@@ -1054,6 +1081,9 @@ def delete_activity(activity_id: int, request: Request, db: Session = Depends(ge
     # A task that was under it stays on its day, as a task of the project.
     db.query(models.DBScheduleTask).filter(models.DBScheduleTask.activity_id == a.id).update(
         {"activity_id": None}, synchronize_session=False)
+    # So does a hindrance raised against it: the register keeps it, as a hindrance of the site.
+    db.query(models.DBHindrance).filter(models.DBHindrance.activity_id == a.id).update(
+        {"activity_id": None}, synchronize_session=False)
     job_id = a.job_id
     db.delete(a)
     db.commit()
@@ -1088,13 +1118,39 @@ def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Se
                                      note=(body.note or "").strip(), by_name=actor_name))
     if done is not None:
         a.qty_done = done
-    if pct > 0 and not a.actual_start:
-        a.actual_start = on
-    if pct >= 100 and not a.actual_finish:
-        a.actual_finish = on
-    status_after_progress(a, pct)
+    # The latest report decides: 100 finishes the activity, anything lower opens it again (and takes its finish date away).
+    reconcile_activity(db, a)
     db.commit()
     return {"ok": True, "schedule": schedule_view(db, client.id, job_or_404(db, client.id, a.job_id))}
+
+
+@router.put("/api/schedule/activities/{activity_id}/delay-reason")
+def set_delay_reason(activity_id: int, body: DelayReasonIn, request: Request, db: Session = Depends(get_db)):
+    """Why an activity is late against its baseline, when no hindrance on the register says. Blank takes the reason away."""
+    from app.constants.projects import DELAY_REASONS
+    client, _, actor_name = wo_actor(request, db, "site.record")
+    a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == activity_id,
+                                                   models.DBScheduleActivity.client_id == client.id).first()
+    if not a:
+        raise HTTPException(404, "Activity not found")
+    reason = (body.reason or "").strip()
+    if reason and reason not in DELAY_REASONS:
+        raise HTTPException(400, "Choose the reason from the list.")
+    note = re.sub(r"\s+", " ", body.note or "").strip()[:500]
+    if reason == "Other" and len(note) < 3:
+        raise HTTPException(400, "Say in a few words what the other reason is.")
+    a.delay_reason, a.delay_note = reason, (note if reason else "")
+    log_audit(db, client.id, "delay_reason", "schedule_activity", a.id, a.code or a.name or "", "%s: %s %s" % (actor_name, reason or "(cleared)", note), request)
+    db.commit()
+    return {"ok": True, "schedule": schedule_view(db, client.id, job_or_404(db, client.id, a.job_id)),
+            "message": ("Reason kept: %s." % reason) if reason else "Reason taken away."}
+
+
+@router.get("/api/delay-reasons")
+def delay_reasons(request: Request, db: Session = Depends(get_read_db)):
+    from app.constants.projects import DELAY_REASONS
+    require_erp_read(request, db)
+    return {"reasons": list(DELAY_REASONS)}
 
 
 @router.post("/api/jobs/{job_id}/schedule/import")

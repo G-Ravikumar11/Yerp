@@ -54,8 +54,8 @@ def contractor_compliance(db, client_id, contractor_id, today=None):
     for kind in REQUIRED_KINDS:
         d = best.get(kind)
         if d is None:
+            # Optional: a document not given is noted here and stops nothing. One on file that has run out does.
             warnings.append("%s is not on record." % DOC_KINDS[kind])
-            blocking = True
         elif d["state"] == "expired":
             warnings.append("%s ran out on %s." % (DOC_KINDS[kind], d["valid_to"]))
             blocking = True

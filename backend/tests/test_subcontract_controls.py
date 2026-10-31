@@ -152,21 +152,20 @@ def test_a_contractor_whose_papers_have_lapsed_is_not_certified_or_paid(tenant, 
     monkeypatch.setenv("REQUIRE_CONTRACTOR_COMPLIANCE", "1")
     order = priced(tenant)
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
-    res = tenant.post("/api/wo/orders/%d/approve" % order["id"], json={})
-    assert res.status_code == 409 and "Compliance" in res.json()["detail"]
-    all_papers(tenant, order["contractor_id"])
+    # Papers not on record are optional: the order goes ahead without them.
     assert tenant.post("/api/wo/orders/%d/approve" % order["id"], json={}).status_code == 200
+    all_papers(tenant, order["contractor_id"])
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     measure(tenant, order["id"], item, 50)
     bill = raise_bill(tenant, order["id"]).json()["bill"]
     tenant.post("/api/sub-bills/%d/submit" % bill["id"], json={})
-    # The licence is struck off the record before the bill is certified.
+    # The licence on file runs out before the bill is certified.
     from app import models
     import main
     with main.SessionLocal() as db:
         db.query(models.DBComplianceDocument).filter(
             models.DBComplianceDocument.contractor_id == order["contractor_id"],
-            models.DBComplianceDocument.kind == "labour_licence").delete()
+            models.DBComplianceDocument.kind == "labour_licence").update({"valid_to": day(-2)})
         db.commit()
     assert tenant.get("/api/sub-bills/%d" % bill["id"]).json()["compliance_blocks"]
     res = tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={})

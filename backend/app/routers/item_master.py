@@ -1,8 +1,10 @@
 """The item master endpoints for BOQ work items: list, edit, status, categories, and where an item is used."""
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import and_, func, or_
+from sqlalchemy.exc import IntegrityError
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import models
@@ -15,10 +17,16 @@ from app.core.currency import unit_rate
 from app.core.sheets import read_sheet_rows, sheet_response
 from app.schemas.item_master import BulkCategoryIn, BulkStatusIn, BulkUpdateIn, CategoryIn, CategoryPatch, ImportRowsIn, MasterItemIn, MergeIn, StatusIn
 from app.services import item_master as im
-from app.services import item_import, item_usage
+from app.services import item_import, item_merge, item_usage
 from app.services.site_rates import current_lines_of_item
 
 router = APIRouter()
+
+class ItemMergeIn(BaseModel):
+    primary_id: int
+    item_ids: List[int]
+    reason: Optional[str] = ""
+
 
 NO_CATEGORY = "__none__"        # the filter value for items nobody has put in a category yet
 SORTS = {"code": models.DBItem.item_code, "name": models.DBItem.item_name, "category": models.DBItem.item_category,
@@ -209,6 +217,51 @@ def item_similar(request: Request, name: str = "", code: str = "", exclude_id: O
     return {"similar": im.similar_items(db, client.id, name, code, exclude_id)}
 
 
+@router.get("/api/items/duplicates")
+def item_duplicates(request: Request, type: str = "", kind: str = "", q: str = "", page: int = 1, per_page: int = 25, db: Session = Depends(get_read_db)):
+    """Groups that may be one item entered twice, exact and possible apart. Nothing here is merged by itself."""
+    client = require_erp_read(request, db)
+    groups = item_merge.find_duplicates(db, client.id, kind, q, type)
+    per_page = max(1, min(per_page, 100))
+    page = max(1, page)
+    shown = groups[(page - 1) * per_page:page * per_page]
+    stock = im.stock_of(db, client.id, [m.item_code for g in shown for m in g["members"]])
+    return {"groups": [item_merge.group_dict(g, stock) for g in shown], "total": len(groups), "page": page, "per_page": per_page,
+            "exact": len([g for g in groups if g["type"] == "exact"]), "possible": len([g for g in groups if g["type"] == "possible"])}
+
+
+@router.get("/api/items/duplicates.xlsx")
+def item_duplicates_export(request: Request, type: str = "", kind: str = "", q: str = "", db: Session = Depends(get_read_db)):
+    client = require_erp_read(request, db)
+    groups = item_merge.find_duplicates(db, client.id, kind, q, type)
+    stock = im.stock_of(db, client.id, [m.item_code for g in groups for m in g["members"]])
+    rows = [(n, g["type"].capitalize(), g["reason"], m.item_code, m.item_name, m.item_category or "", m.units_of_measure or "", float(stock.get(m.item_code) or 0),
+             "Active" if m.is_active is not False else "Inactive") for n, g in enumerate(groups, 1) for m in g["members"]]
+    return sheet_response(("Group", "Match", "Why", "Item Code", "Item Name", "Category", "UOM", "Stock", "Status"), rows, "duplicate_items.xlsx")
+
+
+@router.post("/api/items/merge/preview")
+def item_merge_preview(body: ItemMergeIn, request: Request, db: Session = Depends(get_db)):
+    """The items side by side, what is linked to each, and anything that stops them being merged. Changes nothing."""
+    client, _, _ = wo_actor(request, db, "items.manage")
+    return item_merge.merge_preview(db, client.id, body.primary_id, body.item_ids)
+
+
+@router.post("/api/items/merge")
+def item_merge_run(body: ItemMergeIn, request: Request, db: Session = Depends(get_db)):
+    """Fold the duplicates into the item kept: the whole of it, or none."""
+    client, _, who = wo_actor(request, db, "items.manage")
+    try:
+        primary, others, records = item_merge.merge_items(db, client.id, body.primary_id, body.item_ids, body.reason, who)
+        for r in records:
+            log_audit(db, client.id, "item_merged", "item", r.merged_item_id, r.merged_code, "Into %s. Moved %s. %s" % (r.primary_code, r.moved, r.reason), request)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"item": im.item_dict(primary), "merged": [o.item_code for o in others], "message": "%s merged into %s." % (", ".join(o.item_code for o in others), primary.item_code)}
+
+
 @router.get("/api/items/export.xlsx")
 def items_export(request: Request, q: str = "", category: str = "", subcategory: str = "", item_type: str = "", uom: str = "",
                  status: str = "all", kind: str = "", site_id: Optional[int] = None, ids: str = "", missing: str = "",
@@ -243,6 +296,9 @@ def item_create(body: MasterItemIn, request: Request, db: Session = Depends(get_
         item = im.create_master_item(db, client.id, body, who)
         log_audit(db, client.id, "item_created", "item", item.id, item.item_code, item.item_name, request)
         db.commit()
+    except IntegrityError:
+        db.rollback()                   # somebody saved the same item a moment earlier: the unique index had the last word
+        raise HTTPException(409, "This item has just been added by someone else. Search for it before adding it again.")
     except Exception:
         db.rollback()
         raise
@@ -257,6 +313,9 @@ def item_update(item_id: int, body: MasterItemIn, request: Request, db: Session 
         im.update_master_item(db, item, body, who)
         log_audit(db, client.id, "item_updated", "item", item.id, item.item_code, item.item_name, request)
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Another item already has these details.")
     except Exception:
         db.rollback()
         raise

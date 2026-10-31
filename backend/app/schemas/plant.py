@@ -43,6 +43,9 @@ class LogbookIn(BaseModel):
     fuel_litres: Optional[float] = 0
     supervisor_remarks: Optional[str] = ""
     correction_reason: Optional[str] = ""
+    meter_replaced: Optional[bool] = False       # the only way a reading may fall
+    replacement_date: Optional[str] = ""
+    replacement_reason: Optional[str] = ""
 
 
 class DecisionIn(BaseModel):
@@ -51,7 +54,10 @@ class DecisionIn(BaseModel):
 
 
 class HoursRuleIn(BaseModel):
-    regular_hours: float
+    regular_hours: Optional[float] = None
+    document_alert_days: Optional[int] = None    # warn this many days before insurance or fitness runs out
+    fuel_tolerance_percent: Optional[float] = None
+    rental_tolerance_percent: Optional[float] = None
 
 
 class FuelIn(BaseModel):
@@ -173,3 +179,27 @@ class ExpenseIn(BaseModel):
     invoice_no: Optional[str] = ""
     payment_status: Optional[str] = "Unpaid"
     payment_ref: Optional[str] = ""
+
+
+class GapResolveIn(BaseModel):
+    asset_id: int
+    from_date: str
+    to_date: str
+    note: str = ""
+
+
+class FuelFlagReviewIn(BaseModel):
+    fuel_id: int
+    reason: str                                  # above_norm | over_tank | no_hours
+    decision: str                                # investigate | resolve | dismiss
+    note: str = ""
+
+
+class InvoiceVerifyIn(BaseModel):
+    decision: str                                # approve | dispute
+    note: Optional[str] = ""
+
+
+class AlertReviewIn(BaseModel):
+    status: str                                  # Reviewed | Resolved
+    note: Optional[str] = ""

@@ -38,7 +38,7 @@ def test_the_dashboard_counts_what_is_stored_and_respects_the_project(tenant):
     tenant.post("/api/qc/ncrs", json={"job_id": b["id"], "description": "Cover short on slab"})
 
     everything = tenant.get("/api/qc/summary").json()
-    assert everything["inspections_failed"] == 1 and everything["below_grade"] == 1 and everything["ncrs_open"] == 2
+    assert everything["inspections_failed"] == 1 and everything["below_grade"] == 1 and everything["ncrs_open"] == 3     # the two above, and the failed cube's own
     # The project tests M30 at 28 days only; two sets cast 40 days ago, one already crushed.
     assert everything["cubes_to_crush"] == 1 and everything["cubes_overdue"] == 1
     one = tenant.get("/api/qc/summary?job_id=%d" % b["id"]).json()
@@ -388,7 +388,7 @@ def test_one_issue_gets_one_ncr(tenant):
     s = tenant.post("/api/qc/cubes", json={"job_id": j["id"], "grade": "M25"}).json()["cube_set"]
     tenant.post("/api/qc/cubes/%d/results" % s["id"], json={"age_days": 28, "strengths": "15, 16, 17"})
     assert tenant.post("/api/qc/ncrs", json={"source_type": "cube_set", "source_id": s["id"]}).status_code == 200
-    assert tenant.post("/api/qc/ncrs", json={"source_type": "cube_set", "source_id": s["id"]}).status_code == 409
+    assert tenant.post("/api/qc/ncrs", json={"source_type": "cube_set", "source_id": s["id"]}).json()["existing"] is True
 
 
 def test_ncr_numbers_stay_unique_after_a_record_is_deleted(tenant):

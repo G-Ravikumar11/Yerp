@@ -51,6 +51,7 @@ from app.services.assets import (
     next_asset_code,
     tax_block_schedule,
 )
+from app.services.plant_checks import raise_breakdown_alert
 from app.services.projects import job_or_404
 
 
@@ -211,6 +212,9 @@ def get_asset(asset_id: int, request: Request, db: Session = Depends(get_read_db
     # How hard it worked: hours against the hours it stood on a site.
     worked = sum(l["hours_worked"] for l in d["logs"])
     idle = sum(l["idle_hours"] for l in d["logs"])
+    d["breakdowns"] = [{"id": s.id, "number": s.number or "", "reported_on": s.reported_on or s.service_on, "kind": s.kind, "priority": s.priority or "Normal", "status": s.status or "Completed",
+                        "description": s.description or "", "downtime_hours": s.downtime_hours or 0, "total_cost": money(s.total_cost)}
+                       for s in db.query(S).filter(S.asset_id == a.id, S.kind.in_(("Corrective", "Emergency", "Breakdown", "Repair"))).order_by(S.id.desc()).limit(50).all()]
     d["utilisation_percent"] = round(worked / (worked + idle) * 100, 1) if (worked + idle) else 0.0
     d["litres_per_hour"] = round(sum(l["fuel_litres"] for l in d["logs"]) / worked, 2) if worked else 0.0
     return d
@@ -248,39 +252,10 @@ def move_asset(asset_id: int, body: AssetMoveIn, request: Request, db: Session =
 
 @router.post("/api/assets/{asset_id}/logs")
 def log_asset_day(asset_id: int, body: AssetLogIn, request: Request, db: Session = Depends(get_db)):
-    """One machine, one day - on the site it is deployed to."""
-    client, actor_id, actor_name = wo_actor(request, db, "site.record")
-    a = asset_or_404(db, client.id, asset_id)
-    if a.status != "Deployed" or not a.current_job_id:
-        raise HTTPException(409, "%s is not on a site. Deploy it before logging its day." % a.code)
-    on = (body.log_date or datetime.now().strftime("%Y-%m-%d"))[:10]
-    if db.query(models.DBAssetLog).filter(models.DBAssetLog.asset_id == a.id,
-                                          models.DBAssetLog.log_date == on).first():
-        raise HTTPException(409, "%s already has a log for %s." % (a.code, on))
-    worked, idle = float(body.hours_worked or 0), float(body.idle_hours or 0)
-    if worked < 0 or idle < 0 or worked + idle > 24:
-        raise HTTPException(400, "Hours worked and idle add up to more than a day.")
-    if body.meter_reading is not None:
-        if body.meter_reading < (a.meter_reading or 0):
-            raise HTTPException(400, "The meter reads %g now; %g would run it backwards."
-                                     % (a.meter_reading or 0, body.meter_reading))
-        a.meter_reading = float(body.meter_reading)
-    elif a.meter_unit == "Hours" and worked:
-        a.meter_reading = (a.meter_reading or 0) + worked
-    litres = max(0.0, float(body.fuel_litres or 0))
-    rate = max(0.0, float(body.fuel_rate or 0))
-    log = models.DBAssetLog(
-        client_id=client.id, asset_id=a.id, job_id=a.current_job_id, log_date=on,
-        hours_worked=worked, idle_hours=idle, fuel_litres=litres, fuel_rate=rate,
-        fuel_cost=money(litres * rate), hire_cost=hire_cost_for(a, worked),
-        meter_reading=a.meter_reading, operator=(body.operator or "").strip(),
-        work_done=(body.work_done or "").strip()[:300], recorded_by_name=actor_name)
-    db.add(log)
-    db.commit()
-    state = asset_service_state(a)
-    return {"ok": True, "cost": money(log.fuel_cost + log.hire_cost), "service": state,
-            "message": "%s logged for %s: %g h worked%s." % (
-                a.code, on, worked, (" - " + "; ".join(state["reasons"])) if state["reasons"] else "")}
+    """Closed. The logbook is the one way a machine's day goes in, so a day cannot be counted twice. Days already logged
+    this way are kept as they were."""
+    wo_actor(request, db, "site.record")
+    raise HTTPException(410, "Log day has been replaced by the Logbook. Enter the day in Equipment & Plant, Logbook.")
 
 
 @router.post("/api/assets/{asset_id}/services")
@@ -310,6 +285,8 @@ def service_asset(asset_id: int, body: AssetServiceIn, request: Request, db: Ses
     if kind == "Breakdown" and body.out_of_service:
         a.status = "Under repair"
     db.commit()
+    if kind == "Breakdown":
+        raise_breakdown_alert(db, client.id, a, s, "High")
     return {"ok": True, "asset": asset_dict(db, a),
             "message": "%s %s recorded%s." % (a.code, kind.lower(),
                                               ", off work until it is repaired" if a.status == "Under repair" else "")}

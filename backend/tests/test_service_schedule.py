@@ -32,11 +32,11 @@ def edit(tenant, m, **over):
 
 
 def log_meter(tenant, m, reading, n=-1):
-    """Run the meter on by a day's log - the way it moves in the field."""
+    """Run the meter on by a reading taken in the field."""
     j = tenant.post("/api/jobs", json={"name": "Site %s" % reading, "customer_name": "L&T"}).json()
     if not tenant.get("/api/assets/%d" % m["id"]).json()["current_job_id"]:
         assert tenant.post("/api/assets/%d/move" % m["id"], json={"to_job_id": j["id"]}).status_code == 200
-    res = tenant.post("/api/assets/%d/logs" % m["id"], json={"log_date": day(n), "hours_worked": 8, "meter_reading": reading})
+    res = tenant.post("/api/plant/fuel", json={"asset_id": m["id"], "filled_on": day(n), "litres": 10, "rate": 90, "meter_reading": reading})
     assert res.status_code == 200, res.text
 
 

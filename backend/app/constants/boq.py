@@ -18,6 +18,7 @@ BOQ_HEADER_ALIASES = {
     "uom": ["uom", "unit", "units", "measure", "unitofmeasure", "unitsofmeasure"],
     "quantity": ["qty", "quantity", "volume", "boqqty"],
     "unit_rate": ["rate", "unitrate", "price", "unitprice", "amountperunit"],
+    "material": ["material", "grade", "materialgrade", "materialtype", "mix", "mixgrade"],
 }
 
 # THE PROJECT BOQ

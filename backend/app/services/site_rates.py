@@ -78,13 +78,14 @@ def pricing_rows(db, client_id, job_id):
     priced = [l for l in lines if l.kind in BOQ_PRICED]
     by_id, by_code = _items_for(db, client_id, priced)
     rates = rates_of_site(db, client_id, job_id)
-    rows, section = [], ""
+    from app.services.boq_outline import boq_outline, heading_trail, line_materials
+    heads, path, _ = boq_outline(lines)
+    grades = line_materials(lines, heads, path)
+    rows = []
     for l in lines:
-        if l.kind == "section":
-            section = l.description or ""
-            continue
         if l.kind not in BOQ_PRICED:
-            continue                                            # notes stay out of pricing
+            continue                                            # headings and notes stay out of pricing
+        section = heading_trail(heads, path[l.key][-1]) if path.get(l.key) else ""
         item = by_id.get(l.item_id) or by_code.get(l.item_code)
         rate = rates.get(item.id) if item else None
         site_rate = rate.site_rate if rate is not None else None
@@ -93,7 +94,7 @@ def pricing_rows(db, client_id, job_id):
             "line_key": l.key, "line_id": l.id, "section": section, "description": l.description or "",
             "item_id": item.id if item else None, "item_code": l.item_code or "", "mapped": item is not None,
             "item_name": item.item_name if item else "", "item_active": bool(item and item.is_active is not False),
-            "specification": (l.material or (item.specification if item else "")) or "", "uom": l.uom or (item.units_of_measure if item else ""),
+            "specification": (grades.get(l.key) or (item.specification if item else "")) or "", "uom": l.uom or (item.units_of_measure if item else ""),
             "quantity": qty, "rate_only": bool(l.rate_only), "boq_rate": unit_rate(l.rate),
             "default_rate": default_rate(item) if item else None,
             "site_rate": unit_rate(site_rate) if site_rate is not None else None,

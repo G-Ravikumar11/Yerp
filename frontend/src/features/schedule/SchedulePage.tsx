@@ -15,6 +15,7 @@ import { ProgrammeImportModal } from './programme/ProgrammeImportModal'
 import { AiDayTasks, AiDraftModal, AiPlanPanel } from './AiPlanning'
 import { BoqPickerModal } from './programme/BoqPickerModal'
 import { ProgrammeView } from './programme/ProgrammeView'
+import { HindranceRegister } from './Hindrances'
 
 /** The day's plan, the whole programme, and how far along the work is - and what slips if the thing before it slips. */
 export default function SchedulePage() {
@@ -31,7 +32,7 @@ export default function SchedulePage() {
   }, { replace: true })
   const setJob = (id: number) => remember({ job: id })
   const setOn = (day: string) => remember({ on: day })
-  const [tab, setTab] = useState<'day' | 'programme'>('day')
+  const [tab, setTab] = useState<'day' | 'programme' | 'hindrances'>('day')
   const q = useSchedule(job)
   const d = q.data
   const s = d?.summary
@@ -48,7 +49,7 @@ export default function SchedulePage() {
       <div className="mb-4 flex flex-wrap items-end gap-4"><ProjectPicker value={job} onChange={setJob} id="sch-job" /></div>
       {job > 0 && (
         <div className="mb-5 flex flex-wrap items-center gap-3">
-          <div className="max-w-xs"><Tabs label="Planning views" value={tab} onChange={setTab} items={[{ value: 'day', label: 'Day plan' }, { value: 'programme', label: 'Programme' }]} /></div>
+          <div className="max-w-md"><Tabs label="Planning views" value={tab} onChange={setTab} items={[{ value: 'day', label: 'Day plan' }, { value: 'programme', label: 'Programme' }, { value: 'hindrances', label: 'Hindrances' }]} /></div>
           {tab === 'day' && (
             <label className="flex items-center gap-2 text-[13px]">
               <span className="text-muted-foreground">Day</span>
@@ -61,12 +62,14 @@ export default function SchedulePage() {
       {job > 0 && tab === 'day' && <AiDayTasks job={job} on={on} canAdd={can('site.record') || can('workorders.manage')} />}
       {job > 0 && tab === 'day' && <DayPlan job={job} on={on} canReport={can('site.record') || can('workorders.manage')} />}
       {job > 0 && tab === 'day' && <AiPlanPanel job={job} />}
+      {job > 0 && tab === 'hindrances' && <HindranceRegister job={job} canEdit={can('site.record') || can('workorders.manage')} />}
       {(tab === 'programme' || !job) && <StatGrid>
         <Stat label="Planned by today" value={`${s?.planned_percent ?? 0}%`} loading={q.isPending && job > 0} />
         <Stat label="Done" value={`${s?.actual_percent ?? 0}%`} loading={q.isPending && job > 0} />
         <Stat label="Ahead / behind" value={`${v > 0 ? '+' : ''}${v} pts`} tone={v < -5 ? 'danger' : v < 0 ? 'warning' : 'success'} loading={q.isPending && job > 0} />
         <Stat label="Late activities" value={s?.late ?? 0} sub={s?.behind ? `+${s.behind} behind` : undefined} loading={q.isPending && job > 0} />
-        <Stat label="Finishes" value={s?.forecast_finish || '-'} sub={s && s.slip_days > 0 ? `${s.slip_days} days late` : undefined} tone={s && s.slip_days > 0 ? 'danger' : undefined} loading={q.isPending && job > 0} />
+        <Stat label="Finishes" value={s?.forecast_finish || '-'} sub={s && s.slip_days > 0 ? `${s.slip_days} days after ${s.measured_against === 'baseline' ? 'the baseline' : 'plan'}` : s?.measured_against === 'baseline' ? `baseline ${s.baseline_finish}` : undefined} tone={s && s.slip_days > 0 ? 'danger' : undefined} loading={q.isPending && job > 0} />
+        <Stat label="Delays with no reason" value={s?.unexplained ?? 0} sub={s?.delayed ? `of ${s.delayed} late` : undefined} tone={(s?.unexplained ?? 0) > 0 ? 'danger' : undefined} loading={q.isPending && job > 0} />
       </StatGrid>}
       {tab === 'programme' && job > 0 && <ProgrammeView key={job} job={job} />}
       {tab === 'programme' && d && d.curve.length > 0 && <Curve curve={d.curve} />}

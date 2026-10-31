@@ -172,13 +172,21 @@ def wo_form_spec(db, client, order):
     history_prepared = next((s["name"] for s in doc.get("signatures", []) if s["role"] == "Prepared by"), "")
     company = letterhead(db, client, order.business_unit_id)
 
-    rows = []
-    for i, it in enumerate(doc.get("items") or [], 1):
+    # The schedule as the BOQ reads: headings in bold with the text that goes with them, and each line with its grade.
+    rows, headings, n = [], [], 0
+    for it in doc.get("items") or []:
         boq = " ".join(x for x in (it.get("activity_no") or "", it.get("item_code") or "") if x)
         desc = it.get("item_description") or ""
+        if it.get("material"):
+            desc += "\nMaterial: " + it["material"]
         if it.get("technical_spec"):
             desc += "\n" + it["technical_spec"]
-        rows.append([str(i), boq, desc, it.get("uom") or "", form_pdf.qty_text(it.get("quantity")),
+        if it.get("is_header"):
+            headings.append(len(rows))
+            rows.append(["", boq, desc, "", "", "", ""])
+            continue
+        n += 1
+        rows.append([str(n), boq, desc, it.get("uom") or "", form_pdf.qty_text(it.get("quantity")),
                      form_pdf.plain_number(it.get("unit_rate")), form_pdf.plain_number(it.get("total_amount"))])
 
     months = doc.get("duration_months")
@@ -243,7 +251,7 @@ def wo_form_spec(db, client, order):
     blocks += [
         {"type": "table", "columns": [("#", 6, "C"), ("BOQ", 26, "L"), ("Description", 70, "L"), ("UoM", 13, "C"),
                                       ("Qty", 19, "R"), ("Rate", 21, "R"), ("Total Amt", 27, "R")],
-         "rows": rows, "totals": [("TOTAL AMOUNT", form_pdf.plain_number(doc.get("gross_amount")), True)]},
+         "rows": rows, "bold_rows": headings, "totals": [("TOTAL AMOUNT", form_pdf.plain_number(doc.get("gross_amount")), True)]},
         {"type": "words", "label": "Rupees", "text": _words(doc.get("gross_amount"))},
         {"type": "text", "text": "The above agreed rates are firm till completion of the entire work including "
                                  "variation in scope and extension of time"},
@@ -688,7 +696,7 @@ def sub_bill_certificate(db, client, bill):
             pending_header = None
         n += 1
         r8 = unit_rate(line["rate"] if line else it.unit_rate)
-        rows.append({"sl": n, "description": (it.item_description or "").split("\n")[0], "unit": it.uom or "",
+        rows.append({"sl": n, "description": with_grade((it.item_description or "").split("\n")[0], it.material), "unit": it.uom or "",
                      "prev_qty": pq or None, "prev_rate": r8 if pq else None, "prev_amount": money(pq * r8) if pq else None,
                      "this_qty": tq or None, "this_rate": r8 if tq else None, "this_amount": money(tq * r8) if tq else None,
                      "upto_qty": money(pq + tq), "upto_amount": money((pq + tq) * r8), "remarks": ""})
@@ -730,7 +738,7 @@ def sub_bill_certificate(db, client, bill):
     for it in sorted((it for it in items if it.id in by_item), key=lambda x: order_of[x.id]):
         k += 1
         uom = it.uom or ""
-        mb_rows.append({"kind": "item", "sno": str(k), "description": (it.item_description or "").split("\n")[0].upper()})
+        mb_rows.append({"kind": "item", "sno": str(k), "description": with_grade((it.item_description or "").split("\n")[0], it.material).upper()})
         item_total = 0.0
         ents = by_item[it.id]
         section, sec_total, sec_count = None, 0.0, 0
@@ -1297,6 +1305,7 @@ from app.documents.letterhead import (
     sign_boxes,
 )
 from app.services.client_billing import _words, dimensions_for, order_variations, ra_bill_dict
+from app.services.boq_outline import with_grade
 from app.services.crm import norm_name
 from app.services.hr import employee_name
 from app.services.invoicing import active_irn, einvoice_buyer

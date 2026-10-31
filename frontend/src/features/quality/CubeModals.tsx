@@ -1,8 +1,9 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { FileText } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, NumField, Select, Skeleton, Textarea } from '@/components/ui'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
-import { cubeResult, decideCube, flagCube, logCubes, qcKeys, useCube, useCriteria, type CubeSet } from '@/api/quality'
+import { cubeResult, decideCube, flagCube, logCubes, qcKeys, useCube, useCriteria, type CubeSet, type RaisedNcr } from '@/api/quality'
 import { uploadFiles } from '@/api/files'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -171,6 +172,7 @@ function ResultModal({ set: c, open, onClose }: { set: CubeSet; open: boolean; o
 }
 
 function ResultForm({ set: c, onClose }: { set: CubeSet; onClose: () => void }) {
+  const [raised, setRaised] = useState<RaisedNcr | null>(null)
   const waiting = c.schedule.filter((s) => s.state !== 'tested')
   const [age, setAge] = useState(String(waiting[0]?.age_days ?? 28))
   const [strengths, setStrengths] = useState('')
@@ -197,9 +199,26 @@ function ResultForm({ set: c, onClose }: { set: CubeSet; onClose: () => void }) 
     {
       invalidate: [qcKeys.all],
       success: (r) => { const x = r.cube_set.results.find((y) => y.age_days === Number(age)); return `${r.cube_set.number} at ${age} days: ${x?.average} N/mm2 - ${x?.verdict}` },
-      onSuccess: (r) => { if (r.failed.length) toast.error(`Result saved, but the report was not: ${r.failed.join(' - ')}`); onClose() },
+      onSuccess: (r) => { if (r.failed.length) toast.error(`Result saved, but the report was not: ${r.failed.join(' - ')}`); if (r.ncr) setRaised(r.ncr); else onClose() },
     },
   )
+  if (raised) {
+    return (
+      <div role="status" aria-label="NCR generated">
+        <p className="text-sm font-medium">This result failed, so a non-conformance report has been generated.</p>
+        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-border p-3 text-[13px]">
+          <dt className="text-muted-foreground">NCR</dt><dd className="font-mono font-semibold">{raised.number}</dd>
+          <dt className="text-muted-foreground">Status</dt><dd>{raised.status === 'CLOSED' ? 'Closed' : 'Open'}</dd>
+          <dt className="text-muted-foreground">Project</dt><dd>{c.project}</dd>
+          <dt className="text-muted-foreground">Cube test</dt><dd>{c.number} / {age} day</dd>
+        </dl>
+        <div className="mt-5 flex justify-end gap-2 border-t border-border pt-4">
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+          <Button asChild><Link to={`/projects/quality?ncr=${raised.id}`} onClick={onClose}>View NCR</Link></Button>
+        </div>
+      </div>
+    )
+  }
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-3">

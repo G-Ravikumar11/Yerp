@@ -10,6 +10,7 @@ import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { FormFoot, LoadError, MachineSelect, RangeBar, StatusBadge, usePaged } from './plantParts'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
+import { FuelMonitor } from './PlantChecks'
 
 // ---- fuel ----------------------------------------------------------------------------------------
 
@@ -40,6 +41,7 @@ export function Fuel() {
         <div className="w-56"><MachineSelect id="fu-fm" value={r.asset} onChange={(asset) => setR((x) => ({ ...x, asset }))} placeholder="Every machine" /></div>
         {can('site.record|stores.manage') && <Button className="ml-auto" onClick={() => setAdding(true)}><Plus /> Record fuel</Button>}
       </RangeBar>
+      <FuelMonitor from={r.from} to={r.to} asset={r.asset} />
       {q.isError ? <LoadError message={q.error.message} retry={() => q.refetch()} /> : <>
         {d && d.fuel.length > 0 && <p className="mb-2 text-[13px] text-muted-foreground"><strong className="text-foreground">{d.totals.litres} L</strong> for <strong className="text-foreground">{formatINR(d.totals.amount)}</strong> in {d.fuel.length} fills.</p>}
         <Card className="mb-4 overflow-hidden"><DataTable label="Fuel" className="rounded-none border-0 shadow-none" rows={shown} columns={cols} rowKey={(f) => f.id} loading={q.isPending} empty="No fuel recorded for these filters." />{!q.isPending && pager}</Card>
@@ -77,7 +79,7 @@ function FuelForm({ types, onClose }: { types: string[]; onClose: () => void }) 
   const amount = Math.round(n.litres * n.rate * 100) / 100
   const errors = { asset: f.asset_id ? '' : 'Choose the machine.', litres: n.litres > 0 && n.litres <= 5000 ? '' : 'Litres, more than 0 and at most 5,000.', rate: n.rate > 0 ? '' : 'The price a litre.', date: f.filled_on > today() ? 'Not in the future.' : '' }
   const bad = Object.values(errors).some(Boolean)
-  const save = useAction(() => recordFuel({ ...f, litres: n.litres, rate: n.rate, amount, meter_reading: useMeter ? n.meter : null }), { invalidate: [plantKeys.all], success: (r) => r.message, onSuccess: onClose })
+  const save = useAction(() => recordFuel({ ...f, litres: n.litres, rate: n.rate, amount, meter_reading: useMeter ? n.meter : null }), { invalidate: [plantKeys.all], success: (r) => [r.message, r.warning].filter(Boolean).join(' '), onSuccess: onClose })
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-3">

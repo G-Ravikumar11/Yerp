@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { FileSpreadsheet, PackagePlus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { OldStoreBanner, useCutover } from '@/features/store/OldStore'
+import { OldStoreBanner, useOldStoreClosed } from '@/features/store/OldStore'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Stat, StatGrid } from '@/components/ui'
 import { VERDICT, useMatch, useReceipts, type GrnRow, type MatchRow } from '@/api/grn'
@@ -16,7 +16,7 @@ const tone = (s: string) => (s === 'POSTED' ? 'success' : s === 'CANCELLED' ? 'd
 
 /** What arrived at the gate, and whether the order, the delivery and the bill agree. */
 export default function GrnPage() {
-  const moved = !!useCutover().data
+  const moved = useOldStoreClosed()
   const q = useReceipts()
   const [exceptions, setExceptions] = useState(false)
   const match = useMatch(exceptions)
@@ -31,7 +31,7 @@ export default function GrnPage() {
     { id: 'acc', header: 'Accepted', align: 'right', cell: (g) => formatINR(g.accepted_value) },
     { id: 'rej', header: 'Rejected', hideBelow: 'md', align: 'right', cell: (g) => (g.rejected_value ? <span className="text-warning">{formatINR(g.rejected_value)}</span> : '-') },
     { id: 'st', header: 'Status', cell: (g) => <Badge tone={tone(g.status)} dot>{g.status === 'POSTED' ? 'Posted' : g.status === 'CANCELLED' ? 'Cancelled' : 'Draft'}</Badge> },
-    { id: 'act', header: '', align: 'right', cell: (g) => <div className="flex justify-end gap-1.5">{g.actions.includes('POST') && <Button size="sm" onClick={() => setOpen(g.id)}>Post</Button>}<Button size="sm" variant="outline" onClick={() => setOpen(g.id)}>Open</Button><Button size="sm" variant="ghost" asChild><a href={`/api/grn/${g.id}/export.xlsx`} title="As a workbook"><FileSpreadsheet /></a></Button></div> },
+    { id: 'act', header: '', align: 'right', cell: (g) => <div className="flex justify-end gap-1.5">{g.actions.includes('POST') && !moved && <Button size="sm" onClick={() => setOpen(g.id)}>Post</Button>}<Button size="sm" variant="outline" onClick={() => setOpen(g.id)}>Open</Button><Button size="sm" variant="ghost" asChild><a href={`/api/grn/${g.id}/export.xlsx`} title="As a workbook"><FileSpreadsheet /></a></Button></div> },
     { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="grn" id={r.id} label={String(r.number)} noun="goods receipt" /> },
   ]
   const matches: TableColumn<MatchRow>[] = [

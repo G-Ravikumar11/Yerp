@@ -25,3 +25,5 @@ class NotificationSettingsIn(BaseModel):
     channels: Optional[dict] = None
     wa_phone_id: Optional[str] = None
     wa_token: Optional[str] = None
+    # The evening site report and the reminders: {"email_client", "email_manager", "remind_missing", "delay_alerts"} -> on/off.
+    site_reports: Optional[dict] = None

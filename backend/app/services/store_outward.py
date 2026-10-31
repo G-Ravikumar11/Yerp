@@ -268,6 +268,8 @@ def _check_batch(db, store_id, item, batch, qty, on_date, label):
         lot = next((b for b in batches_on_hand(db, store_id, item.id, on_date) if b["batch_no"] == batch), None)
         if lot is None:
             raise HTTPException(409, "%s: the store holds no batch %s of %s." % (label, batch, item.item_name))
+        if lot["on_hold"]:
+            raise HTTPException(409, "%s: batch %s of %s is on quality hold and cannot be issued." % (label, batch, item.item_name))
         if lot["state"] == "EXPIRED":
             raise HTTPException(409, "%s: batch %s of %s expired on %s and is not issued. Write it off under Control, or choose another batch." % (
                 label, batch, item.item_name, lot["expiry_date"]))
@@ -277,7 +279,7 @@ def _check_batch(db, store_id, item, batch, qty, on_date, label):
         return
     held, fit = get_balance(db, store_id, item.id).qty, usable_qty(db, store_id, item.id, on_date)
     if fit < held and qty > fit:
-        raise HTTPException(409, "%s: only %s %s of %s has not expired (%s %s has). Write the expired stock off under Control." % (
+        raise HTTPException(409, "%s: only %s %s of %s can be issued (%s %s is expired or on quality hold). Write the expired stock off under Control." % (
             label, s3(fit), base_uom_of(db, item), item.item_name, s3(held - fit), base_uom_of(db, item)))
 
 

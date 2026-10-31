@@ -282,6 +282,11 @@ class DBSubcontractItem(Base):
     # A line that stands for a whole heading of the BOQ (Plain Cement Concrete, say) has no single BOQ line: it keeps
     # which ones it adds up, as JSON [{"key": ..., "qty": ...}], so each still shows what was given against it.
     boq_parts = Column(Text, default="")
+    # The grade or material the BOQ gives the line (M60, Fe550), kept apart from the description as the sheet has it.
+    material = Column(String, default="")
+    # For a heading: how deep it sits (1 a main heading, 2 the sub-heading under it ...), so the schedule reads and
+    # adds up like the BOQ. Nought on an ordinary line.
+    heading_level = Column(Integer, default=0)
 
 
 class DBSubcontractTerm(Base):

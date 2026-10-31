@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from app.core.auth import get_employee_user, require_items_access
-from app.models.store_core import InsufficientStockError, InvalidMovementError, StoreError, StoreFrozenError
+from app.models.store_core import BatchOnHoldError, InsufficientStockError, InvalidMovementError, StoreError, StoreFrozenError
 
 
 @dataclass
@@ -51,7 +51,7 @@ def store_errors():
     """Turn the module's errors into the HTTP answers a screen can show."""
     try:
         yield
-    except InsufficientStockError as exc:
+    except (InsufficientStockError, BatchOnHoldError) as exc:
         raise HTTPException(409, str(exc)) from exc
     except StoreFrozenError as exc:
         raise HTTPException(423, str(exc)) from exc

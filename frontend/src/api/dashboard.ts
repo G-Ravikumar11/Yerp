@@ -97,6 +97,8 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'stores-view': '/store/hub/inward/grn',
     'eway-view': '/store/eway',
     'diary-view': '/projects/diary',
+    'schedule-view': '/projects/programme',
+    'budgeting-view': '/projects/budgeting',
     'chat-view': '/projects/chart',
     'attendance-view': '/people/attendance',
     'leave-view': '/people/leave',

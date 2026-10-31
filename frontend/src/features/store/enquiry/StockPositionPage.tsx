@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useNavigate } from 'react-router-dom'
 import { FileSpreadsheet } from 'lucide-react'
 import { Badge, Button, Field, Input, Select } from '@/components/ui'
@@ -41,7 +41,8 @@ export default function StockPositionPage() {
           <Select id="sp-status" value={f.status} placeholder="Any" onChange={(e) => set('status', e.target.value)} options={Object.entries(STATUS_LABEL).map(([v, l]) => ({ value: v, label: l }))} />
         </Field>
         <label className="flex items-center gap-2 pb-2.5 text-sm"><input type="checkbox" checked={f.include_zero} onChange={(e) => set('include_zero', e.target.checked)} /> Show nil stock</label>
-        <Button variant="outline" className="ml-auto" asChild><a href={`/api/store/enquiry/balances/export${qs(f)}`}><FileSpreadsheet /> Excel</a></Button>
+        <Button variant="outline" className="ml-auto" asChild><Link to="/store/hub/enquiry/batches">Batches & quality holds</Link></Button>
+        <Button variant="outline" asChild><a href={`/api/store/enquiry/balances/export${qs(f)}`}><FileSpreadsheet /> Excel</a></Button>
       </div>
       {pos.data && (
         <p className="mb-3 text-sm text-muted-foreground" role="status">

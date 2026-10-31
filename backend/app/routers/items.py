@@ -40,6 +40,8 @@ from app.services.subcontract_orders import work_order_or_404, work_order_to_dic
 from app.validators.common import check_item_row, validate_bom_sheet, validate_items
 
 
+from app.services.item_master import dup_key, refuse_duplicate  # noqa: E402
+
 router = APIRouter()
 
 
@@ -287,6 +289,9 @@ def erp_next_item_code(request: Request, kind: str = "RM",
 @router.post("/api/erp/items")
 def erp_create_item(body: ItemIn, request: Request, db: Session = Depends(get_db)):
     client = require_items_access(request, db)
+    if (body.kind or "").upper() == "RM":
+        key = dup_key(client.id, "RM", {"item_name": body.item_name, "units_of_measure": body.units_of_measure, "specification": "", "make": getattr(body, "make", "")})
+        refuse_duplicate(db, client.id, "RM", key)
     item = build_item(db, client.id, body, set())
     log_audit(db, client.id, "erp_item_created", "item", None, item.item_code,
               item.item_name, request)
@@ -350,6 +355,10 @@ def erp_update_item(item_id: int, body: ItemIn, request: Request,
         item.units_of_measure = unit
     if body.reorder_level is not None:
         item.reorder_level = max(0.0, money(body.reorder_level))
+        # One level for one item: the Store Hub's, where the item has one there.
+        hub = db.query(models.DBStoreItemSettings).filter(models.DBStoreItemSettings.item_id == item.id).first()
+        if hub is not None:
+            hub.reorder_level = item.reorder_level
     db.commit()
     return {"ok": True, "message": item.item_code + " updated."}
 

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Card, ConfirmDialog, Field, Input, Modal, NumField, Select, Textarea } from '@/components/ui'
+import { MeterGaps } from './PlantChecks'
 import { allocate, decideLog, endAllocation, plantKeys, reassign, saveHoursRule, saveLog, useAllocations, useLogs, usePeople, type Allocation, type LogRow } from '@/api/plant'
 import { useRegister } from '@/api/equipment'
 import { useAction } from '@/lib/mutate'
@@ -151,6 +152,7 @@ export function Logbook() {
           {can('site.record') && <Button onClick={() => setEditing('new')}><Plus /> Log a shift</Button>}
         </span>
       </RangeBar>
+      <MeterGaps assetId={r.asset} />
       {rows.length > 0 && <p className="mb-2 text-[13px] text-muted-foreground">{rows.length} shifts: <strong className="text-foreground">{sum('attendance_hours')} h</strong> on duty ({sum('overtime_hours')} overtime), machines ran <strong className="text-foreground">{sum('operating_hours')} h</strong>, idle {sum('idle_hours')} h.</p>}
       {q.isError ? <LoadError message={q.error.message} retry={() => q.refetch()} /> : (
         <Card className="overflow-hidden"><DataTable label="Logbook" className="rounded-none border-0 shadow-none" rows={shown} columns={cols} rowKey={(l) => l.id} loading={q.isPending} empty="No shifts logged for these filters." />{!q.isPending && pager}</Card>
@@ -186,6 +188,7 @@ function LogForm({ log: l, onClose }: { log: LogRow | null; onClose: () => void 
   })
   const [n, setN] = useState({ break_minutes: l?.break_minutes ?? 60, opening: l?.opening_meter ?? 0, closing: l?.closing_meter ?? 0, operating: l?.operating_hours ?? 0, breakdown: l?.breakdown_hours ?? 0, fuel: l?.fuel_litres ?? 0 })
   const [meters, setMeters] = useState(l ? l.opening_meter != null : true)
+  const [swap, setSwap] = useState({ on: false, date: today(), reason: '' })
   const [tried, setTried] = useState(false)
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }))
   const num = (k: keyof typeof n) => (v: number) => setN((x) => ({ ...x, [k]: v }))
@@ -200,13 +203,16 @@ function LogForm({ log: l, onClose }: { log: LogRow | null; onClose: () => void 
     asset: f.asset_id ? '' : 'Choose the machine.', emp: f.employee_id ? '' : 'Choose the employee.',
     time: span == null ? 'Times as 07:00.' : n.break_minutes >= span ? 'The break is longer than the shift.' : '',
     meter: meters && n.closing < n.opening ? 'The closing reading is below the opening one.' : '',
+    swap: swap.on && !swap.reason.trim() ? 'Say why the meter was replaced.' : swap.on && !swap.date ? 'Give the date it was replaced.' : '',
     over: span != null && running + n.breakdown > span / 60 + 0.01 ? 'Running and breakdown hours are longer than the shift.' : '',
     why: l && !f.correction_reason.trim() ? 'Say why it is being corrected.' : '',
   }
   const bad = Object.values(errors).some(Boolean)
+  // A warning, not a stop: a day entered late may rightly read below today's meter. The server checks it against the day before.
+  const lowOpening = meters && !swap.on && m && n.opening < m.meter_reading ? `Below the machine's reading now (${m.meter_reading}). A meter only runs forward: check it, or tick Meter Replaced.` : undefined
   const save = useAction(() => saveLog(l?.id ?? null, {
     ...f, break_minutes: n.break_minutes, opening_meter: meters ? n.opening : null, closing_meter: meters ? n.closing : null, operating_hours: meters ? null : n.operating,
-    breakdown_hours: n.breakdown, fuel_litres: n.fuel,
+    breakdown_hours: n.breakdown, fuel_litres: n.fuel, meter_replaced: meters && swap.on, replacement_date: swap.on ? swap.date : '', replacement_reason: swap.on ? swap.reason : '',
   }), { invalidate: [plantKeys.all], success: (r) => r.message, onSuccess: onClose })
   return (
     <div>
@@ -220,8 +226,13 @@ function LogForm({ log: l, onClose }: { log: LogRow | null; onClose: () => void 
         <Field label="Break (minutes)" htmlFor="lb-b"><NumField id="lb-b" value={n.break_minutes} onValue={num('break_minutes')} /></Field>
         <label className="flex items-center gap-2 text-sm sm:col-span-3"><input type="checkbox" checked={meters} onChange={(e) => setMeters(e.target.checked)} /> Read from the hour meter{m ? ` (it reads ${m.meter_reading} now)` : ''}</label>
         {meters ? <>
-          <Field label="Opening meter" htmlFor="lb-om"><NumField id="lb-om" value={n.opening} onValue={num('opening')} /></Field>
+          <Field label="Opening meter" htmlFor="lb-om" hint={lowOpening}><NumField id="lb-om" value={n.opening} onValue={num('opening')} /></Field>
           <Field label="Closing meter" htmlFor="lb-cm" error={errors.meter}><NumField id="lb-cm" value={n.closing} onValue={num('closing')} /></Field>
+          <label className="flex items-center gap-2 text-sm sm:col-span-3"><input type="checkbox" checked={swap.on} onChange={(e) => setSwap((x) => ({ ...x, on: e.target.checked }))} /> Meter Replaced</label>
+          {swap.on && <>
+            <Field label="Replacement date" htmlFor="lb-rd"><Input id="lb-rd" type="date" max={f.log_date} value={swap.date} onChange={(e) => setSwap((x) => ({ ...x, date: e.target.value }))} /></Field>
+            <Field label="Reason" htmlFor="lb-rr" error={tried ? errors.swap : ''} className="sm:col-span-2" hint={m ? `The old reading (${m.meter_reading}) and the new one go on the machine's meter history.` : undefined}><Input id="lb-rr" value={swap.reason} maxLength={300} onChange={(e) => setSwap((x) => ({ ...x, reason: e.target.value }))} /></Field>
+          </>}
         </> : <Field label="Machine running hours" htmlFor="lb-oh"><NumField id="lb-oh" value={n.operating} onValue={num('operating')} /></Field>}
         <Field label="Breakdown hours" htmlFor="lb-bh" error={errors.over}><NumField id="lb-bh" value={n.breakdown} onValue={num('breakdown')} /></Field>
         <Field label="Fuel used (litres)" htmlFor="lb-f" hint="For the record; fuel is costed in the Fuel register"><NumField id="lb-f" value={n.fuel} onValue={num('fuel')} /></Field>

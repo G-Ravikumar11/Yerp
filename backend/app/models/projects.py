@@ -26,6 +26,7 @@ class DBJob(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    timezone = Column(String, default="")                       # where the site is; "" = the company default
     number = Column(String, index=True)
     name = Column(String, nullable=False)
 
@@ -110,6 +111,7 @@ class DBSiteDiary(Base):
     prepared_by = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     prepared_by_name = Column(String, default="")
     submitted_at = Column(String, default="")
+    submitted_by_name = Column(String, default="")      # who signed the day off
     # Each time a signed-off day was reopened to be changed: when, by whom and why, one line each. Kept for good, so a
     # diary that was amended after sign-off says so.
     amendments = Column(Text, default="")
@@ -199,6 +201,9 @@ class DBScheduleActivity(Base):
     output_per_day = Column(Float, default=0.0)        # per gang
     gangs = Column(Float, default=0.0)
     qty_done = Column(Float, default=0.0)              # progress in the row's unit; % done = qty_done / quantity
+    # Why it is late against the baseline, when no hindrance on the register explains it: one of DELAY_REASONS, and a word more.
+    delay_reason = Column(String, default="")
+    delay_note = Column(Text, default="")
 
 
 class DBScheduleLink(Base):
@@ -295,6 +300,79 @@ class DBScheduleProgress(Base):
     qty_done = Column(Float, nullable=True)            # in the row's unit, when it has a quantity
     note = Column(String, default="")
     by_name = Column(String, default="")
+    # The site diary whose "work done" made this report, so deleting that draft takes it back (null: reported on the plan itself).
+    diary_id = Column(Integer, nullable=True, index=True)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBDiaryTaskChange(Base):
+    """What a site diary did to a task - ticked it, part-ticked it, put it back - with how the task stood before, so the diary can
+    be deleted while it is still a draft and the task goes back as it was."""
+    __tablename__ = "diary_task_changes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    diary_id = Column(Integer, nullable=False, index=True)
+    task_id = Column(Integer, nullable=False, index=True)
+    was_done = Column(Boolean, default=False)
+    was_percent = Column(Float, default=0.0)
+    was_done_by_name = Column(String, default="")
+    was_done_at = Column(String, default="")
+    now_done = Column(Boolean, default=False)
+    now_percent = Column(Float, default=0.0)
+
+
+class DBHindrance(Base):
+    """Something that held the work up - rain, drawings not issued, the client's decision, a front not handed over - kept as it
+    happened: the cause, from when to when, whose risk it was, how many days it cost and when the client was told. It is the record
+    an extension of time is argued from, so it is kept per site, numbered, and can be raised straight from a day's diary."""
+    __tablename__ = "hindrances"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id"), nullable=False, index=True)
+    number = Column(String, default="")                  # H-001, per site
+    activity_id = Column(Integer, nullable=True, index=True)      # the activity it held up, when it held up one in particular
+    diary_id = Column(Integer, nullable=True, index=True)         # the day's diary it was raised from
+    cause = Column(String, default="")                   # one of HINDRANCE_CAUSES
+    description = Column(Text, default="")
+    from_date = Column(String, default="", index=True)
+    to_date = Column(String, default="")                 # blank while it is still holding the work up
+    responsibility = Column(String, default="")          # one of HINDRANCE_PARTIES: whose risk it was
+    impact_days = Column(Float, default=0.0)             # working days it cost the work
+    notice_date = Column(String, default="")             # when the client was told in writing
+    status = Column(String, default="Open", index=True)  # one of HINDRANCE_STATUSES
+    created_by_name = Column(String, default="")
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    updated_at = Column(String, default="")
+
+
+class DBDelayAlert(Base):
+    """An activity that has gone late against its baseline, and the day its people were told. One a delay: the next morning's run
+    finds it here and says nothing more; once the activity is back on time the row goes, so a later slip is a new delay."""
+    __tablename__ = "delay_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, nullable=False, index=True)
+    activity_id = Column(Integer, nullable=False, index=True)
+    promised = Column(String, default="")              # the baseline finish it went late against
+    delay_days = Column(Integer, default=0)            # how late it was when told
+    told = Column(String, default="")                  # who was told, by name
+    alerted_on = Column(String, default="")
+
+
+class DBSiteReportRun(Base):
+    """What the evening run did for a site on a day: the report sent (and to whom), or the reminder that no diary was written."""
+    __tablename__ = "site_report_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    job_id = Column(Integer, nullable=False, index=True)
+    run_on = Column(String, default="", index=True)
+    kind = Column(String, default="")                  # report | reminder
+    sent_to = Column(Text, default="")
+    note = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 

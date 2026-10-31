@@ -19,6 +19,8 @@ export interface Machine {
   hired_from: string
   hire_rate: number
   hire_basis: string
+  fuel_norm_lph: number | null
+  tank_capacity_l: number | null
   meter_unit: string
   meter_reading: number
   service_every: number
@@ -60,8 +62,9 @@ interface MachineService {
   work_performed: string; parts_used: string; parts_cost: number; labour_cost: number; total_cost: number; next_service_meter: number | null; next_service_on: string; by: string
 }
 interface MachineMove { moved_on: string; from: string; to: string; note: string }
+interface MachineBreakdown { id: number; number: string; reported_on: string; kind: string; priority: string; status: string; description: string; downtime_hours: number; total_cost: number }
 interface ScheduleEvent { at: string; action: string; details: string; by: string }
-export interface MachineDetail extends Machine { utilisation_percent: number; litres_per_hour: number; logs: MachineLog[]; services: MachineService[]; moves: MachineMove[]; schedule_history: ScheduleEvent[] }
+export interface MachineDetail extends Machine { breakdowns: MachineBreakdown[]; utilisation_percent: number; litres_per_hour: number; logs: MachineLog[]; services: MachineService[]; moves: MachineMove[]; schedule_history: ScheduleEvent[] }
 export type MachineInput = Omit<Machine, 'id' | 'code' | 'current_job_id' | 'current_job' | 'status' | 'service' | 'cost_to_date' | 'ownership_label' | 'is_archived' | 'location_type' | 'location_id' | 'where'> & { code: string; location_type?: LocationType; location_id?: number }
 
 export const useRegister = (status: string, archived = false) => useQuery({ queryKey: ['equipment', 'register', status, archived], queryFn: () => get<Register>(`/api/assets?archived=${archived}${status ? `&status=${encodeURIComponent(status)}` : ''}`) })
@@ -70,7 +73,6 @@ export const useMachine = (id: number | null) => useQuery({ queryKey: ['equipmen
 
 export const saveMachine = (id: number | null, b: MachineInput) => (id ? put<{ code: string; name: string }>(`/api/assets/${id}`, b) : post<{ code: string; name: string }>('/api/assets', b))
 export const moveMachine = (id: number, b: { to_job_id: number | null; moved_on: string; note: string }) => post<{ message: string }>(`/api/assets/${id}/move`, b)
-export const logDay = (id: number, b: Record<string, unknown>) => post<{ message: string; cost: number; service?: { due: boolean } }>(`/api/assets/${id}/logs`, b)
 export const serviceMachine = (id: number, b: Record<string, unknown>) => post<{ message: string }>(`/api/assets/${id}/services`, b)
 export const completeService = (id: number, b: Record<string, unknown>) => post<{ message: string }>(`/api/assets/${id}/service-complete`, b)
 export const backInService =(id: number) => post<{ message: string }>(`/api/assets/${id}/back-in-service`)

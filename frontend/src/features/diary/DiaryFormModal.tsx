@@ -15,6 +15,8 @@ import { toast } from '@/stores/toast'
 import { today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { PlannedWork, type TaskState } from './PlannedWork'
+import { useDiaryDraft } from '@/api/hindrances'
+import { HindranceModal, type Opening } from '@/features/schedule/Hindrances'
 
 const blankLabour = (): LabourLine => ({ trade: TRADES[0], agency: 'Own', headcount: 0, hours: 0, rate: 0 })
 const blankPlant = (): PlantLine => ({ plant: '', worked_hours: 0, idle_hours: 0, rate: 0 })
@@ -65,6 +67,9 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
     setPlanned((p) => ({ ...p, rows: { ...p.rows, [r.id]: r } }))
   }
   const camera = useRef<HTMLInputElement>(null)
+  // A saved day that says what held the work up, or that it rained, can start a hindrance from those words.
+  const draft = useDiaryDraft(day?.id ?? 0)
+  const [raising, setRaising] = useState<Opening | null>(null)
   const saved = useFiles('diary', day?.id ?? 0, noFilter)
   const edit = <T,>(list: T[], set: (l: T[]) => void, i: number, patch: Partial<T>) => set(list.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   const totals = useMemo(() => {
@@ -119,6 +124,7 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
           <ul className="grid gap-0.5">{day.amendments.map((a, i) => <li key={i}>{a}</li>)}</ul>
         </div>
       )}
+      <HindranceModal job={job} opening={raising} onClose={() => setRaising(null)} />
       <PromptModal open={reopening} title="Edit a signed-off day" description="The day opens for changes and has to be signed off again. Your reason is kept on the diary with your name and the time." fields={[{ key: 'reason', label: 'Why is it being changed?', required: true }]} confirm="Open for editing" busy={reopen.isPending} error={reopen.error?.message} onSubmit={(v) => reopen.mutate(v.reason.trim())} onClose={() => setReopening(false)} />
       {clash && (
         <p role="alert" className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning-soft p-2.5 text-[13px]">
@@ -142,6 +148,16 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
           <Field label="Visitors" htmlFor="dy-vis"><Textarea id="dy-vis" rows={2} value={visitors} onChange={(e) => setVisitors(e.target.value)} /></Field>
           <Field label="Safety note" htmlFor="dy-safe"><Textarea id="dy-safe" rows={2} value={safety} onChange={(e) => setSafety(e.target.value)} /></Field>
         </div>
+        {day && draft.data && (draft.data.has_cause || draft.data.already.length > 0) && (
+          <p aria-label="Hindrance" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning-soft p-2.5 text-[13px]">
+            <span className="flex-1">
+              {draft.data.already.length
+                ? `In the hindrance register: ${draft.data.already.map((h) => `${h.number} ${h.cause}`).join(', ')}.`
+                : 'This day says the work was held up. Record it in the hindrance register, so the days can be claimed later.'}
+            </span>
+            {draft.data.has_cause && (can('site.record') || can('workorders.manage')) && <Button type="button" size="sm" variant="outline" onClick={() => setRaising({ draft: draft.data.draft })}>{draft.data.already.length ? 'Raise another' : 'Raise a hindrance'}</Button>}
+          </p>
+        )}
         <PlannedWork job={job} date={date} taskState={taskState} onTask={tickTask} percent={percent} onPercent={setProgressOf} disabled={locked} />
         <h3 className="mb-2 mt-5 text-sm font-semibold">Labour on site</h3>
         <div className="grid gap-2">

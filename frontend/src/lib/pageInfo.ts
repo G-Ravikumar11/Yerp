@@ -4,6 +4,7 @@
  */
 export const PAGE_INFO: Record<string, string> = {
   '/': 'Your front page. The money, progress and attention items across every project, and a link into each portal. For staff it is Overview: your own work, leave and what is waiting on you.',
+  '/celebrations': 'Birthdays, festivals and special days across the company. React with an emoji or write a message; HR can add a special day, and everybody is notified on the day.',
   '/calendar': 'India\'s public holidays and the days off this business has added. The Master can mark one day or a run of days; every employee has them off for leave, attendance and payslips.',
   '/ho': 'Head Office\'s front page: every site\'s vendors, work orders, BOQs and bills in one place, and what is waiting on whom.',
   '/approvals': 'Everything waiting for your decision - bills, work orders, leave and the like. Open one, look at it, and approve or send it back with a reason.',
@@ -30,6 +31,8 @@ export const PAGE_INFO: Record<string, string> = {
   '/projects/diary': 'The site diary: one entry a day with weather, labour, plant, work done, hold-ups and visitors. A signed-off day is changed only with a reason, and the change is kept.',
   '/projects/chart': 'The project chart: every activity as a bar against time, to see what is running, late or next.',
   '/projects/equipment': 'Equipment & Plant: machines and vehicles, where each one is, service due dates, fuel and rentals.',
+  '/projects/bbs': 'Every bar mark of a project: what it takes to cut, what the steel weighs, and who approved it.',
+  '/store/items/duplicates': 'Items that may have been entered twice, and folding them into one.',
   '/projects/budgeting': "Our own cost for each line of the client's BOQ - material, labour and the rest - against what the BOQ pays, and the profit that leaves.",
   '/projects/profit': 'What each project has earned against what it has cost, so you can see where money is made or lost.',
   '/projects/costs': 'The cost of each project by head - materials, labour, subcontract and plant. Open one for the lines behind it.',

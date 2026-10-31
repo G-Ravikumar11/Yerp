@@ -23,11 +23,11 @@ def doc(tenant, contractor_id, kind, valid_to):
     return tenant.post("/api/compliance/documents", json={"contractor_id": contractor_id, "kind": kind, "valid_to": valid_to})
 
 
-def test_a_contractor_with_no_papers_is_flagged_and_complete_papers_clear_it(tenant):
+def test_papers_not_on_record_are_noted_but_optional_and_complete_papers_clear_the_notes(tenant):
     order, bill = a_draft(tenant)
     cid = bill["contractor_id"] if "contractor_id" in bill else order["contractor_id"]
     status = tenant.get("/api/compliance/contractors/%d" % cid).json()
-    assert status["ok"] is False and len(status["warnings"]) == 4
+    assert status["ok"] is True and len(status["warnings"]) == 4         # optional: noted, nothing stopped
     for kind in ("labour_licence", "pf", "esi", "insurance"):
         assert doc(tenant, cid, kind, day(400)).status_code == 200
     status = tenant.get("/api/compliance/contractors/%d" % cid).json()

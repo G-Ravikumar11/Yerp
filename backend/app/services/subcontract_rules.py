@@ -127,15 +127,15 @@ def compliance_enforced(db, client_id):
 
 
 def compliance_problems(db, client_id, contractor_id):
-    """What is missing or lapsed among the papers a contractor must hold to be paid. A document running out soon is
-    a warning, not a reason to stop."""
+    """What has lapsed among the papers a contractor holds. A document not on record is optional and stops nothing;
+    one running out soon is a warning, not a reason to stop."""
     if not contractor_id or not compliance_enforced(db, client_id):
         return []
     from app.services.compliance import contractor_compliance
     verdict = contractor_compliance(db, client_id, contractor_id)
     if verdict["ok"]:
         return []
-    return [w for w in verdict["warnings"] if "runs out in" not in w]
+    return [w for w in verdict["warnings"] if "runs out in" not in w and "is not on record" not in w]
 
 
 def compliance_gate(db, client_id, contractor_id, actor_id, reason, doing):

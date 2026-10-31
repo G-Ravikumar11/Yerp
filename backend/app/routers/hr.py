@@ -33,7 +33,8 @@ from app.core.permissions import (
     permission_list,
     permissions_for,
 )
-from app.core.security import validate_password_strength
+from app.core.security import rate_limiter, validate_password_strength
+from app.services.login_email import resend_login_email
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.store_staff import release_on_leaving
 from app.services.employee_portal import leave_balance_for
@@ -486,6 +487,8 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
     validate_employee_money(body.model_dump())
     emergency_contact, emergency_phone = clean_emergency(body.emergency_contact, body.emergency_phone)
     gender = clean_gender(body.gender)
+    from app.services.celebrations import clean_birth_date
+    date_of_birth = clean_birth_date(body.date_of_birth)
     from app.constants.hr import gender_required
     if gender_required() and not gender:
         raise HTTPException(status_code=400, detail="Gender is required. Choose one ('Prefer not to say' is an answer).")
@@ -530,7 +533,7 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         allowances=body.allowances, bonus=body.bonus,
         bank_name=body.bank_name, bank_account=body.bank_account,
         tax_id=body.tax_id,
-        emergency_contact=emergency_contact, emergency_phone=emergency_phone, gender=gender,
+        emergency_contact=emergency_contact, emergency_phone=emergency_phone, gender=gender, date_of_birth=date_of_birth,
         aadhaar_no=aadhaar_no, pan_no=pan_no, uan_no=uan_no, esi_no=esi_no,
         start_date=body.start_date, status="onboarding",
         password_hash=passwords.hash_password(validated_staff_password(body.password)) if body.password else "",
@@ -554,6 +557,8 @@ def create_employee(request: Request, body: EmployeeCreate, db: Session = Depend
         "id": emp.id, "employee_id": emp_number,
         "first_name": first_name, "last_name": last_name,
         "email": email, "org_email": org_email or "", "status": "onboarding", "level": level or "", "role": role,
+        # Nothing is emailed on its own: the login email goes when somebody clicks Send login email on their page.
+        "credentials_email_status": "",
         "permission_role": permission_role or DEFAULT_PERMISSION_ROLE,
         "department_id": dept_id, "reports_to": reports_to,
         "message": "Employee created. Onboarding checklist generated.",
@@ -607,6 +612,7 @@ def _profile(emp, dept_name, manager_name, sites):
         "email": emp.email, "org_email": emp.org_email or "", "phone": emp.phone, "address": emp.address,
         # Whether they can sign in yet; the password itself (or its hash) is never sent.
         "has_password": bool(emp.password_hash),
+        "credentials_email_status": emp.credentials_email_status or "", "credentials_email_at": emp.credentials_email_at or "",
         "department_id": emp.department_id, "department_name": dept_name,
         "reports_to": emp.reports_to, "manager_name": manager_name,
         "job_title": emp.job_title, "role": emp.role, "level": emp.level or "",
@@ -624,7 +630,7 @@ def _profile(emp, dept_name, manager_name, sites):
         "allowances": emp.allowances, "bonus": emp.bonus,
         "bank_name": emp.bank_name, "bank_account": emp.bank_account, "tax_id": emp.tax_id,
         "emergency_contact": emp.emergency_contact, "emergency_phone": emp.emergency_phone,
-        "gender": emp.gender or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "", "esi_no": emp.esi_no or "",
+        "gender": emp.gender or "", "date_of_birth": emp.date_of_birth or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "", "esi_no": emp.esi_no or "",
         "aadhaar_masked": ("XXXX XXXX " + emp.aadhaar_no[-4:]) if emp.aadhaar_no else "",
         "start_date": emp.start_date, "end_date": emp.end_date,
         "status": emp.status, "onboarding_complete": emp.onboarding_complete,
@@ -796,6 +802,9 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
             body.pop(key, None)                        # these numbers are HR's and the Master's to enter
     if "gender" in body:
         body["gender"] = clean_gender(body["gender"])
+    if "date_of_birth" in body:
+        from app.services.celebrations import clean_birth_date
+        body["date_of_birth"] = clean_birth_date(body["date_of_birth"])
     if "aadhaar_no" in body:
         body["aadhaar_no"] = clean_aadhaar(body["aadhaar_no"])
     if "pan_no" in body:
@@ -1443,6 +1452,28 @@ def set_employee_password(emp_id: int, request: Request, body: dict = None, db: 
     from app.core import login_guard
     login_guard.clear_account(emp.email)              # the Master has just given them a new password
     return {"message": "Password set. They can sign in with their email and this password."}
+
+
+@router.post("/api/employees/{emp_id}/login-email")
+def send_employee_login_email(emp_id: int, request: Request, db: Session = Depends(get_db)):
+    """Send the login email again: no new account, and their password stands until they use the link."""
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    _guard_the_master(request, emp)
+    if not emp.org_email:
+        raise HTTPException(status_code=400, detail="Give them an organization email first - the login email goes only there")
+    if emp.status == "terminated":
+        raise HTTPException(status_code=400, detail="This person has left - they cannot sign in")
+    if rate_limiter.is_rate_limited("login-email:%d" % emp.id, max_requests=5, window=600):
+        raise HTTPException(status_code=429, detail="Too many login emails for this person. Try again in a few minutes.")
+    to = emp.org_email
+    log_audit(db, client.id, "employee_login_email_sent", "employee", emp.id, to, "", request)
+    ok = resend_login_email(request, db, client.company_name or "Our office", emp)
+    return {"ok": ok, "credentials_email_status": emp.credentials_email_status, "credentials_email_at": emp.credentials_email_at,
+            "message": ("Login email sent to %s." % to) if ok else "The login email could not be sent. Check the Gmail connection and try again."}
 
 
 @router.get("/api/onboarding/requirements")

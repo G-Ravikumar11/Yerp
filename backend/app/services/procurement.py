@@ -12,6 +12,7 @@ from app.core.auth import wo_actor
 from app.core.currency import lines_money, money, unit_rate
 from app.core.gst import gstin_valid, state_from_gstin
 from app.core.units import canonical_unit
+from app.services.store_cutover import old_store_closed
 from app.services.store_integration import hub_debit_notes, hub_received_on_orders
 from app.services.invoicing import BILL_DEAD
 from app.services.stores import stock_movement
@@ -289,7 +290,7 @@ def grn_dict(db, grn, detail=False):
         "posted_at": grn.posted_at or "",
         "created_at": grn.created_at or "",
         "editable": (grn.status or "DRAFT") in GRN_EDITABLE,
-        "actions": sorted(GRN_TRANSITIONS.get(grn.status or "DRAFT", {}).keys()),
+        "actions": [] if old_store_closed() else sorted(GRN_TRANSITIONS.get(grn.status or "DRAFT", {}).keys()),
     }
     if detail:
         row["lines"] = [{

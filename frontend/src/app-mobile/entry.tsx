@@ -18,16 +18,18 @@ const MobileShell = __MOBILE_UI__ ? lazy(() => import('./MobileShell')) : null
 const TodayPage = __MOBILE_UI__ ? lazy(() => import('./TodayPage')) : null
 const ProjectsCards = __MOBILE_UI__ ? lazy(() => import('./ProjectsCards')) : null
 const MorePage = __MOBILE_UI__ ? lazy(() => import('./MorePage')) : null
+const ApprovalsCards = __MOBILE_UI__ ? lazy(() => import('./ApprovalsCards')) : null
 
 export const AppShell: ElementType = phone && MobileShell ? MobileShell : WebShell
 export const HomePage: ElementType = phone && TodayPage ? TodayPage : WebHome
 
-/** The website's screens; in the phone app the project list is the cards, and /more is added. */
+/** The website's screens; in the phone app the project list and the approvals are cards, and /more is added. */
 export const SCREENS: Screen[] =
-  phone && ProjectsCards && MorePage
+  phone && ProjectsCards && ApprovalsCards && MorePage
     ? [
-        ...WEB_SCREENS.filter((s) => s.path !== '/projects'),
+        ...WEB_SCREENS.filter((s) => s.path !== '/projects' && s.path !== '/approvals'),
         { path: '/projects', Component: ProjectsCards },
+        { path: '/approvals', Component: ApprovalsCards },
         { path: '/more', Component: MorePage },
       ]
     : WEB_SCREENS

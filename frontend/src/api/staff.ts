@@ -236,6 +236,7 @@ export interface Profile {
   emergency_complete: boolean
   /** The employee's own optional details. */
   gender: string
+  date_of_birth: string
   aadhaar_no: string
   pan_no: string
   uan_no: string
@@ -249,7 +250,7 @@ export interface Profile {
 }
 export const useProfile = () => useQuery({ queryKey: k('profile'), queryFn: () => get<Profile>('/api/employee/profile') })
 
-export interface MyDetails { emergency_contact: string; emergency_phone: string; gender: string; aadhaar_no: string; pan_no: string; uan_no: string; esi_no: string }
+export interface MyDetails { emergency_contact: string; emergency_phone: string; gender: string; date_of_birth: string; aadhaar_no: string; pan_no: string; uan_no: string; esi_no: string }
 /** The employee saves their own emergency contact, gender, Aadhaar, PAN and UAN. The server knows who they are from the session. */
 export const saveMyDetails = (b: Partial<MyDetails>) => put<{ message?: string; emergency_complete: boolean }>('/api/employee/profile/details', b)
 

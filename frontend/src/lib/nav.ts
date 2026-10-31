@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   type LucideIcon,
   Package,
+  PartyPopper,
   Settings,
   UserRound,
   Users,
@@ -32,6 +33,7 @@ export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIc
 const NAV: NavEntry[] = [
   { kind: 'link', id: 'dashboard', label: 'Command Center', icon: LayoutDashboard, path: '/', ownerOnly: true },
   { kind: 'link', id: 'calendar', label: 'Calendar', icon: CalendarDays, path: '/calendar' },
+  { kind: 'link', id: 'celebrations', label: 'Celebrations', icon: PartyPopper, path: '/celebrations' },
   // Head office's front page: every site's vendors, work orders, BOQs and bills, and what waits on whom.
   // HO QS and HO Coordinator land here. It is theirs, a staff login like any other: the Master manages
   // who they are in People and does not carry the HO portal in the Master's own menu.
@@ -74,6 +76,7 @@ const NAV: NavEntry[] = [
       { label: 'Site Diary', path: '/projects/diary' },
       { label: 'Project Chart', path: '/projects/chart' },
       { label: 'Equipment & Plant', path: '/projects/equipment' },
+      { label: 'Bar Bending Schedule', path: '/projects/bbs' },
       { label: 'Budgeting', path: '/projects/budgeting', perm: 'reports.view' },
       { label: 'Project Profit', path: '/projects/profit', perm: 'reports.view' },
       { label: 'Cost by Project', path: '/projects/costs', perm: 'reports.view' },

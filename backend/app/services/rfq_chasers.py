@@ -76,7 +76,8 @@ def l1_summary(db, rfq):
 
 @scheduled_job("rfq_chasers")
 def job_rfq_chasers(db, now):
-    """Remind the suppliers who have not quoted, and give the buyer the L1 summary on the due date."""
+    """Tell the buyer which suppliers have not quoted as the due date nears, and give the L1 summary on the due date.
+    Suppliers are emailed only when the buyer presses the reminder on the enquiry: nothing goes out on its own."""
     today = now.date() if isinstance(now, datetime) else date.today()
     reminded = summaries = 0
     for rfq in db.query(models.DBRfq).filter(models.DBRfq.status == "OPEN", models.DBRfq.quotes_due.isnot(None),
@@ -84,14 +85,22 @@ def job_rfq_chasers(db, now):
         due = _day(rfq.quotes_due)
         if due is None:
             continue
-        client = db.get(models.DBClient, rfq.client_id)
         left = (due - today).days
         if left in REMIND_DAYS_LEFT:
-            for inv in db.query(models.DBRfqInvite).filter(models.DBRfqInvite.rfq_id == rfq.id).all():
-                if answered(inv) or (inv.reminded_on or "") == today.isoformat() or not EMAIL.match(inv.email or ""):
-                    continue
-                ok, _ = email_invite(db, client, rfq, inv, reminder=True)
-                reminded += 1 if ok else 0
+            waiting = [inv for inv in db.query(models.DBRfqInvite).filter(models.DBRfqInvite.rfq_id == rfq.id).all()
+                       if not answered(inv) and (inv.reminded_on or "") != today.isoformat()]
+            if waiting:
+                names = ", ".join((inv.supplier_name or inv.email or "a supplier") for inv in waiting[:6])
+                text = "%d supplier%s %s not quoted on %s, due %s: %s. Remind them from the enquiry." % (
+                    len(waiting), "" if len(waiting) == 1 else "s", "has" if len(waiting) == 1 else "have", rfq.number,
+                    "today" if left == 0 else "in %d day%s" % (left, "" if left == 1 else "s"), names)
+                notify(db, rfq.client_id, "rfq_waiting", "Quotes awaited: %s" % rfq.number, text, view="enquiries",
+                       ref_type="rfq", ref_id=rfq.id, severity="action")
+                notify_employee(db, rfq.client_id, rfq.created_by_id, "Quotes awaited: %s" % rfq.number, text,
+                                link="/next/store/enquiries/%d" % rfq.id)
+                for inv in waiting:
+                    inv.reminded_on = today.isoformat()             # the buyer is told once a day, not once an hour
+                reminded += len(waiting)
         if left <= 0 and not rfq.l1_sent_at:
             text = l1_summary(db, rfq)
             notify(db, rfq.client_id, "rfq_l1", text, view="enquiries", ref_type="rfq", ref_id=rfq.id, severity="action")
@@ -99,4 +108,4 @@ def job_rfq_chasers(db, now):
             rfq.l1_sent_at = now.strftime("%Y-%m-%d %H:%M:%S")
             summaries += 1
         db.commit()
-    return "%d reminders sent, %d L1 summaries" % (reminded, summaries)
+    return "%d suppliers awaited, %d L1 summaries" % (reminded, summaries)

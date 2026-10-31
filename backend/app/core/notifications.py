@@ -18,6 +18,7 @@ from app.db import SessionLocal
 
 from app.core.config import logger
 from app.core.push import push_to
+from app.constants.common import GMAIL_SCOPES
 
 
 def default_from_email():
@@ -36,7 +37,8 @@ def get_gmail_credentials(access_token: str = None, refresh_token: str = None):
         refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id,
-        client_secret=client_secret
+        client_secret=client_secret,
+        scopes=GMAIL_SCOPES,
     )
     try:
         if creds.expired or not creds.valid:
@@ -66,16 +68,14 @@ def prepare_email_message(to_email, subject, body_text, html_body, from_email, l
     from email.mime.text import MIMEText
     from email.mime.base import MIMEBase
     from email import encoders as _encoders
+    from email.utils import formatdate
 
     msg = MIMEMultipart('mixed')
     msg['Subject'] = subject
     msg['From'] = from_email
     msg['To'] = to_email
     msg['Reply-To'] = from_email
-    msg['Date'] = datetime.now().strftime('%a, %d %b %Y %H:%M:%S %z')
-    if (os.getenv("FROM_EMAIL", "") or "").strip():
-        msg['List-Unsubscribe'] = '<mailto:%s?subject=unsubscribe>' % os.getenv("FROM_EMAIL").strip()
-    msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+    msg['Date'] = formatdate(localtime=True)
 
     alt_part = MIMEMultipart('alternative')
     alt_part.attach(MIMEText(body_text, 'plain', 'utf-8'))
@@ -102,7 +102,9 @@ def prepare_email_message(to_email, subject, body_text, html_body, from_email, l
         else:
             pass
 
-    alt_part.attach(MIMEText(html_body, 'html', 'utf-8'))
+    # A mail app shows the last part it can: an empty HTML part would leave a plain-text email looking blank.
+    if html_body:
+        alt_part.attach(MIMEText(html_body, 'html', 'utf-8'))
     msg.attach(alt_part)
 
     if pdf_bytes:
@@ -212,6 +214,10 @@ NOTIFY_KINDS = {
     "daily_digest": "The morning list of what needs looking at",
     "security_lock": "An account was locked after too many wrong passwords",
     "increment_due": "It is a year since somebody's last salary increment",
+    "plant_weekly": "The week's alerts for a machine: service, papers, hire return, no logbook",
+    "plant_breakdown": "A machine has broken down - emergency",
+    "plant_unbilled": "A hired machine has a month with no rental invoice",
+    "celebration": "A birthday or a special day is being celebrated today",
 }
 # Out of the box: the bell for everything, email for the money, the digest and a locked account.
 # Nothing is emailed on its own: a company ticks the alerts it wants mailed in Settings.

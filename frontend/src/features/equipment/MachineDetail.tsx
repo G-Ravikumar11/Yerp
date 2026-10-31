@@ -6,6 +6,7 @@ import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
 import { ServiceBadge } from './plantParts'
 import { ServiceDoneModal } from './ServiceDoneModal'
+import { MeterHistory } from './PlantChecks'
 
 const th = 'px-3 py-2 text-left text-xs font-medium text-muted-foreground'
 const TYPE_LABEL = { Both: 'Meter reading + calendar days', Meter: 'Meter reading only', Days: 'Calendar days only', None: 'No service schedule' }
@@ -29,6 +30,12 @@ export function MachineDetail({ id, onClose }: { id: number; onClose: () => void
         <Stat label="Diesel" value={`${d.litres_per_hour} L/h`} />
         <Stat label="Cost to date" value={formatINR(d.cost_to_date)} />
       </StatGrid>
+      <dl aria-label="Machine details" className="mb-5 grid gap-x-6 gap-y-1.5 rounded-lg border border-border p-3.5 text-[13px] sm:grid-cols-2 lg:grid-cols-4">
+        <div><dt className="text-xs text-muted-foreground">Project / site</dt><dd>{d.current_job || d.where}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Fuel norm</dt><dd>{d.fuel_norm_lph != null ? `${d.fuel_norm_lph} L/h` : 'Not set'}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Tank capacity</dt><dd>{d.tank_capacity_l != null ? `${d.tank_capacity_l} L` : 'Not set'}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Insurance / fitness until</dt><dd>{d.insurance_until ? formatDate(d.insurance_until) : '-'} / {d.fitness_until ? formatDate(d.fitness_until) : '-'}</dd></div>
+      </dl>
       {d.service.reasons.length > 0 && <p className={`mb-4 rounded-lg border p-2.5 text-[13px] ${d.service.due ? 'border-danger/40 text-danger' : 'border-warning/40 text-warning'}`}>{d.service.reasons.join('; ')}</p>}
 
       <div aria-label="Service schedule" className="mb-5 rounded-lg border border-border p-3.5">
@@ -46,6 +53,8 @@ export function MachineDetail({ id, onClose }: { id: number; onClose: () => void
         </dl>
       </div>
 
+      <MeterHistory id={d.id} />
+
       <h3 className="mb-2 text-sm font-semibold">Service history</h3>
       <div className="mb-5 overflow-x-auto rounded-lg border border-border"><table aria-label="Services" className="w-full min-w-[52rem] text-[13px]"><thead className="bg-surface"><tr><th className={th}>Date</th><th className={th}>Kind</th><th className={`${th} text-right`}>Meter</th><th className={th}>Work performed</th><th className={th}>Parts used</th><th className={th}>By</th><th className={`${th} text-right`}>Cost</th><th className={th}>Next due</th></tr></thead>
         <tbody>{d.services.length ? d.services.map((v) => (
@@ -60,6 +69,13 @@ export function MachineDetail({ id, onClose }: { id: number; onClose: () => void
             <td className="px-3 py-2">{[v.next_service_meter !== null ? `${v.next_service_meter.toLocaleString('en-IN')} ${s.unit}` : '', v.next_service_on ? formatDate(v.next_service_on) : ''].filter(Boolean).join(' or ') || '-'}</td>
           </tr>
         )) : <tr><td colSpan={8} className="px-3 py-4 text-center text-muted-foreground">No services recorded.</td></tr>}</tbody></table></div>
+
+      {d.breakdowns.length > 0 && (
+        <>
+          <h3 className="mb-2 text-sm font-semibold">Breakdown history</h3>
+          <ul aria-label="Breakdown history" className="mb-5 grid gap-1 text-[13px]">{d.breakdowns.map((b) => <li key={b.id}>{formatDate(b.reported_on)} &nbsp; <strong>{b.kind}</strong> ({b.priority}, {b.status}): {b.description}{b.total_cost > 0 && ` - ${formatINR(b.total_cost)}`}</li>)}</ul>
+        </>
+      )}
 
       {d.schedule_history.length > 0 && (
         <>

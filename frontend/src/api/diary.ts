@@ -20,6 +20,8 @@ export interface DiaryRow {
   total_mandays: number
   status: string
   submitted_at: string
+  /** Who signed the day off. */
+  submitted_by_name?: string
   /** Each time the day was reopened after sign-off: when, by whom and why. */
   amendments?: string[]
   editable: boolean

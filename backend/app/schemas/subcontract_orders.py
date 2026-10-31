@@ -109,6 +109,8 @@ class BoqLineIn(BaseModel):
     # The line of the project BOQ it is part of.
     boq_key: Optional[str] = ""
     boq_parts: Optional[list] = None
+    material: Optional[str] = ""
+    heading_level: Optional[int] = 0
 
 
 class BoqIn(BaseModel):
