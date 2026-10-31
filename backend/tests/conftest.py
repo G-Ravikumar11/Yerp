@@ -237,7 +237,7 @@ def work_every_day(tenant):
     not at work. A test about the clock-in mechanics must not also depend on
     which day the suite happens to run, or it goes red every weekend.
     """
-    res = tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7"})
+    res = tenant.put("/api/attendance/settings", json={"working_days": "1,2,3,4,5,6,7", "require_location": False})
     assert res.status_code == 200, res.text
 
 

@@ -39,8 +39,11 @@ function Form({ employeeId, onClose }: { employeeId?: number; onClose: () => voi
   const made = (kind: 'earning' | 'deduction') => (d?.structure ?? []).filter((l) => l.kind === kind).reduce((n, l) => n + l.amount, 0)
   const otPay = f.otHours * f.otRate
   const gross = structured ? made('earning') + otPay + f.bonus : f.basic + otPay + f.bonus + f.allow
-  const tax = Math.round(gross * ((d?.tax_rate ?? 0) / 100) * 100) / 100
-  const deductions = (d?.deductions ?? 0) + (structured ? made('deduction') : f.insurance + f.retirement + f.other)
+  // A flat rate on the record is HR's own; anybody else pays new-regime TDS, worked out by the server on the year.
+  const tax = d?.tax_rate ? Math.round(gross * (d.tax_rate / 100) * 100) / 100 : d?.tax_amount ?? 0
+  // PF, ESI and professional tax are the law's: the server works them out and the preview follows it. A PF or ESI amount typed here stands in for its own.
+  const statutory = structured ? (d?.professional_tax ?? 0) : (f.retirement || d?.provident_fund || 0) + (f.insurance || d?.state_insurance || 0) + (d?.professional_tax ?? 0)
+  const deductions = (d?.deductions ?? 0) + (structured ? made('deduction') : f.other) + statutory
   const net = Math.round((gross - tax - deductions) * 100) / 100
   const body = () => ({ employee_id: Number(emp), period_start: start, period_end: end, pay_date: payDate, hours_worked: f.hours, basic_salary: f.basic, overtime_hours: f.otHours, overtime_rate: f.otRate, bonus: f.bonus, allowances: f.allow, insurance: f.insurance, retirement: f.retirement, other_deductions: f.other, notes })
   const save = useAction((overlap: boolean) => createPayslip(body(), overlap), {
@@ -71,6 +74,13 @@ function Form({ employeeId, onClose }: { employeeId?: number; onClose: () => voi
         {!structured && <Field label="Other deductions" htmlFor="ps-oth2"><NumField id="ps-oth2" value={f.other} onValue={set('other')} /></Field>}
         <Field label="Notes" htmlFor="ps-notes" className="sm:col-span-3"><Textarea id="ps-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
       </div>
+      {d?.days && d.days.paid_days < d.days.working_days && (
+        <p role="status" aria-label="Paid days" className="mt-4 rounded-lg bg-muted/50 p-3 text-sm">
+          Paid for <strong>{d.days.paid_days}</strong> of {d.days.working_days} working days
+          {d.days.active_days < d.days.working_days ? ` (on the books for ${d.days.active_days})` : ''}
+          {d.days.lop_days > 0 ? `; loss of pay ${d.days.lop_days}: ${[d.days.unpaid_leave && `${d.days.unpaid_leave} unpaid leave`, d.days.excess_leave && `${d.days.excess_leave} leave over the entitlement`, d.days.absent && `${d.days.absent} absent`, d.days.late_penalty && `${d.days.late_penalty} for ${d.days.late_count} lates`].filter(Boolean).join(', ')}` : ''}.
+        </p>
+      )}
       {structured && (
         <section aria-label="From the salary structure" className="mt-4 rounded-lg border border-border p-3">
           <h3 className="text-[13px] font-semibold">From the salary structure</h3>
@@ -83,7 +93,7 @@ function Form({ employeeId, onClose }: { employeeId?: number; onClose: () => voi
       {emp && (
         <dl aria-label="Preview" className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 rounded-lg bg-muted/50 p-3 text-sm sm:grid-cols-4">
           <div><dt className="text-xs text-muted-foreground">Gross</dt><dd className="tabular font-semibold">{formatINR(gross)}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">Tax{d ? ` (${d.tax_rate}%)` : ''}</dt><dd className="tabular font-semibold">{formatINR(tax)}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">{d?.tax_rate ? `Tax (${d.tax_rate}%)` : 'TDS (new regime)'}</dt><dd className="tabular font-semibold">{formatINR(tax)}</dd></div>
           <div><dt className="text-xs text-muted-foreground">Other deductions</dt><dd className="tabular font-semibold">{formatINR(deductions)}</dd></div>
           <div><dt className="text-xs text-muted-foreground">Net pay</dt><dd className="tabular font-display text-base font-semibold">{formatINR(net)}</dd></div>
         </dl>

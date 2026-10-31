@@ -40,6 +40,15 @@ function Form({ initial }: { initial: AttSettings }) {
         <div className="flex flex-wrap gap-4 text-sm">{DAYS.map(([v, l]) => <label key={v} className="flex items-center gap-1.5"><input type="checkbox" checked={days.includes(v)} onChange={() => toggle(v)} /> {l}</label>)}</div>
         <p className="mt-1.5 text-[13px] text-muted-foreground">Leave this off and staff clock in themselves. Either way, signing in on a non-working day never records attendance, so someone opening the portal on a Sunday to read a payslip is not marked present. They can still clock in by hand if they really are working.</p>
       </div>
+      <div className="mt-5 border-t border-border pt-4">
+        <p className="mb-2 text-sm font-medium">Late arrivals and pay</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Lates before a penalty" htmlFor="as-late-n" hint="Every this many lates in a month cost the days below."><NumField id="as-late-n" value={s.late_threshold ?? 3} onValue={(n) => set('late_threshold', n)} /></Field>
+          <Field label="Days of pay lost for each" htmlFor="as-late-d" hint="0.5 is a half day; 0 turns the penalty off."><NumField id="as-late-d" value={s.late_penalty_lop ?? 0.5} onValue={(n) => set('late_penalty_lop', n)} /></Field>
+        </div>
+        <p className="mt-1.5 text-[13px] text-muted-foreground">Taken as loss of pay when payslips are made, together with unpaid leave and days with neither attendance nor approved leave.</p>
+        <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={!!s.auto_email_on_approval} onChange={(e) => set('auto_email_on_approval', e.target.checked)} /> Email everybody their payslip when a month's payroll is approved</label>
+      </div>
       <div className="mt-5 flex justify-end">
         <Button loading={save.isPending} onClick={() => save.mutate()}>Save settings</Button>
       </div>

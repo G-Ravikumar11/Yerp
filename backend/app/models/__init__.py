@@ -97,6 +97,8 @@ from app.models.hr import (
     DBAttendance,
     DBAttendanceSettings,
     DBOvertimeLog,
+    DBPayrollMonth,
+    DBLeaveLedger,
     DBEmployeeGoal,
     DBDepartmentGoal,
     DBLeaveRequest,
@@ -105,7 +107,7 @@ from app.models.hr import (
     DBCustomHoliday,
     DBSiteGeofence,
 )
-from app.models.celebrations import DBSpecialDay, DBCelebrationReaction, DBCelebrationWish
+from app.models.celebrations import DBSpecialDay, DBCelebrationReaction, DBCelebrationWish, DBAnnouncement
 from app.models.invoicing import (
     DBInvoice,
     DBPayment,

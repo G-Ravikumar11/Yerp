@@ -4,6 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Typing into a form this size re-renders all of it on each key; with the whole suite running side by side, the longest
+// of these take several times what they do alone (about 1.5 seconds).
+vi.setConfig({ testTimeout: 20_000 })
+
 const sent: { url: string; body: unknown }[] = []
 let owner = true
 

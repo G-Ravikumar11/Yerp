@@ -53,7 +53,7 @@ function Mandatory() {
 export default function CompanyTab() {
   const q = useCompany()
   const logo = useLogo()
-  const [f, setF] = useState({ name: '', email: '', phone: '', address: '', gstin: '', website: '', currency: 'INR' })
+  const [f, setF] = useState({ name: '', email: '', phone: '', address: '', gstin: '', tan: '', pan: '', website: '', currency: 'INR' })
   const [banks, setBanks] = useState<BankDetail[]>([blankBank()])
   const [pic, setPic] = useState('')
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((s) => ({ ...s, [k]: e.target.value }))
@@ -61,7 +61,7 @@ export default function CompanyTab() {
   useEffect(() => {
     const d = q.data
     if (!d) return
-    setF({ name: d.company_name || '', email: d.company_email || d.email || '', phone: d.company_phone || d.phone_number || '', address: d.company_address || '', gstin: d.company_abn || '', website: d.company_website || '', currency: d.currency || 'INR' })
+    setF({ name: d.company_name || '', email: d.company_email || d.email || '', phone: d.company_phone || d.phone_number || '', address: d.company_address || '', gstin: d.company_abn || '', tan: d.company_tan || '', pan: d.company_pan || '', website: d.company_website || '', currency: d.currency || 'INR' })
     setBanks(parseBanks(d.bank_details))
   }, [q.data])
   useEffect(() => setPic(logo.data?.logo_url ?? ''), [logo.data])
@@ -76,6 +76,8 @@ export default function CompanyTab() {
         phone_number: f.phone,
         company_address: f.address,
         company_abn: f.gstin,
+        company_tan: f.tan,
+        company_pan: f.pan,
         company_website: f.website,
         currency: f.currency,
         bank_details: JSON.stringify(banks.filter((b) => b.bank_name || b.account_number)),
@@ -93,6 +95,8 @@ export default function CompanyTab() {
         <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); save.mutate() }}>
           <Field label="Company name" htmlFor="co-name"><Input id="co-name" value={f.name} onChange={set('name')} /></Field>
           <Field label="GSTIN" htmlFor="co-gstin" hint="Fifteen characters. It also sets the company's state."><Input id="co-gstin" value={f.gstin} onChange={set('gstin')} /></Field>
+          <Field label="TAN" htmlFor="co-tan" hint="For Form 16: like ABCD12345E."><Input id="co-tan" maxLength={10} value={f.tan} onChange={(e) => setF((s) => ({ ...s, tan: e.target.value.toUpperCase() }))} /></Field>
+          <Field label="Company PAN" htmlFor="co-pan" hint="For Form 16: like ABCDE1234F."><Input id="co-pan" maxLength={10} value={f.pan} onChange={(e) => setF((s) => ({ ...s, pan: e.target.value.toUpperCase() }))} /></Field>
           <Field label="Email" htmlFor="co-email"><Input id="co-email" type="email" value={f.email} onChange={set('email')} /></Field>
           <Field label="Phone" htmlFor="co-phone"><Input id="co-phone" value={f.phone} onChange={set('phone')} /></Field>
           <Field label="Website" htmlFor="co-web"><Input id="co-web" value={f.website} onChange={set('website')} /></Field>

@@ -11,6 +11,7 @@ import { persistOptions, queryClient } from '@/lib/query'
 import { watchConnection } from '@/stores/offline'
 import { applyTheme, useUI } from '@/stores/ui'
 import { AppShell, HomePage, SCREENS } from '@/app-mobile/entry'
+import { FeedFirst } from '@/features/feed/FeedFirst'
 import NotFound from '@/pages/NotFound'
 import { REDIRECTS } from '@/routes'
 
@@ -102,7 +103,7 @@ export default function App() {
             <Route path="superadmin/login" element={<SuperadminLoginPage />} />
             <Route path="reset" element={<ResetPage />} />
             <Route element={<AppShell />}>
-              <Route index element={<HomePage />} />
+              <Route index element={<FeedFirst Home={HomePage} />} />
               {SCREENS.map(({ path, Component }) => (
                 <Route key={path} path={path.slice(1)} element={<Component />} />
               ))}

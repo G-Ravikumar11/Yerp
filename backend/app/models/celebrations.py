@@ -1,7 +1,7 @@
 """Birthdays and special days, and what people say about them."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Text, Boolean, Column, ForeignKey, Integer, String, UniqueConstraint
 
 from app.db.session import Base
 
@@ -51,3 +51,23 @@ class DBCelebrationWish(Base):
     author_name = Column(String, default="")
     message = Column(String, nullable=False)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBAnnouncement(Base):
+    """Something HR wants every employee to see on the Feed: a site notice, a holiday, anything important.
+
+    Only HR and the Master write them; everybody in the company reads them. `pinned` keeps one at the top, and
+    `expires_on` (YYYY-MM-DD, optional) takes it off the Feed after that day so old news does not pile up."""
+    __tablename__ = "announcements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    title = Column(String, nullable=False)
+    body = Column(Text, default="")
+    category = Column(String, default="general")          # general | site | holiday | important
+    pinned = Column(Boolean, default=False)
+    expires_on = Column(String, default="")
+    posted_by = Column(String, default="")                # the name shown
+    posted_by_key = Column(String, default="")            # owner, m:<member>, e:<employee>
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"), index=True)
+    updated_at = Column(String, default="")

@@ -13,7 +13,9 @@ import { GENDERS } from './EmployeeFormModal'
 import { LoginEmail } from './LoginEmail'
 import { SalaryIncrement } from './SalaryIncrement'
 import { SetPasswordModal } from './SetPasswordModal'
+import { EmployeePayTools } from './EmployeePayTools'
 import { EMPLOYEE_TONE } from './EmployeesPage'
+import { PayrollFields } from './PayrollFields'
 
 type Tab = 'profile' | 'access'
 
@@ -34,6 +36,7 @@ function Profile({ e, ready, onPassword }: { e: EmployeeDetail; ready: boolean; 
     ['Level', cat.data?.levels.find((l) => l.code === e.level)?.label ?? e.level],
     ['Reporting role', cat.data?.roles.find((r) => r.code === e.role)?.label ?? e.role],
     ['Start date', e.start_date], ['Salary', e.salary], ['Tax rate %', e.tax_rate],
+    ...(hrOnly ? ([['Bank', [e.bank_name, e.bank_account].filter(Boolean).join(' / ')], ['IFSC', e.bank_ifsc], ['Provident Fund', e.pf_enabled === false ? 'Off' : 'On'], ['ESI', e.esi_enabled === false ? 'Off' : 'On'], ['Professional tax', e.pt_enabled === false ? 'Off' : `On (${e.pt_state ?? 'TS'})`], ['Probation ends', e.probation_end_date], ['Contract ends', e.contract_end_date]] as Row[]) : []),
   ]
   if (editing) return <ProfileForm e={e} onDone={() => setEditing(false)} onPassword={onPassword} />
   const group = (title: string, rows: Row[], first = false) => (
@@ -57,6 +60,7 @@ function Profile({ e, ready, onPassword }: { e: EmployeeDetail; ready: boolean; 
       {hrOnly && canManage && <LoginEmail e={e} />}
       {hrOnly && canManage && <SalaryIncrement e={e} />}
       {hrOnly && <EmployeeDocuments id={e.id} canManage={canManage} />}
+      {hrOnly && <EmployeePayTools id={e.id} endDate={e.end_date} />}
     </div>
   )
 }
@@ -65,7 +69,7 @@ function ProfileForm({ e, onDone, onPassword }: { e: EmployeeDetail; onDone: () 
   const depts = useDepartments()
   const people = useEmployees('')
   const cat = useHrCatalogue()
-  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, address: e.address ?? '', job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone, gender: e.gender ?? '', date_of_birth: e.date_of_birth ?? '', uan_no: e.uan_no ?? '', esi_no: e.esi_no ?? '', aadhaar_no: '', pan_no: e.pan_no ?? '' })
+  const [f, setF] = useState({ first_name: e.first_name, last_name: e.last_name, email: e.email, org_email: e.org_email ?? '', phone: e.phone, address: e.address ?? '', job_title: e.job_title, department_id: e.department_id, reports_to: e.reports_to, level: e.level, role: e.role, employment_type: e.employment_type, pay_frequency: e.pay_frequency, salary: e.salary, tax_rate: e.tax_rate, start_date: e.start_date, emergency_contact: e.emergency_contact, emergency_phone: e.emergency_phone, gender: e.gender ?? '', date_of_birth: e.date_of_birth ?? '', uan_no: e.uan_no ?? '', esi_no: e.esi_no ?? '', aadhaar_no: '', pan_no: e.pan_no ?? '', bank_name: e.bank_name ?? '', bank_account: e.bank_account ?? '', bank_ifsc: e.bank_ifsc ?? '', pf_enabled: e.pf_enabled !== false, esi_enabled: e.esi_enabled !== false, pt_enabled: e.pt_enabled !== false, pt_state: e.pt_state ?? 'TS', probation_end_date: e.probation_end_date ?? '', contract_end_date: e.contract_end_date ?? '' })
   const { can, isHrOrMaster: hrOnly } = useSession()
   const canManage = can('people.manage')
   // The reporting line runs up the levels: the same level or above, never below.
@@ -97,6 +101,7 @@ function ProfileForm({ e, onDone, onPassword }: { e: EmployeeDetail; onDone: () 
         {hrOnly && <Field label="Aadhaar number" htmlFor="ep-aadhaar" hint={e.aadhaar_masked ? `On file: ${e.aadhaar_masked}. Leave blank to keep it.` : '12 digits.'}><Input id="ep-aadhaar" inputMode="numeric" value={f.aadhaar_no} onChange={set('aadhaar_no')} autoComplete="off" /></Field>}
         {hrOnly && <Field label="PAN number" htmlFor="ep-pan" hint="Like ABCDE1234F."><Input id="ep-pan" value={f.pan_no} onChange={(ev) => setF((s) => ({ ...s, pan_no: ev.target.value.toUpperCase() }))} autoComplete="off" /></Field>}
         {hrOnly && <Field label="ESI number" htmlFor="ep-esi" hint="10 digits."><Input id="ep-esi" inputMode="numeric" value={f.esi_no} onChange={set('esi_no')} autoComplete="off" /></Field>}
+        {hrOnly && <PayrollFields id="ep" value={f} onChange={(patch) => setF((s) => ({ ...s, ...patch }))} />}
         <Field label="Emergency contact" htmlFor="ep-em"><Input id="ep-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
         <Field label="Emergency phone" htmlFor="ep-emp"><Input id="ep-emp" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
         <div className="col-span-full mt-1 border-t border-border pt-4"><h4 className="text-sm font-semibold">Company details</h4></div>

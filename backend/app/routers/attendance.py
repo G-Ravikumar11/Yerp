@@ -1,5 +1,5 @@
 """The attendance endpoints."""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -10,6 +10,8 @@ from app.db import get_db, get_read_db
 from app.core.auth import get_client_user, require_erp_read, require_items_access
 from app.core.queries import by_id, prime
 from app.core.dates import DEFAULT_WORKING_DAYS
+from app.services.employee_portal import (attendance_settings_for, check_clock_in_location, end_shift, is_late,
+                                          late_rule_for_reports, running_shift)
 from app.services.holidays import custom_holidays
 from app.validators.common import clean_working_days
 
@@ -26,6 +28,12 @@ def clock_in(request: Request, body: dict = None, db: Session = Depends(get_db))
     emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
+    going = running_shift(db, emp_id, client.id)
+    if going and going.clock_in and not going.clock_out and going.date != datetime.now().strftime("%Y-%m-%d"):
+        raise HTTPException(status_code=400, detail="%s is still clocked in from last night. Clock them out first." % emp.first_name)
+    lat, lng = body.get("latitude"), body.get("longitude")
+    check_clock_in_location(db, client.id, attendance_settings_for(db, client.id), lat, lng)
+    here = {"location_lat": float(lat), "location_lng": float(lng)} if lat and lng else {}
     today = datetime.now().strftime("%Y-%m-%d")
     existing = db.query(models.DBAttendance).filter(
         models.DBAttendance.employee_id == emp_id,
@@ -37,11 +45,13 @@ def clock_in(request: Request, body: dict = None, db: Session = Depends(get_db))
             raise HTTPException(status_code=400, detail="Already clocked in today")
         existing.clock_in = datetime.now().strftime("%H:%M:%S")
         existing.status = "present"
+        for key, val in here.items():
+            setattr(existing, key, val)
         db.commit()
         return {"message": "Clocked in", "clock_in": existing.clock_in}
     att = models.DBAttendance(
         client_id=client.id, employee_id=emp_id, date=today,
-        clock_in=datetime.now().strftime("%H:%M:%S"), status="present",
+        clock_in=datetime.now().strftime("%H:%M:%S"), status="present", **here,
     )
     db.add(att)
     db.commit()
@@ -54,26 +64,26 @@ def clock_out(request: Request, body: dict = None, db: Session = Depends(get_db)
     if not body or not body.get("employee_id"):
         raise HTTPException(status_code=400, detail="employee_id required")
     emp_id = body["employee_id"]
-    today = datetime.now().strftime("%Y-%m-%d")
-    att = db.query(models.DBAttendance).filter(
-        models.DBAttendance.employee_id == emp_id,
-        models.DBAttendance.date == today,
-        models.DBAttendance.client_id == client.id,
-    ).first()
-    if not att or not att.clock_in:
+    now = datetime.now()
+    # Today's record; failing that, a shift opened yesterday and still running (it ran past midnight).
+    att = None
+    for day in (now.strftime("%Y-%m-%d"), (now - timedelta(days=1)).strftime("%Y-%m-%d")):
+        att = db.query(models.DBAttendance).filter(
+            models.DBAttendance.employee_id == emp_id,
+            models.DBAttendance.date == day,
+            models.DBAttendance.client_id == client.id,
+        ).first()
+        if att and att.clock_in and (day == now.strftime("%Y-%m-%d") or not att.clock_out):
+            break
+        att = None
+    if not att:
         raise HTTPException(status_code=400, detail="Not clocked in today")
     if att.clock_out:
         raise HTTPException(status_code=400, detail="Already clocked out today")
-    att.clock_out = datetime.now().strftime("%H:%M:%S")
-    try:
-        cin = datetime.strptime(att.clock_in, "%H:%M:%S")
-        cout = datetime.strptime(att.clock_out, "%H:%M:%S")
-        att.total_hours = round((cout - cin).total_seconds() / 3600, 2)
-    except Exception:
-        att.total_hours = 0.0
-    att.status = "completed"
+    end_shift(db, att, client.id, now)       # takes off the breaks and carries a shift past midnight
     db.commit()
-    return {"message": "Clocked out", "clock_out": att.clock_out, "total_hours": att.total_hours}
+    return {"message": "Clocked out", "clock_out": att.clock_out, "total_hours": att.total_hours,
+            "overtime_hours": att.overtime_hours, "break_minutes": att.break_minutes}
 
 
 @router.get("/api/attendance")
@@ -200,6 +210,7 @@ def get_attendance_analytics(request: Request, days: int = 30, db: Session = Dep
         models.DBEmployee.client_id == client.id,
         models.DBEmployee.status.in_(["active", "onboarding"]),
     ).count()
+    rule = late_rule_for_reports(attendance_settings_for(db, client.id))      # the company's own start time and grace
     daily_stats = {}
     late_count = 0
     overtime_count = 0
@@ -212,7 +223,7 @@ def get_attendance_analytics(request: Request, days: int = 30, db: Session = Dep
         daily_stats[d]["present"] += 1
         daily_stats[d]["hours"] += r.total_hours or 0
         total_hours_all += r.total_hours or 0
-        if r.clock_in and r.clock_in > "09:15":
+        if r.status != "absent" and is_late(r, rule):
             late_count += 1
         if r.overtime_hours and r.overtime_hours > 0:
             overtime_count += 1
@@ -280,13 +291,19 @@ def announce_overtime(request: Request, body: dict = None, db: Session = Depends
         att.overtime_hours = hours
         att.overtime_announced = True
         att.overtime_announced_by = client.company_name or client.contact_name or "HR"
-    log = models.DBOvertimeLog(
-        client_id=client.id, employee_id=emp.id, date=date,
-        hours=hours, reason=reason,
-        announced_by=client.company_name or client.contact_name or "HR",
-        status="announced",
-    )
-    db.add(log)
+    announced_by = client.company_name or client.contact_name or "HR"
+    # One entry per person per day: announcing again for the same day replaces the earlier one.
+    log = db.query(models.DBOvertimeLog).filter(
+        models.DBOvertimeLog.employee_id == emp.id,
+        models.DBOvertimeLog.date == date,
+    ).first()
+    if log:
+        log.hours, log.reason, log.announced_by, log.status = hours, reason, announced_by, "announced"
+    else:
+        db.add(models.DBOvertimeLog(
+            client_id=client.id, employee_id=emp.id, date=date,
+            hours=hours, reason=reason, announced_by=announced_by, status="announced",
+        ))
     db.commit()
     return {"message": f"Overtime of {hours}h announced for {emp.first_name} {emp.last_name}"}
 
@@ -311,6 +328,23 @@ def get_overtime_logs(request: Request, db: Session = Depends(get_read_db)):
     return result
 
 
+def _number_between(value, label, low, high):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="%s must be a number." % label)
+    if not low <= number <= high:
+        raise HTTPException(status_code=400, detail="%s must be between %g and %g." % (label, low, high))
+    return number
+
+
+def _whole_number(value, label, low, high):
+    number = _number_between(value, label, low, high)
+    if number != int(number):
+        raise HTTPException(status_code=400, detail="%s must be a whole number." % label)
+    return int(number)
+
+
 @router.put("/api/attendance/settings")
 def update_attendance_settings(request: Request, body: dict = None, db: Session = Depends(get_db)):
     client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
@@ -326,6 +360,12 @@ def update_attendance_settings(request: Request, body: dict = None, db: Session 
                 # Normalised, so a stray value cannot leave a tenant with no
                 # working days at all.
                 val = clean_working_days(val)
+            elif key == "late_threshold":
+                val = _whole_number(val, "Lates before a penalty", 1, 31)
+            elif key == "late_penalty_lop":
+                val = _number_between(val, "Late penalty", 0, 1)
+            elif key == "auto_email_on_approval":
+                val = bool(val)
             setattr(settings, key, val)
     db.commit()
     return {"message": "Settings saved"}
@@ -342,6 +382,7 @@ def get_attendance_settings(request: Request, db: Session = Depends(get_read_db)
             "grace_minutes": 15.0, "auto_clockout_hours": 10.0, "max_overtime_hours": 4.0,
             "allow_remote": True, "require_location": True,
             "working_days": DEFAULT_WORKING_DAYS,
+            "late_threshold": 3, "late_penalty_lop": 0.5, "auto_email_on_approval": False,
         }
     return {
         "office_name": settings.office_name, "office_lat": settings.office_lat,
@@ -352,6 +393,9 @@ def get_attendance_settings(request: Request, db: Session = Depends(get_read_db)
         "max_overtime_hours": settings.max_overtime_hours,
         "allow_remote": settings.allow_remote, "require_location": settings.require_location,
         "working_days": clean_working_days(settings.working_days),
+        "late_threshold": settings.late_threshold if settings.late_threshold is not None else 3,
+        "late_penalty_lop": settings.late_penalty_lop if settings.late_penalty_lop is not None else 0.5,
+        "auto_email_on_approval": bool(settings.auto_email_on_approval),
     }
 
 

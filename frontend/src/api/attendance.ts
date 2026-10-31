@@ -51,6 +51,10 @@ export interface AttSettings {
   allow_remote: boolean
   require_location: boolean
   working_days: string
+  /** Lates in a month that cost late_penalty_lop days of pay, and how many days each such group costs. */
+  late_threshold?: number
+  late_penalty_lop?: number
+  auto_email_on_approval?: boolean
 }
 export interface OvertimeLog { id?: number; employee_id: number; employee_name: string; date: string; hours: number; reason: string; announced_by: string; status: string }
 

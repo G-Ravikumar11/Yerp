@@ -59,6 +59,10 @@ class SkipWhatExists:
                 self._known[kind] = set()    # could not tell: everything is created if missing, as it always was
         return self._known[kind]
 
+    def has_index(self, name):
+        """Whether the database already has this index, from the list read once for the whole start-up."""
+        return name.lower() in self._have(2)
+
     def execute(self, statement, *args, **kwargs):
         sql = str(statement)
         for kind, (pattern, _query) in enumerate(_IF_MISSING):
@@ -120,6 +124,27 @@ SITE_PLAN_COLUMNS = (
     # Who signed a site diary day off (when was already kept), for the daily progress report.
     ("site_diaries", "submitted_by_name", "VARCHAR DEFAULT ''"),
 )
+
+HR_PAYROLL_COLUMNS = (
+    # (table, column, type) - payroll: added to tables that always exist.
+    ("employees", "bank_ifsc", "VARCHAR DEFAULT ''"),
+    ("employees", "pf_enabled", "BOOLEAN DEFAULT TRUE"), ("employees", "esi_enabled", "BOOLEAN DEFAULT TRUE"),
+    ("employees", "pt_enabled", "BOOLEAN DEFAULT TRUE"), ("employees", "pt_state", "VARCHAR DEFAULT 'TS'"),
+    ("employees", "probation_end_date", "VARCHAR"), ("employees", "contract_end_date", "VARCHAR"),
+    ("payslips", "working_days", "FLOAT DEFAULT 0"), ("payslips", "lop_days", "FLOAT DEFAULT 0"),
+    ("payslips", "paid_days", "FLOAT DEFAULT 0"), ("payslips", "professional_tax", "FLOAT DEFAULT 0"),
+    ("payslips", "employer_pf", "FLOAT DEFAULT 0"), ("payslips", "employer_epf", "FLOAT DEFAULT 0"),
+    ("payslips", "employer_eps", "FLOAT DEFAULT 0"), ("payslips", "employer_esi", "FLOAT DEFAULT 0"),
+    ("attendance_settings", "late_threshold", "INTEGER DEFAULT 3"),
+    ("attendance_settings", "late_penalty_lop", "FLOAT DEFAULT 0.5"),
+    ("attendance_settings", "auto_email_on_approval", "BOOLEAN DEFAULT FALSE"),
+)
+
+# One overtime entry per person per day. Run after any duplicates are removed, or the index cannot be built.
+OVERTIME_DEDUPE = (
+    "DELETE FROM overtime_logs WHERE id NOT IN (SELECT MAX(id) FROM overtime_logs GROUP BY employee_id, date)"
+)
+OVERTIME_UNIQUE = "CREATE UNIQUE INDEX IF NOT EXISTS uq_overtime_employee_date ON overtime_logs (employee_id, date)"
 
 STORE_OUTWARD_COLUMNS = (
     # (table, column, type) - what the outward slice added to its own tables after they were first made (indents, who received the issue, the
@@ -1950,6 +1975,33 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # Payroll columns on the HR tables.
+            try:
+                for table, column, typedef in HR_PAYROLL_COLUMNS:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step payroll columns: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            # One overtime entry per person per day: drop older duplicates, then enforce it.
+            try:
+                # Only while the index is missing: the clean-up scans the whole table, and once the index exists a
+                # duplicate cannot be added, so there is nothing left to remove on any later start-up.
+                if not conn.has_index("uq_overtime_employee_date"):
+                    conn.execute(text(OVERTIME_DEDUPE))
+                    conn.execute(text(OVERTIME_UNIQUE))
+                    conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step overtime unique: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # The Store module's outward tables: columns added after the tables were first made. A database that has no store tables yet is not an error.
             try:
                 have = {r[0] for r in conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()")).fetchall()}
@@ -2137,8 +2189,14 @@ def migrate_sqlite():
             add_col("subcontract_items", "material", "VARCHAR DEFAULT ''")
             add_col("subcontract_items", "heading_level", "INTEGER DEFAULT 0")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
-            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS + SITE_RATE_COLUMNS + SITE_PLAN_COLUMNS:
-                add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0"))
+            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS + SITE_RATE_COLUMNS + SITE_PLAN_COLUMNS + HR_PAYROLL_COLUMNS:
+                add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0").replace("BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"))
+            try:
+                if conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='overtime_logs'")).fetchone() and not                         conn.execute(text("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_overtime_employee_date'")).fetchone():
+                    conn.execute(text(OVERTIME_DEDUPE))
+                    conn.execute(text(OVERTIME_UNIQUE))
+            except Exception:
+                MIGRATION_ERRORS.append(f"sqlite overtime unique: {sys.exc_info()[1]}")
             try:
                 conn.execute(text(SCHEDULE_BACKFILL))
                 conn.execute(text(LOCATION_BACKFILL))

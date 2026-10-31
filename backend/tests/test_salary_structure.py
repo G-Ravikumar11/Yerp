@@ -43,12 +43,12 @@ def test_a_new_payslip_gets_its_lines_worked_out_from_the_monthly_salary(tenant)
     _, pid = make_slip(tenant, 65000)
     lines = lines_of(tenant, pid)
     assert lines["Basic"]["amount"] == 26000 and lines["Conveyance"]["amount"] == 6500
-    assert lines["Medical allowance"]["amount"] == 13000 and lines["PF"]["amount"] == 7800
+    assert lines["Medical allowance"]["amount"] == 13000 and lines["PF"]["amount"] == 1800
     assert lines["HRA"]["amount"] == 0 and lines["Spcl allowance"]["amount"] == 0          # blank, for HR to type
     slip = tenant.get("/api/payslips/%d" % pid).json()
     assert slip["monthly_salary"] == 65000
-    assert slip["basic_salary"] == 26000 and slip["retirement"] == 7800                     # the payslip's own totals follow
-    assert slip["gross_pay"] == 45500 and slip["net_pay"] == 45500 - 7800
+    assert slip["basic_salary"] == 26000 and slip["retirement"] == 1800                     # the payslip's own totals follow
+    assert slip["gross_pay"] == 45500 and slip["net_pay"] == 45500 - 1800 - 200       # PF to the 15,000 ceiling, and professional tax
 
 
 def test_hr_types_the_blank_ones_and_the_totals_follow(tenant):
@@ -58,7 +58,7 @@ def test_hr_types_the_blank_ones_and_the_totals_follow(tenant):
                                                                {"id": lines["Spcl allowance"]["id"], "amount": 6500}]})
     assert res.status_code == 200, res.text
     slip = tenant.get("/api/payslips/%d" % pid).json()
-    assert slip["gross_pay"] == 65000 and slip["net_pay"] == 65000 - 7800
+    assert slip["gross_pay"] == 65000 and slip["net_pay"] == 65000 - 1800 - 200
     assert tenant.put("/api/payslips/%d" % pid, json={"lines": [{"id": lines["HRA"]["id"], "amount": -1}]}).status_code == 400
     assert tenant.put("/api/payslips/%d" % pid, json={"lines": [{"id": 99999999, "amount": 1}]}).status_code == 400
 
@@ -85,7 +85,7 @@ def test_nothing_is_recalculated_when_a_payslip_is_viewed_or_downloaded(tenant):
     assert (after["gross_pay"], after["net_pay"], after["lines"]) == (before["gross_pay"], before["net_pay"], before["lines"])
     sheet = openpyxl.load_workbook(io.BytesIO(tenant.get("/api/payslips/%d/xlsx" % pid).content)).active
     figures = [c.value for row in sheet.iter_rows() for c in row]
-    assert 26000.0 in figures and 7800.0 in figures                                # the amounts the payslip was made with
+    assert 26000.0 in figures and 1800.0 in figures                                # the amounts the payslip was made with
 
 
 def test_hr_can_add_change_reorder_and_remove_components(tenant):

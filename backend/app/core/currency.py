@@ -176,6 +176,13 @@ def formatted_money(db, client_id, amount) -> str:
     return f"{currency_symbol(code)}{money(amount):,.2f}"
 
 
+def money_text(code, amount) -> str:
+    """An amount as people read it in a company's currency: rupees grouped the Indian way (12,34,567.00), any other
+    currency with its symbol. For the emails and messages the company sends."""
+    code = (code or DEFAULT_CURRENCY).upper()
+    return inr(amount) if code == "INR" else f"{currency_symbol(code)}{money(amount):,.2f}"
+
+
 # SALES PIPELINE - quotes and invoices as one flow instead of two lists
 def totals_by_currency(cards, field="total", fallback=DEFAULT_CURRENCY):
     """Sum per currency and return the biggest first.

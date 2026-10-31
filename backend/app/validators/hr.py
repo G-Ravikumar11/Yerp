@@ -307,3 +307,65 @@ def clean_emergency(name, phone, required=None):
     if len(re.sub(r"\D", "", phone)) < 7:
         raise HTTPException(status_code=400, detail="An emergency contact is required: give a phone number for %s." % name)
     return name[:120], phone[:30]
+
+
+STATUTORY_FLAGS = ("pf_enabled", "esi_enabled", "pt_enabled")
+
+
+def clean_ifsc(value):
+    """An IFSC: four letters, a zero, then six letters or digits - eleven in all; or nothing."""
+    code = re.sub(r"\s", "", value or "").upper()
+    if code and not re.fullmatch(r"[A-Z]{4}0[A-Z0-9]{6}", code):
+        raise HTTPException(status_code=400, detail="An IFSC code is 11 characters: four letters, a 0, then six letters or digits.")
+    return code
+
+
+def clean_pt_state(value):
+    from app.services.statutory import DEFAULT_PT_STATE, PT_STATES
+    state = (value or DEFAULT_PT_STATE).strip().upper()
+    if state not in PT_STATES:
+        raise HTTPException(status_code=400, detail="Professional tax is worked out for Telangana (TS) or Andhra Pradesh (AP).")
+    return state
+
+
+def clean_optional_date(value, label):
+    """A YYYY-MM-DD date, or nothing (kept as null)."""
+    from datetime import datetime
+    given = (value or "").strip() if isinstance(value, str) else value
+    if not given:
+        return None
+    try:
+        return datetime.strptime(given, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="%s must be a date as YYYY-MM-DD." % label)
+
+
+def clean_statutory(values):
+    """The payroll fields of an employee that `values` names, checked; the others are left alone."""
+    out = {}
+    if "bank_ifsc" in values:
+        out["bank_ifsc"] = clean_ifsc(values["bank_ifsc"])
+    if "pt_state" in values:
+        out["pt_state"] = clean_pt_state(values["pt_state"])
+    for flag in STATUTORY_FLAGS:
+        if flag in values:
+            out[flag] = True if values[flag] is None else bool(values[flag])
+    for key, label in (("probation_end_date", "Probation end date"), ("contract_end_date", "Contract end date")):
+        if key in values:
+            out[key] = clean_optional_date(values[key], label)
+    return out
+
+
+def statutory_inputs(body):
+    """clean_statutory for the create form, whose model always carries every field."""
+    return clean_statutory(body.model_dump(include={"bank_ifsc", "pt_state", "probation_end_date", "contract_end_date", *STATUTORY_FLAGS}))
+
+
+def statutory_fields(emp):
+    """The payroll fields of an employee as the API gives them."""
+    return {
+        "bank_ifsc": emp.bank_ifsc or "",
+        "pf_enabled": emp.pf_enabled is not False, "esi_enabled": emp.esi_enabled is not False,
+        "pt_enabled": emp.pt_enabled is not False, "pt_state": emp.pt_state or "TS",
+        "probation_end_date": emp.probation_end_date or "", "contract_end_date": emp.contract_end_date or "",
+    }

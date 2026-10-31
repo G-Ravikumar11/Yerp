@@ -37,7 +37,7 @@ from app.core.security import rate_limiter, validate_password_strength
 from app.services.login_email import deliver_login_email, resend_login_email, welcome_email
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.store_staff import release_on_leaving
-from app.services.employee_portal import leave_balance_for
+from app.services.employee_portal import attendance_settings_for, is_late, late_rule_for_reports, leave_balance_for
 from app.services.salary_revisions import give_increment, record_salary_change, revision_payload, revisions
 from app.services.salary_structure import structure_lines
 from app.services.hr import (
@@ -79,6 +79,9 @@ from app.validators.hr import (
     clean_emergency,
     clean_employee_email,
     clean_esi,
+    clean_statutory,
+    statutory_fields,
+    statutory_inputs,
     clean_gender,
     clean_org_email,
     clean_org_domain,
@@ -425,7 +428,7 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
             "salary": e.salary, "hourly_rate": e.hourly_rate,
             "tax_rate": e.tax_rate, "deductions": e.deductions,
             "allowances": e.allowances, "bonus": e.bonus,
-            "bank_name": e.bank_name, "bank_account": e.bank_account, "tax_id": e.tax_id,
+            "bank_name": e.bank_name, "bank_account": e.bank_account, "tax_id": e.tax_id, **statutory_fields(e),
             "emergency_contact": e.emergency_contact, "emergency_phone": e.emergency_phone,
             "start_date": e.start_date, "end_date": e.end_date,
             "status": e.status, "onboarding_complete": e.onboarding_complete,
@@ -532,7 +535,7 @@ def create_employee(request: Request, body: EmployeeCreate, background_tasks: Ba
         tax_rate=body.tax_rate, deductions=body.deductions,
         allowances=body.allowances, bonus=body.bonus,
         bank_name=body.bank_name, bank_account=body.bank_account,
-        tax_id=body.tax_id,
+        tax_id=body.tax_id, **statutory_inputs(body),
         emergency_contact=emergency_contact, emergency_phone=emergency_phone, gender=gender, date_of_birth=date_of_birth,
         aadhaar_no=aadhaar_no, pan_no=pan_no, uan_no=uan_no, esi_no=esi_no,
         start_date=body.start_date, status="onboarding",
@@ -634,7 +637,7 @@ def _profile(emp, dept_name, manager_name, sites):
         "salary": emp.salary, "hourly_rate": emp.hourly_rate,
         "tax_rate": emp.tax_rate, "deductions": emp.deductions,
         "allowances": emp.allowances, "bonus": emp.bonus,
-        "bank_name": emp.bank_name, "bank_account": emp.bank_account, "tax_id": emp.tax_id,
+        "bank_name": emp.bank_name, "bank_account": emp.bank_account, "tax_id": emp.tax_id, **statutory_fields(emp),
         "emergency_contact": emp.emergency_contact, "emergency_phone": emp.emergency_phone,
         "gender": emp.gender or "", "date_of_birth": emp.date_of_birth or "", "pan_no": emp.pan_no or "", "uan_no": emp.uan_no or "", "esi_no": emp.esi_no or "",
         "aadhaar_masked": ("XXXX XXXX " + emp.aadhaar_no[-4:]) if emp.aadhaar_no else "",
@@ -695,6 +698,7 @@ def get_employee(emp_id: int, request: Request, view: str = "", db: Session = De
     ).order_by(models.DBAttendance.date.desc()).all()
     today_str = datetime.now().strftime("%Y-%m-%d")
     today_row = next((a for a in attendance if a.date == today_str), None)
+    rule_settings = attendance_settings_for(db, client.id)
 
     goals = db.query(models.DBEmployeeGoal).filter(
         models.DBEmployeeGoal.employee_id == emp.id
@@ -735,7 +739,8 @@ def get_employee(emp_id: int, request: Request, view: str = "", db: Session = De
         } for l in leave_rows],
         "attendance_summary": {
             "days_present": sum(1 for a in attendance if a.clock_in),
-            "days_late": sum(1 for a in attendance if a.status == "late"),
+            # From the clock-in against the company's start time and grace: the status is "completed" once they clock out.
+            "days_late": sum(1 for a in attendance if a.status != "absent" and is_late(a, late_rule_for_reports(rule_settings))),
             "hours_30d": round(sum(a.total_hours or 0 for a in attendance), 2),
             "overtime_30d": round(sum(a.overtime_hours or 0 for a in attendance), 2),
             "clocked_in_today": bool(today_row and today_row.clock_in and not today_row.clock_out),
@@ -803,6 +808,7 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
         else:
             body["org_email"] = clean_org_email(db, client.id, body["org_email"], exclude_id=emp.id)
     validate_employee_money(body)
+    body.update(clean_statutory(body))
     if not is_hr_or_master(request, db):
         for key in ID_FIELDS:
             body.pop(key, None)                        # these numbers are HR's and the Master's to enter
@@ -897,6 +903,11 @@ def delete_employee(emp_id: int, request: Request, db: Session = Depends(get_db)
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
     _guard_the_master(request, emp)
+    from app.services import payroll_month
+    frozen = payroll_month.locked_months_of(db, client.id, emp.id)
+    if frozen:
+        raise HTTPException(status_code=409, detail="%s has payslips in locked payroll (%s), which deleting them would remove. "
+                                                    "Reopen the month first, or mark the employee as left instead." % (emp.first_name, ", ".join(frozen)))
     emp_name = f"{emp.first_name} {emp.last_name}"
     # Everything that points at the person is dealt with first, otherwise the delete fails on a foreign key violation
     # (on Postgres - SQLite would let it through). Their own records (payslips, attendance, leave, documents, sites)
@@ -1312,7 +1323,8 @@ def get_employee_pay_details(emp_id: int, request: Request, period_start: str = 
 
     ot_rate = emp.hourly_rate or 0.0
     if ot_rate == 0 and (emp.salary or 0) > 0:
-        ot_rate = round(emp.salary / 160 * 1.5, 2)
+        from app.services.payroll import default_overtime_rate
+        ot_rate = default_overtime_rate(emp)
 
     # Hourly staff have salary == 0; paying them their (zero) salary produced a
     # blank payslip. Derive basic from the hours actually worked instead.
@@ -1324,7 +1336,29 @@ def get_employee_pay_details(emp_id: int, request: Request, period_start: str = 
     tax_rate = emp.tax_rate or 0.0
     tax_amount = money(gross * (tax_rate / 100)) if tax_rate > 0 else 0
     deductions = emp.deductions or 0.0
-    total_deductions = money(tax_amount + deductions)
+    from app.services import statutory
+    from app.services import lop
+    from app.services.payroll import proration_applies
+    days = lop.pay_days(db, client.id, emp, period_start, period_end) if period_start and period_end and proration_applies(emp) else None
+    structure = structure_lines(db, client.id, emp, preview=True, factor=days["factor"] if days else 1.0) if is_hr_or_master(request, db) else None
+    if days and not structure:
+        basic = lop.prorated(emp.salary, days["factor"])           # paid for the days it covers
+        gross = money(basic + ot_pay + bonus + allowances)
+        tax_amount = money(gross * (tax_rate / 100)) if tax_rate > 0 else 0
+    pay_basic = basic
+    if structure:
+        # Made from the salary structure: its own earnings are the gross, and its PF and ESI lines are the deductions.
+        pay_basic = sum(l["amount"] for l in structure if l["kind"] == "earning" and l["counts_as"] == "basic")
+        gross = money(sum(l["amount"] for l in structure if l["kind"] == "earning") + ot_pay + bonus)
+        tax_amount = money(gross * (tax_rate / 100)) if tax_rate > 0 else 0
+    from app.services.income_tax import tds_function
+    tds = tds_function(db, client.id, emp, period_end) if period_end else None
+    if tds is not None:
+        tax_amount = tds(gross, bonus + ot_pay)        # new-regime TDS, the way the payslip will work it out
+    pf_amount, _epf, _eps = statutory.provident_fund(emp, pay_basic)
+    esi_amount, _employer_esi = statutory.state_insurance(emp, gross)
+    pt_amount = statutory.professional_tax(emp, gross)
+    total_deductions = money(tax_amount + deductions + pf_amount + esi_amount + pt_amount)
     net_pay = money(gross - total_deductions)
 
     return {
@@ -1344,13 +1378,16 @@ def get_employee_pay_details(emp_id: int, request: Request, period_start: str = 
         "allowances": allowances,
         "bonus": bonus,
         # What the company's salary structure would make of this person's pay, when it applies to them.
-        "structure": structure_lines(db, client.id, emp, preview=True) if is_hr_or_master(request, db) else None,
+        "structure": structure,
+        # Paid days of the period: working days, the days on the books, loss of pay and what it is made of.
+        "days": days,
         "hours_worked": hours_worked,
         "overtime_hours": overtime_hours,
         "overtime_rate": ot_rate,
         "overtime_pay": ot_pay,
         "gross_pay": round(gross, 2),
         "tax_amount": tax_amount,
+        "provident_fund": pf_amount, "state_insurance": esi_amount, "professional_tax": pt_amount,
         "total_deductions": round(total_deductions, 2),
         "net_pay": net_pay,
     }
@@ -1968,3 +2005,171 @@ def upload_document(emp_id: int, request: Request, body: dict = None, db: Sessio
     db.add(note)
     db.commit()
     return {"message": "Document uploaded", "id": doc.id}
+
+
+# --- Leave accrual: the company's switch, a person's ledger, and HR's corrections ------------------------------------
+
+@router.get("/api/leave/accrual")
+def get_leave_accrual(request: Request, db: Session = Depends(get_read_db)):
+    from app.services import leave_accrual
+    client = require_items_access(request, db, "people.manage")
+    return {"enabled": leave_accrual.enabled(db, client.id), "carry_max": leave_accrual.carry_limits(db, client.id)}
+
+
+@router.put("/api/leave/accrual")
+def put_leave_accrual(request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Turns monthly accrual on or off and sets how much carries into the next year. Turning it on credits the months
+    of this year already begun, for everybody."""
+    from app.services import leave_accrual
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
+    body = body or {}
+    limits = {}
+    for kind in ("annual", "sick"):
+        value = (body.get("carry_max") or {}).get(kind)
+        if value is not None:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="The %s leave carried over must be a number of days." % kind)
+            if not 0 <= value <= 365:
+                raise HTTPException(status_code=400, detail="The %s leave carried over must be 0 to 365 days." % kind)
+            limits[kind] = value
+    on = bool(body.get("enabled", leave_accrual.enabled(db, client.id)))
+    added = leave_accrual.set_accrual(db, client.id, on, limits.get("annual"), limits.get("sick"))
+    log_audit(db, client.id, "leave_accrual_changed", "settings", None, "leave_accrual",
+              "Monthly accrual %s; carry over %s" % ("on" if on else "off", limits or "unchanged"), request)
+    db.commit()
+    return {"enabled": on, "carry_max": leave_accrual.carry_limits(db, client.id), "credited": added,
+            "message": "Leave accrues monthly" if on else "Everybody has their whole year's leave from January"}
+
+
+@router.get("/api/employees/{emp_id}/leave-ledger")
+def get_leave_ledger(emp_id: int, request: Request, year: int = 0, db: Session = Depends(get_read_db)):
+    """A person's leave credits and debits for a year, with leave taken beside them and the running balance."""
+    from app.services import leave_accrual
+    client = require_items_access(request, db, "people.manage")
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    year = year or datetime.now().year
+    L = models.DBLeaveLedger
+    rows = db.query(L).filter(L.employee_id == emp.id, L.entry_date >= "%04d-01-01" % year,
+                              L.entry_date <= "%04d-12-31" % year).order_by(L.entry_date, L.id).all()
+    return {"year": year, "enabled": leave_accrual.enabled(db, client.id), "balance": leave_balance_for(db, emp, for_year=year),
+            "entries": [{"id": r.id, "leave_type": r.leave_type, "kind": r.kind, "date": r.entry_date, "days": round(r.days or 0, 2),
+                         "note": r.note, "by": r.created_by} for r in rows]}
+
+
+@router.post("/api/employees/{emp_id}/leave-ledger")
+def adjust_leave_ledger(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """HR's correction to somebody's leave, either way, with the reason kept."""
+    client = require_items_access(request, db, "people.manage")
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    body = body or {}
+    kind = body.get("leave_type")
+    if kind not in ("annual", "sick"):
+        raise HTTPException(status_code=400, detail="Say which leave: annual or sick.")
+    try:
+        days = float(body.get("days"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Give the days to add (or take away, as a negative number).")
+    if days == 0 or abs(days) > 365:
+        raise HTTPException(status_code=400, detail="The days must be something other than 0, and at most 365 either way.")
+    note = (body.get("note") or "").strip()
+    if len(note) < 3:
+        raise HTTPException(status_code=400, detail="Say why: the reason is kept with the entry.")
+    by = "Master" if is_master_session(request) else _staff_name(request, db) or "HR"
+    now = datetime.now()
+    db.add(models.DBLeaveLedger(client_id=client.id, employee_id=emp.id, leave_type=kind, kind="adjustment",
+                                period=now.strftime("%Y%m%d%H%M%S%f"), entry_date=now.strftime("%Y-%m-%d"),
+                                days=days, note=note[:200], created_by=by))
+    log_audit(db, client.id, "leave_adjusted", "employee", emp.id, f"{emp.first_name} {emp.last_name}",
+              "%+g %s day(s): %s" % (days, kind, note[:200]), request)
+    db.commit()
+    return {"message": "Leave adjusted", "balance": leave_balance_for(db, emp)}
+
+
+# --- Full and final settlement, arrears, Form 16 ---------------------------------------------------------------------
+
+def _payroll_person(request, db, emp_id):
+    client = require_hr_or_master(request, db, "payroll.manage")
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return client, emp
+
+
+@router.get("/api/employees/{emp_id}/full-and-final")
+def get_full_and_final(emp_id: int, request: Request, last_day: str = "", db: Session = Depends(get_read_db)):
+    """What is owed to somebody leaving: the final month, leave encashment, gratuity and arrears. A calculation; nothing
+    is saved or paid by asking."""
+    from app.services import settlement
+    client, emp = _payroll_person(request, db, emp_id)
+    try:
+        return settlement.settle(db, emp, last_day or None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc) + " (or set their end date).")
+
+
+@router.get("/api/employees/{emp_id}/arrears")
+def get_salary_arrears(emp_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """Payslips already issued that a backdated increment leaves short, and by how much."""
+    from app.services import settlement
+    client, emp = _payroll_person(request, db, emp_id)
+    return settlement.arrears(db, emp)
+
+
+@router.get("/api/employees/{emp_id}/full-and-final.pdf")
+def full_and_final_pdf(emp_id: int, request: Request, last_day: str = "", db: Session = Depends(get_read_db)):
+    from fastapi.responses import Response
+    from app.documents.wo_pdf import inr          # no rupee sign: the PDF font has none
+    from app.documents import form_pdf
+    from app.services import settlement
+    client, emp = _payroll_person(request, db, emp_id)
+    if not form_pdf.PDF_AVAILABLE:
+        raise HTTPException(503, "The PDF library is not installed on this server.")
+    try:
+        s = settlement.settle(db, emp, last_day or None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc) + " (or set their end date).")
+    name = ("%s %s" % (emp.first_name or "", emp.last_name or "")).strip()
+    spec = {"title": "Full and final settlement - %s" % name, "footer": client.company_name or "", "blocks": [
+        {"type": "banner", "lines": [(client.company_name or "", "banner"), ("FULL AND FINAL SETTLEMENT", "centrebold")]},
+        {"type": "pairs", "cols": 2, "rows": [("Employee", name), ("Employee number", emp.employee_id or ""),
+                                              ("Joined", s["start_date"]), ("Last working day", s["last_day"]),
+                                              ("Service", "%d year(s) completed" % s["service"]["completed_years"]),
+                                              ("Last drawn basic", inr(s["last_basic"]))]},
+        {"type": "table", "columns": [("Item", 55, "L"), ("Working", 90, "L"), ("Amount (Rs.)", 35, "R")],
+         "rows": [[p["item"], p["note"], inr(p["amount"])] for p in s["parts"]] + [["Total payable", "", inr(s["total"])]],
+         "bold_rows": [len(s["parts"])]},
+        {"type": "text", "style": "small", "text": "PF, ESI and tax on these amounts are deducted when they are paid."},
+        {"type": "signatures", "boxes": [("Prepared by", ""), ("Authorised signatory", ""), ("Received by the employee", name)]},
+    ]}
+    safe = "".join(ch if ch.isalnum() else "_" for ch in name) or "employee"
+    return Response(content=form_pdf.build_form_pdf(spec), media_type="application/pdf",
+                    headers={"Content-Disposition": 'attachment; filename="Full_and_final_%s.pdf"' % safe})
+
+
+@router.get("/api/employees/{emp_id}/form16")
+def employee_form16(emp_id: int, request: Request, fy: str = "", format: str = "pdf", db: Session = Depends(get_read_db)):
+    """Form 16 for a financial year (2025-26), Part A and Part B, from the year's payslips."""
+    from fastapi.responses import Response
+    from app.documents import form_pdf
+    from app.services import form16, income_tax
+    client, emp = _payroll_person(request, db, emp_id)
+    try:
+        start_year = form16.parse_fy(fy) if fy else income_tax.fy_start_year(datetime.now().date()) - 1
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    d = form16.data(db, client, emp, start_year)
+    if format == "json":
+        return d
+    if not d["payslips"]:
+        raise HTTPException(status_code=404, detail="There are no payslips for %s in %s." % (emp.first_name, d["fy"]))
+    if not form_pdf.PDF_AVAILABLE:
+        raise HTTPException(503, "The PDF library is not installed on this server.")
+    return Response(content=form16.pdf_bytes(d), media_type="application/pdf",
+                    headers={"Content-Disposition": 'attachment; filename="Form16_%s_%s.pdf"' % (emp.employee_id or emp.id, d["fy"])})

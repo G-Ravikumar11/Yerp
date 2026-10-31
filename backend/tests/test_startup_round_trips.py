@@ -21,6 +21,9 @@ class Rows(list):
     def fetchone(self):
         return self[0] if self else None
 
+    def first(self):
+        return self.fetchone()
+
     def fetchall(self):
         return list(self)
 
@@ -80,7 +83,13 @@ def run_ensure_columns(monkeypatch, conn):
             return conn
     monkeypatch.setattr(M, "engine", FakeEngine())
     monkeypatch.setattr(M, "DATABASE_URL", "postgresql://fake")
-    M.ensure_columns()
+    # Whatever a fake run reports is not about this database: /api/health counts the list, so put it back as it was.
+    kept = list(M.MIGRATION_ERRORS)
+    try:
+        M.ensure_columns()
+        assert M.MIGRATION_ERRORS == kept, "start-up against the fake reported: %s" % M.MIGRATION_ERRORS[len(kept):]
+    finally:
+        M.MIGRATION_ERRORS[:] = kept
 
 
 # --- the connection wrapper -----------------------------------------------------------------------------------------

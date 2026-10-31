@@ -48,6 +48,16 @@ export interface EmployeeDetail extends Employee {
   uan_no?: string
   esi_no?: string
   aadhaar_masked?: string
+  bank_name?: string
+  bank_account?: string
+  /** Payroll: the bank's IFSC, the statutory deductions switched on for this person, and the dates that drive reminders. */
+  bank_ifsc?: string
+  pf_enabled?: boolean
+  esi_enabled?: boolean
+  pt_enabled?: boolean
+  pt_state?: string
+  probation_end_date?: string
+  contract_end_date?: string
   /** Whether they have a password to sign in with. The password itself is never sent. */
   has_password: boolean
   /** How their login email went: empty if never sent, then sending, sent or failed. */
@@ -229,6 +239,15 @@ export interface EmployeeInput {
   pan_no?: string
   uan_no?: string
   esi_no?: string
+  bank_name?: string
+  bank_account?: string
+  bank_ifsc?: string
+  pf_enabled?: boolean
+  esi_enabled?: boolean
+  pt_enabled?: boolean
+  pt_state?: string
+  probation_end_date?: string
+  contract_end_date?: string
   /** The rights the Master ticked, saved with the employee in the same request. Left out, the access level's own apply. */
   permissions?: string[]
 }

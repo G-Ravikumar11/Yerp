@@ -37,6 +37,9 @@ from app.services.approvals import (
 from app.services.auth import reset_email_bodies
 from app.services.employee_portal import (
     attendance_settings_for,
+    check_clock_in_location,
+    minutes_since,
+    running_shift,
     end_shift,
     bill_money_from,
     bill_to_employee_dict,
@@ -259,6 +262,10 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
     ).first()
     if existing and existing.clock_in:
         raise HTTPException(status_code=400, detail="Already clocked in today")
+    going = running_shift(db, emp_id, client_id)
+    if going and going.clock_in and not going.clock_out:
+        raise HTTPException(status_code=400, detail="You are still clocked in from %s. Clock out first." % (
+            "last night" if going.date != today else "today"))
     ip = request.client.host if request and request.client else ""
     device = ""
     lat = lng = 0.0
@@ -270,8 +277,9 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
         lng = body.get("longitude", 0.0)
         loc_label = body.get("location_label", "")
     check_type = "manual"
+    settings = attendance_settings_for(db, client_id)
+    check_clock_in_location(db, client_id, settings, lat, lng)
     if lat and lng:
-        settings = db.query(models.DBAttendanceSettings).filter(models.DBAttendanceSettings.client_id == client_id).first()
         if settings and settings.office_lat and settings.office_lng:
             from math import radians, cos, sin, asin, sqrt
             dlat = radians(lat - settings.office_lat)
@@ -345,12 +353,9 @@ def _todays_attendance(request, db):
     if not emp_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
     today = datetime.now().strftime("%Y-%m-%d")
-    att = db.query(models.DBAttendance).filter(
-        models.DBAttendance.employee_id == emp_id,
-        models.DBAttendance.date == today,
-        models.DBAttendance.client_id == client_id,
-    ).first()
-    return att, client_id, today
+    # The shift they are on: today's once clocked in, or last night's if it is still within its longest length (an
+    # evening shift carried past midnight), so Clock out, the breaks and the clock face all find it.
+    return running_shift(db, emp_id, client_id), client_id, today
 
 
 @router.post("/api/employee/attendance/clock-out")
@@ -387,11 +392,7 @@ def employee_break_stop(request: Request, db: Session = Depends(get_db)):
     if not att or not att.is_on_break:
         raise HTTPException(status_code=400, detail="Not on break")
     try:
-        now = datetime.now()
-        today_str = now.strftime("%Y-%m-%d")
-        break_start = datetime.strptime(today_str + " " + att.break_start, "%Y-%m-%d %H:%M:%S")
-        elapsed = round((now - break_start).total_seconds() / 60, 3)
-        att.break_minutes = (att.break_minutes or 0) + elapsed
+        att.break_minutes = (att.break_minutes or 0) + minutes_since(att.break_start, datetime.now())
     except Exception:
         logger.error(f"Failed to calculate break duration for attendance {att.id}")
     att.is_on_break = False
@@ -410,18 +411,16 @@ def employee_today_attendance(request: Request, db: Session = Depends(get_read_d
     target = target_hours_for(settings)       # what the dial on the clock fills towards
     if not att:
         return {"clocked_in": False, "is_working_day": working_day, "holiday": holiday or "", "target_hours": target}
-    now_str = datetime.now().strftime("%H:%M:%S")
     elapsed = 0
     worked_seconds = 0       # what the screen's counter starts from, to the second
     break_seconds = 0        # how long the break in progress has run
     if att.clock_in and not att.clock_out:
         try:
-            cin = datetime.strptime(today + " " + att.clock_in, "%Y-%m-%d %H:%M:%S")
-            now_t = datetime.strptime(today + " " + now_str, "%Y-%m-%d %H:%M:%S")
+            now_t = datetime.now().replace(microsecond=0)
+            cin = datetime.strptime((att.date or today) + " " + att.clock_in, "%Y-%m-%d %H:%M:%S")    # may be last night's
             worked = (now_t - cin).total_seconds()
             if att.is_on_break and att.break_start:
-                bs = datetime.strptime(today + " " + att.break_start, "%Y-%m-%d %H:%M:%S")
-                break_seconds = max(0, int((now_t - bs).total_seconds()))
+                break_seconds = max(0, int(minutes_since(att.break_start, now_t) * 60))
                 worked -= break_seconds
             worked -= (att.break_minutes or 0) * 60
             worked_seconds = max(0, int(worked))
@@ -466,9 +465,14 @@ def employee_dashboard(request: Request, db: Session = Depends(get_read_db)):
         "break_minutes": r.break_minutes or 0, "overtime_hours": r.overtime_hours or 0,
         "is_on_break": r.is_on_break,
     } for r in records]
-    payslips = db.query(models.DBPayslip).filter(models.DBPayslip.employee_id == emp_id).order_by(models.DBPayslip.created_at.desc()).limit(6).all()
+    # Only what has been released to them: a draft HR is still working on stays HR's (see visible_to_staff).
+    from app.services.payroll_month import visible_to_staff
+    recent = db.query(models.DBPayslip).filter(
+        models.DBPayslip.employee_id == emp_id, models.DBPayslip.client_id == emp.client_id,
+        models.DBPayslip.status != "Void").order_by(models.DBPayslip.created_at.desc()).limit(24).all()
+    payslips = visible_to_staff(db, emp.client_id, recent)[:6]
     payslip_list = [{
-        "number": p.number, "period_start": p.period_start, "period_end": p.period_end,
+        "id": p.id, "number": p.number, "period_start": p.period_start, "period_end": p.period_end,
         "pay_date": p.pay_date, "net_pay": p.net_pay, "status": p.status,
     } for p in payslips]
     onboarding = db.query(models.DBOnboardingItem).filter(models.DBOnboardingItem.employee_id == emp_id).all()
@@ -1070,7 +1074,9 @@ def request_leave(request: Request, body: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="End date cannot be before the start date")
 
     # A day the business has marked as a holiday is not a day of leave: it is off for everybody.
-    days = working_days_between(start_date, end_date, holidays=custom_holidays(db, emp.client_id, start, end))
+    # Counted here, never taken from the request, on the company's own working week (not a fixed Monday to Friday).
+    days = working_days_between(start_date, end_date, attendance_settings_for(db, emp.client_id),
+                                holidays=custom_holidays(db, emp.client_id, start, end))
     if days <= 0:
         raise HTTPException(status_code=400, detail="That range contains no working days")
 
@@ -1478,3 +1484,54 @@ def employee_today(request: Request, db: Session = Depends(get_read_db)):
             "clock": {"in": (att.clock_in or "")[:5] if att else "", "out": (att.clock_out or "")[:5] if att else "",
                       "site": at_site or ""},
             "sites": sites, "waiting": waiting}
+
+
+@router.get("/api/employee/payslips/{ps_id}/pdf")
+def employee_payslip_pdf(ps_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """An employee's own payslip as a PDF, once it has been released to them. Anybody else's, or a draft, is not found
+    rather than forbidden, so the answer says nothing about what exists."""
+    from fastapi.responses import Response
+    from app.documents import payslip as payslip_sheet
+    from app.routers.payroll import payslip_payload
+    from app.services.payroll_month import visible_to_staff
+
+    emp = get_employee_user(request, db)
+    ps = db.query(models.DBPayslip).filter(models.DBPayslip.id == ps_id, models.DBPayslip.employee_id == emp.id,
+                                           models.DBPayslip.client_id == emp.client_id).first()
+    if not ps or not visible_to_staff(db, emp.client_id, [ps]):
+        raise HTTPException(status_code=404, detail="Payslip not found")
+    if not payslip_sheet.form_pdf.PDF_AVAILABLE:
+        raise HTTPException(503, "The PDF library is not installed on this server.")
+    client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
+    content = payslip_sheet.pdf_bytes(payslip_payload(db, client, ps))
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (ps.number or "payslip"))
+    return Response(content=content, media_type="application/pdf",
+                    headers={"Content-Disposition": 'attachment; filename="Payslip_%s.pdf"' % safe})
+
+
+@router.get("/api/employee/form16")
+def my_form16(request: Request, fy: str = "", db: Session = Depends(get_read_db)):
+    """The signed-in employee's own Form 16, from the payslips released to them (never a draft HR is still working on)."""
+    from fastapi.responses import Response
+    from app.documents import form_pdf
+    from app.services import form16, income_tax
+    from app.services.payroll_month import visible_to_staff
+
+    emp = get_employee_user(request, db)
+    client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
+    try:
+        start_year = form16.parse_fy(fy) if fy else income_tax.fy_start_year(datetime.now().date()) - 1
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    fy_start, fy_end = income_tax.fy_bounds(start_year)
+    P = models.DBPayslip
+    mine = visible_to_staff(db, emp.client_id, db.query(P).filter(
+        P.client_id == emp.client_id, P.employee_id == emp.id, P.status != "Void",
+        P.period_end >= fy_start.isoformat(), P.period_end <= fy_end.isoformat()).order_by(P.period_end).all())
+    if not mine:
+        raise HTTPException(status_code=404, detail="There are no payslips for you in %s yet." % income_tax.fy_label(start_year))
+    if not form_pdf.PDF_AVAILABLE:
+        raise HTTPException(503, "The PDF library is not installed on this server.")
+    d = form16.data(db, client, emp, start_year, payslips=mine)
+    return Response(content=form16.pdf_bytes(d), media_type="application/pdf",
+                    headers={"Content-Disposition": 'attachment; filename="Form16_%s.pdf"' % d["fy"]})

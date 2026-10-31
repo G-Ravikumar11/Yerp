@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from fastapi import HTTPException
 
 from app import models
+from app.constants.common import OVERTIME_MULTIPLIER
 from app.core.currency import money
 from app.core.dates import _parse_date
 
@@ -184,7 +185,7 @@ def costs(db, client_id, date_from="", date_to="", asset_id=0):
             c["labour_hours"] += l.attendance_hours or 0
             c["overtime_hours"] += l.overtime_hours or 0
             rate = hourly_cost(staff[l.employee_id])
-            c["labour_cost"] += (l.regular_hours or 0) * rate + (l.overtime_hours or 0) * rate * 1.5
+            c["labour_cost"] += (l.regular_hours or 0) * rate + (l.overtime_hours or 0) * rate * OVERTIME_MULTIPLIER
     for f in db.query(models.DBPlantFuel).filter(models.DBPlantFuel.client_id == client_id).all():
         if f.asset_id in out and in_range(f.filled_at, date_from, date_to):
             out[f.asset_id]["fuel"] += f.amount or 0

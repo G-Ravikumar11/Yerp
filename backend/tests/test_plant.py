@@ -336,7 +336,7 @@ def test_the_dashboard_is_the_records(tenant):
     tenant.post("/api/plant/maintenance", json={"asset_id": b["id"], "kind": "Emergency", "description": "Engine seized", "out_of_service": True})
     e = person(tenant)
     tenant.post("/api/plant/allocations", json={"asset_id": a["id"], "employee_id": e["id"]})
-    log(tenant, a, e)
+    log(tenant, a, e, log_date=day(0))                     # today: the dashboard counts this month, and yesterday may be last month
     tenant.post("/api/plant/fuel", json={"asset_id": a["id"], "litres": 20, "rate": 90})
     d = tenant.get("/api/plant/dashboard").json()
     k = d["cards"]
@@ -349,7 +349,7 @@ def test_the_dashboard_is_the_records(tenant):
 def test_excessive_idle_is_called_out(tenant):
     m = machine(tenant)
     e = person(tenant)
-    log(tenant, m, e, opening_meter=1000, closing_meter=1002)
+    log(tenant, m, e, opening_meter=1000, closing_meter=1002, log_date=day(0))
     idle = tenant.get("/api/plant/dashboard").json()["excess_idle"]
     assert idle and idle[0]["code"] == m["code"] and idle[0]["idle_share"] > 0.4
 
