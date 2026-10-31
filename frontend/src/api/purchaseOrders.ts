@@ -17,6 +17,8 @@ interface PoLine {
 /** An order for goods from a supplier: spend agreed before it is committed. */
 export interface PurchaseOrder {
   id: number
+  /** Why the order may go over its budget head, as given when it was raised. */
+  budget_reason?: string
   number: string
   supplier_name: string
   job_id: number | null

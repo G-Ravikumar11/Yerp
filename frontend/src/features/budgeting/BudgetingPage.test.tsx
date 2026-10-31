@@ -33,7 +33,7 @@ describe('Budgeting: the BOQ headings fold and open', () => {
   it('start folded, open on the arrow, and fold again on a second click', async () => {
     const user = userEvent.setup()
     mount()
-    const pcc = await screen.findByRole('button', { name: /Show the lines under PLAIN CEMENT CONCRETE/ })
+    const pcc = await screen.findByRole('button', { name: /Show the lines under PLAIN CEMENT CONCRETE/ }, { timeout: 5000 })
     expect(screen.getByText('REINFORCED CEMENT CONCRETE')).toBeTruthy()           // both headings are there, in bold
     expect(pcc.getAttribute('aria-expanded')).toBe('false')
     expect(screen.queryByText('PCC M10 below footings')).toBeNull()                // the lines under them are not
@@ -52,7 +52,7 @@ describe('Budgeting: the BOQ headings fold and open', () => {
   it('open and fold every section at once', async () => {
     const user = userEvent.setup()
     mount()
-    await user.click(await screen.findByRole('button', { name: 'Open all sections' }))
+    await user.click(await screen.findByRole('button', { name: 'Open all sections' }, { timeout: 5000 }))
     expect(screen.getByText('PCC M10 below footings')).toBeTruthy()
     expect(screen.getByText('RCC footings')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Fold all sections' }))

@@ -117,7 +117,7 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
     { invalidate: [poKeys.all, ['approvals']], onSuccess: onClose },
   )
   const fromSheet = (r: { [k: string]: string | number | null }[]) =>
-    setRows((cur) => [...cur.filter((x) => x.item_code || x.description || x.qty), ...r.map((x) => ({ item_code: master.has(String(x.item_code ?? '')) ? String(x.item_code) : '', description: String(x.description || x.item_code || ''), qty: Number(x.qty) || 0, uom: String(x.uom ?? ''), price: Number(x.price) || 0, tax: '18' }))])
+    setRows((cur) => [...cur.filter((x) => x.item_code || x.description || x.qty), ...r.map((x) => ({ item_code: master.has(String(x.item_code ?? '')) ? String(x.item_code) : '', description: String(x.description || x.item_code || ''), qty: Number(x.qty) || 0, uom: String(x.uom ?? ''), price: Number(x.price) || 0, tax: '18', boq_key: '' }))])
   const names = [...(suppliers.data?.suppliers ?? []).map((s) => s.name), ...(suppliers.data?.unregistered ?? [])]
 
   // The budget and the prices, checked as the order is filled in (a moment after the typing stops).
