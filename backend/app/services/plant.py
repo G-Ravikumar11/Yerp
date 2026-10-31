@@ -168,13 +168,15 @@ def costs(db, client_id, date_from="", date_to="", asset_id=0):
         c["idle_hours"] += h["idle"]
         c["breakdown_hours"] += h["breakdown"]
     staff = {}
-    hired_with_agreement = {r.asset_id for r in db.query(models.DBPlantRental).filter(models.DBPlantRental.client_id == client_id).all()}
+    rentals_of = rentals_by_asset(db, client_id)
+    register_days = fuel_register_days(db, client_id)
     for l in logs:
         c = out[l.asset_id]
         # Fuel and hire written on the older daily log, before those had registers of their own.
-        c["fuel"] += l.fuel_cost or 0
-        c["fuel_litres"] += l.fuel_litres if (l.fuel_cost or 0) else 0
-        if l.asset_id not in hired_with_agreement:
+        if l.fuel_cost and log_fuel_counts(l, register_days):
+            c["fuel"] += l.fuel_cost
+            c["fuel_litres"] += l.fuel_litres or 0
+        if not on_agreement(rentals_of, l.asset_id, l.log_date):
             c["rental"] += l.hire_cost or 0
         if l.employee_id:
             if l.employee_id not in staff:
@@ -215,6 +217,150 @@ def costs(db, client_id, date_from="", date_to="", asset_id=0):
         c["litres_per_hour"] = round(c["fuel_litres"] / c["operating_hours"], 2) if c["operating_hours"] else 0.0
         on_duty = c["operating_hours"] + c["idle_hours"]
         c["idle_share"] = round(c["idle_hours"] / on_duty, 3) if on_duty else 0.0
+    return out
+
+
+def month_end(day):
+    d = _parse_date(day[:10])
+    nxt = (d.replace(day=1) + timedelta(days=32)).replace(day=1)
+    return (nxt - timedelta(days=1)).isoformat()
+
+
+def invoice_period(inv):
+    """The days a rental bill covers: what it says, or the month it is dated in when it does not say."""
+    day = (inv.invoice_date or today())[:10]
+    return (inv.period_from or day[:8] + "01"), (inv.period_to or month_end(inv.period_from or day))
+
+
+def rentals_by_asset(db, client_id):
+    by = {}
+    for r in db.query(models.DBPlantRental).filter(models.DBPlantRental.client_id == client_id).all():
+        by.setdefault(r.asset_id, []).append(r)
+    return by
+
+
+def on_agreement(rentals, asset_id, day):
+    """Whether a day is inside a hire agreement. Hire for that day is then the owner's bill, whatever a log worked out:
+    the log's figure is an estimate of the same money."""
+    return any((r.start_date or "") <= day <= (r.actual_return or "9999-12-31") for r in rentals.get(asset_id, ()))
+
+
+def fuel_register_days(db, client_id):
+    return {(f.asset_id, (f.filled_at or "")[:10]) for f in db.query(models.DBPlantFuel.asset_id, models.DBPlantFuel.filled_at).filter(
+        models.DBPlantFuel.client_id == client_id).all()}
+
+
+def log_fuel_counts(log, register_days):
+    """Fuel written on an older log counts, unless the register has that machine's fuel for the day: then it is the same diesel."""
+    return (log.asset_id, log.log_date) not in register_days
+
+
+def _invoice_shares(inv, rental, hours_by_asset, assets, moves_by_asset):
+    """{job_id: amount}: a rental bill names no project, so it goes to the sites the machine worked in its period, by
+    hours. No hours logged: the site it stood on. Nowhere known: job 0, shown as not yet charged to a project."""
+    pf, pt = invoice_period(inv)
+    hours = {}
+    for h in hours_by_asset.get(rental.asset_id, ()):
+        if pf <= h["date"] <= pt and h["job_id"]:
+            hours[h["job_id"]] = hours.get(h["job_id"], 0.0) + (h["operating"] or 0)
+    total = sum(hours.values())
+    if total <= 0:
+        site = None
+        for m in moves_by_asset.get(rental.asset_id, ()):
+            if (m.moved_on or "") <= pt:
+                site = m.to_job_id
+        a = assets.get(rental.asset_id)
+        site = site or (a.current_job_id if a else None)
+        return {site or 0: money(inv.amount or 0)}
+    jobs = sorted(hours)
+    out = {j: money((inv.amount or 0) * hours[j] / total) for j in jobs}
+    out[jobs[-1]] = money((inv.amount or 0) - sum(out[j] for j in jobs[:-1]))    # the paise left over by rounding
+    return out
+
+
+def plant_cost_breakdown(db, client_id, date_from="", date_to="", lines=False):
+    """{job_id: what the machines cost it}. Job 0 is cost not yet tied to a project. Everything comes from the record it
+    is kept in, by the date it was incurred:
+
+      fuel         the fuel register, and fuel on older logs for a day the register does not cover
+      rental       rental invoices, shared across sites by hours (the actual bill, never the expected one)
+      hire         hire on a logged day with no agreement behind it; inside an agreement the invoice is the cost
+      maintenance  maintenance and repair jobs
+      expenses     the expense register, unless rejected
+
+    Rejected logs and expenses count for nothing. Worked out from the records every time, so a correction, an
+    approval or an invoice shows at once."""
+    assets = {a.id: a for a in db.query(models.DBAsset).filter(models.DBAsset.client_id == client_id).all()}
+    rentals = rentals_by_asset(db, client_id)
+    register_days = fuel_register_days(db, client_id)
+    out = {}
+
+    def row(job):
+        return out.setdefault(job or 0, {"job_id": job or 0, "fuel": 0.0, "rental": 0.0, "hire": 0.0, "maintenance": 0.0, "expenses": 0.0,
+                                         "total": 0.0, "duplicates_excluded": 0.0, "unbilled_hire_estimate": 0.0, "lines": []})
+
+    def add(job, category, source, ref, day, asset_id, description, amount):
+        r = row(job)
+        r[category] += amount or 0
+        if lines:
+            a = assets.get(asset_id)
+            r["lines"].append({"category": category, "source": source, "ref": ref or "", "date": (day or "")[:10], "asset_id": asset_id,
+                               "code": a.code if a else "", "machine": a.name if a else "", "description": description or "", "amount": money(amount or 0)})
+
+    for f in db.query(models.DBPlantFuel).filter(models.DBPlantFuel.client_id == client_id).all():
+        if in_range(f.filled_at, date_from, date_to) and f.amount:
+            add(f.job_id, "fuel", "Fuel register", f.number, f.filled_at, f.asset_id, "%g L %s" % (f.litres or 0, f.fuel_type or ""), f.amount)
+
+    logs = [l for l in db.query(models.DBAssetLog).filter(models.DBAssetLog.client_id == client_id).all()
+            if (l.approval_status or "") != "Rejected"]
+    invoices = db.query(models.DBPlantRentalInvoice).filter(models.DBPlantRentalInvoice.client_id == client_id).all()
+    billed = {}
+    by_id = {r.id: r for rs in rentals.values() for r in rs}
+    for inv in invoices:
+        r = by_id.get(inv.rental_id)
+        if r:
+            billed.setdefault(r.asset_id, []).append(invoice_period(inv))
+    for l in logs:
+        if not in_range(l.log_date, date_from, date_to):
+            continue
+        if l.fuel_cost:
+            if log_fuel_counts(l, register_days):
+                add(l.job_id, "fuel", "Older logbook", "LOG-%d" % l.id, l.log_date, l.asset_id, "%g L on the daily log" % (l.fuel_litres or 0), l.fuel_cost)
+            else:
+                row(l.job_id)["duplicates_excluded"] += l.fuel_cost
+        if l.hire_cost:
+            if not on_agreement(rentals, l.asset_id, l.log_date):
+                add(l.job_id, "hire", "Logbook hire", "LOG-%d" % l.id, l.log_date, l.asset_id, "%g h on hire terms" % (l.hours_worked or 0), l.hire_cost)
+            elif any(pf <= l.log_date <= pt for pf, pt in billed.get(l.asset_id, ())):
+                row(l.job_id)["duplicates_excluded"] += l.hire_cost
+            else:
+                row(l.job_id)["unbilled_hire_estimate"] += l.hire_cost
+
+    hours_by_asset = {}
+    for h in machine_hours(logs):
+        hours_by_asset.setdefault(h["asset_id"], []).append(h)
+    moves = {}
+    for m in db.query(models.DBAssetMove).filter(models.DBAssetMove.client_id == client_id).order_by(models.DBAssetMove.moved_on, models.DBAssetMove.id).all():
+        moves.setdefault(m.asset_id, []).append(m)
+    for inv in invoices:
+        r = by_id.get(inv.rental_id)
+        if r and in_range(inv.invoice_date, date_from, date_to) and inv.amount:
+            for job, amount in _invoice_shares(inv, r, hours_by_asset, assets, moves).items():
+                add(job, "rental", "Rental invoice", inv.invoice_no, inv.invoice_date, r.asset_id, "%s, hire %s to %s" % (r.agreement_no, *invoice_period(inv)), amount)
+
+    for s in db.query(models.DBAssetService).filter(models.DBAssetService.client_id == client_id).all():
+        if s.total_cost and in_range(s.completed_on or s.service_on, date_from, date_to):
+            add(s.job_id, "maintenance", "Maintenance", s.number or ("SVC-%d" % s.id), s.completed_on or s.service_on, s.asset_id,
+                (s.work_performed or s.description or "")[:120], s.total_cost)
+    for e in db.query(models.DBPlantExpense).filter(models.DBPlantExpense.client_id == client_id, models.DBPlantExpense.approval_status != "Rejected").all():
+        if e.amount and in_range(e.spent_on, date_from, date_to):
+            add(e.job_id, "expenses", "Plant expense", e.number, e.spent_on, e.asset_id, ("%s: %s" % (e.category, e.description or ""))[:120], e.amount)
+
+    for r in out.values():
+        for k in ("fuel", "rental", "hire", "maintenance", "expenses", "duplicates_excluded", "unbilled_hire_estimate"):
+            r[k] = money(r[k])
+        r["total"] = money(r["fuel"] + r["rental"] + r["hire"] + r["maintenance"] + r["expenses"])
+        r["lines"].sort(key=lambda x: x["date"], reverse=True)
     return out
 
 

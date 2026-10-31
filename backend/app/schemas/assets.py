@@ -16,6 +16,8 @@ class AssetIn(BaseModel):
     hired_from: Optional[str] = ""
     hire_rate: Optional[float] = 0
     hire_basis: Optional[str] = "Day"
+    fuel_norm_lph: Optional[float] = None         # litres an hour; blank or 0 = not set
+    tank_capacity_l: Optional[float] = None       # litres; blank or 0 = not set
     meter_unit: Optional[str] = "Hours"
     meter_reading: Optional[float] = 0
     service_every: Optional[float] = 0

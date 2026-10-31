@@ -13,6 +13,7 @@ import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { FormFoot, LoadError, MachineSelect, RangeBar, usePaged } from './plantParts'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
+import { RentalVerification } from './PlantChecks'
 
 const rentTone = (s: string) => (s === 'Overdue' ? 'danger' : s === 'Returned' ? 'neutral' : s === 'Upcoming' ? 'info' : s === 'Extended' ? 'warning' : 'success') as 'danger' | 'neutral' | 'info' | 'warning' | 'success'
 
@@ -56,6 +57,7 @@ export function Rentals() {
       {q.isError ? <LoadError message={q.error.message} retry={() => q.refetch()} /> : (
         <Card className="overflow-hidden"><DataTable label="Rentals" className="rounded-none border-0 shadow-none" rows={shown} columns={cols} rowKey={(r) => r.id} loading={q.isPending} empty="No machines hired in. Add the provider, mark the machine Rented on the register, then record the agreement." />{!q.isPending && pager}</Card>
       )}
+      <RentalVerification />
       <RentalModal open={adding} providers={prov.data?.providers ?? []} billing={q.data?.billing ?? ['Daily']} onClose={() => setAdding(false)} />
       <ProvidersModal open={providers} onClose={() => setProviders(false)} />
       <RentalDetail rental={current} manage={manage} onClose={() => setOpen(null)} />

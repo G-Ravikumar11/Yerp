@@ -199,6 +199,7 @@ def asset_dict(db, a, jobs=None, costs=None):
             "purchase_date": a.purchase_date or "", "purchase_value": money(a.purchase_value),
             "hired_from": a.hired_from or "", "hire_rate": money(a.hire_rate),
             "hire_basis": a.hire_basis or "Day", "meter_unit": a.meter_unit or "Hours",
+            "fuel_norm_lph": a.fuel_norm_lph, "tank_capacity_l": a.tank_capacity_l,
             "meter_reading": a.meter_reading or 0, "service_every": a.service_every or 0,
             "service_every_days": a.service_every_days or 0,
             "last_service_on": a.last_service_on or "", "last_service_meter": a.last_service_meter,
@@ -240,6 +241,11 @@ def _apply_asset(a, body):
     a.hire_rate = money(body.hire_rate or 0)
     a.hire_basis = body.hire_basis if body.hire_basis in HIRE_BASES else "Day"
     a.meter_unit = body.meter_unit if body.meter_unit in ("Hours", "Km") else "Hours"
+    for field, label in (("fuel_norm_lph", "fuel norm"), ("tank_capacity_l", "tank capacity")):
+        value = getattr(body, field, None)
+        if value is not None and value < 0:
+            raise HTTPException(400, "The %s has to be a positive number." % label)
+        setattr(a, field, float(value) if value else None)
     a.insurance_until = (body.insurance_until or "").strip()
     a.fitness_until = (body.fitness_until or "").strip()
     a.notes = (body.notes or "").strip()
@@ -388,6 +394,8 @@ def asset_costs(db, client_id, job_id=None):
     if job_id:
         q = q.filter(models.DBAssetLog.job_id == job_id)
     for l in q.all():
+        if (l.approval_status or "") == "Rejected":
+            continue
         c = out.setdefault(l.asset_id, {"fuel": 0.0, "hire": 0.0, "service": 0.0,
                                          "total": 0.0, "hours": 0.0, "litres": 0.0, "idle": 0.0})
         c["fuel"] += l.fuel_cost or 0
@@ -404,18 +412,6 @@ def asset_costs(db, client_id, job_id=None):
         c["service"] += s.total_cost or 0
     for c in out.values():
         c["total"] = money(c["fuel"] + c["hire"] + c["service"])
-    return out
-
-
-def equipment_cost_by_job(db, client_id):
-    """What the machines cost each project - read by the project P&L."""
-    out = {}
-    for l in db.query(models.DBAssetLog).filter(models.DBAssetLog.client_id == client_id).all():
-        if l.job_id:
-            out[l.job_id] = money(out.get(l.job_id, 0.0) + (l.fuel_cost or 0) + (l.hire_cost or 0))
-    for s in db.query(models.DBAssetService).filter(models.DBAssetService.client_id == client_id).all():
-        if s.job_id:
-            out[s.job_id] = money(out.get(s.job_id, 0.0) + (s.total_cost or 0))
     return out
 
 

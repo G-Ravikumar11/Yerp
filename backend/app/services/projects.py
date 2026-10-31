@@ -18,7 +18,8 @@ from app.core.currency import inr, money, unit_rate
 from app.core.dates import _days_until, ageing_bucket
 from app.core.permissions import employee_can
 from app.core.queries import by_id, on_job
-from app.services.assets import asset_service_state, equipment_cost_by_job
+from app.services.assets import asset_service_state
+from app.services.plant import plant_cost_breakdown
 from app.models.store_inward import DBStoreGrn
 from app.services.store_integration import current_stock, hub_transfers_out, project_store_material, store_material_by_project
 from app.services.stores import stocked_share_of_bills
@@ -622,7 +623,7 @@ def preload_pnl_for_job(db, client_id, job_id):
             models.DBSubBill.client_id == client_id, models.DBSubBill.job_id == job_id,
             models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
         "released": one([r for r in _live_releases(db, client_id, "client") if r.job_id == job_id]),
-        "equipment": {job_id: equipment_cost_by_job(db, client_id).get(job_id, 0.0)},
+        "plant_costs": plant_cost_breakdown(db, client_id),
         "recovered": material_recovered_by_job(db, client_id, job_id),
         "stocked": stocked_share_of_bills(db, client_id),
         "attendance": one(db.query(models.DBAttendance).filter(
@@ -680,7 +681,7 @@ def preload_pnl(db, client_id):
             models.DBSubBill.client_id == client_id,
             models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all()),
         "released": by_job(_live_releases(db, client_id, "client")),
-        "equipment": equipment_cost_by_job(db, client_id),
+        "plant_costs": plant_cost_breakdown(db, client_id),
         "recovered": material_recovered_by_job(db, client_id),
         "stocked": stocked_share_of_bills(db, client_id),
         "attendance": by_job(db.query(models.DBAttendance).filter(
@@ -755,9 +756,10 @@ def project_pnl(db, client_id, job, pre=None):
     # subcontract cost.
     subcontract = money(sum(b.this_bill or 0 for b in pre["sub"].get(job.id, [])) - taken_sub.get("taxable", 0.0))
 
-    # Diesel, hire and repairs on the machines that worked this site - kept
-    # in the equipment register, so the diary lists only plant that is not.
-    equipment = money((pre.get("equipment") or {}).get(job.id, 0.0))
+    # Diesel, hire, repairs and running costs of the machines that worked this site - kept
+    # in the plant registers, so the diary lists only plant that is not.
+    plant_costs = (pre.get("plant_costs") or {}).get(job.id) or {}
+    equipment = money(plant_costs.get("total", 0.0))
 
     # Material issued to a contractor and taken back out of their bill: its cost is
     # inside what they billed, so it comes off here or it is counted twice.
@@ -794,6 +796,7 @@ def project_pnl(db, client_id, job, pre=None):
             "labour": labour,
             "plant": plant,
             "equipment": equipment,
+            "equipment_breakdown": {k: money(plant_costs.get(k, 0.0)) for k in ("fuel", "rental", "hire", "maintenance", "expenses")},
             "site_expenses": site_expenses,
             "material_recovered_from_contractors": recovered,
             "incurred": incurred,

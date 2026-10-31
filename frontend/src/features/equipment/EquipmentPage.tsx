@@ -10,7 +10,6 @@ import { STATUS_LABEL } from '@/api/plant'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatINR } from '@/lib/utils'
-import { LogModal } from './LogModal'
 import { MachineDetail } from './MachineDetail'
 import { MachineModal } from './MachineModal'
 import { MoveModal } from './MoveModal'
@@ -21,6 +20,7 @@ import { PlantDashboard } from './PlantDashboard'
 import { Allocations, Logbook } from './PlantPeople'
 import { Fuel, Maintenance } from './PlantFuelMaint'
 import { Expenses, Rentals } from './PlantRentals'
+import { PlantAlerts } from './PlantChecks'
 import { PlantReports } from './PlantReports'
 import { ServiceBadge, StatusBadge, usePaged } from './plantParts'
 import { ServiceDoneModal } from './ServiceDoneModal'
@@ -28,10 +28,10 @@ import { formatDate } from '@/lib/format'
 
 const SERVICE_ORDER = ['Overdue', 'Service due', 'Due soon', 'Upcoming', 'Incomplete', 'Not scheduled']
 
-type Tab = 'dashboard' | 'register' | 'allocation' | 'logbook' | 'fuel' | 'maintenance' | 'rentals' | 'expenses' | 'reports'
+type Tab = 'dashboard' | 'register' | 'allocation' | 'logbook' | 'fuel' | 'maintenance' | 'rentals' | 'expenses' | 'alerts' | 'reports'
 const TABS: { value: Tab; label: string }[] = [
   { value: 'dashboard', label: 'Dashboard' }, { value: 'register', label: 'Register' }, { value: 'allocation', label: 'Allocation' }, { value: 'logbook', label: 'Logbook' },
-  { value: 'fuel', label: 'Fuel' }, { value: 'maintenance', label: 'Maintenance' }, { value: 'rentals', label: 'Rentals' }, { value: 'expenses', label: 'Expenses' }, { value: 'reports', label: 'Reports' },
+  { value: 'fuel', label: 'Fuel' }, { value: 'maintenance', label: 'Maintenance' }, { value: 'rentals', label: 'Rentals' }, { value: 'expenses', label: 'Expenses' }, { value: 'alerts', label: 'Alerts' }, { value: 'reports', label: 'Reports' },
 ]
 
 /** Where each machine is, who works it, what it did, what it burned and when it is due - and what it costs. */
@@ -52,6 +52,7 @@ export default function EquipmentPage() {
       {tab === 'maintenance' && <Maintenance />}
       {tab === 'rentals' && <Rentals />}
       {tab === 'expenses' && <Expenses />}
+      {tab === 'alerts' && <PlantAlerts />}
       {tab === 'reports' && <PlantReports />}
     </>
   )
@@ -64,7 +65,6 @@ function Register() {
   const q = useRegister(status, archived)
   const [editing, setEditing] = useState<Machine | 'new' | null>(null)
   const [moving, setMoving] = useState<Machine | null>(null)
-  const [logging, setLogging] = useState<Machine | null>(null)
   const [servicing, setServicing] = useState<Machine | null>(null)
   const [archiving, setArchiving] = useState<Machine | null>(null)
   const [photos, setPhotos] = useState<Machine | null>(null)
@@ -94,7 +94,6 @@ function Register() {
         <div className="flex flex-wrap justify-end gap-1.5">
           {!m.is_archived && m.status !== 'Returned' && <>
             {!['Under repair', 'Breakdown'].includes(m.status) && <Button size="sm" variant="outline" onClick={() => setMoving(m)}>{m.current_job_id ? 'Move' : 'Deploy'}</Button>}
-            {m.status === 'Deployed' && <Button size="sm" onClick={() => setLogging(m)}>Log day</Button>}
             {['Due soon', 'Service due', 'Overdue'].includes(m.service.status) && <Button size="sm" variant={m.service.due ? 'primary' : 'outline'} onClick={() => setDone(m)}>Service done</Button>}
             {['Under repair', 'Breakdown'].includes(m.status) ? <Button size="sm" loading={back.isPending && back.variables?.id === m.id} onClick={() => back.mutate(m)}>Back at work</Button> : <Button size="sm" variant="outline" onClick={() => setServicing(m)}>Service</Button>}
             {manage && <Button size="sm" variant="ghost" onClick={() => setEditing(m)}>Edit</Button>}
@@ -125,7 +124,6 @@ function Register() {
       {open && <MachineDetail id={open} onClose={() => setOpen(null)} />}
       <MachineModal machine={editing && editing !== 'new' ? editing : null} categories={q.data?.categories ?? []} open={!!editing} onClose={() => setEditing(null)} />
       <MoveModal machine={moving} onClose={() => setMoving(null)} />
-      <LogModal machine={logging} onClose={() => setLogging(null)} />
       <ServiceModal machine={servicing} onClose={() => setServicing(null)} />
       <ServiceDoneModal machine={done} onClose={() => setDone(null)} />
       <ConfirmDialog open={!!archiving} onOpenChange={(o) => !o && setArchiving(null)} title={archiving ? `${archiving.is_archived ? 'Restore' : 'Archive'} ${archiving.code} ${archiving.name}?` : ''} description={archiving?.is_archived ? 'It comes back onto the working register.' : 'It leaves the working register. Its logs, costs and history are kept.'} confirmLabel="Yes" cancelLabel="Cancel" loading={arch.isPending} onConfirm={() => { if (archiving) arch.mutate(archiving) }} />

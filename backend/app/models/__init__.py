@@ -32,9 +32,12 @@ from app.models.assets import (
     DBAssetBook,
 )
 from app.models.plant import (
+    DBPlantAlert,
     DBPlantAllocation,
     DBPlantExpense,
     DBPlantFuel,
+    DBPlantFuelReview,
+    DBPlantMeterEvent,
     DBPlantRental,
     DBPlantRentalExtension,
     DBPlantRentalInvoice,

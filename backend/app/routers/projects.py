@@ -868,6 +868,7 @@ def job_pnl_export(job_id: int, request: Request, db: Session = Depends(get_db))
         ("Material from the store", c["material_from_store"]),
         ("Labour", c["labour"]),
         ("Plant", c["plant"]),
+        ("Equipment & plant", c["equipment"]),
         ("Incurred", c["incurred"]),
         ("Committed, not yet billed", c["committed_not_yet_billed"]),
         ("Forecast cost", c["forecast"]),

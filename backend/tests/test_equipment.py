@@ -2,6 +2,11 @@
 due - and what it cost the project it worked for."""
 from datetime import date, timedelta
 
+import main
+from app import models
+from app.core.currency import money
+from app.services.assets import hire_cost_for
+
 
 def job(tenant, name="Vizag STP"):
     return tenant.post("/api/jobs", json={"name": name, "customer_name": "L&T"}).json()
@@ -22,8 +27,18 @@ def deploy(tenant, asset, j):
     return res.json()["asset"]
 
 
-def log(tenant, asset, **body):
-    return tenant.post("/api/assets/%d/logs" % asset["id"], json=body)
+def log(tenant, asset, hours_worked=0, idle_hours=0, fuel_litres=0, fuel_rate=0, log_date=None, meter_reading=None, operator="", work_done=""):
+    """A day as the old Log day left it. The way in is closed; the days it wrote are history and still count."""
+    with main.SessionLocal() as db:
+        a = db.query(models.DBAsset).filter(models.DBAsset.id == asset["id"]).first()
+        a.meter_reading = meter_reading if meter_reading is not None else (a.meter_reading or 0) + hours_worked
+        row = models.DBAssetLog(client_id=a.client_id, asset_id=a.id, job_id=a.current_job_id, log_date=log_date or date.today().isoformat(),
+                                hours_worked=hours_worked, idle_hours=idle_hours, fuel_litres=fuel_litres, fuel_rate=fuel_rate,
+                                fuel_cost=money(fuel_litres * fuel_rate), hire_cost=hire_cost_for(a, hours_worked), meter_reading=a.meter_reading,
+                                operator=operator, work_done=work_done, recorded_by_name="Site")
+        db.add(row)
+        db.commit()
+        return money(row.fuel_cost + row.hire_cost)
 
 
 def test_a_machine_is_numbered_and_starts_in_the_yard(tenant):
@@ -55,18 +70,18 @@ def test_it_moves_between_sites_and_back(tenant):
                                               "%s %s" % (j2["number"], j2["name"]), "Yard"]
 
 
-def test_a_machine_in_the_yard_cannot_log_a_day(tenant):
-    res = log(tenant, machine(tenant), hours_worked=8)
-    assert res.status_code == 409 and "Deploy it" in res.json()["detail"]
+def test_log_day_is_closed_and_writes_nothing(tenant):
+    a = deploy(tenant, machine(tenant), job(tenant))
+    res = tenant.post("/api/assets/%d/logs" % a["id"], json={"hours_worked": 8})
+    assert res.status_code == 410 and "Logbook" in res.json()["detail"]
+    assert tenant.get("/api/assets/%d" % a["id"]).json()["logs"] == []
 
 
 def test_a_day_costs_its_diesel(tenant):
     j = job(tenant)
     a = deploy(tenant, machine(tenant), j)
-    res = log(tenant, a, hours_worked=8, idle_hours=1, fuel_litres=60, fuel_rate=92.5,
-              operator="Ramesh", work_done="Excavation, zone B")
-    assert res.status_code == 200, res.text
-    assert res.json()["cost"] == 60 * 92.5
+    assert log(tenant, a, hours_worked=8, idle_hours=1, fuel_litres=60, fuel_rate=92.5,
+               operator="Ramesh", work_done="Excavation, zone B") == 60 * 92.5
     got = tenant.get("/api/assets/%d" % a["id"]).json()
     assert got["meter_reading"] == 1208           # the meter moves with the hours
     assert got["litres_per_hour"] == 7.5
@@ -81,32 +96,10 @@ def test_a_hired_machine_costs_its_hire_on_its_terms(tenant):
                                     hire_basis="Day"), j)
     by_month = deploy(tenant, machine(tenant, name="Crane", ownership="Hired", hire_rate=260000,
                                       hire_basis="Month"), j)
-    assert log(tenant, by_hour, hours_worked=6).json()["cost"] == 9000
-    assert log(tenant, by_day, hours_worked=3).json()["cost"] == 6000
-    assert log(tenant, by_month, hours_worked=8).json()["cost"] == 10000   # 2,60,000 / 26
+    assert log(tenant, by_hour, hours_worked=6) == 9000
+    assert log(tenant, by_day, hours_worked=3) == 6000
+    assert log(tenant, by_month, hours_worked=8) == 10000   # 2,60,000 / 26
 
-
-def test_one_log_per_machine_per_day(tenant):
-    j = job(tenant)
-    a = deploy(tenant, machine(tenant), j)
-    log(tenant, a, hours_worked=8, log_date="2026-09-01")
-    assert log(tenant, a, hours_worked=2, log_date="2026-09-01").status_code == 409
-
-
-def test_the_meter_does_not_run_backwards(tenant):
-    j = job(tenant)
-    a = deploy(tenant, machine(tenant), j)
-    res = log(tenant, a, hours_worked=8, meter_reading=1100)
-    assert res.status_code == 400 and "backwards" in res.json()["detail"]
-
-
-def test_more_than_a_day_is_refused(tenant):
-    j = job(tenant)
-    a = deploy(tenant, machine(tenant), j)
-    assert log(tenant, a, hours_worked=20, idle_hours=6).status_code == 400
-
-
-# --- Maintenance --------------------------------------------------------------------
 
 def test_a_service_falls_due_on_the_meter(tenant):
     j = job(tenant)
@@ -153,7 +146,6 @@ def test_a_breakdown_takes_it_off_work_until_it_is_back(tenant):
         "kind": "Breakdown", "description": "Hydraulic hose burst", "parts_cost": 4200,
         "out_of_service": True})
     assert tenant.get("/api/assets/%d" % a["id"]).json()["status"] == "Under repair"
-    assert log(tenant, a, hours_worked=4).status_code == 409
     tenant.post("/api/assets/%d/back-in-service" % a["id"])
     assert tenant.get("/api/assets/%d" % a["id"]).json()["status"] == "Deployed"
 
