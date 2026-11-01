@@ -3,7 +3,9 @@ the Master post, change or take them down. (Birthdays and special days are on th
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import Response
+from sqlalchemy.orm import defer
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -20,6 +22,9 @@ router = APIRouter()
 CATEGORIES = ("general", "site", "holiday", "important")
 MAX_TITLE, MAX_BODY, SHOWN = 120, 2000, 50
 LINK = "/feed"
+MAX_MEDIA, MAX_IMAGE_BYTES, MAX_VIDEO_BYTES = 6, 10 * 1024 * 1024, 50 * 1024 * 1024
+IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp", "image/gif")
+VIDEO_TYPES = ("video/mp4", "video/webm", "video/quicktime")
 
 
 class AnnouncementIn(BaseModel):
@@ -52,11 +57,16 @@ def _clean(body: AnnouncementIn):
     return title, text, category, bool(body.pinned), expires
 
 
-def _dict(a, hr, today):
+def _media(m):
+    return {"id": m.id, "kind": m.kind, "name": m.name or "", "content_type": m.content_type or "", "size": m.size or 0,
+            "url": "/api/announcements/media/%d" % m.id}
+
+
+def _dict(a, hr, today, media=()):
     expired = bool(a.expires_on) and a.expires_on < today
     return {"id": a.id, "title": a.title, "body": a.body or "", "category": a.category or "general", "pinned": bool(a.pinned),
             "expires_on": a.expires_on or "", "expired": expired, "posted_by": a.posted_by or "", "created_at": a.created_at,
-            "updated_at": a.updated_at or "", "can_edit": hr}
+            "updated_at": a.updated_at or "", "can_edit": hr, "media": [_media(m) for m in media]}
 
 
 @router.get("/api/announcements")
@@ -69,7 +79,18 @@ def list_announcements(request: Request, db: Session = Depends(get_read_db)):
     A = models.DBAnnouncement
     rows = db.query(A).filter(A.client_id == client_id).order_by(A.pinned.desc(), A.created_at.desc(), A.id.desc()).all()
     shown = [a for a in rows if hr or not a.expires_on or a.expires_on >= today][:SHOWN]
-    return {"announcements": [_dict(a, hr, today) for a in shown], "can_post": hr, "categories": list(CATEGORIES)}
+    media = _media_of(db, client_id, [a.id for a in shown])
+    return {"announcements": [_dict(a, hr, today, media.get(a.id, ())) for a in shown], "can_post": hr, "categories": list(CATEGORIES)}
+
+
+def _media_of(db, client_id, ids):
+    """The photos and videos of these announcements, without their bytes, in one query."""
+    M = models.DBAnnouncementMedia
+    out = {}
+    if ids:
+        for m in db.query(M).options(defer(M.data)).filter(M.client_id == client_id, M.announcement_id.in_(ids)).order_by(M.id).all():
+            out.setdefault(m.announcement_id, []).append(m)
+    return out
 
 
 def _tell_everyone(db, client_id, title, text, by):
@@ -114,7 +135,7 @@ def change_announcement(announcement_id: int, body: AnnouncementIn, request: Req
     row.title, row.body, row.category, row.pinned, row.expires_on = _clean(body)
     row.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_audit(db, client.id, "announcement_changed", "announcement", row.id, row.title, row.category, request)
-    out = _dict(row, True, date.today().isoformat())
+    out = _dict(row, True, date.today().isoformat(), _media_of(db, client.id, [row.id]).get(row.id, ()))
     db.commit()
     return out
 
@@ -133,6 +154,91 @@ def pin_announcement(announcement_id: int, request: Request, body: dict = None, 
 def remove_announcement(announcement_id: int, request: Request, db: Session = Depends(get_db)):
     client, row = _mine_to_change(db, request, announcement_id)
     log_audit(db, client.id, "announcement_removed", "announcement", row.id, row.title, "", request)
+    db.query(models.DBAnnouncementMedia).filter(models.DBAnnouncementMedia.announcement_id == row.id).delete(synchronize_session=False)
     db.delete(row)
     db.commit()
     return {"message": "Announcement removed"}
+
+
+
+def _sniff(data):
+    """What the bytes really are, so a renamed file cannot pass as a picture or a video: (kind, content type) or None."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image", "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image", "image/png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image", "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image", "image/webp"
+    if data[:4] == b"\x1a\x45\xdf\xa3":
+        return "video", "video/webm"
+    if data[4:8] == b"ftyp":
+        return "video", "video/quicktime" if data[8:12] == b"qt  " else "video/mp4"
+    return None
+
+
+@router.post("/api/announcements/{announcement_id}/media")
+async def add_media(announcement_id: int, request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Attach a photo or a video to an announcement."""
+    client, row = _mine_to_change(db, request, announcement_id)
+    M = models.DBAnnouncementMedia
+    if db.query(M.id).filter(M.announcement_id == row.id).count() >= MAX_MEDIA:
+        raise HTTPException(status_code=400, detail="An announcement holds up to %d photos and videos." % MAX_MEDIA)
+    data = await file.read(MAX_VIDEO_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="The file is empty.")
+    found = _sniff(data)
+    if not found:
+        raise HTTPException(status_code=400, detail="A photo (JPG, PNG, WebP, GIF) or a video (MP4, WebM, MOV).")
+    kind, ctype = found
+    if kind == "image" and len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="That photo is over %d MB." % (MAX_IMAGE_BYTES // 1048576))
+    if len(data) > MAX_VIDEO_BYTES:
+        raise HTTPException(status_code=413, detail="That video is over %d MB. Shorten or compress it." % (MAX_VIDEO_BYTES // 1048576))
+    m = M(client_id=client.id, announcement_id=row.id, kind=kind, name=(file.filename or kind)[:200], content_type=ctype, size=len(data), data=data)
+    db.add(m)
+    db.flush()
+    log_audit(db, client.id, "announcement_media_added", "announcement", row.id, row.title, m.name, request)
+    out = _media(m)
+    db.commit()
+    return out
+
+
+@router.delete("/api/announcements/{announcement_id}/media/{media_id}")
+def remove_media(announcement_id: int, media_id: int, request: Request, db: Session = Depends(get_db)):
+    client, row = _mine_to_change(db, request, announcement_id)
+    M = models.DBAnnouncementMedia
+    m = db.query(M).options(defer(M.data)).filter(M.id == media_id, M.announcement_id == row.id).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="Not found")
+    log_audit(db, client.id, "announcement_media_removed", "announcement", row.id, row.title, m.name, request)
+    db.delete(m)
+    db.commit()
+    return {"message": "Removed"}
+
+
+@router.get("/api/announcements/media/{media_id}")
+def get_media(media_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The bytes, to anybody signed in to this company. Honours Range so a video can be skipped through."""
+    client_id, _me, _name = _viewer(request, db)
+    m = db.query(models.DBAnnouncementMedia).filter(models.DBAnnouncementMedia.id == media_id,
+                                                    models.DBAnnouncementMedia.client_id == client_id).first()
+    if not m or not m.data:
+        raise HTTPException(status_code=404, detail="Not found")
+    data, total = m.data, len(m.data)
+    headers = {"X-Content-Type-Options": "nosniff", "Accept-Ranges": "bytes", "Cache-Control": "private, max-age=3600",
+               "Content-Security-Policy": "default-src 'none'; sandbox"}
+    rng = request.headers.get("range", "")
+    if rng.startswith("bytes=") and "," not in rng:
+        a, _, b = rng[6:].partition("-")
+        try:
+            start = int(a) if a else max(0, total - int(b))
+            end = min(int(b), total - 1) if (a and b) else total - 1
+        except ValueError:
+            start, end = 0, total - 1
+        if start > end or start >= total:
+            return Response(status_code=416, headers={**headers, "Content-Range": "bytes */%d" % total})
+        headers["Content-Range"] = "bytes %d-%d/%d" % (start, end, total)
+        return Response(data[start:end + 1], status_code=206, media_type=m.content_type, headers=headers)
+    return Response(data, media_type=m.content_type, headers=headers)

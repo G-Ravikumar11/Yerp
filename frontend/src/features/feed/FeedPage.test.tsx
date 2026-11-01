@@ -12,7 +12,7 @@ let canPost = true
 
 const ann = (over: Partial<Announcement>): Announcement => ({
   id: 1, title: 'Site closed on Saturday', body: 'Heavy rain.\nBack on Monday.', category: 'site', pinned: false, expires_on: '', expired: false,
-  posted_by: 'Priya Nair', created_at: '2026-10-30 10:00:00', updated_at: '', can_edit: canPost, ...over,
+  posted_by: 'Priya Nair', created_at: '2026-10-30 10:00:00', updated_at: '', can_edit: canPost, media: [], ...over,
 })
 const celebrations = {
   today: [{ key: 'birthday:7:2026', kind: 'birthday', date: '2026-10-31', title: 'Meena Iyer\'s birthday', emoji: '🎂', message: '', job_title: 'Planning Engineer', reactions: [], wishes: [] }],
@@ -24,9 +24,12 @@ vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
   get: vi.fn(async (url: string) => {
     if (url === '/api/celebrations') return celebrations
-    return { announcements: [ann({ id: 2, title: 'Pay day moved', body: 'Salaries on the 3rd.', category: 'important', pinned: true }), ann({})], can_post: canPost, categories: ['general', 'site', 'holiday', 'important'] }
+    return { announcements: [ann({ id: 2, title: 'Pay day moved', body: 'Salaries on the 3rd.', category: 'important', pinned: true }), ann({ media: [{ id: 5, kind: 'image', name: 'trench.jpg', content_type: 'image/jpeg', size: 10, url: '/api/announcements/media/5' }, { id: 6, kind: 'video', name: 'walk.mp4', content_type: 'video/mp4', size: 10, url: '/api/announcements/media/6' }] })], can_post: canPost, categories: ['general', 'site', 'holiday', 'important'] }
   }),
-  post: vi.fn(async (url: string, body: unknown) => { calls.push({ method: 'POST', url, body }); return { message: 'ok', told: 12 } }),
+  post: vi.fn(async (url: string, body: unknown) => {
+    calls.push({ method: 'POST', url, body: body instanceof FormData ? { file: (body.get('file') as File).name } : body })
+    return url.endsWith('/media') ? { id: 9, kind: 'image', name: 'x', content_type: 'image/png', size: 1, url: '/m/9' } : { id: 77, message: 'ok', told: 12 }
+  }),
   put: vi.fn(async (url: string, body: unknown) => { calls.push({ method: 'PUT', url, body }); return { message: 'ok' } }),
   del: vi.fn(async (url: string) => { calls.push({ method: 'DELETE', url }); return { message: 'ok' } }),
 }))
@@ -103,6 +106,27 @@ describe('The Feed', () => {
     await user.click(post)
     await waitFor(() => expect(calls).toEqual([{ method: 'POST', url: '/api/announcements', body: {
       title: 'Diwali holidays', body: 'Office closed 8 to 10 November.', category: 'holiday', pinned: true, expires_on: '', notify: true } }]))
+  })
+
+  it('shows the photos and videos on a post', async () => {
+    mount()
+    const site = (await screen.findByText('Site closed on Saturday')).closest('article')!
+    expect(within(site).getByAltText('trench.jpg').getAttribute('src')).toBe('/api/announcements/media/5')
+    expect(site.querySelector('video')?.getAttribute('src')).toBe('/api/announcements/media/6')
+  })
+
+  it('posts with a photo and a video, and refuses what is too big or not a picture', async () => {
+    const user = userEvent.setup({ applyAccept: false })
+    mount()
+    await user.click(await screen.findByRole('button', { name: /post an announcement/i }))
+    await user.type(screen.getByLabelText('Title'), 'Site visit')
+    const pick = screen.getByLabelText('Add photos or videos')
+    await user.upload(pick, new File(['x'], 'notes.txt', { type: 'text/plain' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('notes.txt')
+    await user.upload(pick, [new File(['x'], 'a.png', { type: 'image/png' }), new File(['y'], 'b.mp4', { type: 'video/mp4' })])
+    await user.click(screen.getByRole('button', { name: /^Post$/ }))
+    await waitFor(() => expect(calls.map((c) => c.url)).toEqual(['/api/announcements', '/api/announcements/77/media', '/api/announcements/77/media']))
+    expect(calls.slice(1).map((c) => c.body)).toEqual([{ file: 'a.png' }, { file: 'b.mp4' }])
   })
 
   it('asks before taking one down', async () => {

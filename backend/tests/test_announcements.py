@@ -141,3 +141,54 @@ def test_what_hr_does_is_in_the_audit_log(tenant):
         actions = [r.action for r in s.query(models.DBAuditLog).filter(models.DBAuditLog.entity_type == "announcement",
                                                                          models.DBAuditLog.entity_id == a["id"]).order_by(models.DBAuditLog.id)]
     assert actions == ["announcement_posted", "announcement_changed", "announcement_removed"]
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+MP4 = b"\x00\x00\x00\x18ftypmp42" + bytes(range(200))
+
+
+def attach(c, aid, data, name="a.bin", ctype="application/octet-stream"):
+    return c.post("/api/announcements/%d/media" % aid, files={"file": (name, data, ctype)})
+
+
+def test_hr_attaches_a_photo_and_a_video_that_everybody_can_watch(tenant, portal):
+    made = post(tenant).json()
+    photo, video = attach(tenant, made["id"], PNG, "site.png"), attach(tenant, made["id"], MP4, "walk.mp4")
+    assert photo.status_code == 200 and photo.json()["kind"] == "image"
+    assert video.status_code == 200 and video.json()["kind"] == "video" and video.json()["content_type"] == "video/mp4"
+    shown = tenant.get("/api/announcements").json()["announcements"][0]["media"]
+    assert [m["kind"] for m in shown] == ["image", "video"]
+    sign_in(portal, staff(tenant))
+    assert [m["kind"] for m in portal.get("/api/announcements").json()["announcements"][0]["media"]] == ["image", "video"]
+    got = portal.get(video.json()["url"])
+    assert got.status_code == 200 and got.content == MP4 and got.headers["content-type"] == "video/mp4"
+    part = portal.get(video.json()["url"], headers={"Range": "bytes=0-9"})
+    assert part.status_code == 206 and part.content == MP4[:10] and part.headers["content-range"] == "bytes 0-9/%d" % len(MP4)
+
+
+def test_only_real_photos_and_videos_are_taken_and_only_from_hr(tenant, portal):
+    made = post(tenant).json()
+    assert attach(tenant, made["id"], b"<html>hi</html>", "x.png", "image/png").status_code == 400
+    assert attach(tenant, made["id"], b"").status_code == 400
+    sign_in(portal, staff(tenant))
+    assert attach(portal, made["id"], PNG, "a.png").status_code in (401, 403)
+    assert tenant.get("/api/announcements").json()["announcements"][0]["media"] == []
+
+
+def test_an_announcement_holds_six_and_removing_it_removes_them(tenant):
+    made = post(tenant).json()
+    for _ in range(6):
+        assert attach(tenant, made["id"], PNG).status_code == 200
+    assert attach(tenant, made["id"], PNG).status_code == 400
+    first = tenant.get("/api/announcements").json()["announcements"][0]["media"][0]
+    assert tenant.delete("/api/announcements/%d/media/%d" % (made["id"], first["id"])).status_code == 200
+    assert len(tenant.get("/api/announcements").json()["announcements"][0]["media"]) == 5
+    url = tenant.get("/api/announcements").json()["announcements"][0]["media"][0]["url"]
+    tenant.delete("/api/announcements/%d" % made["id"])
+    assert tenant.get(url).status_code == 404
+
+
+def test_another_company_cannot_open_the_media(tenant, second_tenant):
+    made = post(tenant).json()
+    url = attach(tenant, made["id"], PNG).json()["url"]
+    assert second_tenant.get(url).status_code == 404

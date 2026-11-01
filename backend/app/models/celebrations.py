@@ -1,7 +1,7 @@
 """Birthdays and special days, and what people say about them."""
 from datetime import datetime
 
-from sqlalchemy import Text, Boolean, Column, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Text, Boolean, Column, ForeignKey, Integer, LargeBinary, String, UniqueConstraint
 
 from app.db.session import Base
 
@@ -71,3 +71,19 @@ class DBAnnouncement(Base):
     posted_by_key = Column(String, default="")            # owner, m:<member>, e:<employee>
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"), index=True)
     updated_at = Column(String, default="")
+
+
+class DBAnnouncementMedia(Base):
+    """A photo or a video shown with an announcement. Kept in the database like the project photos: the server's own
+    disk is replaced on every deploy. Everybody in the company may watch it; only HR and the Master add or remove."""
+    __tablename__ = "announcement_media"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    announcement_id = Column(Integer, ForeignKey("announcements.id"), nullable=False, index=True)
+    kind = Column(String, default="image")                # image | video
+    name = Column(String, default="")
+    content_type = Column(String, default="")
+    size = Column(Integer, default=0)
+    data = Column(LargeBinary)
+    created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
