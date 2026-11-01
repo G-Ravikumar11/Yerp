@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Camera, Check, FileText, Plus, Printer, Settings2, Wallet, X } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -7,13 +8,14 @@ import { ledgerKeys, useMoneyHeads, voucherUrl } from '@/api/ledger'
 import { useEmployees } from '@/api/people'
 import { projectLabel, useProjects } from '@/api/projects'
 import {
-  attachBillPhoto, cashStatementUrl, decideSiteExpense, setCashBox, siteCashKeys, spendSiteCash, useSiteCash,
+  attachBillPhoto, cashStatementUrl, decideSiteExpense, setCashBox, siteCashKeys, useSiteCash,
   type CashBox, type SiteExpense, type SiteExpenseStatus,
 } from '@/api/sitecash'
 import { TransferModal } from '@/features/ledger/VoucherModals'
 import { useAction } from '@/lib/mutate'
 import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
+import { sendOrQueue } from '@/stores/offline'
 import { toast } from '@/stores/toast'
 
 const TONE: Record<SiteExpenseStatus, 'warning' | 'success' | 'danger'> = { SUBMITTED: 'warning', APPROVED: 'success', REJECTED: 'danger' }
@@ -30,6 +32,17 @@ export default function SiteCashPage() {
   const q = useSiteCash(filter)
   const d = q.data
   const [spending, setSpending] = useState<CashBox | null>(null)
+  // The phone's + sheet sends the site it is on (?job=) and asks for the Spent form (&spend=1): the website just opens the page.
+  const [params, setParams] = useSearchParams()
+  const spendFor = useRef(params.get('spend') === '1' ? Number(params.get('job')) || 0 : -1)
+  useEffect(() => {
+    if (spendFor.current < 0 || !d) return
+    const job = spendFor.current
+    spendFor.current = -1
+    const box = d.boxes.find((b) => b.job_id === job) ?? (d.boxes.length === 1 ? d.boxes[0] : undefined)
+    if (box) setSpending(box)
+    setParams({}, { replace: true })
+  }, [d, setParams])
   const [setting, setSetting] = useState<CashBox | null>(null)
   const [topping, setTopping] = useState<CashBox | null>(null)
   const [rejecting, setRejecting] = useState<SiteExpense | null>(null)
@@ -145,12 +158,18 @@ function SpendModal({ box, onClose }: { box: CashBox; onClose: () => void }) {
   const [note, setNote] = useState('')
   const [photo, setPhoto] = useState<File | null>(null)
   const save = useAction(async () => {
-    const r = await spendSiteCash({ account_id: box.id, amount, head: head || list[0] || '', paid_to: paidTo.trim(), spent_on: on, note, bill_no: billNo })
+    // With no signal the payment is kept on this phone with the photo of its bill, and both go up when the signal returns.
+    const sent = await sendOrQueue<{ expense: SiteExpense; message: string; warning?: string }>(
+      { method: 'POST', url: '/api/site-cash/expenses', body: { account_id: box.id, amount, head: head || list[0] || '', paid_to: paidTo.trim(), spent_on: on, note, bill_no: billNo }, label: `Site cash ${formatINR(amount)} to ${paidTo.trim()}` },
+      { files: photo ? { items: [photo], via: 'bill', idFrom: 'expense.id' } : undefined },
+    )
+    if (sent.queued) return { queued: true as const, warning: '' }
+    const r = sent.result
     if (photo) {
       try { await attachBillPhoto(r.expense.id, photo) } catch { toast.error('Saved, but the photo did not go up. Add it again from the list.') }
     }
-    return r
-  }, { invalidate: [siteCashKeys.all], onSuccess: (r) => { if (r.warning) toast.info(r.warning); onClose() } })
+    return { queued: false as const, warning: r.warning ?? '' }
+  }, { invalidate: [siteCashKeys.all], onSuccess: (r) => { if (r.queued) toast.info('No signal. The payment and its bill are kept on this phone and go up by themselves when you are back online.'); else if (r.warning) toast.info(r.warning); onClose() } })
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title={`Spent from ${box.name}`} description={`${formatINR(box.in_hand)} should be in hand. Accounts check each payment against its bill before it is booked to ${box.project || 'the site'}.`}>
       <div className="grid gap-4 sm:grid-cols-2">

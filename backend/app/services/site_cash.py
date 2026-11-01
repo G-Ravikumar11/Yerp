@@ -21,9 +21,12 @@ BILL_NEEDED_ABOVE = 500.0
 CASH_LIMIT_A_DAY = 10000.0
 
 
+CHECKERS = ("bills.pay", "payments.approve", "payments.approve_high")
+
+
 def can_manage(emp):
     """Accounts (and the Master) look after every box: set them up, check what is spent, top them up."""
-    return emp is None or any(employee_can(emp, p) for p in ("bills.pay", "payments.approve", "payments.approve_high"))
+    return emp is None or any(employee_can(emp, p) for p in CHECKERS)
 
 
 def boxes_for(db, client_id, emp):

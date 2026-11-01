@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Button, Field, Input, Modal, NumField, Select, Textarea } from '@/components/ui'
-import { reportIncident, safetyKeys } from '@/api/safety'
+import { safetyKeys } from '@/api/safety'
 import { useAction } from '@/lib/mutate'
+import { sendOrQueue } from '@/stores/offline'
 import { today } from '@/lib/format'
 
 export function IncidentModal({ job, kinds, open, onClose }: { job: number; kinds: string[]; open: boolean; onClose: () => void }) {
@@ -15,7 +16,11 @@ export function IncidentModal({ job, kinds, open, onClose }: { job: number; kind
 function Form({ job, kinds, onClose }: { job: number; kinds: string[]; onClose: () => void }) {
   const [f, setF] = useState({ kind: kinds[0] ?? '', happened_on: today(), happened_at: '', location: '', description: '', injured_name: '', injury: '', treatment: '', lost_days: 0, immediate_action: '' })
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }))
-  const save = useAction(() => reportIncident({ job_id: job, ...f }), { invalidate: [safetyKeys.all, ['staff']], success: (r) => `${r.incident.number} reported`, onSuccess: onClose })
+  // With no signal the report is kept on this phone and goes up by itself: an incident must not wait for somebody to remember it.
+  const save = useAction(async () => {
+    const sent = await sendOrQueue<{ incident: { number: string } }>({ method: 'POST', url: '/api/safety/incidents', body: { job_id: job, ...f }, label: `${f.kind || 'Incident'} report, ${f.happened_on}` })
+    return { message: sent.queued ? 'No signal. The report is kept on this phone and goes up by itself when you are back online.' : `${sent.result.incident.number} reported` }
+  }, { invalidate: [safetyKeys.all, ['staff']], success: (r) => r.message, onSuccess: onClose })
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-3">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link2, Plus, Trash2 } from 'lucide-react'
 import { Button, Field, Input, Select, Textarea } from '@/components/ui'
@@ -39,9 +39,11 @@ const asNumber = (n: number) => (Number.isFinite(n) ? String(Math.round(n * 1000
 export default function GrnForm({ doc }: { doc?: Doc }) {
   const nav = useNavigate()
   const projects = useProjects()
+  // The phone's + sheet opens a new receipt for the site it is on (?project=).
+  const [fromSheet] = useSearchParams()
   const [f, setF] = useState({
     store_id: doc?.store_id ?? 0, grn_date: doc?.date || today(), po_id: doc?.po_id ?? 0, supplier_name: doc?.supplier_name ?? '', challan_no: doc?.challan_no ?? '',
-    challan_date: doc?.challan_date ?? '', vehicle_no: doc?.vehicle_no ?? '', project_id: doc?.project_id ?? 0, remarks: doc?.remarks ?? '',
+    challan_date: doc?.challan_date ?? '', vehicle_no: doc?.vehicle_no ?? '', project_id: doc?.project_id ?? (Number(fromSheet.get('project')) || 0), remarks: doc?.remarks ?? '',
     gate_delivery: doc?.gate_delivery ?? false, driver_remarks: doc?.driver_remarks ?? '',
   })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))

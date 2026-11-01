@@ -502,6 +502,8 @@ def diary_dict(db, d, detail=False):
         # A day the site was rained off is worth seeing at a glance.
         "lost_to_weather": bool((d.rain_hours or 0) >= (d.working_hours or 8) / 2),
         "created_at": d.created_at or "",
+        # The version of this day, for an edit kept on a phone out of signal to say which copy it started from (core/versions.py).
+        "updated_at": d.updated_at or "",
     }
     if detail:
         lines = db.query(models.DBDiaryLabour).filter(

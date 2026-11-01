@@ -22,6 +22,7 @@ from app.core.config import logger
 from app.core.currency import DEFAULT_CURRENCY, money, totals_by_currency
 from app.core.gst import GST_STATES
 from app.core.queries import prime
+from app.core.versions import check_base_version
 from app.core.serials import allocate_job_number, typed_job_number
 from app.core.sheets import sheet_response
 from app.routers.files import list_files
@@ -587,7 +588,8 @@ def create_diary(body: DiaryIn, request: Request, db: Session = Depends(get_db))
         instructions=(body.instructions or "").strip(),
         visitors=(body.visitors or "").strip(),
         safety_note=(body.safety_note or "").strip(),
-        status="DRAFT", prepared_by=actor_id, prepared_by_name=actor_name)
+        status="DRAFT", prepared_by=actor_id, prepared_by_name=actor_name,
+        updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     db.add(diary)
     db.flush()
     _replace_diary_lines(db, diary, body.labour, body.plant)
@@ -613,6 +615,9 @@ def update_diary(diary_id: int, body: DiaryIn, request: Request,
         raise HTTPException(
             409, "This day has been signed off. A diary that can be rewritten "
                  "afterwards is worth nothing in a claim.")
+    # An edit kept on a phone out of signal says which copy it started from; if somebody has saved since, the person chooses.
+    check_base_version(request, diary.updated_at, "This day's diary")
+    diary.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if body.weather in WEATHER:
         diary.weather = body.weather
     for field, label in (("rain_hours", "hours of rain"), ("working_hours", "working hours")):
@@ -645,7 +650,7 @@ def submit_diary(diary_id: int, request: Request, db: Session = Depends(get_db))
             400, "Say what was done. A day with no record of the work is not "
                  "a diary entry.")
     diary.status = "SUBMITTED"
-    diary.submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    diary.updated_at = diary.submitted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     diary.submitted_by_name = actor_name
     log_audit(db, client.id, "diary_submitted", "site_diary", diary.id,
               diary.diary_date or "", actor_name, request)
@@ -669,6 +674,7 @@ def reopen_diary(diary_id: int, body: ReopenIn, request: Request, db: Session = 
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     diary.amendments = ((diary.amendments or "").rstrip("\n") + "\n" if diary.amendments else "") + "%s - %s: %s" % (stamp, actor_name, reason[:300])
     diary.status = "DRAFT"
+    diary.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     diary.submitted_at = ""
     diary.submitted_by_name = ""
     log_audit(db, client.id, "diary_reopened", "site_diary", diary.id, diary.diary_date or "", "%s: %s" % (actor_name, reason[:300]), request)

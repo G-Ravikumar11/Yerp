@@ -12,7 +12,8 @@ Everybody else, in the app:
   - looks at everything their access lets them see (a read is never refused here),
   - changes nothing, except what one of the four "Phone app" rights allows (app.* in permissions.py), which the Master
     gives or takes away person by person on the Access screen:
-        app.site_edit      record site work: diary, photos, measurements, material in, safety, quality, task progress
+        app.site_edit      record site work: diary, photos, measurements, material in, site cash, workers, safety,
+                           quality, task progress
         app.approve        approve and reject
         app.download_pdf   download a PDF (a bill, an order, a report)
         app.download_excel download an Excel report
@@ -49,6 +50,13 @@ _OWN = re.compile(
 _SITE = re.compile(
     r"^/api/(diary|files|schedule|mb|sub-mb|grn|stock-issues|stock|safety|qc|plant"
     r"|jobs/\d+/(schedule/tasks|diary|photos))(/|$)")
+
+# Site work that is only ever added or filled in, never taken away: goods in at the gate (the receipt, its link to the
+# order raised for it, submitting and posting it), a payment out of the site's cash box with the photo of its bill, and
+# screening a worker. Store orders and issues, returns, the quality decision, cancelling and deleting stay the website's.
+_SITE_ADD = re.compile(
+    r"^/api/(store/inward/grn(/\d+/(link-po|submit|post))?|site-cash/expenses(/\d+/photo)?|workers)$")
+_SITE_EDIT = re.compile(r"^/api/store/inward/grn/\d+$")
 
 # Approving: the approvals inbox and any step that is a decision.
 _APPROVE = re.compile(r"^/api/approvals(/|$)|/(approve|reject|certify|decide|sign-off|signoff)$")
@@ -97,7 +105,7 @@ def refusal(method, path, held):
         return None if APP_PDF in held else _refuse(APP_PDF)
     if _APPROVE.search(path):
         return None if APP_APPROVE in held else _refuse(APP_APPROVE)
-    if _SITE.match(path):
+    if _SITE.match(path) or (method == "POST" and _SITE_ADD.match(path)) or (method == "PUT" and _SITE_EDIT.match(path)):
         return None if APP_SITE in held else _refuse(APP_SITE)
     return _refuse(None)
 

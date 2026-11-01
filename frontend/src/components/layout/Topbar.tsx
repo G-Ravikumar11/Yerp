@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { ChevronRight, Download, LogOut, Menu, Monitor, Moon, Sun } from 'lucide-react'
 import { post } from '@/lib/api'
 import { useInstall } from '@/lib/install'
+import { forgetPush } from '@/lib/mobile'
 import { forgetLocalData } from '@/lib/query'
 import { useOffline } from '@/stores/offline'
 import { trailFor } from '@/lib/nav'
@@ -90,6 +91,8 @@ function UserChip() {
   if (isLoading) return <Skeleton className="h-9 w-28 rounded-lg" />
 
   const signOut = async () => {
+    // In the phone app, this phone stops getting their notices first (nothing happens in a browser).
+    await forgetPush()
     // Both: this browser may hold an owner's sign-in and a staff one, and the login page signs back in on either.
     for (const path of user?.type === 'employee' ? ['/api/employee/auth/logout', '/api/client/logout'] : ['/api/client/logout', '/api/employee/auth/logout']) {
       try {
@@ -99,7 +102,7 @@ function UserChip() {
       }
     }
     // What this device kept for them - the data, and any change not yet sent - goes too.
-    useOffline.setState({ queue: [] })
+    useOffline.getState().clearQueue()
     await forgetLocalData()
     window.location.assign(appUrl('login?signedout=1'))
   }

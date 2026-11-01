@@ -18,7 +18,7 @@ from app.core.auth import (
 from app.core.cache import cached_read
 from app.core.currency import amount_in_words, inr, money
 from app.core.dates import ageing_bucket, days_after
-from app.core.notifications import notify
+from app.core.notifications import notify, tell_approvers
 from app.core.sheets import sheet_response
 from app.core.tenant_settings import put_setting, tenant_setting
 from app.documents.forms import _pre, form_pdf_response, money_voucher_spec, statement_form_spec
@@ -1063,6 +1063,9 @@ def submit_site_expense(body: SiteCashExpenseIn, request: Request, db: Session =
     who = employee_name(emp) if emp is not None else (
         (member.name or member.email) if member is not None else (client.contact_name or "Master"))
     x = site_cash.submit(db, client, emp, who, box, body, member=member)
+    # Accounts check it (and the Master can): it reaches their phones now, not when somebody happens to open the screen.
+    tell_approvers(db, client.id, "Site cash to check: %s" % x.number, "%s paid %s to %s (%s)." % (who, inr(x.amount), x.paid_to, x.head),
+                   rights=site_cash.CHECKERS, exclude=[emp.id if emp is not None else None], owner=emp is not None or member is not None)
     warning = site_cash.cash_warning(db, client.id, x.paid_to, x.spent_on)
     log_audit(db, client.id, "site_cash_spent", "site_cash", x.id, x.number,
               "%s %s %s" % (x.head, inr(x.amount), x.paid_to), request)

@@ -79,6 +79,34 @@ def test_site_work_needs_the_site_right_and_approving_needs_the_approve_right():
     assert app_limits.refusal("POST", "/api/ra-bills/3/approve", {"app.approve"}) is None
 
 
+SITE_ADDS = [("POST", "/api/store/inward/grn"), ("PUT", "/api/store/inward/grn/7"), ("POST", "/api/store/inward/grn/7/link-po"),
+             ("POST", "/api/store/inward/grn/7/submit"), ("POST", "/api/store/inward/grn/7/post"),
+             ("POST", "/api/site-cash/expenses"), ("POST", "/api/site-cash/expenses/7/photo"), ("POST", "/api/workers")]
+
+# What stays on the website even though it sits beside the above: store orders and issues, returns and opening stock,
+# the quality decision, cancelling or throwing a receipt away, setting up a cash box, removing a worker.
+STILL_SITE_ONLY = [("POST", "/api/store/outward/issue"), ("POST", "/api/store/outward/issue/7/post"), ("POST", "/api/store/inward/returns"),
+                   ("POST", "/api/store/inward/opening"), ("POST", "/api/store/inward/client-supply"), ("POST", "/api/store/inward/grn/7/qc/3"),
+                   ("POST", "/api/store/inward/grn/7/cancel"), ("DELETE", "/api/store/inward/grn/7"), ("PUT", "/api/site-cash/boxes/7"),
+                   ("DELETE", "/api/workers/7"), ("POST", "/api/store/inward/returns/7/post"), ("PUT", "/api/store/inward/returns/7")]
+
+
+def test_goods_in_site_cash_and_workers_are_site_work_and_nothing_beside_them_opens():
+    for method, path in SITE_ADDS:
+        assert "Record site work" in app_limits.refusal(method, path, set()), (method, path)
+        assert app_limits.refusal(method, path, {"app.site_edit"}) is None, (method, path)
+        # Holding the other rights does not open site work.
+        assert app_limits.refusal(method, path, {"app.approve", "app.download_pdf", "app.download_excel"}), (method, path)
+    for method, path in STILL_SITE_ONLY:
+        assert "not available in the app" in app_limits.refusal(method, path, set(app_limits.APP_KEYS)), (method, path)
+
+
+def test_approving_a_receipt_or_a_cash_expense_is_still_the_approve_right():
+    for path in ("/api/store/inward/grn/7/approve", "/api/site-cash/expenses/7/decide"):
+        assert "Approve" in app_limits.refusal("POST", path, {"app.site_edit"}), path
+        assert app_limits.refusal("POST", path, {"app.approve"}) is None, path
+
+
 def test_a_persons_own_things_are_always_open():
     for path in ("/api/employee/attendance/clock-in", "/api/employee/auth/logout", "/api/devices", "/api/chat/threads",
                  "/api/client/logout", "/api/leave", "/api/celebrations/react", "/api/celebrations/wishes"):
@@ -141,6 +169,23 @@ def test_site_work_and_approving_in_the_app_are_the_masters_to_give(tenant):
     assert by_app(res) and "Approve" in res.text
     grant(tenant, plain, add=["app.approve"])
     assert not by_app(sign_in(plain, "app").post("/api/approvals/decide", json=one))
+
+
+def test_site_staff_in_the_app_reach_goods_in_site_cash_and_workers_but_not_store_orders(tenant):
+    # Only requests that need no form are used here (a form with nothing in it is turned away before the app's rules are
+    # asked); the rules for every route are in the test above.
+    person = staff(tenant, "construction")
+    app = sign_in(person, "app")
+    receipt = "/api/store/inward/grn/999999"
+    for path in (receipt + "/submit", receipt + "/post"):
+        assert not by_app(app.post(path)), path                    # the app lets it through; the store's own checks answer
+    assert by_app(app.post(receipt + "/cancel")) and by_app(app.delete(receipt)) and by_app(app.delete("/api/workers/999999"))
+    grant(tenant, person, take=["app.site_edit"])
+    held_back = sign_in(person, "app")
+    res = held_back.post(receipt + "/submit")
+    assert by_app(res) and "Record site work" in res.text
+    # The website is not held to it either way.
+    assert not by_app(sign_in(person, None).post(receipt + "/submit"))
 
 
 def test_the_masters_access_level_is_the_whole_website_in_the_app(tenant):

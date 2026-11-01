@@ -78,6 +78,20 @@ export async function uploadFiles(files: File[], type: string, id: number, extra
 
 /** One file, shrunk first when it is a photograph; null when it was saved, else why not. */
 async function uploadOne(f: File, type: string, id: number, extra: Record<string, string>): Promise<string | null> {
+  try {
+    await sendFile(f, type, id, extra)
+    return null
+  } catch (e) {
+    return `${f.name}: ${e instanceof Error ? e.message : 'not saved'}`
+  }
+}
+
+/**
+ * One file against a record, shrunk first when it is a photograph. Throws what the server (or the missing connection) said
+ * when it could not be saved, so a caller can tell "no signal" from "refused". `key` makes a repeat of the same send
+ * (a reply lost on a weak signal) answer the first rather than store the picture twice.
+ */
+export async function sendFile(f: File, type: string, id: number, extra: Record<string, string> = {}, key?: string) {
   const fd = new FormData()
   const drawing = extra.kind === 'drawing'
   let big = await shrinkImage(f, drawing ? 2400 : 1600, drawing ? 0.85 : 0.8)
@@ -90,10 +104,5 @@ async function uploadOne(f: File, type: string, id: number, extra: Record<string
   fd.append('attached_type', type)
   fd.append('attached_id', String(id))
   for (const [k, v] of Object.entries(extra)) fd.append(k, v)
-  try {
-    await api('/api/files', { method: 'POST', body: fd })
-    return null
-  } catch (e) {
-    return `${f.name}: ${e instanceof Error ? e.message : 'not saved'}`
-  }
+  await api('/api/files', { method: 'POST', body: fd, headers: key ? { 'Idempotency-Key': key } : undefined })
 }

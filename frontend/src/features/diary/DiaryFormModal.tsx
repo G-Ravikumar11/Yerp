@@ -93,8 +93,12 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
   })
   const save = useAction(
     async (signOff: boolean) => {
-      const sent = await sendOrQueue<{ diary: { id: number }; message?: string }>({ method: day ? 'PUT' : 'POST', url: day ? `/api/diary/${day.id}` : '/api/diary', body: body(), label: `Site diary ${date}` })
-      if (sent.queued) return { message: 'No signal. The day is kept on this device and goes up by itself when you are back online.' + (signOff ? ' Sign it off once it has gone up.' : '') }
+      // Kept offline, the day takes its photos with it and sends them once it has gone up; an edit says which copy it started from.
+      const sent = await sendOrQueue<{ diary: { id: number }; message?: string }>(
+        { method: day ? 'PUT' : 'POST', url: day ? `/api/diary/${day.id}` : '/api/diary', body: body(), label: `Site diary ${date}` },
+        { base: day ? day.updated_at || '-' : undefined, files: photos.length ? { items: photos, via: 'attached', type: 'diary', id: day?.id, idFrom: 'diary.id' } : undefined },
+      )
+      if (sent.queued) return { message: 'No signal. The day and its photos are kept on this device and go up by themselves when you are back online.' + (signOff ? ' Sign it off once it has gone up.' : '') }
       const id = sent.result.diary.id
       if (photos.length) {
         const { failed } = await uploadFiles(photos, 'diary', id)

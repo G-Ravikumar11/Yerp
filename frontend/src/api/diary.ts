@@ -26,6 +26,8 @@ export interface DiaryRow {
   amendments?: string[]
   editable: boolean
   lost_to_weather: boolean
+  /** When the day was last saved. An edit kept offline says which copy it started from, so a save made meanwhile is noticed. */
+  updated_at?: string
 }
 export interface LabourLine {
   trade: string; agency: string; headcount: number; hours: number; rate: number

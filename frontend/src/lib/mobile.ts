@@ -8,6 +8,8 @@ import { SplashScreen } from '@capacitor/splash-screen'
 import { PushNotifications } from '@capacitor/push-notifications'
 import { api, get, post } from '@/lib/api'
 import { installDownloads } from '@/lib/download'
+import { queryClient } from '@/lib/query'
+import { toast } from '@/stores/toast'
 import { useUpdatePrompt } from '@/stores/updatePrompt'
 
 /**
@@ -17,9 +19,9 @@ import { useUpdatePrompt } from '@/stores/updatePrompt'
 export async function initMobile() {
   if (!Capacitor.isNativePlatform()) return
 
-  // Screens downloaded over the air are on trial until this runs: one that never gets this far is dropped, and the
+  // Screens downloaded over the air are on trial until markScreensGood() runs, which the signed-in shell (or the sign-in
+  // form, for a phone nobody is signed in on) does once it is up. One that never gets that far is dropped, and the
   // plugin goes back to the last screens that did.
-  void CapacitorUpdater.notifyAppReady().catch(() => undefined)
 
   // PDF and Excel buttons: the app fetches the file itself and hands it to the phone's Open / Share choices.
   installDownloads()
@@ -54,6 +56,20 @@ export async function initMobile() {
     void checkForUpdate()
     void checkForWebUpdate()
   })
+}
+
+let screensGood = false
+
+/**
+ * Tell the updater these screens work, so it keeps them. Called only once the app has loaded and shown that it can: a
+ * signed-in person's shell has been on screen for a moment, or, with nobody signed in, the sign-in form has (nothing
+ * more can be proved without a password). Called at start-up instead, a build that opened but broke after sign-in would
+ * have been kept. Does nothing outside the native app.
+ */
+export function markScreensGood() {
+  if (!Capacitor.isNativePlatform() || screensGood) return
+  screensGood = true
+  void CapacitorUpdater.notifyAppReady().catch(() => { screensGood = false })
 }
 
 /** The build number of the screens inside this APK; the workflow stamps it (VITE_WEB_VERSION). 0 for a laptop build. */
@@ -166,6 +182,32 @@ export async function takePhoto(fallback: HTMLInputElement | null, onFiles: (fil
 }
 
 let pushStarted = false
+let pushToken = ''
+const TOKEN_KEY = 'yerp.push.token'
+
+const keepToken = (value: string) => {
+  pushToken = value
+  try { localStorage.setItem(TOKEN_KEY, value) } catch { /* private storage: the token is held in memory for this run */ }
+}
+
+/**
+ * Sign-out on a phone: this phone stops getting the signed-out person's notices, and what has already been delivered to
+ * the notification shade is cleared, so the next person on a shared site phone does not see (or receive) the last one's
+ * approvals. Called before the sign-out request, while the session can still say whose token it is. Does nothing in a browser.
+ * With no signal the server keeps the token, and it moves to whoever signs in on this phone next (POST /api/devices).
+ */
+export async function forgetPush() {
+  if (!Capacitor.isNativePlatform()) return
+  let token = pushToken
+  if (!token) { try { token = localStorage.getItem(TOKEN_KEY) ?? '' } catch { /* nothing kept */ } }
+  if (token) await api(`/api/devices/${encodeURIComponent(token)}`, { method: 'DELETE', quiet: true }).catch(() => undefined)
+  await PushNotifications.removeAllDeliveredNotifications().catch(() => undefined)
+  // A new token is issued when the next person registers.
+  await PushNotifications.unregister().catch(() => undefined)
+  pushToken = ''
+  pushStarted = false
+  try { localStorage.removeItem(TOKEN_KEY) } catch { /* nothing kept */ }
+}
 
 /**
  * Once someone is signed in, in the native app: ask permission for notifications and give this phone's token to the
@@ -178,7 +220,19 @@ export async function registerPush() {
     if (!enabled) return
     pushStarted = true
     await PushNotifications.addListener('registration', ({ value }) => {
+      keepToken(value)
       void post('/api/devices', { token: value, platform: Capacitor.getPlatform() })
+    })
+    // A notice that arrives while the app is open: the lists it is about are refreshed, and Android (which shows nothing of its
+    // own to an open app; iPhone does, see capacitor.config.ts) puts it on screen with a way to open it.
+    await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+      void queryClient.invalidateQueries({ predicate: (q) => q.queryKey.some((part) => part === 'approvals' || part === 'notes' || part === 'notifications') })
+      if (Capacitor.getPlatform() !== 'android') return
+      const text = [notification.title, notification.body].filter(Boolean).join(': ')
+      const link = notification.data?.link
+      if (!text) return
+      if (typeof link === 'string' && link.startsWith('/')) toast.withAction(text, 'Open', () => window.location.assign(link.replace(/^\/next/, '') || '/'))
+      else toast.info(text)
     })
     await PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => {
       const link = notification.data?.link

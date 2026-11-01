@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FileDown, FileUp, Lock, LockOpen, Receipt, Ruler, ScanText, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -82,8 +82,10 @@ export default function MeasurementBookPage() {
     }
   }
   const live = [...grouped, ...ranked.filter((o) => !placed.has(o.id))]
-  // Work orders can be narrowed to one site (the project each is charged to).
-  const [site, setSite] = useState(0)
+  // Work orders can be narrowed to one site (the project each is charged to). The phone's + sheet opens the book on the site it
+  // is on (?site=), with the entry box ready (&add=1); the website just opens the page.
+  const fromSite = Number(params.get('site')) || 0
+  const [site, setSite] = useState(fromSite)
   const sites = Array.from(new Map(live.filter((o) => o.job_id).map((o) => [o.job_id as number, o.project] as const)).entries()).sort((a, b) => a[1].localeCompare(b[1]))
   const shown = site ? live.filter((o) => o.job_id === site) : live
   const vocab = useOrderVocabulary()
@@ -98,7 +100,8 @@ export default function MeasurementBookPage() {
   // approved, on the revision, which is the one that takes measurements now.
   const lastOrder = all.find((o) => o.id === remembered())
   const last = (liveAfter(lastOrder) ?? lastOrder)?.id ?? 0
-  const chosen = Number(params.get('order')) || (live.some((o) => o.id === last) ? last : 0) || live[0]?.id || 0
+  const inSite = fromSite ? live.filter((o) => o.job_id === fromSite) : live
+  const chosen = Number(params.get('order')) || (inSite.some((o) => o.id === last) ? last : 0) || inSite[0]?.id || live[0]?.id || 0
   const order = all.find((o) => o.id === chosen)
   const measurable = !!order && isLive(order)
   // The order that carries on from this one: follow the revisions on to the one now live.
@@ -133,6 +136,14 @@ export default function MeasurementBookPage() {
   }
   const [removing, setRemoving] = useState<MbEntry | null>(null)
   const record = can('site.record') && measurable
+  // From the phone's + sheet: put the cursor in the entry box once the book is up.
+  const focusEntry = useRef(params.get('add') === '1')
+  useEffect(() => {
+    if (!focusEntry.current || !record || chosen <= 0) return
+    focusEntry.current = false
+    setTimeout(() => quick.current?.focus(), 250)
+    setParams((p) => { p.delete('add'); return p }, { replace: true })
+  }, [record, chosen, setParams])
   // Billing staff and the owner hold work back; only the owner puts it back.
   const canHold = can('billing.manage') && measurable
   const { isOwner } = useSession()
