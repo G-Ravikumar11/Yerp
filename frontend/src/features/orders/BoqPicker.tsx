@@ -175,6 +175,9 @@ export function BoqPicker({
   const pricedCount = items.length
   const ticked = Object.entries(picks)
   const incomplete = ticked.some(([, p]) => !(Number(p.quantity) > 0) || !(Number(p.rate) > 0))
+  // A contractor is given at most what the BOQ still has left; more than that is an extra item or change to the BOQ first.
+  const roomOf = (key: string) => lines.find((l) => l.key === key)?.left ?? 0
+  const over = ticked.filter(([key, p]) => Number(p.quantity) > roomOf(key) + 1e-9)
   const value = ticked.reduce((n, [, p]) => n + (Number(p.quantity) || 0) * (Number(p.rate) || 0), 0)
   const takeable = shown.filter((l) => l.kind !== 'section' && (l.left ?? 0) > 0)
   const allTaken = takeable.length > 0 && takeable.every((l) => picks[l.key!])
@@ -263,6 +266,7 @@ export function BoqPicker({
                 <span className="font-medium text-foreground">{ticks}</span> ticked
                 {total > 0 && <> · <span className="tabular font-medium text-foreground">{formatINR(total)}</span> at contractor rates</>}
                 {(incomplete || gincomplete) && <span className="text-warning"> · give every ticked line a rate</span>}
+                {over.length > 0 && <span className="text-danger"> · {over.length === 1 ? 'a line asks' : `${over.length} lines ask`} for more than the BOQ has left - raise an extra item or change on the BOQ first</span>}
               </>
             ) : headings ? (
               'Tick the headings this contractor is to do. Each becomes one line, under its main heading.'
@@ -274,7 +278,7 @@ export function BoqPicker({
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button loading={add.isPending} disabled={!count || incomplete || gincomplete} onClick={() => add.mutate()}>
+            <Button loading={add.isPending} disabled={!count || incomplete || gincomplete || over.length > 0} onClick={() => add.mutate()}>
               Add {count || ''} {count === 1 ? 'line' : 'lines'} to the work order
             </Button>
           </div>
@@ -487,7 +491,7 @@ export function BoqPicker({
                           </td>
                           <td className={cn('tabular px-2 py-1.5 text-right', !room && 'text-muted-foreground')}>{formatQty(room)}</td>
                           <td className="px-2 py-1">
-                            {p && <input aria-label={`Quantity of ${l.description}`} inputMode="decimal" className="h-8 w-full rounded-md border border-input bg-background px-2 text-right" value={p.quantity} onChange={(e) => set(k, 'quantity', e.target.value)} />}
+                            {p && <input aria-label={`Quantity of ${l.description}`} inputMode="decimal" aria-invalid={Number(p.quantity) > room + 1e-9 || undefined} title={Number(p.quantity) > room + 1e-9 ? `Only ${formatQty(room)} ${l.uom} left in the BOQ` : undefined} className="h-8 w-full rounded-md border border-input bg-background px-2 text-right aria-[invalid=true]:border-danger aria-[invalid=true]:text-danger" value={p.quantity} onChange={(e) => set(k, 'quantity', e.target.value)} />}
                           </td>
                           <td className="px-2 py-1">
                             {p && (
