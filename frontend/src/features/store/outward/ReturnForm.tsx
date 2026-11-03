@@ -29,7 +29,7 @@ export default function ReturnForm({ doc }: { doc?: Doc }) {
       const body = { issue_id: issueId, return_date: date, remarks, lines: picked.map((l) => ({ issue_line_id: l.issue_line_id, qty_returned: back[l.issue_line_id] ?? '', qty_lost: lost[l.issue_line_id] ?? '', uom: l.base_uom, reason: why[l.issue_line_id] ?? '', condition: cond[l.issue_line_id] ?? 'GOOD', bin_id: cond[l.issue_line_id] === 'DAMAGED' ? Number(bin[l.issue_line_id]) || null : null })) }
       return doc ? storePut<Doc>('outward', `/returns/${doc.id}`, body) : storePost<Doc>('outward', '/returns', body)
     },
-    { invalidate: [[...outwardKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/outward/returns/${d.id}`) },
+    { invalidate: [[...outwardKeys.all], ['store', 'enquiry']], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/outward/returns/${d.id}`) },
   )
   const needsReason = picked.some((l) => (Number(lost[l.issue_line_id]) > 0 || cond[l.issue_line_id] === 'DAMAGED') && !(why[l.issue_line_id] ?? '').trim()) || picked.some((l) => cond[l.issue_line_id] === 'DAMAGED' && !bin[l.issue_line_id])
   const columns: TableColumn<Line>[] = [

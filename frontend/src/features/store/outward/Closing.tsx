@@ -11,7 +11,7 @@ export function CloseReturnableModal({ row, mode, onClose }: { row: Returnable; 
   const settings = useOutwardSettings()
   const [f, setF] = useState({ qty: String(Number(row.qty_outstanding)), rate: '', handling: '', reason: '' })
   const save = useAction(() => storePost<{ message: string }>('outward', `/returnables/${row.issue_line_id}/${mode}`, mode === 'convert' ? { qty: f.qty, rate: f.rate, handling_pct: f.handling, reason: f.reason } : { qty: f.qty, reason: f.reason }),
-    { invalidate: [[...outwardKeys.all]], success: (r) => r.message, onSuccess: onClose })
+    { invalidate: [[...outwardKeys.all], ['store', 'enquiry']], success: (r) => r.message, onSuccess: onClose })
   const ok = Number(f.qty) > 0 && f.reason.trim() && (mode === 'writeoff' || Number(f.rate) > 0)
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title={mode === 'convert' ? `Charge ${row.holder_name || 'the holder'} for ${row.item_name}` : `Ask for ${row.item_name} to be written off`}
@@ -56,7 +56,7 @@ export function SettingsPage() {
   const q = useOutwardSettings()
   const [f, setF] = useState<OutwardSettings | null>(null)
   const v = f ?? q.data
-  const save = useAction(() => storePut<OutwardSettings>('outward', '/settings', v), { invalidate: [[...outwardKeys.all]], success: 'Settings saved', onSuccess: () => setF(null) })
+  const save = useAction(() => storePut<OutwardSettings>('outward', '/settings', v), { invalidate: [[...outwardKeys.all], ['store', 'enquiry']], success: 'Settings saved', onSuccess: () => setF(null) })
   const can2 = can(storePerm('outward', 'approve'))
   if (!v) return <p className="text-sm text-muted-foreground">Loading...</p>
   return (

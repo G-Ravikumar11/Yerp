@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { Search } from 'lucide-react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -22,6 +23,7 @@ const WHY_BLOCKED: Record<string, string> = { Rejected: 'Blocked: rejected', Exp
 /** Every batch in the stores and whether it may be issued. A batch on hold cannot leave for use, whatever is on hand. */
 export default function BatchesPage() {
   const { can } = useSession()
+  const fromDesk = useSearchParams()[0].get('from') === 'desk'
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
   const [page, setPage] = useState(1)
@@ -40,6 +42,7 @@ export default function BatchesPage() {
   ]
   return (
     <div>
+      {fromDesk && <Link to="/store/desk?tab=stock" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Store Desk</Link>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="w-full sm:w-72"><Input aria-label="Search batches" placeholder="Batch or material" leading={<Search />} value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} /></div>
         <Button size="sm" variant={status === 'On Hold' ? 'primary' : 'outline'} onClick={() => { setStatus(status === 'On Hold' ? '' : 'On Hold'); setPage(1) }}>Material on hold</Button>

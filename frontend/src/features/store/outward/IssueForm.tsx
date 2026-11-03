@@ -21,7 +21,8 @@ const isReturnable = (i: StoreItemOption | null) => i?.category === 'RETURNABLE'
  * direct-issue right, on its own; it is charged to a BOQ item or a cost head and says who received the material. A subcontractor issue names the
  * subcontract work order and whether each line is free of cost or recovered at the contract rate or the average cost, plus handling.
  */
-export default function IssueForm({ doc }: { doc?: Doc }) {
+/** `base`: the list it returns to - the Store Hub's issues unless opened from Store > Issue. */
+export default function IssueForm({ doc, base = '/store/hub/outward/issue' }: { doc?: Doc; base?: string }) {
   const nav = useNavigate()
   const [params] = useSearchParams()
   const { can } = useSession()
@@ -34,7 +35,7 @@ export default function IssueForm({ doc }: { doc?: Doc }) {
   const settings = useOutwardSettings()
   const indents = useOpenIndents()
   const [f, setF] = useState({
-    store_id: doc?.store_id ?? 0, issue_date: doc?.date || today(), issue_type: (doc?.issue_type ?? 'SITE') as 'SITE' | 'SUBCONTRACTOR', project_id: doc?.project_id ?? 0, work_order_id: doc?.work_order_id ?? 0,
+    store_id: doc?.store_id ?? Number(params.get('store') || 0), issue_date: doc?.date || today(), issue_type: (doc?.issue_type ?? 'SITE') as 'SITE' | 'SUBCONTRACTOR', project_id: doc?.project_id ?? 0, work_order_id: doc?.work_order_id ?? 0,
     indent_id: doc?.indent_id ?? Number(params.get('indent') || 0), subcontractor_id: doc?.subcontractor_id ?? 0, subcontract_order_id: doc?.subcontract_order_id ?? 0,
     received_by_type: doc?.received_by_type || 'PERSON', received_by_employee_id: doc?.received_by_employee_id ?? 0, received_by_name: doc?.received_by_name ?? '', purpose: doc?.purpose ?? '', remarks: doc?.remarks ?? '',
   })
@@ -78,7 +79,7 @@ export default function IssueForm({ doc }: { doc?: Doc }) {
   })
   const save = useAction(
     () => (direct ? storePost<Doc>('outward', '/issue/direct', body()) : doc ? storePut<Doc>('outward', `/issue/${doc.id}`, body()) : storePost<Doc>('outward', '/issue', body())),
-    { invalidate: [[...outwardKeys.all], ['store', 'lookup']], success: (d) => (direct ? `Issued and posted - ${d.number}` : `Saved as draft - ${d.number}`), onSuccess: (d) => nav(`/store/hub/outward/issue/${d.id}`) },
+    { invalidate: [[...outwardKeys.all], ['store', 'enquiry'], ['store', 'lookup']], success: (d) => (direct ? `Issued and posted - ${d.number}` : `Saved as draft - ${d.number}`), onSuccess: (d) => nav(`${base}/${d.id}`) },
   )
   const needsIndent = !sub && !f.indent_id && !canDirect
   const costOk = sub || filled.every((r) => r.target)
@@ -147,7 +148,7 @@ export default function IssueForm({ doc }: { doc?: Doc }) {
         {f.indent_id > 0 && pending.data && <p className="mt-2 text-xs text-muted-foreground">{pending.data.lines.map((l) => `${l.item_name}: ${num(l.pending)} ${l.base_uom} still to issue`).join('; ')}</p>}
       </section>
       <div className="flex justify-end gap-2 border-t border-border pt-4">
-        <Button type="button" variant="ghost" onClick={() => nav(doc ? `/store/hub/outward/issue/${doc.id}` : '/store/hub/outward/issue')}>Cancel</Button>
+        <Button type="button" variant="ghost" onClick={() => nav(doc ? `${base}/${doc.id}` : base)}>Cancel</Button>
         <Button type="submit" loading={save.isPending} disabled={!ready}>{direct ? <><Zap /> Issue now</> : doc ? 'Save changes' : 'Save as draft'}</Button>
       </div>
     </form>

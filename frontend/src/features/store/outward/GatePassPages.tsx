@@ -55,7 +55,7 @@ export function GatePassForm() {
   const full = useDoc('issue', issueId).data?.lines
   const picked = (full ?? []).filter((l) => Number(qty[l.id]) > 0)
   const save = useAction(() => storePost<GatePass>('outward', '/gate-pass', { ...f, issue_id: issueId, lines: picked.map((l) => ({ issue_line_id: l.id, qty: qty[l.id], uom: l.base_uom })) }),
-    { invalidate: [[...outwardKeys.all]], success: (g) => `Gate pass ${g.number} made`, onSuccess: (g) => nav(`/store/hub/outward/gate-pass/${g.id}`) })
+    { invalidate: [[...outwardKeys.all], ['store', 'enquiry']], success: (g) => `Gate pass ${g.number} made`, onSuccess: (g) => nav(`/store/hub/outward/gate-pass/${g.id}`) })
   return (
     <form onSubmit={(e) => { e.preventDefault(); if (issueId && f.destination.trim()) save.mutate() }} className="grid gap-5">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

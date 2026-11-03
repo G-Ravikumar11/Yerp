@@ -26,7 +26,7 @@ export default function DocPage() {
   })
   const receive = useAction(() => storePost<Doc>('control', `/transfer/${id}/receive`), { invalidate: refresh, success: 'Received into the store' })
   const start = useAction(() => storePost<Doc>('control', `/count/${id}/start`), { invalidate: refresh, success: 'Count started - the store is frozen' })
-  const discard = useAction(() => storeDelete<{ message: string }>('control', `/${kind?.key}/${id}`), { invalidate: [[...controlKeys.all]], onSuccess: () => nav(`/store/hub/control/${kind?.key}`) })
+  const discard = useAction(() => storeDelete<{ message: string }>('control', `/${kind?.key}/${id}`), { invalidate: [[...controlKeys.all], ['store', 'enquiry']], onSuccess: () => nav(`/store/hub/control/${kind?.key}`) })
   if (!kind) return <p className="text-sm text-muted-foreground">There is no such document type.</p>
   const back = <Link to={`/store/hub/control/${kind.key}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {kind.plural}</Link>
   if (q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>

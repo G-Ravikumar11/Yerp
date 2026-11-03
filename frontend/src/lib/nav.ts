@@ -123,6 +123,8 @@ const NAV: NavEntry[] = [
     items: [
       // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are kept as records,
       // reached from the Hub (routes.tsx sends their old addresses there).
+      // The day's store work on one screen: receive, issue, stock and what is low.
+      { label: 'Store Desk', path: '/store/desk', perm: 'store.enquiry.view|store.inward.view|store.outward.view' },
       { label: 'Store Hub', path: '/store/hub', perm: STORE_ANY },
       { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all' },
       { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage' },
@@ -169,6 +171,9 @@ const NAV: NavEntry[] = [
 export type Trail = { label: string; path?: string }[]
 
 /** Screens with no menu entry of their own: the old store's records, opened from the Store Hub. */
+/** The Store Desk's own pages, reached from it rather than from the menu. */
+const DESK_PAGES: [string, string][] = [['/store/issue', 'Material Issue'], ['/store/receive', 'Material Receive'], ['/store/stock-register', 'Stock Register'], ['/store/low-stock', 'Low Stock']]
+
 const OFF_MENU: Record<string, string> = {
   '/store/old/stock': 'Stock & Issues (old store)',
   '/store/old/goods-receipt': 'Goods Receipt & Match (old store)',
@@ -187,6 +192,8 @@ export function trailFor(pathname: string, staff = false): Trail {
       if (hit) return [...home, { label: e.label }, { label: hit.label }]
     }
   }
+  const desk = DESK_PAGES.find(([p]) => pathname === p || pathname.startsWith(p + '/'))
+  if (desk) return [...home, { label: 'Store' }, { label: 'Store Desk', path: '/store/desk' }, ...(pathname === desk[0] ? [{ label: desk[1] }] : [{ label: desk[1], path: desk[0] }, { label: 'Details' }])]
   const off = OFF_MENU[pathname]
   if (off) return [...home, { label: 'Store' }, { label: 'Store Hub', path: '/store/hub' }, { label: off }]
   // A page inside a section: /subcontractors/work-orders/12 sits under Work Orders.

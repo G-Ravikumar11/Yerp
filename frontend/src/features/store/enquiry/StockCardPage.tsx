@@ -42,17 +42,21 @@ export default function StockCardPage() {
     { id: 'bal', header: 'Balance', align: 'right', width: '7.5rem', cell: (r) => <span className="font-medium">{qty(r.running_qty)}</span> },
   ]
 
+  // Opened from the Store Desk: the way back is to the desk, not the Store Hub's stock list.
+  const desk = params.get('from') === 'desk'
+  const back = <Link to={desk ? '/store/desk?tab=stock' : '/store/hub/enquiry'} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {desk ? 'Store Desk' : 'Stock position'}</Link>
+
   if (!item) {
     return (
       <div>
-        <Link to="/store/hub/enquiry" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Stock position</Link>
+        {back}
         <p className="text-sm text-muted-foreground">Open an item from the stock position to see its stock card.</p>
       </div>
     )
   }
   return (
     <div>
-      <Link to="/store/hub/enquiry" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Stock position</Link>
+      {back}
       <h2 className="text-lg font-semibold">{pos.data?.item.name ?? 'Stock card'} <span className="font-mono text-sm font-normal text-muted-foreground">{pos.data?.item.code}</span></h2>
       {pos.data && (
         <p className="mb-4 mt-1 text-sm text-muted-foreground">

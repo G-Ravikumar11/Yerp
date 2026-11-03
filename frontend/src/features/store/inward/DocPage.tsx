@@ -13,9 +13,11 @@ import { dmy, inwardKeys, kindOf, money, num, useDoc, usePoOptions, type Doc, ty
 const QC_TONE = { NOT_REQUIRED: 'neutral', PENDING: 'warning', PASSED: 'success', FAILED: 'danger' } as const
 
 /** One inward document: its header, lines and history, the actions its status allows, and its printed form. */
-export default function DocPage() {
+/** `base`: where its list is, when it is opened from somewhere other than the Store Hub (Store > Receive). */
+export default function DocPage({ kindKey, base }: { kindKey?: InwardKind; base?: string } = {}) {
   const { kind: key, id } = useParams()
-  const kind = kindOf(key)
+  const kind = kindOf(kindKey ?? key)
+  const list = base ?? `/store/hub/inward/${kind?.key}`
   const nav = useNavigate()
   const qc = useQueryClient()
   const { can } = useSession()
@@ -25,16 +27,16 @@ export default function DocPage() {
   const [linking, setLinking] = useState(false)
   const doc = q.data
   const run = useAction(({ action, reason }: { action: DocAction; reason?: string }) => storePost<Doc>('inward', `/${kind?.key}/${id}/${action}`, { reason: reason ?? '' }), {
-    invalidate: [[...inwardKeys.all], ['store', 'lookup']],
+    invalidate: [[...inwardKeys.all], ['store', 'enquiry'], ['store', 'lookup']],
     success: (d, v) => ({ submit: 'Submitted', approve: 'Approved', post: 'Posted to stock', cancel: 'Cancelled' })[v.action] + (d.number ? ` - ${d.number}` : ''),
   })
   const discard = useAction(() => storeDelete<{ message: string }>('inward', `/${kind?.key}/${id}`), {
-    invalidate: [[...inwardKeys.all]],
-    onSuccess: () => nav(`/store/hub/inward/${kind?.key}`),
+    invalidate: [[...inwardKeys.all], ['store', 'enquiry']],
+    onSuccess: () => nav(list),
   })
   if (!kind) return <p className="text-sm text-muted-foreground">There is no such document type.</p>
   const back = (
-    <Link to={`/store/hub/inward/${kind.key}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {kind.plural}</Link>
+    <Link to={list} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {kind.plural}</Link>
   )
   if (q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
   if (q.isError || !doc) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this {kind.label.toLowerCase()}.</p></div>
@@ -102,7 +104,7 @@ export default function DocPage() {
           <Button variant="outline" asChild><a href={`/api/store/inward/${kind.key}/${doc.id}/print`} target="_blank" rel="noreferrer"><Printer /> {kind.key === 'returns' ? 'Print debit note' : 'Print'}</a></Button>
           {doc.status === 'DRAFT' && can(storePerm('inward', 'create')) && (
             <>
-              <Button variant="outline" onClick={() => nav(`/store/hub/inward/${kind.key}/${doc.id}/edit`)}><Pencil /> Edit</Button>
+              <Button variant="outline" onClick={() => nav(`${list}/${doc.id}/edit`)}><Pencil /> Edit</Button>
               <Button variant="ghost" onClick={() => setDiscarding(true)}><Trash2 /> Delete draft</Button>
             </>
           )}
@@ -131,7 +133,7 @@ export default function DocPage() {
         </ul>
       </section>
       {linking && <LinkPoModal doc={doc} onClose={() => setLinking(false)} />}
-      {checking && <QcModal doc={doc} line={checking} onClose={() => { setChecking(null); void qc.invalidateQueries({ queryKey: [...inwardKeys.all] }) }} />}
+      {checking && <QcModal doc={doc} line={checking} onClose={() => { setChecking(null); void qc.invalidateQueries({ queryKey: ['store', 'enquiry'] }); void qc.invalidateQueries({ queryKey: [...inwardKeys.all] }) }} />}
       <ConfirmDialog open={discarding} onOpenChange={setDiscarding} title="Delete this draft?" description="Nothing has moved in stock. The number it used is not given back." confirmLabel="Delete" tone="danger" onConfirm={() => { discard.mutate(); setDiscarding(false) }} />
     </div>
   )
@@ -142,7 +144,7 @@ function QcModal({ doc, line, onClose }: { doc: Doc; line: DocLine; onClose: () 
   const [rejected, setRejected] = useState(Number(line.rejected_qty) && line.qc_status === 'PASSED' ? String(Number(line.rejected_qty)) : '')
   const [note, setNote] = useState(line.qc_note ?? '')
   const save = useAction(() => storePost<Doc>('inward', `/grn/${doc.id}/qc/${line.id}`, { result, rejected_qty: result === 'PASSED' ? rejected : '', note }), {
-    invalidate: [[...inwardKeys.all]],
+    invalidate: [[...inwardKeys.all], ['store', 'enquiry']],
     success: 'Quality check recorded',
     onSuccess: onClose,
   })
@@ -173,7 +175,7 @@ function LinkPoModal({ doc, onClose }: { doc: Doc; onClose: () => void }) {
   const po = options.find((p) => p.id === poId)
   const linesFor = (l: DocLine) => (po?.lines ?? []).filter((x) => x.item_id === l.item_id)
   const save = useAction(() => storePost<Doc>('inward', `/grn/${doc.id}/link-po`, { po_id: poId, lines: Object.fromEntries(Object.entries(pick).filter(([, v]) => v)) }), {
-    invalidate: [[...inwardKeys.all], ['store', 'lookup']],
+    invalidate: [[...inwardKeys.all], ['store', 'enquiry'], ['store', 'lookup']],
     success: (d) => `Linked to ${d.po_number}`,
     onSuccess: onClose,
   })

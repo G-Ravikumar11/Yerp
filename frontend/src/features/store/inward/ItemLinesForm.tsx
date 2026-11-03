@@ -38,7 +38,7 @@ export default function ItemLinesForm({ kind, doc }: { kind: 'client-supply' | '
         : { store_id: f.store_id, as_on_date: f.date, remarks: f.remarks, lines }
       return doc ? storePut<Doc>('inward', `/${kind}/${doc.id}`, body) : storePost<Doc>('inward', `/${kind}`, body)
     },
-    { invalidate: [[...inwardKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/inward/${kind}/${d.id}`) },
+    { invalidate: [[...inwardKeys.all], ['store', 'enquiry']], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/inward/${kind}/${d.id}`) },
   )
   const ready = f.store_id > 0 && filled.length > 0 && (!supply || f.project_id > 0) && (supply || filled.every((r) => r.rate !== ''))
   return (

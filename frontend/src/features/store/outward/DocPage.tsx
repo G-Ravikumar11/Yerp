@@ -12,21 +12,23 @@ import { dmy, headLabel, kindOf, num, outwardKeys, useDoc, type Doc, type Outwar
 type Line = NonNullable<Doc['lines']>[number]
 
 /** One outward document: its header, lines and history, the actions its status allows, and its printed form. */
-export default function DocPage() {
+/** `base`: where its list is, when it is opened from somewhere other than the Store Hub (Store > Issue). */
+export default function DocPage({ kindKey, base }: { kindKey?: OutwardKind; base?: string } = {}) {
   const { kind: key, id } = useParams()
-  const kind = kindOf(key)
+  const kind = kindOf(kindKey ?? key)
+  const list = base ?? `/store/hub/outward/${kind?.key}`
   const nav = useNavigate()
   const { can } = useSession()
   const q = useDoc((kind?.key ?? 'issue') as OutwardKind, Number(id))
   const [discarding, setDiscarding] = useState(false)
   const doc = q.data
   const run = useAction(({ action, reason }: { action: DocAction; reason?: string }) => storePost<Doc>('outward', `/${kind?.key}/${id}/${action}`, { reason: reason ?? '' }), {
-    invalidate: [[...outwardKeys.all], ['store', 'lookup']],
+    invalidate: [[...outwardKeys.all], ['store', 'enquiry'], ['store', 'lookup']],
     success: (d, v) => ({ submit: 'Submitted', approve: 'Approved', post: 'Posted to stock', cancel: 'Cancelled' })[v.action] + (d.number ? ` - ${d.number}` : ''),
   })
-  const discard = useAction(() => storeDelete<{ message: string }>('outward', `/${kind?.key}/${id}`), { invalidate: [[...outwardKeys.all]], onSuccess: () => nav(`/store/hub/outward/${kind?.key}`) })
+  const discard = useAction(() => storeDelete<{ message: string }>('outward', `/${kind?.key}/${id}`), { invalidate: [[...outwardKeys.all], ['store', 'enquiry']], onSuccess: () => nav(list) })
   if (!kind) return <p className="text-sm text-muted-foreground">There is no such document type.</p>
-  const back = <Link to={`/store/hub/outward/${kind.key}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {kind.plural}</Link>
+  const back = <Link to={list} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {kind.plural}</Link>
   if (q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
   if (q.isError || !doc) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this {kind.label.toLowerCase()}.</p></div>
 
@@ -74,7 +76,7 @@ export default function DocPage() {
           {isIssue && doc.status === 'POSTED' && can(storePerm('outward', 'create')) && <Button variant="outline" onClick={() => nav(`/store/hub/outward/gate-pass/new?issue=${doc.id}`)}><DoorOpen /> Gate pass</Button>}
           {doc.status === 'DRAFT' && can(storePerm('outward', 'create')) && (
             <>
-              <Button variant="outline" onClick={() => nav(`/store/hub/outward/${kind.key}/${doc.id}/edit`)}><Pencil /> Edit</Button>
+              <Button variant="outline" onClick={() => nav(`${list}/${doc.id}/edit`)}><Pencil /> Edit</Button>
               <Button variant="ghost" onClick={() => setDiscarding(true)}><Trash2 /> Delete draft</Button>
             </>
           )}

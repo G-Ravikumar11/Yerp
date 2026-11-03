@@ -72,7 +72,7 @@ export function IndentForm({ indent }: { indent?: Indent }) {
       const body = { ...f, work_order_id: f.work_order_id || null, boq_item_id: f.boq_item_id || null, lines: filled.map((r) => ({ item_id: r.item?.id, qty: r.qty.qty, uom: r.qty.uom, purpose: r.purpose })) }
       return indent ? storePut<Indent>('outward', `/indent/${indent.id}`, body) : storePost<Indent>('outward', '/indent', body)
     },
-    { invalidate: [[...outwardKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/outward/indent/${d.id}`) },
+    { invalidate: [[...outwardKeys.all], ['store', 'enquiry']], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/outward/indent/${d.id}`) },
   )
   const ready = f.store_id > 0 && f.project_id > 0 && filled.length > 0 && !!(f.work_order_id || f.boq_item_id || f.activity.trim())
   return (
@@ -199,7 +199,7 @@ function ApproveModal({ indent, onClose }: { indent: Indent; onClose: () => void
       return { line_id: l.id, approved_qty: qty[l.id] ?? '0', uom: l.entry_uom, reason: why[l.id] ?? '', ...(cut(l) && s?.item ? { substitute_item_id: s.item.id, substitute_qty: s.qty, substitute_uom: s.uom || s.item.base_uom } : {}) }
     }),
   })
-  const save = useAction(() => storePost<Indent>('outward', `/indent/${indent.id}/approve`, body()), { invalidate: [[...outwardKeys.all]], success: (d) => `${d.number} approved`, onSuccess: onClose })
+  const save = useAction(() => storePost<Indent>('outward', `/indent/${indent.id}/approve`, body()), { invalidate: [[...outwardKeys.all], ['store', 'enquiry']], success: (d) => `${d.number} approved`, onSuccess: onClose })
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title={`Approve ${indent.number}`} description="You can reduce what was asked for, to nothing if need be, but not raise it. Say why a line is cut, and give another item in its place if you can.">
       <form onSubmit={(e) => { e.preventDefault(); save.mutate() }} className="grid gap-4">

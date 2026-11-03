@@ -25,7 +25,7 @@ export default function ReturnForm({ doc }: { doc?: Doc }) {
       const body = { grn_id: grnId, return_date: date, reason, remarks, lines: picked.map((l) => ({ grn_line_id: l.grn_line_id, qty: qty[l.grn_line_id], uom: l.base_uom, reason: why[l.grn_line_id] ?? '' })) }
       return doc ? storePut<Doc>('inward', `/returns/${doc.id}`, body) : storePost<Doc>('inward', '/returns', body)
     },
-    { invalidate: [[...inwardKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/inward/returns/${d.id}`) },
+    { invalidate: [[...inwardKeys.all], ['store', 'enquiry']], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/inward/returns/${d.id}`) },
   )
   const columns: TableColumn<Line>[] = [
     { id: 'item', header: 'Item', cell: (l) => <div><div className="font-medium">{l.item_name}</div><div className="font-mono text-xs text-muted-foreground">{l.item_code}</div></div> },

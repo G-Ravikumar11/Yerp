@@ -81,6 +81,7 @@ def _balance_rows(db, rows, status=""):
     out = []
     over = store_levels.overrides(db, {r[1].id for r in rows})
     held = store_reservations.reserved_map(db, {r[1].id for r in rows}, {r[2].id for r in rows})
+    last = _last_received(db, {r[1].id for r in rows})
     for bal, store, item, s in rows:
         o = over.get((store.id, item.id))
         level, low, high = store_levels.effective(s, o)
@@ -90,8 +91,22 @@ def _balance_rows(db, rows, status=""):
         out.append({"store_id": store.id, "store_code": store.code, "store_name": store.name, "item_id": item.id, "item_code": item.item_code,
                     "item_name": item.item_name, "category": s.category if s else None, "base_uom": (s.base_uom if s else item.units_of_measure) or "",
                     "qty": num(bal.qty), "reserved": num(held.get((store.id, item.id), ZERO)), "available": num(max(ZERO, Decimal(str(bal.qty or 0)) - held.get((store.id, item.id), ZERO))), "avg_rate": num(bal.avg_rate, "0.0001"), "value": num(bal.value, "0.01"), "status": st,
-                    "reorder_level": num(level), "min_qty": num(low), "max_qty": num(high)})
+                    "reorder_level": num(level), "min_qty": num(low), "max_qty": num(high),
+                    "last_received": last.get((store.id, item.id), "")})
     return out
+
+
+RECEIVED = (MovementType.GRN_IN.value, MovementType.CLIENT_SUPPLY_IN.value)
+
+
+def _last_received(db, store_ids):
+    """{(store id, item id): the last day stock came in from outside - a receipt or a client supply}, in one grouped query."""
+    if not store_ids:
+        return {}
+    rows = (db.query(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id, func.max(DBStoreStockLedger.txn_date))
+            .filter(DBStoreStockLedger.store_id.in_(store_ids), DBStoreStockLedger.movement_type.in_(RECEIVED))
+            .group_by(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id).all())
+    return {(s, i): d.isoformat() for s, i, d in rows if d}
 
 
 @router.get("")
@@ -280,3 +295,87 @@ def _xlsx(wb, name):
     buf = io.BytesIO()
     wb.save(buf)
     return Response(content=buf.getvalue(), media_type=XLSX, headers={"Content-Disposition": 'attachment; filename="%s"' % name})
+
+
+# ---- registers: posted receipts and issues, one row per line ------------------------------------------------------
+
+def _like(q):
+    term = (q or "").strip().replace("%", "").replace("_", "")
+    return "%" + term + "%" if term else ""
+
+
+def _uoms(db, items):
+    from app.models.store_core import DBStoreItemSettings as S
+    got = {s.item_id: s.base_uom for s in db.query(S).filter(S.item_id.in_([i.id for i in items] or [0])).all()}
+    return {i.id: got.get(i.id) or i.units_of_measure or "" for i in items}
+
+
+@router.get("/receipts")
+def receipt_register(request: Request, q: str = "", store_id: int = 0, limit: int = 500, db: Session = Depends(get_read_db)):
+    """Every goods receipt line not cancelled, newest first: what came in, from whom, who took it in, and how far it has got.
+    Only a posted one is in stock; the others wait to be submitted, approved and posted."""
+    from app.models.store_inward import DBStoreGrn, DBStoreGrnLine
+    actor = store_actor(request, db, ("store.enquiry.view", "store.inward.view"))
+    query = (db.query(DBStoreGrnLine, DBStoreGrn, models.DBItem, DBStore)
+             .join(DBStoreGrn, DBStoreGrn.id == DBStoreGrnLine.grn_id)
+             .join(models.DBItem, models.DBItem.id == DBStoreGrnLine.item_id)
+             .join(DBStore, DBStore.id == DBStoreGrn.store_id)
+             .filter(DBStoreGrn.client_id == actor.client.id, DBStoreGrn.status != "CANCELLED"))
+    seen = visible_store_ids(db, actor)
+    if seen is not None:
+        query = query.filter(DBStoreGrn.store_id.in_(seen or {0}))
+    if store_id:
+        my_store(db, actor, store_id)
+        query = query.filter(DBStoreGrn.store_id == store_id)
+    like = _like(q)
+    if like:
+        query = query.filter(or_(models.DBItem.item_name.ilike(like), models.DBItem.item_code.ilike(like), DBStoreGrn.supplier_name.ilike(like), DBStoreGrn.number.ilike(like)))
+    rows = query.order_by(DBStoreGrn.grn_date.desc(), DBStoreGrn.id.desc(), DBStoreGrnLine.line_no).limit(max(1, min(limit, 2000))).all()
+    pos = {p.id: p.number for p in db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.id.in_({g.po_id for _l, g, _i, _s in rows if g.po_id} or {0})).all()}
+    uom = _uoms(db, [i for _l, _g, i, _s in rows])
+    return {"items": [{"id": l.id, "grn_id": g.id, "number": g.number, "item_id": i.id, "item_code": i.item_code, "item_name": i.item_name,
+                       "qty": num(l.accepted_qty), "uom": uom.get(i.id, ""), "supplier": g.supplier_name or "", "po_number": pos.get(g.po_id, "") if g.po_id else "",
+                       "date": g.grn_date.isoformat() if g.grn_date else "", "received_by": g.created_by_name or "", "status": g.status, "store_code": st.code, "store_name": st.name}
+                      for l, g, i, st in rows]}
+
+
+@router.get("/issues")
+def issue_register(request: Request, q: str = "", store_id: int = 0, limit: int = 500, db: Session = Depends(get_read_db)):
+    """Every issue line not cancelled, newest first: what went out, where it was used, for which project, who issued it and
+    how far it has got. Only a posted one has left stock."""
+    from app.models.boq import DBBoqLine
+    from app.models.store_outward import DBStoreIssue, DBStoreIssueLine
+    actor = store_actor(request, db, ("store.enquiry.view", "store.outward.view"))
+    query = (db.query(DBStoreIssueLine, DBStoreIssue, models.DBItem, DBStore)
+             .join(DBStoreIssue, DBStoreIssue.id == DBStoreIssueLine.issue_id)
+             .join(models.DBItem, models.DBItem.id == DBStoreIssueLine.item_id)
+             .join(DBStore, DBStore.id == DBStoreIssue.store_id)
+             .filter(DBStoreIssue.client_id == actor.client.id, DBStoreIssue.status != "CANCELLED"))
+    seen = visible_store_ids(db, actor)
+    if seen is not None:
+        query = query.filter(DBStoreIssue.store_id.in_(seen or {0}))
+    if store_id:
+        my_store(db, actor, store_id)
+        query = query.filter(DBStoreIssue.store_id == store_id)
+    like = _like(q)
+    if like:
+        query = query.filter(or_(models.DBItem.item_name.ilike(like), models.DBItem.item_code.ilike(like), DBStoreIssue.number.ilike(like), DBStoreIssue.purpose.ilike(like)))
+    rows = query.order_by(DBStoreIssue.issue_date.desc(), DBStoreIssue.id.desc(), DBStoreIssueLine.line_no).limit(max(1, min(limit, 2000))).all()
+    jobs = {j.id: j.name for j in db.query(models.DBJob).filter(models.DBJob.id.in_({d.project_id for _l, d, _i, _s in rows} or {0})).all()}
+    boqs = {b.id: b for b in db.query(DBBoqLine).filter(DBBoqLine.id.in_({l.boq_item_id for l, _d, _i, _s in rows if l.boq_item_id} or {0})).all()}
+    subs = {c.id: c.company_name for c in db.query(models.DBContractor).filter(models.DBContractor.id.in_({d.subcontractor_id for _l, d, _i, _s in rows if d.subcontractor_id} or {0})).all()}
+    uom = _uoms(db, [i for _l, _d, i, _s in rows])
+
+    def used_for(l, d):
+        if l.boq_item_id in boqs:
+            b = boqs[l.boq_item_id]
+            return ("%s %s" % (b.item_no or "", (b.description or "").split(chr(10))[0][:60])).strip()
+        if d.purpose:
+            return d.purpose
+        return (l.cost_head or "").replace("_", " ").capitalize()
+
+    return {"items": [{"id": l.id, "issue_id": d.id, "number": d.number, "item_id": i.id, "item_code": i.item_code, "item_name": i.item_name,
+                       "qty": num(l.qty), "uom": uom.get(i.id, ""), "used_for": used_for(l, d), "subcontractor": subs.get(d.subcontractor_id, ""),
+                       "received_by": d.received_by_name or d.holder_name or "", "project": jobs.get(d.project_id, ""),
+                       "date": d.issue_date.isoformat() if d.issue_date else "", "issued_by": d.created_by_name or "", "status": d.status, "store_code": st.code}
+                      for l, d, i, st in rows]}

@@ -28,7 +28,7 @@ export function TransferForm({ doc }: { doc?: Doc }) {
       const body = { ...f, lines: filled.map((r) => ({ item_id: r.item?.id, qty: r.qty.qty, uom: r.qty.uom })) }
       return doc ? storePut<Doc>('control', `/transfer/${doc.id}`, body) : storePost<Doc>('control', '/transfer', body)
     },
-    { invalidate: [[...controlKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/control/transfer/${d.id}`) },
+    { invalidate: [[...controlKeys.all], ['store', 'enquiry']], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/control/transfer/${d.id}`) },
   )
   const ready = f.store_id > 0 && f.to_store_id > 0 && f.store_id !== f.to_store_id && filled.length > 0
   return (
@@ -85,7 +85,7 @@ export function CountForm() {
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))
   const chosen = items.filter((i): i is StoreItemOption => !!i)
   const save = useAction(() => storePost<Doc>('control', '/count', { ...f, item_ids: f.count_type === 'PARTIAL' ? chosen.map((i) => i.id) : [] }), {
-    invalidate: [[...controlKeys.all]], success: (d) => `Count created - ${d.number}. Start it when you are ready to count.`, onSuccess: (d) => nav(`/store/hub/control/count/${d.id}`),
+    invalidate: [[...controlKeys.all], ['store', 'enquiry']], success: (d) => `Count created - ${d.number}. Start it when you are ready to count.`, onSuccess: (d) => nav(`/store/hub/control/count/${d.id}`),
   })
   const ready = f.store_id > 0 && (f.count_type === 'FULL' || chosen.length > 0)
   return (
@@ -130,7 +130,7 @@ export function ScrapForm({ doc }: { doc?: Doc }) {
       const body = { ...f, project_id: f.project_id || null, lines: filled.map((r) => ({ item_id: r.item?.id, qty: r.qty.qty, uom: r.qty.uom, disposal: r.disposal, reason: r.reason, realised_value: r.disposal === 'SCRAP' ? r.realised : '', cost_head: r.head, writeoff_request_id: r.request || null })) }
       return doc ? storePut<Doc>('control', `/scrap/${doc.id}`, body) : storePost<Doc>('control', '/scrap', body)
     },
-    { invalidate: [[...controlKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/control/scrap/${d.id}`) },
+    { invalidate: [[...controlKeys.all], ['store', 'enquiry']], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/control/scrap/${d.id}`) },
   )
   const ready = f.store_id > 0 && filled.length > 0 && filled.every((r) => r.reason.trim())
   return (

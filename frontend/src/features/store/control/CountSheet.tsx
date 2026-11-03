@@ -23,7 +23,7 @@ export default function CountSheet({ doc, editable }: { doc: Doc; editable: bool
   const changed = lines.filter((l) => counted[l.id] !== undefined || why[l.id] !== undefined)
   const save = useAction(
     (rows: { item_id: number; counted_qty: string; uom: string; reason: string; rate?: string }[]) => storePut<Doc>('control', `/count/${doc.id}/sheet`, { rows }),
-    { invalidate: [[...controlKeys.all]], success: 'Counts saved', onSuccess: () => { setCounted({}); setWhy({}); setExtra({ item: null, qty: '', rate: '', reason: '' }) } },
+    { invalidate: [[...controlKeys.all], ['store', 'enquiry']], success: 'Counts saved', onSuccess: () => { setCounted({}); setWhy({}); setExtra({ item: null, qty: '', rate: '', reason: '' }) } },
   )
   const columns: TableColumn<DocLine>[] = [
     { id: 'item', header: 'Item', cell: (l) => <div><div className="font-medium">{l.item_name} {!l.in_snapshot && <span className="text-xs text-warning">(not in the books)</span>}</div><div className="font-mono text-xs text-muted-foreground">{l.item_code}</div></div> },

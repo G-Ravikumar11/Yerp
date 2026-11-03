@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link2, Plus, Trash2 } from 'lucide-react'
 import { Button, Field, Input, Select, Textarea } from '@/components/ui'
@@ -36,11 +36,13 @@ const hasShelfLife = (r: Row) => r.item?.category === 'CONSUMABLE' || !!r.item?.
 const asNumber = (n: number) => (Number.isFinite(n) ? String(Math.round(n * 10000) / 10000) : '')
 
 /** A goods receipt: against a purchase order (its lines are offered, with what is still to come) or, for a cash purchase, free lines. */
-export default function GrnForm({ doc }: { doc?: Doc }) {
+/** `base`: the list it returns to - the Store Hub's receipts unless opened from Store > Receive. */
+export default function GrnForm({ doc, base = '/store/hub/inward/grn' }: { doc?: Doc; base?: string }) {
   const nav = useNavigate()
+  const [params] = useSearchParams()
   const projects = useProjects()
   const [f, setF] = useState({
-    store_id: doc?.store_id ?? 0, grn_date: doc?.date || today(), po_id: doc?.po_id ?? 0, supplier_name: doc?.supplier_name ?? '', challan_no: doc?.challan_no ?? '',
+    store_id: doc?.store_id ?? Number(params.get('store') || 0), grn_date: doc?.date || today(), po_id: doc?.po_id ?? 0, supplier_name: doc?.supplier_name ?? '', challan_no: doc?.challan_no ?? '',
     challan_date: doc?.challan_date ?? '', vehicle_no: doc?.vehicle_no ?? '', project_id: doc?.project_id ?? 0, remarks: doc?.remarks ?? '',
     gate_delivery: doc?.gate_delivery ?? false, driver_remarks: doc?.driver_remarks ?? '',
   })
@@ -99,7 +101,7 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
       }
       return doc ? storePut<Doc>('inward', `/grn/${doc.id}`, body) : storePost<Doc>('inward', '/grn', body)
     },
-    { invalidate: [[...inwardKeys.all]], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`/store/hub/inward/grn/${d.id}`) },
+    { invalidate: [[...inwardKeys.all], ['store', 'enquiry']], success: (d) => `Saved as draft - ${d.number}`, onSuccess: (d) => nav(`${base}/${d.id}`) },
   )
   const gate = f.po_id === 0 && f.gate_delivery
   // A gate delivery is matched on its challan later, so the challan, vehicle and driver's word are required; its rate may be left for the store to fill.
@@ -181,7 +183,7 @@ export default function GrnForm({ doc }: { doc?: Doc }) {
         </div>
       </section>
       <div className="flex justify-end gap-2 border-t border-border pt-4">
-        <Button type="button" variant="ghost" onClick={() => nav(doc ? `/store/hub/inward/grn/${doc.id}` : '/store/hub/inward/grn')}>Cancel</Button>
+        <Button type="button" variant="ghost" onClick={() => nav(doc ? `${base}/${doc.id}` : base)}>Cancel</Button>
         <Button type="submit" loading={save.isPending} disabled={!ready}>{doc ? 'Save changes' : 'Save as draft'}</Button>
       </div>
     </form>

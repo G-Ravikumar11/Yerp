@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { Link, NavLink, useNavigate } from 'react-router-dom'
+import { LayoutGrid } from 'lucide-react'
+import { Button } from '@/components/ui'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
@@ -39,7 +41,10 @@ export function StoreShell({ slice, children }: { slice: StoreSlice | null; chil
   return (
     <div>
       <PageHeader eyebrow="Store" title={here?.label ?? 'Store'} description={here?.blurb ?? 'Stock held at every store, and everything that moves it.'}
-        actions={scanning && <ScanButton label="Scan" title="Scan a code" hint="An item's rack label or maker's barcode opens its stock card, a bin tag its store, and a gate pass, issue or receipt the document - the gate checks a gate pass here." onCode={(c) => void openScanned(c)} />} />
+        actions={<>
+          <Button variant="outline" asChild><Link to="/store/desk"><LayoutGrid /> Store Desk</Link></Button>
+          {scanning && <ScanButton label="Scan" title="Scan a code" hint="An item's rack label or maker's barcode opens its stock card, a bin tag its store, and a gate pass, issue or receipt the document - the gate checks a gate pass here." onCode={(c) => void openScanned(c)} />}
+        </>} />
       <nav aria-label="Store sections" className="mb-6 flex gap-1 overflow-x-auto border-b border-border">
         <NavLink to="/store/hub" end className={({ isActive }) => cn('whitespace-nowrap px-3 py-2 text-sm', isActive ? 'border-b-2 border-primary font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')}>
           Overview
