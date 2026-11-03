@@ -20,11 +20,11 @@ const v = (await api(page, 'POST', '/api/boq-variations', { boq_id: boq.id, reas
 ] })).data.variation
 
 await open(page, `/projects/boq/${boq.id}?tab=variations`)
-await page.waitForSelector('table[aria-label="Variations"] tbody tr')
-check('the variation is listed with what it adds', /BV-01/.test(await page.$eval('table[aria-label="Variations"]', (t) => t.textContent)) && /59,400/.test(await page.$eval('table[aria-label="Variations"]', (t) => t.textContent)))
+await page.waitForSelector('table[aria-label="Extra items and changes"] tbody tr')
+check('the variation is listed with what it adds', /BV-01/.test(await page.$eval('table[aria-label="Extra items and changes"]', (t) => t.textContent)) && /59,400/.test(await page.$eval('table[aria-label="Extra items and changes"]', (t) => t.textContent)))
 
 // --- open it and send it ----------------------------------------------------------------------------------------------------
-await page.click('table[aria-label="Variations"] tbody tr')
+await page.click('table[aria-label="Extra items and changes"] tbody tr')
 await page.waitForSelector('[role=dialog]')
 await page.waitForFunction(() => document.querySelector('[role=dialog]')?.textContent.includes('Rock found at 2 m'))
 check('the dialog shows what it adds and who it waits for', /59,400/.test(await page.$eval('[role=dialog]', (d) => d.textContent)), (await page.$eval('[role=dialog]', (d) => d.textContent)).slice(-160))
@@ -35,8 +35,8 @@ check('it waits in the approvals inbox', inbox.length === 1 && inbox[0].number =
 
 // --- approve it from the screen -------------------------------------------------------------------------------------------------
 await open(page, `/projects/boq/${boq.id}?tab=variations`)
-await page.waitForSelector('table[aria-label="Variations"] tbody tr')
-await page.click('table[aria-label="Variations"] tbody tr')
+await page.waitForSelector('table[aria-label="Extra items and changes"] tbody tr')
+await page.click('table[aria-label="Extra items and changes"] tbody tr')
 await page.waitForSelector('[role=dialog]')
 await clickText(page, '[role=dialog] button', 'Approve')
 await waitForToast(page, 'now approved')
@@ -45,8 +45,8 @@ const now = Object.fromEntries(book.lines.map((l) => [l.sno, l]))
 check('the BOQ is now its next revision, with the changes in it', book.boq.current_rev === 1 && now['1.1'].quantity === 580 && now['1.9']?.quantity === 25 && !!now['1.9'].item_code, JSON.stringify(book.boq))
 check('the old revision is left as it was', (await api(page, 'GET', `/api/boqs/${boq.id}?rev=0`)).data.total === 500 * 180 + 120 * 8200)
 await open(page, `/projects/boq/${boq.id}?tab=variations`)
-await page.waitForSelector('table[aria-label="Variations"] tbody tr')
-check('the list says which revision it made', /made R1/.test(await page.$eval('table[aria-label="Variations"]', (t) => t.textContent)))
+await page.waitForSelector('table[aria-label="Extra items and changes"] tbody tr')
+check('the list says which revision it made', /made R1/.test(await page.$eval('table[aria-label="Extra items and changes"]', (t) => t.textContent)))
 
 // --- a new one can be started from the screen -----------------------------------------------------------------------------------
 await clickText(page, 'main button', 'New variation')

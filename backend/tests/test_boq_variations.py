@@ -49,7 +49,7 @@ def test_a_variation_is_refused_in_words_when_a_line_is_wrong(tenant):
         ([{"kind": "extra", "description": "", "change_qty": 5, "rate": 10}], "description"),
         ([{"kind": "extra", "description": "X", "change_qty": 5, "rate": 0}], "rate"),
         ([{"kind": "extra", "description": "X", "change_qty": 0, "rate": 10}], "quantity"),
-        ([], "at least one line"),
+        ([], "at least one extra item or change"),
     ]
     for rows, word in cases:
         res = variation(tenant, boq, rows)

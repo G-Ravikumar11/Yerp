@@ -802,7 +802,7 @@ def approval_inbox(db, client, emp):
                 continue
             job = _job_of(db, v.job_id)
             items.append(_row(
-                "boq_variation", "BOQ variation", v.id, v.number, v.value,
+                "boq_variation", "BOQ extra items & changes", v.id, v.number, v.value,
                 party=(job.customer_name if job else "") or "",
                 project=(("%s %s" % (job.number or "", job.name or "")).strip() if job else ""),
                 raised_by=v.raised_by_name or "", since=v.updated_at or "", what=(v.reason or "")[:200], view="boq-view",

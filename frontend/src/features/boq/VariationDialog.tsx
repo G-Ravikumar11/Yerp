@@ -140,7 +140,7 @@ export function VariationDialog({ boqId, id, lines, open, onOpenChange }: { boqI
         open={open}
         onOpenChange={onOpenChange}
         size="xl"
-        title={v ? `${v.number}` : 'New variation to the BOQ'}
+        title={v ? `${v.number}` : 'New extra item or change to the BOQ'}
         description={v ? `${v.project} · drawn against ${v.basis_rev}${v.applied_rev ? ` · made ${v.applied_rev}` : ''}` : 'Quantities that ran past the BOQ, and extra items it never had - each with a rate. Approved, it becomes the BOQ’s next revision.'}
         footer={
           <div className="flex w-full flex-wrap items-center justify-between gap-2">
@@ -200,7 +200,7 @@ export function VariationDialog({ boqId, id, lines, open, onOpenChange }: { boqI
             )}
             {v?.rejection_reason && v.status === 'DRAFT' && <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[13px]">Sent back: {v.rejection_reason}</p>}
             <DataGrid
-              aria-label="Variation lines"
+              aria-label="Extra items and changes"
               columns={columns}
               rows={rows}
               onRowsChange={setRows}

@@ -569,7 +569,7 @@ def bv_write_lines(db, boq, vo, rows):
             if not line or line.kind not in BOQ_PRICED:
                 raise HTTPException(400, "%s: choose the BOQ line whose quantity changes." % label)
             if r.boq_key in seen:
-                raise HTTPException(400, "%s: %s is on this variation twice." % (label, boq_line_label(line)))
+                raise HTTPException(400, "%s: %s is on this twice." % (label, boq_line_label(line)))
             seen.add(r.boq_key)
             if not change:
                 raise HTTPException(400, "%s: say how much is added to (or taken from) %s." % (label, boq_line_label(line)))
@@ -597,7 +597,7 @@ def bv_write_lines(db, boq, vo, rows):
                 amount=money(change * rate), remarks=(r.remarks or "").strip(), display_order=index))
         kept += 1
     if not kept:
-        raise HTTPException(400, "A variation needs at least one line.")
+        raise HTTPException(400, "Add at least one extra item or change.")
     db.flush()
     vo.value = money(sum(l.amount or 0 for l in db.query(models.DBBoqVariationLine).filter(
         models.DBBoqVariationLine.variation_id == vo.id).all()))
@@ -678,7 +678,7 @@ def bv_decide(db, client, vo, actor_id, actor_name, approve, comments=""):
     owner = actor_id is None
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if not owner and vo.raised_by and vo.raised_by == actor_id:
-        raise HTTPException(403, "You raised this variation, so somebody else has to approve it. It is waiting with %s."
+        raise HTTPException(403, "You raised this, so somebody else has to approve it. It is waiting with %s."
                             % (sub_bill_step_name(db, step) or "the Master"))
     if not owner and (step is None or step.approver_id != actor_id):
         raise HTTPException(403, "%s is waiting with %s." % (vo.number, sub_bill_step_name(db, step) or "the Master"))
@@ -722,7 +722,7 @@ def bv_apply(db, client, boq, vo):
         if vl.kind == "quantity":
             line = by_key.get(vl.boq_key)
             if line is None:
-                raise HTTPException(409, "%s is no longer in the BOQ, so this variation cannot be applied. Send it back and correct it."
+                raise HTTPException(409, "%s is no longer in the BOQ, so this cannot be applied. Send it back and correct it."
                                     % (vl.description[:60]))
             line.quantity = money((line.quantity or 0) + vl.change_qty)
             if line.quantity < 0:

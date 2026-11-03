@@ -230,7 +230,7 @@ export default function BoqPage() {
             { value: 'boq', label: 'BOQ' },
             { value: 'summary', label: 'Summary' },
             { value: 'tracker', label: 'Tracker' },
-            { value: 'variations', label: 'Variations', count: variations.data?.summary.raised },
+            { value: 'variations', label: 'Extra items & changes', count: variations.data?.summary.raised },
             { value: 'revisions', label: 'Revisions', count: book.data?.revisions.length },
           ]}
         />
@@ -305,19 +305,19 @@ export default function BoqPage() {
           <div>
             {can('workorders.manage') && viewing === undefined && (
               <Button onClick={() => setVarying({ id: null })}>
-                <Plus /> New variation
+                <Plus /> New extra item or change
               </Button>
             )}
           </div>
           <DataTable
-            label="Variations"
+            label="Extra items and changes"
             rows={variations.data?.variations ?? []}
             rowKey={(x) => x.id}
             loading={variations.isPending}
             onRowClick={(x) => setVarying({ id: x.id })}
-            empty="No variations. Raise one when work runs past the BOQ or an item the BOQ never had is asked for."
+            empty="Nothing raised yet. Raise one when work runs past the BOQ or an item the BOQ never had is asked for."
             columns={[
-              { id: 'no', header: 'Variation', width: '9rem', cell: (x) => <span className="font-mono text-[13px] font-semibold">{x.number.slice(x.number.lastIndexOf('/') + 1)}</span> },
+              { id: 'no', header: 'No.', width: '9rem', cell: (x) => <span className="font-mono text-[13px] font-semibold">{x.number.slice(x.number.lastIndexOf('/') + 1)}</span> },
               { id: 'why', header: 'Why', cell: (x) => <div className="max-w-sm truncate" title={x.reason}>{x.reason || '-'}</div> },
               { id: 'basis', header: 'Against', hideBelow: 'md', cell: (x) => x.basis_rev },
               { id: 'val', header: 'Adds', align: 'right', cell: (x) => <span className={cn('font-semibold', x.value < 0 && 'text-danger')}>{formatINR(x.value)}</span> },
@@ -391,7 +391,7 @@ export default function BoqPage() {
         }
       >
         <div className="grid gap-4">
-          <Field label="Name of the next revision" htmlFor="rev-label"><Input id="rev-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={`R${(head?.current_rev ?? 0) + 1} - After variations`} /></Field>
+          <Field label="Name of the next revision" htmlFor="rev-label"><Input id="rev-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={`R${(head?.current_rev ?? 0) + 1} - After extra items and changes`} /></Field>
           <Field label="Why" htmlFor="rev-note"><Textarea id="rev-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2} /></Field>
         </div>
       </Modal>

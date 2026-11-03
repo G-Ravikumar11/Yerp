@@ -475,7 +475,7 @@ def bv_update(vid: int, body: BoqVariationIn, request: Request, db: Session = De
     client, _, _ = wo_actor(request, db)
     vo = boq_variation_or_404(db, client.id, vid)
     if (vo.status or "DRAFT") != "DRAFT":
-        raise HTTPException(409, "Only a draft variation can be changed. Send it back first.")
+        raise HTTPException(409, "Only a draft can be changed. Send it back first.")
     boq = boq_or_404(db, client.id, vo.boq_id)
     vo.reason = (body.reason or "").strip()
     vo.basis_rev = boq.current_rev
@@ -504,14 +504,14 @@ def act_on_boq_variation(vid: int, action: str, request: Request, body: dict = N
     move = (action or "").upper()
     allowed = BV_TRANSITIONS.get(vo.status or "DRAFT", {})
     if move not in allowed:
-        raise HTTPException(409, "A %s variation cannot be %s." % ((vo.status or "draft").lower(), past_tense(move)))
+        raise HTTPException(409, "%s is %s, so it cannot be %s." % (vo.number, (vo.status or "draft").lower(), past_tense(move)))
     body = body or {}
     comments = (body.get("comments") or "").strip()
     require_items_access(request, db, "subcontracts.approve" if move in ("APPROVE", "REJECT") else "workorders.manage")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     if move == "SUBMIT":
         if not db.query(models.DBBoqVariationLine.id).filter(models.DBBoqVariationLine.variation_id == vo.id).first():
-            raise HTTPException(409, "There is nothing on this variation to submit.")
+            raise HTTPException(409, "There is nothing on this to submit - add an extra item or a change.")
         bv_start_chain(db, client.id, vo, actor_id)
         vo.raised_by, vo.raised_by_name = actor_id, actor_name if actor_id else (vo.raised_by_name or actor_name)
     elif move == "REJECT":
@@ -540,7 +540,7 @@ def act_on_boq_variation(vid: int, action: str, request: Request, body: dict = N
                "%s of change to %s." % (inr(vo.value), boq.number), view="boq-view", ref_type="boq_variation", ref_id=vo.id,
                severity="action" if move == "SUBMIT" else "money")
         if step is not None and step.approver_id:
-            notify_employee(db, client.id, step.approver_id, "BOQ variation awaiting your approval",
+            notify_employee(db, client.id, step.approver_id, "BOQ extra items and changes awaiting your approval",
                             "%s - %s." % (vo.number, inr(vo.value)), link="/next/approvals")
         db.commit()
     db.refresh(vo)
