@@ -1,15 +1,17 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { Download, Eye, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
-import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton } from '@/components/ui'
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, Tabs } from '@/components/ui'
 import { useEntries, voucherUrl, type Entry } from '@/api/ledger'
 import { usePaymentRequests, type PaymentRequest, type RequestStatus } from '@/api/payments'
 import { projectLabel, useProjects } from '@/api/projects'
+import { useSiteCash } from '@/api/sitecash'
 import { ExpenseModal } from '@/features/ledger/VoucherModals'
+import SiteCashPage from '@/features/sitecash/SiteCashPage'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { downloadCsv, formatINR } from '@/lib/utils'
@@ -27,6 +29,8 @@ interface Row {
   amount: number
   date: string
   head: string
+  /** The bank account or cash box it was paid from; a site's spend still waiting says whose box. */
+  by: string
   status: string
   tone: 'warning' | 'info' | 'success' | 'neutral' | 'danger' | 'ember'
   /** An already-paid voucher opens its printed voucher; a request still waiting opens the requests tab to decide it. */
@@ -34,12 +38,16 @@ interface Row {
   external: boolean
 }
 
-/** Every operating expense - site overheads, equipment rentals, diesel, the rest - what it was paid to, which project it
- * was charged to, when, under what head, and whether it has been paid yet or is still waiting on a decision. */
+/** Every day's spend - diesel, transport, site sundries, rentals - in one place, whether the site paid it out of its cash
+ * box or accounts paid it: what it was paid to, which project it was charged to, when, under what head, and whether it
+ * is booked or still waiting to be checked. The Site cash tab is the boxes themselves. */
 export default function ExpensesPage() {
+  const [params] = useSearchParams()
+  const [tab, setTab] = useState(params.get('tab') === 'cash' ? 'cash' : 'all')
   const { can } = useSession()
   const entries = useEntries()
   const requests = usePaymentRequests()
+  const waiting = useSiteCash('SUBMITTED')
   const projects = useProjects()
   const [raising, setRaising] = useState(false)
 
@@ -50,7 +58,7 @@ export default function ExpensesPage() {
       .filter((e): e is Entry => e.doc_type === 'expense')
       .map((e) => ({
         key: `entry-${e.id}`, number: e.number, party: e.party_name || '-', project: e.job_id ? jobName[e.job_id] ?? '' : 'Head office',
-        amount: e.amount, date: e.paid_on, head: e.head || 'Other', status: e.voided ? 'Voided' : 'Paid',
+        amount: e.amount, date: e.paid_on, head: e.head || 'Other', by: e.account || (e.mode === 'Cash' ? 'Cash' : 'Bank'), status: e.voided ? 'Voided' : 'Paid',
         tone: e.voided ? 'neutral' : 'success', href: voucherUrl(e.id), external: true,
       }))
     // A request not yet paid: it becomes the entry above once it is, so only the still-open ones are added here.
@@ -58,11 +66,17 @@ export default function ExpensesPage() {
       .filter((r): r is PaymentRequest => r.doc_type === 'expense' && r.status !== 'PAID')
       .map((r) => ({
         key: `request-${r.id}`, number: r.number, party: r.party_name || '-', project: r.project || 'Head office',
-        amount: r.amount, date: r.requested_at, head: r.head || 'Other', status: r.status_label || r.status,
+        amount: r.amount, date: r.requested_at, head: r.head || 'Other', by: 'Payment request', status: r.status_label || r.status,
         tone: REQUEST_TONE[r.status], href: '/money/ledgers?tab=requests', external: false,
       }))
-    return [...paid, ...open].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-  }, [entries.data, requests.data, jobName])
+    // Spent on site out of a cash box and not checked yet: booked (and listed above) once accounts accept it.
+    const site: Row[] = (waiting.data?.expenses ?? []).filter((x) => x.status === 'SUBMITTED').map((x) => ({
+      key: `site-${x.id}`, number: x.number, party: x.paid_to || '-', project: x.project || 'Head office', amount: x.amount,
+      date: x.spent_on, head: x.head || 'Other', by: x.submitted_by_name ? `Site cash - ${x.submitted_by_name}` : 'Site cash',
+      status: 'Waiting for accounts', tone: 'warning', href: '/money/expenses?tab=cash', external: false,
+    }))
+    return [...paid, ...open, ...site].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+  }, [entries.data, requests.data, waiting.data, jobName])
 
   const categories = useMemo(() => {
     const by = new Map<string, number>()
@@ -75,7 +89,7 @@ export default function ExpensesPage() {
     search: (r) => [r.number, r.party, r.project, r.head].join(' '),
     status: (r) => r.status,
     date: (r) => r.date,
-    facets: { project: { label: 'Project', get: (r) => r.project } },
+    facets: { project: { label: 'Project', get: (r) => r.project }, by: { label: 'Paid from', get: (r) => (r.by.startsWith('Site cash') ? 'Site cash' : r.by) } },
   })
 
   const loading = entries.isPending || requests.isPending
@@ -86,6 +100,7 @@ export default function ExpensesPage() {
     { id: 'amount', header: 'Amount', align: 'right', sort: (r) => r.amount, cell: (r) => <span className="tabular">{formatINR(r.amount)}</span> },
     { id: 'date', header: 'Date', hideBelow: 'sm', sort: (r) => r.date, cell: (r) => formatDate(r.date) },
     { id: 'head', header: 'Category', hideBelow: 'lg', sort: (r) => r.head, cell: (r) => r.head },
+    { id: 'by', header: 'Paid from', hideBelow: 'xl', sort: (r) => r.by, cell: (r) => <span className="text-muted-foreground">{r.by}</span> },
     { id: 'status', header: 'Status', cell: (r) => <Badge tone={r.tone}>{r.status}</Badge> },
     {
       id: 'act', header: '', align: 'right', width: '3rem',
@@ -98,16 +113,18 @@ export default function ExpensesPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Accounts" title="Expenses" description="Site overheads, equipment rentals and other operating expenses."
-        actions={
+        eyebrow="Accounts" title="Daily Expenses" description="Every day's spend - diesel, transport, sundries, rentals - whether the site paid it from its cash box or accounts paid it."
+        actions={tab === 'cash' ? undefined : (
           <>
             <Button variant="outline" disabled={!filters.filtered.length} onClick={() => downloadCsv('expenses', ['Entry ID', 'Paid to', 'Project', 'Amount', 'Date', 'Category', 'Status'], filters.filtered.map((r) => [r.number, r.party, r.project, r.amount, r.date, r.head, r.status]))}>
               <Download /> Export
             </Button>
             {can('bills.pay') && <Button onClick={() => setRaising(true)}><Plus /> New Expense</Button>}
           </>
-        }
+        )}
       />
+      <div className="mb-5"><Tabs label="View" value={tab} onChange={setTab} items={[{ value: 'all', label: 'All expenses' }, { value: 'cash', label: 'Site cash boxes' }]} /></div>
+      {tab === 'cash' ? <SiteCashPage embedded /> : <>
 
       <Card className="mb-5">
         <CardHeader>
@@ -151,6 +168,7 @@ export default function ExpensesPage() {
         label="Expenses" rows={filters.filtered} columns={columns} rowKey={(r) => r.key} loading={loading}
         empty={filters.active ? 'Nothing matches those filters.' : 'No expense has been recorded yet.'}
       />
+      </>}
       <ExpenseModal kind={raising ? 'expense' : null} onClose={() => setRaising(false)} />
     </>
   )

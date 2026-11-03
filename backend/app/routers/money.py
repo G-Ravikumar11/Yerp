@@ -1787,3 +1787,83 @@ def money_entries_export(request: Request, direction: str = "", party: str = "",
                                         ("Period", "%s to %s" % (date_from or "start", date_to or "today"))),
                           closing=[(), ("Received", "", "", "", "", "", "", "", s["received"]),
                                    ("Paid", "", "", "", "", "", "", "", s["paid"])])
+
+
+# --- advances: every rupee paid out ahead of a bill, in one place ----------------------------------------------------
+
+@router.get("/api/advances")
+def advances(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
+    """Everything paid out before the work or the goods it is for: mobilisation advances to contractors (taken back
+    from their RA bills), money paid on account to suppliers, contractors and staff (set against their next bill, or
+    returned or taken from salary), and the cash staff hold for site spending in the site cash boxes.
+
+    One project's (job_id) when asked: an on-account party is listed when any of its advances was for that project."""
+    client = require_items_access(request, db, "bills.view_all")
+    from app.routers.files import advance_register
+    jobs = {j.id: ("%s %s" % (j.number or "", j.name or "")).strip()
+            for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
+
+    order_job = dict(db.query(models.DBSubcontractOrder.id, models.DBSubcontractOrder.job_id).filter(
+        models.DBSubcontractOrder.client_id == client.id).all())
+    mobilisation = []
+    for r in advance_register(request, db)["advances"]:
+        jid = order_job.get(r["order_id"])
+        if job_id and jid != job_id:
+            continue
+        # Bills that took back more than was ever paid out are a mistake to look at, not money owed to us.
+        mobilisation.append({**r, "job_id": jid, "project": jobs.get(jid, ""), "over_recovered": money(max(0.0, -r["outstanding"]))})
+
+    # On account: a party's ledger in their favour is money we paid ahead of their bills.
+    parties = {}
+    for r in _ledger_rows(db, client.id):
+        if r["party_type"] == "client" or not r["party"]:
+            continue
+        if r.get("doc_type") in ("sub_advance", "advance_set_off"):
+            continue            # the mobilisation advance and what the bills took back of it are listed above
+        key = (r["party_type"], norm_name(r["party"]))
+        p = parties.setdefault(key, {"party_type": r["party_type"], "party": r["party"], "billed": 0.0, "moved": 0.0,
+                                     "last": "", "jobs": set()})
+        p["billed"] += r["billed"] or 0
+        p["moved"] += r["moved"] or 0
+        if r.get("doc_type") == "on_account" and (r["moved"] or 0) > 0:
+            p["last"] = max(p["last"], r["date"] or "")
+            if r.get("job_id"):
+                p["jobs"].add(r["job_id"])
+    on_account = []
+    for p in parties.values():
+        ahead = money(p["moved"] - p["billed"])
+        if ahead <= 0.005 or (job_id and job_id not in p["jobs"]):
+            continue
+        on_account.append({"party_type": p["party_type"], "party": p["party"], "outstanding": ahead, "last_paid": p["last"],
+                           "projects": sorted(jobs.get(j, "") for j in p["jobs"])})
+    on_account.sort(key=lambda r: -r["outstanding"])
+
+    cash = []
+    for b in site_cash_view(request, db=db)["boxes"]:
+        if job_id and b.get("job_id") != job_id:
+            continue
+        if b.get("custodian") and (b.get("in_hand") or 0) > 0.005:
+            cash.append({"box": b["name"], "custodian": b["custodian"], "project": b.get("project") or "",
+                         "job_id": b.get("job_id"), "in_hand": money(b["in_hand"]), "pending": money(b.get("pending") or 0)})
+
+    staff = [r for r in on_account if r["party_type"] == "staff"]
+    return {"mobilisation": mobilisation, "on_account": [r for r in on_account if r["party_type"] != "staff"],
+            "staff": staff, "site_cash": cash,
+            "summary": {
+                "contractors": money(sum(max(0.0, r["outstanding"]) for r in mobilisation)),
+                "unsecured": money(sum(r["unsecured"] for r in mobilisation)),
+                "suppliers": money(sum(r["outstanding"] for r in on_account if r["party_type"] == "supplier")),
+                "on_account_contractors": money(sum(r["outstanding"] for r in on_account if r["party_type"] == "contractor")),
+                "staff": money(sum(r["outstanding"] for r in staff) + sum(r["in_hand"] for r in cash)),
+                "other": money(sum(r["outstanding"] for r in on_account if r["party_type"] == "other")),
+            }}
+
+
+@router.get("/api/advances/staff")
+def advance_staff(request: Request, db: Session = Depends(get_read_db)):
+    """The names of the staff an advance can be paid to - only the names, for accounts, who do not see the people list."""
+    client = require_items_access(request, db, "bills.view_all")
+    from app.services.hr import employee_name
+    staff = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id,
+                                               (models.DBEmployee.status == "active") | models.DBEmployee.status.is_(None)).all()
+    return {"staff": sorted(({"id": e.id, "name": employee_name(e)} for e in staff), key=lambda r: r["name"].lower())}

@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
-import { Badge, Button, ConfirmDialog, Stat, StatGrid, Tabs } from '@/components/ui'
+import { Badge, Button, ConfirmDialog, Select, Stat, StatGrid, Tabs } from '@/components/ui'
 import { cancelRelease, certifyRelease, owedKeys, useOwedPayables, useOwedReceivables, useRetentionPage, type CreditBalance, type Payable, type PartyPosition, type Position, type Receivable, type Release } from '@/api/owed'
 import { PayModal } from '@/features/money/PayModal'
 import { EInvoiceModal } from '@/features/einvoice/EInvoiceModal'
@@ -136,11 +136,25 @@ export default function OwedPage() {
     { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="retention_release" id={r.id} label={r.number} noun="retention release" /> },
   ]
 
-  const positions = ret.data?.positions ?? []
+  // Site-wise: one project's bills and retention, out of everybody's.
+  const [site, setSite] = useState('')
+  // Some lists name a project with its number in front ("JOB-0002 VIZAG SITE"), some by its name alone: one entry each.
+  const siteOf = (p: string) => (p || '').replace(/^[A-Z0-9][A-Z0-9/-]*\d\s+/, '').trim()
+  const sites = useMemo(() => [...new Set([...(recv.data?.rows ?? []), ...(pay.data?.rows ?? []), ...(ret.data?.positions ?? [])].map((r) => siteOf(r.project)).filter(Boolean))].sort(), [recv.data, pay.data, ret.data])
+  const onSite = <T extends { project: string }>(rows: T[] | undefined) => (rows ?? []).filter((r) => !site || siteOf(r.project) === site)
+  const recvRows = onSite(recv.data?.rows)
+  const payRows = onSite(pay.data?.rows)
+  const positions = onSite(ret.data?.positions)
+  const siteTotal = tab === 'owed' ? recvRows.reduce((n, r) => n + r.outstanding, 0) : tab === 'owe' ? payRows.reduce((n, r) => n + r.outstanding, 0) : 0
   return (
     <>
-      <PageHeader eyebrow="Accounts" title="Owed & Retention" description="Who owes what today, and the retention nobody chases. Money that is not late yet is kept apart from money that is." />
-      <div className="mb-5"><Tabs label="View" value={tab} onChange={setTab} items={[{ value: 'owed', label: 'Money to receive' }, { value: 'owe', label: 'Money to pay' }, { value: 'retention', label: 'Retention money' }]} /></div>
+      <PageHeader eyebrow="Accounts" title={tab === 'owe' ? 'Money to Pay' : tab === 'owed' ? 'Money to Receive' : 'Retention Money'}
+        description={tab === 'owe' ? 'Every approved supplier and contractor bill still to be paid. Accounts pay them - through Payment Approvals when that is switched on.' : 'Who owes what today, and the retention nobody chases. Money that is not late yet is kept apart from money that is.'} />
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <Tabs label="View" value={tab} onChange={setTab} items={[{ value: 'owe', label: 'Money to pay' }, { value: 'owed', label: 'Money to receive' }, { value: 'retention', label: 'Retention money' }]} />
+        <div className="w-64"><Select aria-label="Project" value={site} onChange={(e) => setSite(e.target.value)} placeholder="All projects" options={sites.map((p) => ({ value: p, label: p }))} /></div>
+        {site && tab !== 'retention' && <span className="text-sm text-muted-foreground">{site}: <strong className="tabular text-foreground">{formatINR(siteTotal)}</strong> {tab === 'owe' ? 'to pay' : 'to receive'}</span>}
+      </div>
 
       {tab === 'owed' && (
         <>
@@ -151,7 +165,7 @@ export default function OwedPage() {
             <Stat label="Worst debt" value={`${rs.worst_days ?? 0} days`} loading={recv.isPending} />
           </StatGrid>
           <AgeingStrip buckets={recv.data?.buckets} total={rs.owed ?? 0} />
-          <DataTable label="Owed to us" rows={recv.data?.rows ?? []} columns={recvCols} rowKey={(r) => `${r.doc_type ?? 'inv'}-${r.id}`} loading={recv.isPending} empty="Nobody owes anything. Nothing to chase." />
+          <DataTable label="Owed to us" rows={recvRows} columns={recvCols} rowKey={(r) => `${r.doc_type ?? 'inv'}-${r.id}`} loading={recv.isPending} empty="Nobody owes anything. Nothing to chase." />
           <InTheirFavour parties={recv.data?.parties ?? []} credits={recv.data?.credits ?? []} who="Client" favour="theirs" />
         </>
       )}
@@ -164,7 +178,7 @@ export default function OwedPage() {
             <Stat label="Over 90 days" value={compactINR(ps.over_90)} loading={pay.isPending} />
           </StatGrid>
           <AgeingStrip buckets={pay.data?.buckets} total={ps.owed ?? 0} />
-          <DataTable label="We owe" rows={pay.data?.rows ?? []} columns={payCols} rowKey={(r) => `${r.doc_type ?? 'b'}-${r.id}`} loading={pay.isPending} empty="Nothing outstanding." />
+          <DataTable label="We owe" rows={payRows} columns={payCols} rowKey={(r) => `${r.doc_type ?? 'b'}-${r.id}`} loading={pay.isPending} empty="Nothing outstanding." />
           <InTheirFavour parties={pay.data?.parties ?? []} credits={pay.data?.credits ?? []} who="Party" favour="ours" />
         </>
       )}

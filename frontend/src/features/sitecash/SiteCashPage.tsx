@@ -27,7 +27,8 @@ const FILTERS = [{ value: 'SUBMITTED', label: 'Waiting' }, { value: '', label: '
  * accounts check it and it is booked against the site; head office tops the box back up to its float.
  * The same page for both: accounts see every box, a site engineer the one they hold.
  */
-export default function SiteCashPage() {
+/** embedded: shown as the Site cash tab of Daily Expenses, under that page's heading. */
+export default function SiteCashPage({ embedded = false }: { embedded?: boolean }) {
   const [filter, setFilter] = useState('SUBMITTED')
   const q = useSiteCash(filter)
   const d = q.data
@@ -82,12 +83,12 @@ export default function SiteCashPage() {
 
   return (
     <>
-      <PageHeader eyebrow={d?.manage ? 'Accounts' : 'My work'} title="Site Cash"
+      {!embedded && <PageHeader eyebrow={d?.manage ? 'Accounts' : 'My work'} title="Site Cash"
         description={d?.manage ? 'Each site’s cash box: what it should hold, what the site has spent and is waiting to be checked, and what tops it back up.'
-          : 'The cash box you hold for the site. Enter each payment as you make it, with a photo of the bill; accounts check it.'} />
+          : 'The cash box you hold for the site. Enter each payment as you make it, with a photo of the bill; accounts check it.'} />}
       {q.isPending ? null : !d?.boxes.length ? (
         <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">
-          {d?.manage ? 'No cash boxes yet. Add one for each site under Payments & Ledgers, Bank book ("Bank account or cash box", kind Cash), then set its site, who holds it and its float here.'
+          {d?.manage ? 'No cash boxes yet. Add one for each site under Ledgers & Bank, Bank book ("Bank account or cash box", kind Cash), then set its site, who holds it and its float here.'
             : 'You do not hold a site cash box. Accounts set one up for you.'}
         </p>
       ) : (

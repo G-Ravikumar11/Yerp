@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { ArrowLeftRight, FileText, MinusCircle, PlusCircle } from 'lucide-react'
 import { Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
+import { projectLabel, useProjects } from '@/api/projects'
 import { entryAgainst, ledgerKeys, PARTY_LABEL, useEntries, voidEntry, voucherUrl, type Entry } from '@/api/ledger'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -21,7 +22,13 @@ export function EntriesTab() {
   const [transferring, setTransferring] = useState(false)
   const act = useAction((a: { e: Entry; reason: string }) => voidEntry(a.e.id, a.reason), { invalidate: [ledgerKeys.all, ['owed']], onSuccess: () => setVoiding(null) })
   const rows = q.data?.entries ?? []
-  const filters = useListFilters(rows, { search: (e) => [e.number, e.party_name, e.doc_number, e.head, e.mode, e.reference, e.account, e.note].join(' '), date: (e) => e.paid_on })
+  const projects = useProjects()
+  const jobName = useMemo(() => Object.fromEntries((projects.data ?? []).map((p) => [p.id, projectLabel(p)])), [projects.data])
+  const filters = useListFilters(rows, {
+    search: (e) => [e.number, e.party_name, e.doc_number, e.head, e.mode, e.reference, e.account, e.note].join(' '), date: (e) => e.paid_on,
+    // Site-wise: what came in and went out for one project.
+    facets: { project: { label: 'Project', get: (e) => (e.job_id ? jobName[e.job_id] ?? '' : 'Head office') } },
+  })
   const s = q.data?.summary
   const strike = (e: Entry) => cn(e.voided && 'line-through opacity-55')
 

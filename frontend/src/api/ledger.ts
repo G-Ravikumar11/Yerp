@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { get, post, put } from '@/lib/api'
 
 export type PartyType = 'client' | 'supplier' | 'contractor' | 'other'
-export const PARTY_LABEL: Record<string, string> = { client: 'Client', supplier: 'Supplier', contractor: 'Subcontractor', other: 'Other' }
+export const PARTY_LABEL: Record<string, string> = { client: 'Client', supplier: 'Supplier', contractor: 'Subcontractor', staff: 'Staff', other: 'Other' }
 
 export const ledgerKeys = { all: ['ledger'] as const }
 const k = (...p: unknown[]) => ['ledger', ...p] as const
@@ -69,7 +69,7 @@ export const transferMoney = (b: { from_account_id: number; to_account_id: numbe
 export const voidEntry = (id: number, reason: string) => post<{ message: string }>(`/api/money/entries/${id}/void`, { reason })
 
 /** Money paid or received against no bill yet. It sits in the party's ledger until a bill arrives to set it against. */
-export const recordOnAccount = (b: { direction: 'IN' | 'OUT'; party_type: string; party_name: string; amount: number; paid_on: string; mode: string; reference: string; note: string; account_id: number | null }) =>
+export const recordOnAccount = (b: { direction: 'IN' | 'OUT'; party_type: string; party_name: string; amount: number; paid_on: string; mode: string; reference: string; note: string; account_id: number | null; job_id?: number | null }) =>
   post<{ message: string }>('/api/money/entries', { ...b, doc_type: 'on_account', doc_id: null })
 
 /* --- The bank book -------------------------------------------------------------------------- */

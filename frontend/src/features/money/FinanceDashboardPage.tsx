@@ -1,8 +1,8 @@
 import { lazy, Suspense } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowUpRight, Banknote, CreditCard, Landmark, Sparkles, Wallet } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, Banknote, CreditCard, Landmark, Sparkles, TrendingUp, Wallet } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, Stat, StatGrid } from '@/components/ui'
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, Stat, StatGrid } from '@/components/ui'
 import { attentionHref, useAttention, useBalanceSheet, useCashFlow, usePayables, useProfitLoss, useReceivables, type AttentionItem } from '@/api/dashboard'
 import { Figure } from '@/features/dashboard/Figure'
 import { monthLabel } from '@/lib/cashflow'
@@ -58,7 +58,7 @@ export default function FinanceDashboardPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Accounts" title="Finance Dashboard" description="Receivables, payables, expenses and cash position across every project." />
+      <PageHeader eyebrow="Accounts" title="Finance Dashboard" description="Receivables, payables, expenses and cash position across every project." actions={<Button variant="outline" asChild><Link to="/money/cash-flow"><TrendingUp /> Cash flow by month</Link></Button>} />
 
       <StatGrid>
         {money && (

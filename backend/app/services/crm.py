@@ -501,7 +501,7 @@ def _moved(e):
     """What an entry takes off a party's balance. A client pays us and we pay suppliers and contractors; money the
     other way - a refund received from a supplier, money paid back to a client - adds to the balance instead. Every
     entry used to come off it, so a 10,000 refund from a supplier showed us owing them 20,000 less than we do."""
-    natural = {"client": "IN", "supplier": "OUT", "contractor": "OUT"}.get(e.party_type or "")
+    natural = {"client": "IN", "supplier": "OUT", "contractor": "OUT", "staff": "OUT"}.get(e.party_type or "")
     if natural and (e.direction or "") != natural:
         return -money(e.amount)
     return money(e.amount)

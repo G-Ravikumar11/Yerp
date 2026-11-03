@@ -49,7 +49,8 @@ AGEING_BUCKETS = ("Not due", "0-30", "31-60", "61-90", "90+")
 # in the bank, so that lived there too. This is those three books, kept from
 # the documents that are already here, so none of them is typed twice.
 MONEY_MODES = ("Bank transfer", "Cheque", "Cash", "UPI", "Adjustment")
-PARTY_TYPES = ("client", "supplier", "contractor", "other")
+# staff: an advance to a member of staff (salary advance, money for site work), set off when it comes back.
+PARTY_TYPES = ("client", "supplier", "contractor", "staff", "other")
 
 # Money that moves with no bill behind it, as a site office pays it: diesel at the pump, the lorry, the room rent,
 # tea for the gang. Each goes out on an expense voucher under one of these heads, charged to the project it was for;

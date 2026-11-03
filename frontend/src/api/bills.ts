@@ -18,6 +18,9 @@ export interface SupplierBill {
   reference: string
   notes: string
   approval_status: string
+  job_id?: number | null
+  /** The project it is charged to, '' for head office. */
+  project?: string
   purchase_order_id?: number | null
   itc_eligible?: boolean
   reverse_charge?: boolean

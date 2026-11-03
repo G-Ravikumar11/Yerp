@@ -34,11 +34,12 @@ export default function BillsPage() {
 
   const all = q.data ?? []
   const byTab = all.filter((b) => (tab === '' ? true : tab === 'Unpaid' ? b.status !== 'Paid' && b.status !== 'Draft' : b.status.toLowerCase() === tab.toLowerCase()))
-  const filters = useListFilters(byTab, { search: (b) => [b.number, b.vendor_name, b.reference].join(' '), date: (b) => b.issue_date })
+  const filters = useListFilters(byTab, { search: (b) => [b.number, b.vendor_name, b.reference, b.project].join(' '), date: (b) => b.issue_date, facets: { project: { label: 'Project', get: (b) => b.project || 'Head office' } } })
 
   const columns: TableColumn<SupplierBill>[] = [
     { id: 'no', header: 'Bill', sort: (b) => b.number, cell: (b) => <span className="font-semibold">{b.number || '-'}</span> },
     { id: 'vendor', header: 'Vendor', sort: (b) => b.vendor_name, cell: (b) => b.vendor_name || '-' },
+    { id: 'project', header: 'Project', hideBelow: 'lg', sort: (b) => b.project ?? '', cell: (b) => b.project || <span className="text-muted-foreground">Head office</span> },
     { id: 'issue', header: 'Issued', hideBelow: 'lg', sort: (b) => b.issue_date, cell: (b) => formatDate(b.issue_date) || '-' },
     { id: 'due', header: 'Due', hideBelow: 'md', sort: (b) => b.due_date, cell: (b) => formatDate(b.due_date) || '-' },
     { id: 'amount', header: 'Amount', align: 'right', sort: (b) => b.total, cell: (b) => formatINR(b.total) },

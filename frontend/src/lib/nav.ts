@@ -143,19 +143,17 @@ const NAV: NavEntry[] = [
     icon: Wallet,
     items: [
       { label: 'Finance Dashboard', path: '/money/dashboard', perm: 'bills.view_all' },
-      { label: 'Accounts Payable', path: '/money/owed?tab=owe', perm: 'bills.view_all' },
-      { label: 'Accounts Receivable', path: '/money/owed?tab=owed', perm: 'bills.view_all' },
-      { label: 'Expenses', path: '/money/expenses', perm: 'bills.view_all' },
-      { label: 'Project Accounting', path: '/projects/profit', perm: 'reports.view' },
-      { label: 'Cost Ledger', path: '/projects/costs', perm: 'reports.view' },
-      { label: 'Cash Flow', path: '/money/cash-flow', perm: 'bills.view_all' },
-      { label: 'Payments & Ledgers', path: '/money/ledgers', perm: 'bills.view_all' },
-      { label: 'Owed & Retention', path: '/money/owed', perm: 'bills.view_all' },
+      // Who is owed and who owes us is one page, its tabs reached straight from here; retention is its third tab.
+      { label: 'Money to Pay', path: '/money/owed?tab=owe', perm: 'bills.view_all' },
+      { label: 'Money to Receive', path: '/money/owed?tab=owed', perm: 'bills.view_all' },
       { label: 'Supplier Bills', path: '/money/supplier-bills', perm: 'bills.view_all' },
+      { label: 'Payment Approvals', path: '/money/ledgers?tab=requests', perm: 'bills.view_all' },
+      { label: 'Daily Expenses', path: '/money/expenses', perm: 'bills.view_all' },
+      { label: 'Advances', path: '/money/advances', perm: 'bills.view_all' },
+      { label: 'Ledgers & Bank', path: '/money/ledgers', perm: 'bills.view_all' },
       { label: 'GST', path: '/money/gst', perm: 'bills.view_all' },
+      { label: 'TDS & Guarantees', path: '/money/registers', perm: 'bills.view_all' },
       { label: 'Fixed Assets', path: '/money/assets', perm: 'bills.view_all' },
-      { label: 'TDS, Guarantees & Advances', path: '/money/registers', perm: 'bills.view_all' },
-      { label: 'Site Cash', path: '/money/site-cash', perm: 'bills.view_all' },
       { label: 'Tally Export', path: '/money/tally', perm: 'bills.view_all' },
     ],
   },
@@ -199,6 +197,12 @@ export function trailFor(pathname: string, staff = false): Trail {
       const hit = e.items.find((i) => i.path === pathname)
       if (hit) return [...home, { label: e.label }, { label: hit.label }]
     }
+  }
+  // A page reached from the menu only by its tabs (/money/owed?tab=owe): named after the group, under its first entry.
+  for (const e of NAV) {
+    if (e.kind !== 'group') continue
+    const tabbed = e.items.find((i) => i.path.split('?')[0] === pathname)
+    if (tabbed) return [...home, { label: e.label }, { label: tabbed.label }]
   }
   const store: Trail = [...home, { label: 'Store', path: '/store' }]
   const desk = DESK_PAGES.find(([p]) => pathname === p || pathname.startsWith(p + '/'))

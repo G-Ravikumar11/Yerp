@@ -561,7 +561,11 @@ def list_bills(request: Request, db: Session = Depends(get_read_db)):
         for e in db.query(models.DBEmployee).filter(
             models.DBEmployee.client_id == client.id).all()
     }
+    # The project each bill is charged to, so the list can be read site by site.
+    jobs = {j.id: ("%s %s" % (j.number or "", j.name or "")).strip() for j in db.query(models.DBJob).filter(
+        models.DBJob.client_id == client.id).all()}
     return [{"id": b.id, "number": b.number, "vendor_name": b.vendor_name, "vendor_email": b.vendor_email or "",
+             "job_id": b.job_id, "project": jobs.get(b.job_id, "") if b.job_id else "",
              "issue_date": b.issue_date or "", "due_date": b.due_date or "", "amount": b.amount or 0.0,
              "tax_amount": b.tax_amount or 0.0, "total": b.total or 0.0, "amount_paid": b.amount_paid or 0.0,
              "status": b.status or "Draft", "category": b.category or "general", "reference": b.reference or "",
