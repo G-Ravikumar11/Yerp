@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button, Field, Input, Modal, NumField, Select, Textarea } from '@/components/ui'
 import { saveActivity, schKeys, useWorkOrderLines, useWorkOrdersOf, type Activity, type Employee } from '@/api/schedule'
+import { useBoq, useBoqs } from '@/api/boq'
 import { useAction } from '@/lib/mutate'
 import { formatDate, today } from '@/lib/format'
 import { MasterDeleteDialog } from '@/features/deleteorder/MasterDelete'
@@ -11,7 +12,7 @@ const STATUSES = ['Not Started', 'In Progress', 'Completed', 'Delayed'] as const
 export function ActivityModal({ job, activity, others, employees = [], teamScope = 'project', milestone = false, open, onClose }: { job: number; activity: Activity | null; others: Activity[]; employees?: Employee[]; teamScope?: string; milestone?: boolean; open: boolean; onClose: () => void }) {
   const isMilestone = activity ? activity.is_milestone : milestone
   return (
-    <Modal open={open} onOpenChange={(o) => !o && onClose()} title={activity ? `Edit ${activity.code || activity.name}` : milestone ? 'New milestone' : 'New activity'} description={isMilestone ? 'A point in time that marks a stage of the project: one date, and who is answerable for it.' : 'An activity tied to a work order line fills its progress itself from the measurement book.'}>
+    <Modal open={open} onOpenChange={(o) => !o && onClose()} title={activity ? `Edit ${activity.code || activity.name}` : milestone ? 'New milestone' : 'New activity'} description={isMilestone ? 'A point in time that marks a stage of the project: one date, and who is answerable for it.' : 'An activity tied to a BOQ line fills its progress itself from what the contractors measure on it.'}>
       {open && <Form key={activity?.id ?? 'new'} job={job} activity={activity} others={others} employees={employees} teamScope={teamScope} milestone={milestone} onClose={onClose} />}
     </Modal>
   )
@@ -31,13 +32,22 @@ const chainOf = (start: number | null | undefined, all: Activity[]) => {
 function Form({ job, activity, others, employees, teamScope, milestone: asMilestone, onClose }: { job: number; activity: Activity | null; others: Activity[]; employees: Employee[]; teamScope: string; milestone: boolean; onClose: () => void }) {
   const orders = useWorkOrdersOf(job)
   const lines = useWorkOrderLines(orders.data ?? [])
+  // The project's BOQ: an activity tied to one of its lines moves with the contractors' measurements on it.
+  const boqs = useBoqs()
+  const boqId = (boqs.data?.boqs ?? []).find((b) => b.job_id === job)?.id ?? 0
+  const book = useBoq(boqId)
+  const sources = useMemo(() => [
+    ...(book.data?.lines ?? []).filter((l) => l.kind === 'item' || l.kind === 'sub')
+      .map((l) => ({ value: `boq:${l.key}`, label: `${l.item_no || l.group_code} ${l.description.split('\n')[0]}`.trim().slice(0, 140) })),
+    ...(lines.data ?? []).map((l) => ({ value: `wo:${l.id}`, label: l.label })),
+  ], [book.data, lines.data])
   const [name, setName] = useState(activity?.name ?? '')
   const [code, setCode] = useState(activity?.code ?? '')
   const [start, setStart] = useState(activity?.planned_start ?? today())
   const [finish, setFinish] = useState(activity?.planned_finish ?? '')
   const [weight, setWeight] = useState(activity?.weight ?? 0)
   const [after, setAfter] = useState(activity?.depends_on_id ? String(activity.depends_on_id) : '')
-  const [line, setLine] = useState(activity?.work_order_line_id ? String(activity.work_order_line_id) : '')
+  const [line, setLine] = useState(activity?.work_order_line_id ? `wo:${activity.work_order_line_id}` : activity?.measured_boq_key ? `boq:${activity.measured_boq_key}` : '')
   const [milestone, setMilestone] = useState(activity ? !!activity.is_milestone : asMilestone)
   const [who, setWho] = useState(activity?.assigned_to_id ? String(activity.assigned_to_id) : '')
   // Shows the status as it stands. Saved as chosen only if it is changed here; left alone, a status that was only worked out stays worked out.
@@ -58,7 +68,7 @@ function Form({ job, activity, others, employees, teamScope, milestone: asMilest
     start: !start ? (milestone ? 'Give the date.' : 'Give the start date.') : '',
     finish: milestone ? '' : !finish ? 'Give the end date.' : finish < start ? 'It cannot end before it starts.' : '',
     after: loops ? 'That would make the activities wait on each other for ever.' : '',
-    line: status === 'Completed' && line ? 'Its progress comes from the measurement book, so it cannot be marked completed by hand.' : '',
+    line: status === 'Completed' && line ? 'Its progress comes from a measurement book, so it cannot be marked completed by hand.' : '',
   }
   const bad = Object.values(errors).some(Boolean)
   // Not an error, but the programme puts it after what it waits on, so the bar will not be where these dates say.
@@ -66,7 +76,7 @@ function Form({ job, activity, others, employees, teamScope, milestone: asMilest
     ? `${pred.code || pred.name} finishes on ${formatDate(pred.planned_finish)}, so this is put after it on the chart, not on the dates typed here. To keep these dates, choose "Nothing" here.` : ''
 
   const refresh = { invalidate: [schKeys.all] }
-  const save = useAction(() => saveActivity(job, activity?.id ?? null, { name, code, planned_start: start, planned_finish: end, weight, depends_on_id: after ? Number(after) : null, work_order_line_id: line ? Number(line) : null, is_milestone: milestone, assigned_to_id: who ? Number(who) : null, status: statusTouched ? status : (activity?.stored_status ?? ''), notes }), {
+  const save = useAction(() => saveActivity(job, activity?.id ?? null, { name, code, planned_start: start, planned_finish: end, weight, depends_on_id: after ? Number(after) : null, work_order_line_id: line.startsWith('wo:') ? Number(line.slice(3)) : null, measured_boq_key: line.startsWith('boq:') ? line.slice(4) : '', is_milestone: milestone, assigned_to_id: who ? Number(who) : null, status: statusTouched ? status : (activity?.stored_status ?? ''), notes }), {
     ...refresh,
     // Said plainly when the chart has it on other dates than the ones typed (it waits on an activity that ends later).
     success: (r) => {
@@ -90,7 +100,7 @@ function Form({ job, activity, others, employees, teamScope, milestone: asMilest
         <Field label="Assigned to" htmlFor="ac-who" className="sm:col-span-3" hint={teamScope === 'company' ? 'Nobody is placed on this project yet, so everyone in the company is listed.' : 'The people on this project.'}><Select id="ac-who" value={who} placeholder="Nobody yet" onChange={(e) => setWho(e.target.value)} options={employees.map((x) => ({ value: x.id, label: x.name }))} /></Field>
         {!milestone && <Field label="Weight" htmlFor="ac-weight" hint="Its share of the whole"><NumField id="ac-weight" value={weight} onValue={setWeight} /></Field>}
         <Field label={milestone ? 'Reached after' : 'Cannot start until'} htmlFor="ac-after" error={errors.after} hint={errors.after ? undefined : early} className="sm:col-span-3"><Select id="ac-after" value={after} placeholder={milestone ? 'Nothing - it stands on its own date' : 'Nothing - it can start on its date'} onChange={(e) => setAfter(e.target.value)} options={others.filter((x) => x.id !== activity?.id).map((x) => ({ value: x.id, label: `${x.code} ${x.name}`, disabled: !!activity && chainOf(x.id, others).includes(activity.id) }))} /></Field>
-        {!milestone && <Field label="Progress comes from" htmlFor="ac-line" className="sm:col-span-3"><Select id="ac-line" value={line} placeholder="Reported by hand" onChange={(e) => setLine(e.target.value)} options={(lines.data ?? []).map((l) => ({ value: l.id, label: l.label }))} /></Field>}
+        {!milestone && <Field label="Progress comes from" htmlFor="ac-line" className="sm:col-span-3" hint={line.startsWith('boq:') ? "What the contractors have measured on this BOQ line, over the BOQ's quantity." : undefined}><Select id="ac-line" value={line} placeholder="Reported by hand" onChange={(e) => setLine(e.target.value)} options={sources} /></Field>}
         <Field label="Description / notes" htmlFor="ac-notes" hint="Optional" className="sm:col-span-3"><Textarea id="ac-notes" rows={3} maxLength={2000} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
         <label className="flex items-center gap-2 text-sm sm:col-span-3"><input type="checkbox" checked={milestone} onChange={(e) => setMilestone(e.target.checked)} /> A milestone (a point in time, not a stretch of work)</label>
       </div>

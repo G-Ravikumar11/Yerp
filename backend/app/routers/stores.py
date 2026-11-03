@@ -336,6 +336,69 @@ def adjust_stock(body: AdjustmentIn, request: Request,
                                       abs(difference))}
 
 
+@router.get("/api/stock/consumption/boq/{boq_id}")
+def boq_material_consumption(boq_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The BOQ budget's materials against what the store issued to the project - the same wastage report as an
+    order's, for the BOQ, which is the client's order. Issues from the old store and from the Hub are both counted."""
+    from app.services.store_integration import material_cost_rows
+    from app.services.stores import boq_material_budget
+    client = require_erp_read(request, db)
+    boq = db.query(models.DBBoq).filter(models.DBBoq.client_id == client.id, models.DBBoq.id == boq_id).first()
+    if boq is None:
+        raise HTTPException(404, "BOQ not found")
+    planned = {k: {"item_code": r["item_code"], "item_name": r["item_name"], "uom": r["uom"],
+                   "planned_qty": r["needed"], "planned_value": r["value"]}
+               for k, r in boq_material_budget(db, client.id, boq.job_id).items()}
+
+    actual = {}
+    for m in db.query(models.DBStockMovement).filter(
+            models.DBStockMovement.client_id == client.id,
+            models.DBStockMovement.job_id == boq.job_id,
+            models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all():
+        a = actual.setdefault(m.item_code, {"qty": 0.0, "value": 0.0, "item_name": m.item_name or ""})
+        a["qty"] = money(a["qty"] - (m.quantity or 0))
+        a["value"] = money(a["value"] - (m.value or 0))
+    hub = material_cost_rows(db, client.id, project_id=boq.job_id)
+    items = {i.id: i for i in db.query(models.DBItem).filter(
+        models.DBItem.id.in_({r[4] for r in hub} or {0})).all()}
+    for _p, _h, _w, _b, item_id, qty, value in hub:
+        it = items.get(item_id)
+        if it is None:
+            continue
+        a = actual.setdefault(it.item_code, {"qty": 0.0, "value": 0.0, "item_name": it.item_name or ""})
+        a["qty"] = money(a["qty"] + float(qty))
+        a["value"] = money(a["value"] + float(value))
+    # What was issued is matched to the budget by item code; a budget material with no code stands on its own.
+    for code in actual:
+        if code not in planned:
+            planned[code] = {"item_code": code, "item_name": actual[code]["item_name"], "uom": "",
+                             "planned_qty": 0.0, "planned_value": 0.0}
+    rows = []
+    for key, p in sorted(planned.items()):
+        a = actual.get(p["item_code"], {"qty": 0.0, "value": 0.0}) if p["item_code"] else {"qty": 0.0, "value": 0.0}
+        over = money(a["qty"] - p["planned_qty"])
+        rows.append({
+            "item_code": p["item_code"] or p["item_name"], "item_name": p["item_name"], "uom": p["uom"],
+            "planned_qty": p["planned_qty"], "planned_value": p["planned_value"],
+            "issued_qty": a["qty"], "issued_value": a["value"],
+            "variance_qty": over, "variance_value": money(a["value"] - p["planned_value"]),
+            "percent_used": round(a["qty"] / p["planned_qty"] * 100, 1) if p["planned_qty"] else 0.0,
+            "over_consumed": over > 0,
+            "unplanned": p["planned_qty"] == 0 and a["qty"] > 0,
+        })
+    return {
+        "boq": {"id": boq.id, "number": boq.number, "job_id": boq.job_id},
+        "lines": rows,
+        "summary": {
+            "planned_value": money(sum(r["planned_value"] for r in rows)),
+            "issued_value": money(sum(r["issued_value"] for r in rows)),
+            "variance_value": money(sum(r["variance_value"] for r in rows)),
+            "lines_over_consumed": len([r for r in rows if r["over_consumed"]]),
+            "unplanned_items": len([r for r in rows if r["unplanned"]]),
+        },
+    }
+
+
 @router.get("/api/stock/consumption/{work_order_id}")
 def material_consumption(work_order_id: int, request: Request,
                          db: Session = Depends(get_read_db)):

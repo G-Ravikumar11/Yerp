@@ -391,6 +391,13 @@ def material_required(db, client_id, wo):
 def boq_material_required(db, client_id, job_id):
     """What the project's BOQ budget still needs bought: each priced BOQ line's quantity times the materials one unit
     of it takes, less what is in the store and on order, the same way an order's budget is read."""
+    return shortfall(db, client_id, boq_material_budget(db, client_id, job_id))
+
+
+def boq_material_budget(db, client_id, job_id):
+    """{key: {item_code, item_name, uom, needed, rate, value}}: the materials the project's BOQ budget takes in all, each
+    priced BOQ line's quantity times what one unit of it takes. Keyed by item code, or by name and unit for a material
+    typed into the budget without one."""
     from app.services.boq import boq_lines_of_job
     qty = {l.key: l.quantity or 0.0 for l in boq_lines_of_job(db, client_id, job_id)}
     needed = {}
@@ -403,9 +410,10 @@ def boq_material_required(db, client_id, job_id):
         # A material typed into the budget without an item code is asked for by its name.
         key = code or "%s|%s" % ((i.description or "").strip().lower(), (i.uom or "").strip().lower())
         row = needed.setdefault(key, {"item_code": code, "item_name": i.description or "",
-                                      "uom": i.uom or "", "needed": 0.0, "rate": unit_rate(i.rate)})
+                                      "uom": i.uom or "", "needed": 0.0, "rate": unit_rate(i.rate), "value": 0.0})
         row["needed"] = money(row["needed"] + qty[i.boq_key] * (i.coefficient or 0))
-    return shortfall(db, client_id, needed)
+        row["value"] = money(row["value"] + qty[i.boq_key] * (i.coefficient or 0) * (i.rate or 0))
+    return needed
 
 
 def shortfall(db, client_id, needed):

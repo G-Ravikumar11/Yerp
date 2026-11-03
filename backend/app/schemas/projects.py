@@ -87,6 +87,8 @@ class ActivityIn(BaseModel):
     weight: Optional[float] = 0
     depends_on_id: Optional[int] = None
     work_order_line_id: Optional[int] = None
+    # The BOQ line whose contractor measurements give its progress; "" for none, left out to keep what it has.
+    measured_boq_key: Optional[str] = None
     is_milestone: Optional[bool] = False
     actual_start: Optional[str] = ""
     actual_finish: Optional[str] = ""

@@ -1132,6 +1132,20 @@ class ScheduleContext:
             for m in db.query(models.DBMeasurement).filter(
                     models.DBMeasurement.line_id.in_(line_ids)).all():
                 self.measures.setdefault(m.line_id, []).append((m.measured_on or "", m.quantity or 0))
+        # Tied to a BOQ line: what the contractors have measured on it, dated, against the BOQ's quantity.
+        keys = {a.measured_boq_key for a in self.acts if a.measured_boq_key and not a.work_order_line_id}
+        self.boq_qty, self.boq_measures = {}, {}
+        if keys:
+            from app.services.boq import boq_given_to_contractors, boq_lines_of_job
+            self.boq_qty = {l.key: l.quantity or 0 for l in boq_lines_of_job(db, client_id, job_id) if l.key in keys}
+            shares = {}
+            for key, g in boq_given_to_contractors(db, client_id, keys).items():
+                for it in g["items"]:
+                    shares.setdefault(it, []).append((key, g["share"].get(it, 1.0)))
+            if shares:
+                for m in db.query(models.DBSubMeasurement).filter(models.DBSubMeasurement.item_id.in_(list(shares))).all():
+                    for key, share in shares[m.item_id]:
+                        self.boq_measures.setdefault(key, []).append((m.measured_on or "", (m.quantity or 0) * share))
         self.reports, self.last = {}, {}
         ids = [a.id for a in self.acts]
         if ids:
@@ -1147,6 +1161,9 @@ class ScheduleContext:
         if a.work_order_line_id and self.ordered.get(a.work_order_line_id):
             done = sum(q for d, q in self.measures.get(a.work_order_line_id, []) if d <= iso)
             pct = min(100.0, max(0.0, done / self.ordered[a.work_order_line_id] * 100.0))
+        elif a.measured_boq_key and self.boq_qty.get(a.measured_boq_key):
+            done = sum(q for d, q in self.boq_measures.get(a.measured_boq_key, []) if d <= iso)
+            pct = min(100.0, max(0.0, done / self.boq_qty[a.measured_boq_key] * 100.0))
         elif a.id not in self.reports and (a.quantity or 0) > 0 and (a.qty_done or 0) > 0:
             pct = min(100.0, a.qty_done / a.quantity * 100.0)      # a quantity done typed on the programme, undated
         else:
@@ -1245,14 +1262,23 @@ class ScheduleContext:
         return round(sum(w.get(a.id, 0.0) * measure(a, on) for a in self.leaves), 1) if w else 0.0
 
 
+def book_measured(a):
+    """Its progress comes from a measurement book - the client order's, or the contractors' on a BOQ line - so nobody sets it by hand."""
+    return bool(a.work_order_line_id or a.measured_boq_key)
+
+
+def progress_from(a):
+    return "measurement book" if a.work_order_line_id else "contractors' measurements" if a.measured_boq_key else "reported"
+
+
 def _effective_status(a, done, state, slip):
     """What to show. Complete is complete. Otherwise what was set by hand stands - it is what the person editing said
     - except that work measured in the book, which nobody can set by hand, and work that has begun since "Not Started"
     was said. With nothing said, it is worked out: late or slipping, then under way, then not started. Whether it is
     overdue or slipping is shown beside the status in any case."""
-    if done >= 100 or (a.status == "Completed" and not a.work_order_line_id):
+    if done >= 100 or (a.status == "Completed" and not book_measured(a)):
         return "Completed"
-    said = a.status if not a.work_order_line_id else ""
+    said = a.status if not book_measured(a) else ""
     if said == "Not Started" and done > 0:
         said = "In Progress"
     if said in ("Not Started", "In Progress", "Delayed"):
@@ -1266,7 +1292,7 @@ def _effective_status(a, done, state, slip):
 
 def status_after_progress(a, pct):
     """Work reported moves the status with it: begun is under way, finished is complete."""
-    if a.work_order_line_id:
+    if book_measured(a):
         return
     if pct >= 100:
         a.status = "Completed"
@@ -1281,7 +1307,7 @@ def reconcile_activity(db, a):
     at 100 the activity is finished (on the day it was reported); anything lower opens it again, and the finish date goes -
     an activity with a finish date counts as 100% whatever was reported after, so a lower figure would otherwise change nothing.
     Measured activities (progress from the measurement book) are left to the book."""
-    if a.work_order_line_id:
+    if book_measured(a):
         return
     db.flush()
     reports = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
@@ -1387,8 +1413,8 @@ def schedule_view(db, client_id, job):
             "actual_start": a.actual_start or "", "actual_finish": a.actual_finish or "",
             "weight": money(a.weight), "share_percent": round(ctx.weight.get(a.id, 0.0) * 100, 1),
             "depends_on_id": a.depends_on_id, "depends_on": ", ".join(names[i] for i in before.get(a.id, [])) or (pred.code or pred.name if pred else ""),
-            "work_order_line_id": a.work_order_line_id, "is_milestone": bool(a.is_milestone),
-            "progress_from": "measurement book" if a.work_order_line_id else "reported",
+            "work_order_line_id": a.work_order_line_id, "measured_boq_key": a.measured_boq_key or "", "is_milestone": bool(a.is_milestone),
+            "progress_from": progress_from(a),
             "planned_percent": plan, "actual_percent": done,
             "forecast_finish": fin.isoformat() if fin else "", "slip_days": slip, "state": state,
             "status": _effective_status(a, done, state, slip), "stored_status": a.status or "", "notes": a.notes or "",
@@ -1710,7 +1736,7 @@ def activity_detail(db, client_id, a):
     return {"job": {"id": job.id, "number": job.number, "name": job.name},
             # What held it up, from the site's hindrance register: the record its delay is explained by.
             "hindrances": [hindrance_dict(h, names) for h in held],
-            "activity": dict(row, editable=not a.work_order_line_id, tasks_total=len(tasks), tasks_done=sum(1 for t in tasks if t.done),
+            "activity": dict(row, editable=not book_measured(a), tasks_total=len(tasks), tasks_done=sum(1 for t in tasks if t.done),
                              tasks=[task_dict(t, names) for t in tasks], updated_on=last[0], updated_by=last[1]),
             "history": [{"on": h.reported_on or "", "percent": h.percent or 0, "qty_done": h.qty_done, "uom": a.uom or "",
                          "note": h.note or "", "by": h.by_name or ""} for h in history]}
@@ -1737,7 +1763,7 @@ def sync_progress_from_tasks(db, client_id, activity_id, actor_name, on=None, di
         return None
     a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == activity_id,
                                                    models.DBScheduleActivity.client_id == client_id).first()
-    if a is None or a.work_order_line_id:
+    if a is None or book_measured(a):
         return None
     tasks = db.query(models.DBScheduleTask).filter(models.DBScheduleTask.activity_id == a.id).all()
     if not tasks:
@@ -1808,7 +1834,7 @@ def apply_work_updates(db, client_id, job, updates, on, actor_name, diary_id=Non
             pct = float(u.percent)
             if pct < 0 or pct > 100:
                 raise HTTPException(400, "Progress is a percentage between 0 and 100.")
-            if a.work_order_line_id:
+            if book_measured(a):
                 raise HTTPException(409, "%s takes its progress from the measurement book. Measure the work instead." % (a.code or a.name))
             if db.query(models.DBScheduleTask.id).filter(models.DBScheduleTask.activity_id == a.id).first():
                 raise HTTPException(409, "%s follows its tasks. Tick the tasks that were done instead." % (a.code or a.name))
@@ -1854,7 +1880,7 @@ def undo_diary_progress(db, client_id, diary):
             continue
         a = db.query(models.DBScheduleActivity).filter(models.DBScheduleActivity.id == aid,
                                                        models.DBScheduleActivity.client_id == client_id).first()
-        if a is None or a.work_order_line_id:
+        if a is None or book_measured(a):
             continue
         if db.query(models.DBScheduleTask.id).filter(models.DBScheduleTask.activity_id == a.id).first():
             sync_progress_from_tasks(db, client_id, a.id, "", diary.diary_date)         # follows its tasks, which are back as they were
@@ -1945,7 +1971,7 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
                 "wbs": ctx.prog.rows[a.id].wbs, "path": ctx.path(a), "boq_ref": a.boq_ref or "",
                 "uom": a.uom or "", "quantity": a.quantity or 0.0, "qty_done": round(done * (a.quantity or 0.0) / 100.0, 3),
                 "planned_start": s.isoformat() if s else "", "planned_finish": f.isoformat() if f else "",
-                "is_milestone": bool(a.is_milestone), "progress_from": "measurement book" if a.work_order_line_id else "reported",
+                "is_milestone": bool(a.is_milestone), "progress_from": progress_from(a),
                 "planned_percent": by_end, "actual_percent": done,
                 "target_today": round(max(0.0, by_end - before), 1),
                 # How far it moved on the day: done by its end less done by the end of the day before.
@@ -1956,7 +1982,7 @@ def schedule_day(db, client_id, job, on=None, ahead_days=7):
                 "days_late": (on - bf).days if bf and bucket == "overdue" and on > bf else None,
                 "baseline_finish": bf.isoformat() if bf else "",
                 "updated_on": ctx.last.get(a.id, ("", ""))[0], "updated_by": ctx.last.get(a.id, ("", ""))[1],
-                "editable": not a.work_order_line_id,
+                "editable": not book_measured(a),
                 "tasks_total": len(mine), "tasks_done": sum(1 for t in mine if t.done),
                 "tasks": [task_dict(t, names) for t in mine]}
 
@@ -2033,6 +2059,11 @@ def _apply_activity(db, client_id, job, a, body, actor_name=""):
             models.DBWorkOrder.client_id == client_id, models.DBWorkOrder.job_id == job.id).first()
         if not line:
             raise HTTPException(400, "That work order line is not on this project.")
+    boq_key = None if body.measured_boq_key is None else (body.measured_boq_key or "").strip()
+    if boq_key:
+        from app.services.boq import boq_lines_of_job
+        if boq_key not in {l.key for l in boq_lines_of_job(db, client_id, job.id)}:
+            raise HTTPException(400, "That BOQ line is not on this project's BOQ.")
     code = (body.code or "").strip()
     if code:
         clash = db.query(models.DBScheduleActivity).filter(
@@ -2060,6 +2091,8 @@ def _apply_activity(db, client_id, job, a, body, actor_name=""):
     a.weight = max(0.0, float(body.weight or 0))
     a.depends_on_id = body.depends_on_id or None
     a.work_order_line_id = body.work_order_line_id or None
+    if boq_key is not None or a.work_order_line_id:
+        a.measured_boq_key = "" if a.work_order_line_id else boq_key
     a.is_milestone = bool(body.is_milestone)
     a.actual_start = (body.actual_start or "").strip()
     a.actual_finish = (body.actual_finish or "").strip()
@@ -2070,7 +2103,7 @@ def _apply_activity(db, client_id, job, a, body, actor_name=""):
 def _set_status(db, client_id, a, status, actor_name):
     """A status picked by hand. Completed means it is done, so it reports 100% (dated, with whoever said so); an
     activity whose progress is measured in the book cannot be called complete until the book says so."""
-    if status in ("Not Started", "In Progress", "Delayed") and not a.work_order_line_id:
+    if status in ("Not Started", "In Progress", "Delayed") and not book_measured(a):
         last = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
             models.DBScheduleProgress.id.desc()).first()
         reported = (last.percent or 0) if last else 0
@@ -2080,7 +2113,7 @@ def _set_status(db, client_id, a, status, actor_name):
             raise HTTPException(409, "%s has %g%% reported, so it has started - choose In Progress, or report 0%% first." % (a.code or a.name, reported))
     a.status = status
     if status == "Completed":
-        if a.work_order_line_id:
+        if book_measured(a):
             raise HTTPException(409, "%s takes its progress from the measurement book - it is complete when the book says so." % (a.code or a.name))
         on = date.today().isoformat()
         last = db.query(models.DBScheduleProgress).filter(models.DBScheduleProgress.activity_id == a.id).order_by(
@@ -2092,7 +2125,7 @@ def _set_status(db, client_id, a, status, actor_name):
             a.actual_start = a.planned_start
         if not a.actual_finish:
             a.actual_finish = on
-    elif status in ("In Progress", "Delayed") and not a.actual_start and not a.work_order_line_id:
+    elif status in ("In Progress", "Delayed") and not a.actual_start and not book_measured(a):
         a.actual_start = date.today().isoformat()
 
 

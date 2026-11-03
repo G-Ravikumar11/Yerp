@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import { Button, Field, Input, Modal, NumField, Select } from '@/components/ui'
-import { openIssue, postIssue, stockKeys, useContractorOrders, usePlacedOrders, useStock, useStores } from '@/api/stock'
+import { openIssue, postIssue, stockKeys, useContractorOrders, useStock, useStores } from '@/api/stock'
+import { useBoqs } from '@/api/boq'
 import { projectLabel, useProjects } from '@/api/projects'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 
-/** Material from the store to a site, against an order or a project; optionally charged on to a contractor. */
+/** Material from the store to a site, charged to its project (and so to its BOQ); optionally charged on to a contractor. */
 export function IssueModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <Modal open={open} onOpenChange={(o) => !o && onClose()} title="Issue to site" description="Only what is in the store can be issued from it. The material is charged to the site it goes to." size="xl">
@@ -17,11 +18,10 @@ export function IssueModal({ open, onClose }: { open: boolean; onClose: () => vo
 
 function Form({ onClose }: { onClose: () => void }) {
   const held = useStock(false)
-  const orders = usePlacedOrders()
+  const boqs = useBoqs()
   const jobs = useProjects()
   const stores = useStores()
   const contractors = useContractorOrders()
-  const [order, setOrder] = useState('')
   const [job, setJob] = useState('')
   const [store, setStore] = useState('')
   const [on, setOn] = useState(today())
@@ -32,19 +32,19 @@ function Form({ onClose }: { onClose: () => void }) {
   const [contractor, setRecoverFrom] = useState('')
   const [markup, setMarkup] = useState(0)
   const rows = useMemo(() => (held.data?.stock ?? []).filter((r) => r.on_hand > 0), [held.data])
+  const boqOf = useMemo(() => new Map((boqs.data?.boqs ?? []).map((b) => [b.job_id, b.number])), [boqs.data])
   const lines = rows.filter((r) => (qty[r.item_code] ?? 0) > 0).map((r) => ({ item_code: r.item_code, quantity: qty[r.item_code], rate: r.rate }))
   const total = lines.reduce((t, l) => t + l.quantity * l.rate, 0)
   const over = rows.some((r) => (qty[r.item_code] ?? 0) > r.on_hand)
   const save = useAction(async (andPost: boolean) => {
-    const made = await openIssue({ work_order_id: order ? Number(order) : null, job_id: !order && job ? Number(job) : null, store, issued_on: on, issued_to: to, purpose, lines })
+    const made = await openIssue({ work_order_id: null, job_id: job ? Number(job) : null, store, issued_on: on, issued_to: to, purpose, lines })
     if (andPost || charge) return postIssue(made.issue.id, charge ? { recover_from_order_id: Number(contractor) || null, markup_percent: markup } : {})
     return { message: made.message }
   }, { invalidate: [stockKeys.all], success: (r) => r.message, onSuccess: onClose })
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Against an order" htmlFor="is-order"><Select id="is-order" value={order} placeholder="Not against a particular order" onChange={(e) => setOrder(e.target.value)} options={(orders.data ?? []).map((w) => ({ value: w.id, label: `${w.number} - ${w.job_name}` }))} /></Field>
-        {!order && <Field label="Or the project" htmlFor="is-job"><Select id="is-job" value={job} placeholder="Not job-specific" onChange={(e) => setJob(e.target.value)} options={(jobs.data ?? []).map((p) => ({ value: p.id, label: projectLabel(p) }))} /></Field>}
+        <Field label="For the project" htmlFor="is-job" hint="What goes to a project is counted against its BOQ's budget."><Select id="is-job" value={job} placeholder="Not job-specific" onChange={(e) => setJob(e.target.value)} options={(jobs.data ?? []).map((p) => ({ value: p.id, label: projectLabel(p) + (boqOf.get(p.id) ? ` (${boqOf.get(p.id)})` : '') }))} /></Field>
         <Field label="From the store" htmlFor="is-store"><Select id="is-store" value={store} placeholder="Wherever it is held" onChange={(e) => setStore(e.target.value)} options={(stores.data ?? []).filter((x) => x.value > 0).sort((a, b) => b.value - a.value).map((x) => ({ value: x.store, label: x.store }))} /></Field>
         <Field label="Date" htmlFor="is-on"><Input id="is-on" type="date" value={on} onChange={(e) => setOn(e.target.value)} /></Field>
         <Field label="Taken by" htmlFor="is-to"><Input id="is-to" value={to} onChange={(e) => setTo(e.target.value)} /></Field>

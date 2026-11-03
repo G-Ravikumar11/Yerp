@@ -131,7 +131,7 @@ export default function ChartPage() {
                         <td className={`whitespace-nowrap px-3 py-2 ${a.overdue ? 'font-semibold text-danger' : ''}`}>{formatDate(a.planned_finish)}{a.overdue && <div className="text-[11px]">{a.days_late} day{a.days_late === 1 ? '' : 's'} late</div>}</td>
                         <td className="px-3 py-2"><ProgressBar thin percent={a.actual_percent} planned={a.planned_percent} tone={BAR[a.overdue ? 'late' : (a.state as keyof typeof BAR)] ?? 'bg-primary'} label={`${a.name} done`} /><div className="text-right text-[10px] text-muted-foreground">plan {a.planned_percent}% - done {a.actual_percent}%</div></td>
                         <td className="px-3 py-2"><Badge tone={STATUS_TONE[statusOf(a)] ?? 'neutral'} dot>{statusOf(a)}</Badge>{a.overdue && <div className="text-[11px] font-semibold text-danger">overdue</div>}{a.slip_days > 0 && !a.overdue && <div className="text-[11px] text-danger">+{a.slip_days} days</div>}{a.notes && <div className="mt-0.5 max-w-48 truncate text-[11px] text-muted-foreground" title={a.notes}>{a.notes}</div>}</td>
-                        <td className="px-3 py-2"><div className="flex flex-col items-end gap-1.5">{!a.work_order_line_id && can('site.record') && a.state !== 'done' && <ProgressControl id={a.id} percent={a.actual_percent} compact />}{manage && <div className="flex gap-1.5"><Button size="sm" variant="outline" aria-label={`Edit ${a.name}`} title="Edit" onClick={() => setEditing(a)}><Pencil /></Button><Button size="sm" variant="ghost" aria-label={`Delete ${a.name}`} className="text-danger" onClick={() => setRemoving(a)}><Trash2 /></Button></div>}</div></td>
+                        <td className="px-3 py-2"><div className="flex flex-col items-end gap-1.5">{a.progress_from === 'reported' && can('site.record') && a.state !== 'done' && <ProgressControl id={a.id} percent={a.actual_percent} compact />}{manage && <div className="flex gap-1.5"><Button size="sm" variant="outline" aria-label={`Edit ${a.name}`} title="Edit" onClick={() => setEditing(a)}><Pencil /></Button><Button size="sm" variant="ghost" aria-label={`Delete ${a.name}`} className="text-danger" onClick={() => setRemoving(a)}><Trash2 /></Button></div>}</div></td>
                       </tr>
                     ))}
                   </tbody>
@@ -170,7 +170,7 @@ function Milestones({ list, onEdit, manage, canTick, onDelete }: { list: Activit
               <p className="text-xs text-muted-foreground">Due {formatDate(a.planned_finish)}{a.assigned_to && ` - ${a.assigned_to}`}{a.predecessor_code && ` - after ${a.predecessor_code}`}</p>{a.notes && <p className="mt-0.5 text-xs text-muted-foreground">{a.notes}</p>}
             </div>
             <Badge tone={done ? 'success' : a.overdue ? 'danger' : 'info'} dot>{done ? `Reached${a.actual_percent ? '' : ''}` : a.overdue ? `${a.days_late} days late` : days === 0 ? 'Due today' : `In ${days} days`}</Badge>
-            {!done && canTick && !a.work_order_line_id && <Button size="sm" variant="outline" loading={tick.isPending && tick.variables?.id === a.id} onClick={() => tick.mutate(a)}>Mark reached</Button>}
+            {!done && canTick && a.progress_from === 'reported' && <Button size="sm" variant="outline" loading={tick.isPending && tick.variables?.id === a.id} onClick={() => tick.mutate(a)}>Mark reached</Button>}
             {manage && <Button size="sm" variant="ghost" className="text-danger" aria-label={`Delete ${a.name}`} onClick={() => onDelete(a)}><Trash2 /></Button>}
           </li>
         )

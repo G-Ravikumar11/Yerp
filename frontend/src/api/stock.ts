@@ -18,8 +18,8 @@ export const useStock = (lowOnly: boolean, store = '') => useQuery({ queryKey: [
 export const useLedger = (code: string | null) => useQuery({ queryKey: ['stock', 'ledger', code], enabled: !!code, queryFn: () => get<Ledger>(`/api/stock/${encodeURIComponent(code as string)}/ledger`) })
 export const useIssues = () => useQuery({ queryKey: ['stock', 'issues'], queryFn: () => get<{ issues: Issue[]; summary: IssueSummary }>('/api/stock-issues') })
 export const useStores = () => useQuery({ queryKey: ['stock', 'stores'], queryFn: async () => (await get<{ stores: { store: string; value: number }[] }>('/api/stock/stores')).stores ?? [] })
-export const useConsumption = (wo: number) => useQuery({ queryKey: ['stock', 'consumption', wo], enabled: wo > 0, queryFn: () => get<Consumption>(`/api/stock/consumption/${wo}`) })
-export const usePlacedOrders = () => useQuery({ queryKey: ['stock', 'placed-orders'], queryFn: async () => ((await get<{ work_orders: { id: number; number: string; job_name: string; status: string }[] }>('/api/erp/work-orders')).work_orders ?? []).filter((w) => w.status !== 'Draft') })
+/** A BOQ's budgeted materials against what the store issued to its project. */
+export const useConsumption = (boq: number) => useQuery({ queryKey: ['stock', 'consumption', 'boq', boq], enabled: boq > 0, queryFn: () => get<Consumption>(`/api/stock/consumption/boq/${boq}`) })
 export const useContractorOrders = () => useQuery({ queryKey: ['stock', 'contractor-orders'], queryFn: async () => ((await get<{ orders: { id: number; wo_number: string; contractor: string; status: string }[] }>('/api/wo/orders')).orders ?? []).filter((o) => o.status === 'APPROVED' || o.status === 'EXECUTED') })
 
 export const countStock = (item_code: string, counted: number) => post<{ message: string; difference: number }>('/api/stock/adjustments', { item_code, counted, remarks: 'Physical count' })

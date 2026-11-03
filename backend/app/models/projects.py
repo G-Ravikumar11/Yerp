@@ -175,6 +175,8 @@ class DBScheduleActivity(Base):
     work_order_line_id = Column(Integer, ForeignKey("work_order_lines.id"), nullable=True, index=True)
     # The BOQ line (or section) it was drawn from, so drawing from the BOQ again adds only what is not on the programme yet.
     boq_key = Column(String, default="", index=True)
+    # The BOQ line its progress is measured on: what the contractors have measured on it over the line's quantity.
+    measured_boq_key = Column(String, default="")
     is_milestone = Column(Boolean, default=False)
     actual_start = Column(String, default="")
     actual_finish = Column(String, default="")

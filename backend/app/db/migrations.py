@@ -326,6 +326,7 @@ QUALITY_COLUMNS = (
     ("schedule_activities", "qty_done", "FLOAT DEFAULT 0"),
     ("schedule_progress", "qty_done", "FLOAT"),
     ("boq_lines", "item_no", "VARCHAR DEFAULT ''"),
+    ("schedule_activities", "measured_boq_key", "VARCHAR DEFAULT ''"),
 )
 
 

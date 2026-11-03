@@ -51,6 +51,7 @@ from app.services.employee_portal import (
 from app.services.procurement import purchase_order_to_dict
 from app.services.projects import (
     _apply_activity,
+    book_measured,
     _free_code,
     status_after_progress,
     _d,
@@ -1105,7 +1106,7 @@ def report_progress(activity_id: int, body: ProgressIn, request: Request, db: Se
         models.DBScheduleActivity.client_id == client.id).first()
     if not a:
         raise HTTPException(404, "Activity not found")
-    if a.work_order_line_id:
+    if book_measured(a):
         raise HTTPException(409, "%s takes its progress from the measurement book. "
                                  "Measure the work instead." % (a.code or a.name))
     qty = (a.quantity or 0) if (a.quantity or 0) > 0 else 0

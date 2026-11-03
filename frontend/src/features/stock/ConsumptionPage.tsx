@@ -3,16 +3,18 @@ import { Printer } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Select, Stat, StatGrid } from '@/components/ui'
-import { useConsumption, usePlacedOrders, type Consumption } from '@/api/stock'
+import { useConsumption, type Consumption } from '@/api/stock'
+import { useBoqs } from '@/api/boq'
 import { formatINR } from '@/lib/utils'
 
 type Line = Consumption['lines'][number]
 
 /** What the contract was priced on, against what the site actually drew from the store. */
 export default function ConsumptionPage() {
-  const orders = usePlacedOrders()
+  const boqs = useBoqs()
+  const list = boqs.data?.boqs ?? []
   const [pick, setPick] = useState(0)
-  const wo = pick || orders.data?.[0]?.id || 0
+  const wo = pick || list[0]?.id || 0
   const q = useConsumption(wo)
   const s = q.data?.summary
   const columns: TableColumn<Line>[] = [
@@ -26,7 +28,7 @@ export default function ConsumptionPage() {
   return (
     <>
       <PageHeader eyebrow="Store" title="Material Used vs Costed" description="What the contract was priced on, against what the site actually drew." actions={<Button variant="outline" onClick={() => window.print()}><Printer /> Print</Button>} />
-      <div className="mb-6 max-w-md"><Select aria-label="Work order" value={wo || ''} disabled={orders.isPending} placeholder={orders.isPending ? 'Loading...' : orders.data?.length ? undefined : 'No placed orders yet'} onChange={(e) => setPick(Number(e.target.value))} options={(orders.data ?? []).map((w) => ({ value: w.id, label: `${w.number} - ${w.job_name}` }))} /></div>
+      <div className="mb-6 max-w-md"><Select aria-label="BOQ" value={wo || ''} disabled={boqs.isPending} placeholder={boqs.isPending ? 'Loading...' : list.length ? undefined : 'No BOQ yet'} onChange={(e) => setPick(Number(e.target.value))} options={list.map((b) => ({ value: b.id, label: `${b.number} - ${b.project}` }))} /></div>
       <StatGrid>
         <Stat label="Costed on" value={formatINR(s?.planned_value ?? 0)} loading={q.isPending && wo > 0} />
         <Stat label="Actually drawn" value={formatINR(s?.issued_value ?? 0)} loading={q.isPending && wo > 0} />
@@ -34,7 +36,7 @@ export default function ConsumptionPage() {
         <Stat label="Items over-consumed" value={s?.lines_over_consumed ?? 0} tone={s?.lines_over_consumed ? 'warning' : undefined} loading={q.isPending && wo > 0} />
         <Stat label="Never budgeted" value={s?.unplanned_items ?? 0} tone={s?.unplanned_items ? 'danger' : undefined} loading={q.isPending && wo > 0} />
       </StatGrid>
-      <DataTable label="Consumption" rows={q.data?.lines ?? []} columns={columns} rowKey={(l) => l.item_code} loading={q.isPending && wo > 0} empty="Nothing costed or drawn on this order." />
+      <DataTable label="Consumption" rows={q.data?.lines ?? []} columns={columns} rowKey={(l) => l.item_code} loading={q.isPending && wo > 0} empty="Nothing in the BOQ's budget or drawn for its project yet." />
     </>
   )
 }

@@ -29,6 +29,8 @@ export interface Activity extends Placing {
   depends_on: string
   depends_on_id: number | null
   work_order_line_id: number | null
+  /** The BOQ line whose contractor measurements give its progress; '' for none. */
+  measured_boq_key: string
   progress_from: string
   actual_percent: number
   planned_percent: number
@@ -66,7 +68,7 @@ export interface Schedule {
   team_scope?: string
   summary: { start?: string; end?: string; duration_days?: number; overdue?: number; milestones?: number; milestones_done?: number; activities: number; planned_percent: number; actual_percent: number; variance: number; late: number; behind: number; done: number; planned_finish: string; forecast_finish: string; slip_days: number; baseline_finish?: string; measured_against?: 'baseline' | 'plan'; delayed?: number; unexplained?: number }
 }
-export interface ActivityInput { name: string; code: string; planned_start: string; planned_finish: string; weight: number; depends_on_id: number | null; work_order_line_id: number | null; is_milestone: boolean; assigned_to_id?: number | null; status?: string; notes?: string }
+export interface ActivityInput { name: string; code: string; planned_start: string; planned_finish: string; weight: number; depends_on_id: number | null; work_order_line_id: number | null; measured_boq_key?: string; is_milestone: boolean; assigned_to_id?: number | null; status?: string; notes?: string }
 export interface WoLite { id: number; number: string; job_id: number; status: string }
 export interface WoLine { id: number; label: string }
 
