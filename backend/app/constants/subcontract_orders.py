@@ -49,7 +49,7 @@ WO_CLAUSE_CATEGORIES = (
 
 # The documents the registration form asks for, in its order.
 REGISTRATION_DOCUMENTS = (("gst", "A) GST Certificate"), ("pan", "B) PAN Card"), ("aadhaar", "C) Aadhar Card"),
-                          ("photos", "D) PassPort Size Photos 2Nos"), ("cheque", "E) Cancelled Cheque"),
+                          ("photos", "D) PassPort Size Photos 2Nos"), ("cheque", "E) Cancelled Cheque or Bank Passbook"),
                           ("esi_pf", "F) ESI & PF Reg (if any)"))
 REGISTRATION_FIELDS = ("registered_project", "joining_date", "pin_code", "city", "state", "nature_of_work",
                        "entity_type", "aadhaar", "bank_branch")

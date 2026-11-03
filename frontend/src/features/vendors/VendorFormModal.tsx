@@ -40,6 +40,7 @@ const REQUIRED: [keyof Vendor, string][] = [
   ['phone_number', 'telephone number'],
   ['address', 'address'],
   ['pan', 'PAN'],
+  ['aadhaar', 'Aadhaar number'],
   ['bank_name', 'bank name'],
   ['bank_account', 'bank account number'],
   ['bank_ifsc', 'IFSC code'],
@@ -129,6 +130,8 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
         e.preventDefault()
         const missing = REQUIRED.filter(([k]) => !String(f[k] ?? '').trim()).map(([, label]) => label)
         const noDoc = VENDOR_DOCS.filter((d) => REQUIRED_DOCS.includes(d.key) && !files[d.key] && !vendor?.document_files?.[d.key]).map((d) => `the ${d.label.replace(/^[A-Z]\) /, '')} to be attached`)
+        const aadhaar = String(f.aadhaar ?? '').replace(/[\s-]/g, '')
+        if (aadhaar && !/^\d{12}$/.test(aadhaar)) return toast.error('An Aadhaar number is twelve digits.')
         if (missing.length || noDoc.length) return toast.error(`The form still needs: ${[...missing, ...noDoc].join(', ')}.`)
         save.mutate()
       }}
@@ -181,7 +184,7 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
       <Field label="GST Reg No" hint="Optional. Without one, an order to them cannot be worth more than ₹19,50,000." htmlFor="v-gst">
         <Input id="v-gst" value={f.gst_number ?? ''} onChange={upper('gst_number')} className="font-mono uppercase" placeholder="37AAAPR1234C1Z5" />
       </Field>
-      <Field label="Aadhaar" htmlFor="v-aadhaar">
+      <Field label="Aadhaar *" htmlFor="v-aadhaar">
         <Input id="v-aadhaar" value={f.aadhaar ?? ''} onChange={set('aadhaar')} inputMode="numeric" placeholder="Twelve digits" />
       </Field>
 

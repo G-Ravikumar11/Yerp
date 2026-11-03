@@ -9,7 +9,7 @@ export const VENDOR_DOCS: { key: string; label: string }[] = [
   { key: 'pan', label: 'B) PAN Card' },
   { key: 'aadhaar', label: 'C) Aadhar Card' },
   { key: 'photos', label: 'D) PassPort Size Photos 2Nos' },
-  { key: 'cheque', label: 'E) Cancelled Cheque' },
+  { key: 'cheque', label: 'E) Cancelled Cheque or Bank Passbook' },
   { key: 'esi_pf', label: 'F) ESI & PF Reg (if any)' },
 ]
 
