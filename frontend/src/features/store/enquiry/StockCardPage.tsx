@@ -44,7 +44,7 @@ export default function StockCardPage() {
 
   // Opened from the Store Desk: the way back is to the desk, not the Store Hub's stock list.
   const desk = params.get('from') === 'desk'
-  const back = <Link to={desk ? '/store/desk?tab=stock' : '/store/hub/enquiry'} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {desk ? 'Store Desk' : 'Stock position'}</Link>
+  const back = <Link to={desk ? '/store?tab=stock' : '/store/hub/enquiry'} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> {desk ? 'Store' : 'Stock position'}</Link>
 
   if (!item) {
     return (

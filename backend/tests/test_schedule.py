@@ -549,7 +549,9 @@ def test_the_status_set_in_the_edit_form_is_the_status_shown(tenant):
     assert back.status_code == 409          # reported complete by the step above
     a2 = act(tenant, j, "Walls", d(-10), d(-2))["activities"][1]
     got = put_act(tenant, a2, status="In Progress").json()["schedule"]["activities"][1]
-    assert got["status"] == "In Progress" and got["overdue"] and got["days_late"] == 2
+    # Days late are counted from the finish as the calendar keeps it (a finish on a Sunday is moved to the Saturday).
+    finish = date.fromisoformat((got.get("baseline_finish") or got["planned_finish"])[:10])
+    assert got["status"] == "In Progress" and got["overdue"] and got["days_late"] == (date.today() - finish).days >= 2
 
 
 def test_reporting_progress_moves_the_status_with_it(tenant):

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowDownToLine, ArrowUpFromLine, Boxes, TriangleAlert } from 'lucide-react'
+import { STORE_DESK_PERM } from '@/lib/nav'
+import { StoreSections } from './StoreSections'
 import { Stat, StatGrid, Tabs } from '@/components/ui'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useSession } from '@/lib/session'
@@ -23,12 +25,24 @@ function rememberedStore() {
 }
 
 /**
- * Store Desk: the whole day's store work on one page, for people who should not have to hunt through menus.
+ * The Store page, the menu's one Store entry. At the top the Store Desk: the whole day's store work on one page, for people who should not have to hunt through menus.
  * Two big buttons for the two jobs done most (material in, material out), today's figures, and the four lists as
  * tabs. Choose the store once; it is remembered, and chosen for you when you work in only one. The lists fetch fresh
  * figures every minute by themselves.
  */
 export default function StoreDeskPage() {
+  const { can } = useSession()
+  if (!can(STORE_DESK_PERM)) return (
+    <div>
+      <PageHeader eyebrow="Store" title="Store" description="Purchase and the rest of the store, from one place." />
+      <StoreSections />
+    </div>
+  )
+  return <StoreDesk />
+}
+
+/** The day's work: choose the store once, two big buttons, today's figures and the four lists; then everything else. */
+function StoreDesk() {
   const { can } = useSession()
   const [params, setParams] = useSearchParams()
   const tab = (TABS.includes(params.get('tab') as Tab) ? params.get('tab') : 'stock') as Tab
@@ -55,7 +69,7 @@ export default function StoreDeskPage() {
 
   return (
     <div>
-      <PageHeader eyebrow="Store" title="Store Desk" description="Receive material, issue material and see what is in the store - all here." />
+      <PageHeader eyebrow="Store" title="Store" description="Receive material, issue material and see what is in the store - and everything else in the store below." />
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <label htmlFor="desk-store" className="text-sm font-medium">Store</label>
         <div className="w-full sm:w-72"><StorePicker id="desk-store" value={storeId || null} placeholder="All my stores" onChange={(id) => setStoreId(id ?? 0)} /></div>
@@ -96,8 +110,8 @@ export default function StoreDeskPage() {
       <p className="mt-6 flex items-center gap-2 text-xs text-muted-foreground">
         <Boxes className="size-4" /> These lists update by themselves every minute.
         {low > 0 && <span className="flex items-center gap-1 text-danger"><TriangleAlert className="size-3.5" /> {low} low</span>}
-        <Link to="/store/hub" className="ml-auto text-primary hover:underline">All store work (Store Hub)</Link>
       </p>
+      <div className="mt-8"><StoreSections /></div>
     </div>
   )
 }

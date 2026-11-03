@@ -48,7 +48,9 @@ function LinkItem({ to, label, icon: Icon, collapsed }: { to: string; label: str
   const badge = to === '/approvals' ? (inbox.data?.mine ?? 0) : 0
   // The class is a plain string, not NavLink's function form: the tooltip wraps this link and merges its className,
   // which turns a function into its own source text and leaves the link unstyled.
-  const isActive = !!useMatch({ path: to, end: true })
+  // A link with screens beneath it (Store: /store/purchase-orders...) stays lit on them.
+  const { pathname } = useLocation()
+  const isActive = !!useMatch({ path: to, end: true }) || (to === '/store' && pathname.startsWith('/store/'))
   return (
     <Tooltip content={label} disabled={!collapsed}>
       <NavLink

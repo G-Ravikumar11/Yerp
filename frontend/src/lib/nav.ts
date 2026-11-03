@@ -18,13 +18,32 @@ import {
 
 /** Any of the Store module's six parts opens its hub. */
 const STORE_ANY = ['masters', 'enquiry', 'inward', 'outward', 'control', 'reports'].map((s) => `store.${s}.view`).join('|')
+/** The day's store work (receive, issue, stock, low stock), at the top of the Store page. */
+export const STORE_DESK_PERM = 'store.enquiry.view|store.inward.view|store.outward.view'
+
+/** What the Store page offers below the day's work, each shown only to somebody with its right. One menu entry, Store,
+ * opens them all: `block` is the heading it sits under there. */
+export type StoreSection = { label: string; path: string; perm: string; hint: string; block: 'purchase' | 'more' }
+export const STORE_SECTIONS: StoreSection[] = [
+  { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage', block: 'purchase', hint: 'Ask suppliers for quotes and compare them' },
+  { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all', block: 'purchase', hint: 'Orders to suppliers and what has arrived' },
+  { label: 'Rate Contracts', path: '/store/rate-contracts', perm: 'purchase.manage', block: 'purchase', hint: 'Rates agreed with suppliers for the year' },
+  { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all', block: 'purchase', hint: "Suppliers' bills checked against what came" },
+  // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are kept as records,
+  // reached from the Hub (routes.tsx sends their old addresses there).
+  { label: 'Full store (Hub)', path: '/store/hub', perm: STORE_ANY, block: 'more', hint: 'Transfers, counts, quality, returns, gate passes, reports' },
+  { label: 'Item Master', path: '/store/items', perm: 'items.manage', block: 'more', hint: 'Every material with its unit, code and rate' },
+  { label: 'E-way Bills', path: '/store/eway', perm: 'accounts.manage|stores.manage|stores.receive|bills.view_all|store.inward.view|store.outward.view', block: 'more', hint: 'Goods on the road and their validity' },
+]
+const STORE_OPENS = [STORE_DESK_PERM, ...STORE_SECTIONS.map((s) => s.perm)].join('|')
 
 /** notHeadOffice: left out for HO QS and HO Coordinator, whose front page is the HO portal. */
 type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
 /** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
 /** perm: the right that puts the whole group in somebody's menu (a portal). Its items may ask for more on top. */
 export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean; perm?: string }
-export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIcon; path: string; perm?: string; ownerOnly?: boolean; staffOnly?: boolean } | ({ kind: 'group' } & NavGroup)
+/** also: a second right a link needs on top of `perm` (the Store portal, and something to do in it). */
+export type NavEntry = { kind: 'link'; id: string; label: string; icon: LucideIcon; path: string; perm?: string; also?: string; ownerOnly?: boolean; staffOnly?: boolean } | ({ kind: 'group' } & NavGroup)
 
 /**
  * The same six groups the current app has, so nobody has to relearn where
@@ -114,26 +133,8 @@ const NAV: NavEntry[] = [
       { label: 'Recoveries & Work Types', path: '/subcontractors/registers' },
     ],
   },
-  {
-    kind: 'group',
-    id: 'store',
-    perm: 'store.view',
-    label: 'Store',
-    icon: Package,
-    items: [
-      // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are kept as records,
-      // reached from the Hub (routes.tsx sends their old addresses there).
-      // The day's store work on one screen: receive, issue, stock and what is low.
-      { label: 'Store Desk', path: '/store/desk', perm: 'store.enquiry.view|store.inward.view|store.outward.view' },
-      { label: 'Store Hub', path: '/store/hub', perm: STORE_ANY },
-      { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all' },
-      { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage' },
-      { label: 'Item Master', path: '/store/items', perm: 'items.manage' },
-      { label: 'Rate Contracts', path: '/store/rate-contracts', perm: 'purchase.manage' },
-      { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all' },
-      { label: 'E-way Bills', path: '/store/eway', perm: 'accounts.manage|stores.manage|stores.receive|bills.view_all|store.inward.view|store.outward.view' },
-    ],
-  },
+  // One entry for the whole store: the day's work at the top, purchase and the rest of the store below (STORE_SECTIONS).
+  { kind: 'link', id: 'store', label: 'Store', icon: Package, path: '/store', perm: 'store.view', also: STORE_OPENS },
   {
     kind: 'group',
     id: 'money',
@@ -178,7 +179,7 @@ const NAV: NavEntry[] = [
 export type Trail = { label: string; path?: string }[]
 
 /** Screens with no menu entry of their own: the old store's records, opened from the Store Hub. */
-/** The Store Desk's own pages, reached from it rather than from the menu. */
+/** The Store page's own lists, reached from it rather than from the menu. */
 const DESK_PAGES: [string, string][] = [['/store/issue', 'Material Issue'], ['/store/receive', 'Material Receive'], ['/store/stock-register', 'Stock Register'], ['/store/low-stock', 'Low Stock']]
 
 const OFF_MENU: Record<string, string> = {
@@ -199,10 +200,13 @@ export function trailFor(pathname: string, staff = false): Trail {
       if (hit) return [...home, { label: e.label }, { label: hit.label }]
     }
   }
+  const store: Trail = [...home, { label: 'Store', path: '/store' }]
   const desk = DESK_PAGES.find(([p]) => pathname === p || pathname.startsWith(p + '/'))
-  if (desk) return [...home, { label: 'Store' }, { label: 'Store Desk', path: '/store/desk' }, ...(pathname === desk[0] ? [{ label: desk[1] }] : [{ label: desk[1], path: desk[0] }, { label: 'Details' }])]
+  if (desk) return [...store, ...(pathname === desk[0] ? [{ label: desk[1] }] : [{ label: desk[1], path: desk[0] }, { label: 'Details' }])]
   const off = OFF_MENU[pathname]
-  if (off) return [...home, { label: 'Store' }, { label: 'Store Hub', path: '/store/hub' }, { label: off }]
+  if (off) return [...store, { label: 'Full store (Hub)', path: '/store/hub' }, { label: off }]
+  const section = STORE_SECTIONS.find((s) => pathname === s.path) ?? STORE_SECTIONS.find((s) => pathname.startsWith(s.path + '/'))
+  if (section) return [...store, ...(pathname === section.path ? [{ label: section.label }] : [{ label: section.label, path: section.path }, { label: 'Details' }])]
   // A page inside a section: /subcontractors/work-orders/12 sits under Work Orders.
   for (const e of NAV) {
     if (e.kind !== 'group') continue
@@ -220,7 +224,7 @@ export function visibleNav(can: (perm: string) => boolean, staff = false, headOf
     if (e.kind === 'group' && e.perm && !can(e.perm)) return []
     if (e.kind === 'link' && e.ownerOnly && staff) return []
     if (e.kind === 'link' && e.staffOnly && !staff) return []
-    if (e.kind === 'link') return !e.perm || can(e.perm) ? [e] : []
+    if (e.kind === 'link') return (!e.perm || can(e.perm)) && (!e.also || can(e.also)) ? [e] : []
     const items = e.items.filter((i) => (!i.perm || can(i.perm)) && !(headOffice && i.notHeadOffice))
     return items.length ? [{ ...e, items }] : []
   })
@@ -232,11 +236,11 @@ export function groupFor(pathname: string): string | null {
 }
 
 export function allRoutes(): { path: string; label: string; group?: string }[] {
-  return NAV.flatMap((e) =>
+  return [...NAV.flatMap((e) =>
     e.kind === 'link'
       ? e.path === '/'
         ? []
         : [{ path: e.path, label: e.label }]
       : e.items.map((i) => ({ path: i.path, label: i.label, group: e.label })),
-  )
+  ), ...STORE_SECTIONS.map((s) => ({ path: s.path, label: s.label, group: 'Store' }))]
 }

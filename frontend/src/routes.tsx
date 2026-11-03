@@ -37,6 +37,8 @@ export const REDIRECTS: { from: string; to: string }[] = [
   { from: '/store/stock', to: '/store/hub/enquiry' },
   { from: '/store/material-vouchers', to: '/store/hub/outward/issue' },
   { from: '/store/material-costing', to: '/store/hub/reports/norm-variance' },
+  // The Store Desk is the Store page now, the one entry in the menu.
+  { from: '/store/desk', to: '/store' },
 ]
 
 export const SCREENS: Screen[] = [
@@ -100,7 +102,7 @@ export const SCREENS: Screen[] = [
   { path: '/projects/budgeting', Component: page(() => import('@/features/budgeting/BudgetingPage')) },
   { path: '/projects/profit', Component: page(() => import('@/features/projects/ProjectProfitPage')) },
   { path: '/store/hub', Component: page(() => import('@/features/store/StorePage')) },
-  { path: '/store/desk', Component: page(() => import('@/features/store/registers/StoreDeskPage')) },
+  { path: '/store', Component: page(() => import('@/features/store/registers/StoreDeskPage')) },
   { path: '/store/stock-register', Component: page(() => import('@/features/store/registers/StockRegisterPage')) },
   { path: '/store/issue/*', Component: page(() => import('@/features/store/registers/IssueSection')) },
   { path: '/store/receive/*', Component: page(() => import('@/features/store/registers/ReceiveSection')) },

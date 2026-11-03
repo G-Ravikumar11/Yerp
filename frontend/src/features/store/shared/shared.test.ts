@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { visibleNav } from '@/lib/nav'
+import { visibleNav, STORE_SECTIONS } from '@/lib/nav'
 import { infoFor } from '@/lib/pageInfo'
 import { availableActions } from './DocActionsBar'
 import { baseQty } from './UomQtyInput'
@@ -31,13 +31,15 @@ describe('the quantity in base units', () => {
 
 describe('the Store module in the menu and the page notes', () => {
   const canWith = (...held: string[]) => (perm: string) => perm.split('|').some((p) => held.includes(p))
-  const storeItems = (held: string[]) => {
-    const g = visibleNav(canWith('store.view', ...held), true).find((e) => e.kind === 'group' && e.id === 'store')
-    return g && g.kind === 'group' ? g.items.map((i) => i.path) : []
+  // The menu has one Store entry; the Store page shows the Hub's tile to whoever may open one of its parts.
+  const storeTiles = (held: string[]) => {
+    const can = canWith('store.view', ...held)
+    const entry = visibleNav(can, true).some((e) => e.kind === 'link' && e.id === 'store')
+    return entry ? STORE_SECTIONS.filter((s) => can(s.perm)).map((s) => s.path) : []
   }
   it('shows the hub to anyone who may open one of its parts', () => {
-    expect(storeItems(['store.inward.view'])).toContain('/store/hub')
-    expect(storeItems([])).not.toContain('/store/hub')
+    expect(storeTiles(['store.inward.view'])).toContain('/store/hub')
+    expect(storeTiles([])).not.toContain('/store/hub')
   })
   it('explains every address beneath a part', () => {
     expect(infoFor('/store/hub/inward/grn/12')).toBe(infoFor('/store/hub/inward/*'))

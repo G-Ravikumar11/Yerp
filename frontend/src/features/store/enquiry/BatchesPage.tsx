@@ -42,7 +42,7 @@ export default function BatchesPage() {
   ]
   return (
     <div>
-      {fromDesk && <Link to="/store/desk?tab=stock" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Store Desk</Link>}
+      {fromDesk && <Link to="/store?tab=stock" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Store</Link>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="w-full sm:w-72"><Input aria-label="Search batches" placeholder="Batch or material" leading={<Search />} value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} /></div>
         <Button size="sm" variant={status === 'On Hold' ? 'primary' : 'outline'} onClick={() => { setStatus(status === 'On Hold' ? '' : 'On Hold'); setPage(1) }}>Material on hold</Button>

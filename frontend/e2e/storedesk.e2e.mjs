@@ -14,7 +14,7 @@ for (const step of ['submit', 'approve', 'post']) await api(page, 'POST', `/api/
 await api(page, 'POST', '/api/store/outward/issue/direct', { store_id: Number(STORE), issue_date: today, project_id: job, received_by_type: 'FOREMAN', received_by_name: 'Suresh', purpose: 'Block A - Foundation',
   lines: [{ item_id: Number(ITEM), qty: '60', uom: 'Bag', cost_head: 'OVERHEAD' }] })
 
-await open(page, '/store/desk')
+await open(page, '/store')
 await page.waitForFunction((t) => document.querySelector('table[aria-label="Stock register"]')?.textContent.includes(t), { timeout: 15000 }, tag)
 const main = await text('main')
 check('the desk has the two big jobs and today\'s figures', /Receive material/.test(main) && /Issue material/.test(main) && /Received today/.test(main) && /Issued today/.test(main) && /Low stock/.test(main))
@@ -26,7 +26,7 @@ for (const [tab, table, word] of [['Received', 'Material received', 'Ultratech C
   await page.waitForFunction((t, w) => document.querySelector(`table[aria-label="${t}"]`)?.textContent.includes(w), { timeout: 15000 }, table, word)
   check(`the ${tab} tab shows its list`, true)
 }
-await open(page, '/store/desk')
+await open(page, '/store')
 await sleep(1200)
 check('the chosen store is remembered', (await page.$eval('#desk-store', (e) => e.value)) === String(STORE))
 await clickText(page, 'main a', 'Receive material')

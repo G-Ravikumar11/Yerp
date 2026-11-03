@@ -13,7 +13,7 @@ const clickRow = (table, word) => page.evaluate((t, w) => [...document.querySele
 // The hub leads to the desk.
 await open(page, '/store/hub')
 await clickText(page, 'main a', 'Store Desk')
-await page.waitForFunction(() => location.pathname.endsWith('/store/desk'), { timeout: 15000 })
+await page.waitForFunction(() => location.pathname.endsWith('/store'), { timeout: 15000 })
 check('every Store Hub page has a way to the Store Desk', true)
 
 // A first receipt, so the item is in stock and the hub's stock list is loaded (and cached) with it.
@@ -31,7 +31,7 @@ await page.waitForFunction(() => location.pathname.endsWith('/store/hub/enquiry/
 await sleep(800)
 check('the stock card opened from the desk says the way back is the desk', /Store Desk/.test(await text('main')))
 await clickText(page, 'main a', 'Store Desk')
-await page.waitForFunction(() => location.pathname.endsWith('/store/desk'), { timeout: 15000 })
+await page.waitForFunction(() => location.pathname.endsWith('/store'), { timeout: 15000 })
 check('and goes back to it', true)
 
 // Batches from the desk lead back to it too.
@@ -39,7 +39,7 @@ await page.waitForFunction(() => [...document.querySelectorAll('main a')].some((
 await clickText(page, 'main a', 'Batches & quality holds')
 await page.waitForFunction(() => location.pathname.endsWith('/store/hub/enquiry/batches'), { timeout: 15000 })
 await sleep(600)
-check('batches opened from the desk lead back to the desk', !!(await page.$('main a[href$="/store/desk?tab=stock"]')))
+check('batches opened from the desk lead back to the desk', !!(await page.$('main a[href$="/store?tab=stock"]')))
 
 // A receipt posted from the desk shows at once in the hub, with no reload.
 const second = await api(page, 'POST', '/api/store/inward/grn', { store_id: Number(STORE), grn_date: today, supplier_name: 'Ultratech Cement', lines: [{ item_id: Number(ITEM), qty: '50', uom: 'Bag', rate: '380' }] })
@@ -54,8 +54,8 @@ for (const step of ['Submit', 'Approve', 'Post']) {
 check('the receipt is posted from the desk', (await api(page, 'GET', `/api/store/inward/grn/${second.data.id}`)).data.status === 'POSTED')
 check('and stays under Store > Receive', (await path()).includes('/store/receive/'))
 // Into the hub the way a person would, by clicking - the page is not reloaded, so a stale list would show.
-await page.evaluate(() => document.querySelector('a[href$="/store/desk"]')?.click())
-await page.waitForFunction(() => location.pathname.endsWith('/store/desk'), { timeout: 15000 })
+await page.evaluate(() => document.querySelector('a[href$="/store"]')?.click())
+await page.waitForFunction(() => location.pathname.endsWith('/store'), { timeout: 15000 })
 await clickText(page, 'main a', 'All store work')
 await page.waitForFunction(() => location.pathname.endsWith('/store/hub'), { timeout: 15000 })
 await page.evaluate(() => [...document.querySelectorAll('nav[aria-label="Store sections"] a')].find((a) => /Stock enquiry/.test(a.textContent)).click())
