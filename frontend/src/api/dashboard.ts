@@ -41,10 +41,20 @@ export const useAttention = () =>
   })
 
 export const useReceivables = (enabled: boolean) =>
-  useQuery({ queryKey: ['dashboard', 'receivables'], queryFn: () => get<{ buckets: Buckets; summary: { owed: number; overdue: number; invoices: number; over_90: number } }>('/api/money/receivables'), enabled, ...opts })
+  useQuery({
+    queryKey: ['dashboard', 'receivables'],
+    queryFn: () => get<{ invoices: { bucket: string }[]; buckets: Buckets; summary: { owed: number; overdue: number; invoices: number; over_90: number } }>('/api/money/receivables'),
+    enabled,
+    ...opts,
+  })
 
 export const usePayables = (enabled: boolean) =>
-  useQuery({ queryKey: ['dashboard', 'payables'], queryFn: () => get<{ buckets: Buckets; summary: { owed: number; overdue: number; bills: number; awaiting_approval: number; over_90: number } }>('/api/money/payables'), enabled, ...opts })
+  useQuery({
+    queryKey: ['dashboard', 'payables'],
+    queryFn: () => get<{ bills: { bucket: string }[]; buckets: Buckets; summary: { owed: number; overdue: number; bills: number; awaiting_approval: number; over_90: number } }>('/api/money/payables'),
+    enabled,
+    ...opts,
+  })
 
 export const useRetention = (enabled: boolean) =>
   useQuery({ queryKey: ['dashboard', 'retention'], queryFn: () => get<{ summary: { held: number; released: number; on_finished_jobs: number; projects: number } }>('/api/money/retention'), enabled, ...opts })
@@ -65,6 +75,32 @@ export const useCashFlow = (enabled: boolean) =>
     enabled,
     ...opts,
   })
+
+/** Accrual profit and loss, all time: earned when billed, spent when billed to us - not when the money moved. */
+export interface ProfitLoss {
+  months: string[]
+  revenue: number[]
+  expenses: number[]
+  profit: number[]
+  total_revenue: number
+  total_expenses: number
+  net_profit: number
+  currency: string
+}
+export const useProfitLoss = (enabled: boolean) =>
+  useQuery({ queryKey: ['dashboard', 'profit-loss'], queryFn: () => get<ProfitLoss>('/api/reports/profit-loss'), enabled, ...opts })
+
+/** What the business holds and owes today. */
+export interface BalanceSheet {
+  assets: { cash_collected: number; accounts_receivable: number; bank_and_cash?: number; bank_accounts?: number; not_in_any_account?: number; retention_receivable?: number; advances_paid?: number }
+  liabilities: Record<string, number>
+  total_assets: number
+  total_liabilities: number
+  total_equity: number
+  currency: string
+}
+export const useBalanceSheet = (enabled: boolean) =>
+  useQuery({ queryKey: ['dashboard', 'balance-sheet'], queryFn: () => get<BalanceSheet>('/api/reports/balance-sheet'), enabled, ...opts })
 
 /** Where an attention item lives now. What has not been ported still opens in the current app. */
 export function attentionHref(view: string): { to: string; external: boolean } {
