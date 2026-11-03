@@ -26,3 +26,19 @@ export function compactINR(value: number | null | undefined) {
   if (abs >= 1e3) return `${sign}₹${(abs / 1e3).toFixed(1)} K`
   return `${sign}₹${abs.toFixed(0)}`
 }
+
+/** A list already on screen, saved as a spreadsheet can open: no round trip to the server, so it is only ever what the
+ * screen itself shows, already filtered. For a formatted document (an invoice, a bill), the server's own export is used instead. */
+export function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
+  const cell = (v: string | number) => {
+    const s = String(v ?? '')
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const csv = [headers, ...rows].map((r) => r.map(cell).join(',')).join('\r\n')
+  const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}

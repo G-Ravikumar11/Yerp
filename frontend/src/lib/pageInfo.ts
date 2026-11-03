@@ -86,8 +86,13 @@ export const PAGE_INFO: Record<string, string> = {
   '/store/invoice-tracker': 'Purchases by trade and supplier invoice, with each bill checked against what was received, plus a ready-mix register by lorry and block.',
   '/store/old/material-costing': 'Material used on site against what was costed, so overuse and wastage show up early.',
 
+  '/money/dashboard': "The accounts at a glance: total receivables, payables, expenses, cash position and overdue amount, insights drawn from the books, and the cash flow and revenue against expense trends.",
   '/money/ledgers': 'Payments and ledgers: what has been paid to or received from each party, and the running balance.',
   '/money/owed': 'What is owed to you and by you - with ageing and retention held - so you know who to chase and when to pay.',
+  '/money/owed?tab=owe': 'What you owe suppliers and subcontractors, with ageing, so you know who to pay and when.',
+  '/money/owed?tab=owed': 'What clients owe you, with ageing, so you know who to chase and when.',
+  '/money/expenses': 'Every operating expense - site overheads, equipment rentals and the rest - by category, project and status, paid or still waiting on a decision.',
+  '/money/cash-flow': 'Money in and money out each month across every bank account and cash box, the balance left, and what is still outstanding by age.',
   '/money/supplier-bills': 'Bills from suppliers: enter, check against the order and receipt, approve and pay.',
   '/money/gst': 'GST on sales and purchases for the period, and what is payable or claimable.',
   '/money/assets': 'Fixed assets with cost, depreciation and book value.',

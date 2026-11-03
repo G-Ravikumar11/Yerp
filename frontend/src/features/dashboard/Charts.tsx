@@ -320,6 +320,53 @@ export function CashFlowChart({ months }: { months: MonthFlow[] }) {
   )
 }
 
+/** One month's accrual revenue against expense, for the Revenue vs Expense chart. */
+export interface RevExpMonth {
+  month: string
+  label: string
+  revenue: number
+  expense: number
+}
+
+/** Revenue against expense, month by month, on the accrual basis (earned when billed, spent when billed to us). */
+export function RevenueExpenseChart({ months }: { months: RevExpMonth[] }) {
+  const calm = useReducedMotion()
+  const wide = useMinWidth(640)
+  return (
+    <figure aria-label="Revenue against expense by month" className="chart-glow m-0 h-full min-h-[210px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={months} margin={{ top: 12, right: 8, left: 0, bottom: 0 }} barGap={4} barCategoryGap="30%">
+          {FILLS}
+          <CartesianGrid vertical={false} stroke={GRID} strokeDasharray="2 6" strokeOpacity={0.7} />
+          <XAxis dataKey="label" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+          <YAxis tickFormatter={compactINR} tick={TICK} axisLine={false} tickLine={false} width={78} />
+          <Tooltip
+            cursor={{ fill: 'var(--accent)', fillOpacity: 0.5, radius: 8 }}
+            content={({ active, payload }) => {
+              const m = payload?.[0]?.payload as RevExpMonth | undefined
+              if (!m) return null
+              return (
+                <Tip
+                  active={active}
+                  title={m.label}
+                  rows={[
+                    { name: 'Revenue', value: m.revenue, color: REVENUE },
+                    { name: 'Expense', value: m.expense, color: COST },
+                    { name: 'Profit', value: m.revenue - m.expense, color: m.revenue - m.expense < 0 ? LOSS : PROFIT, strong: true },
+                  ]}
+                />
+              )
+            }}
+          />
+          <Legend verticalAlign="top" align={wide ? 'right' : 'left'} iconType="circle" iconSize={8} formatter={legend} />
+          <Bar name="Revenue" dataKey="revenue" fill={IN_FILL} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
+          <Bar name="Expense" dataKey="expense" fill={OUT_FILL} radius={[8, 8, 2, 2]} maxBarSize={18} isAnimationActive={!calm} />
+        </BarChart>
+      </ResponsiveContainer>
+    </figure>
+  )
+}
+
 /** Money to receive and money to pay, by how long it has been pending. */
 export function AgeingChart({ receivable, payable }: { receivable: Record<string, number> | undefined; payable: Record<string, number> | undefined }) {
   const calm = useReducedMotion()

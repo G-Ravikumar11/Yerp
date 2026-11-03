@@ -141,6 +141,13 @@ const NAV: NavEntry[] = [
     label: 'Accounts',
     icon: Wallet,
     items: [
+      { label: 'Finance Dashboard', path: '/money/dashboard', perm: 'bills.view_all' },
+      { label: 'Accounts Payable', path: '/money/owed?tab=owe', perm: 'bills.view_all' },
+      { label: 'Accounts Receivable', path: '/money/owed?tab=owed', perm: 'bills.view_all' },
+      { label: 'Expenses', path: '/money/expenses', perm: 'bills.view_all' },
+      { label: 'Project Accounting', path: '/projects/profit', perm: 'reports.view' },
+      { label: 'Cost Ledger', path: '/projects/costs', perm: 'reports.view' },
+      { label: 'Cash Flow', path: '/money/cash-flow', perm: 'bills.view_all' },
       { label: 'Payments & Ledgers', path: '/money/ledgers', perm: 'bills.view_all' },
       { label: 'Owed & Retention', path: '/money/owed', perm: 'bills.view_all' },
       { label: 'Supplier Bills', path: '/money/supplier-bills', perm: 'bills.view_all' },

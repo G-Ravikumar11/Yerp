@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -47,6 +47,11 @@ export default function OwedPage() {
   const [params] = useSearchParams()
   const asked = params.get('tab')
   const [tab, setTab] = useState<Tab>(asked === 'owe' || asked === 'retention' ? asked : 'owed')
+  // A link from elsewhere (the sidebar, an attention item) names its tab in the address; opening a different one
+  // while this page is already up - the two deep links share one route - still has to land on the one asked for.
+  useEffect(() => {
+    if (asked === 'owe' || asked === 'retention' || asked === 'owed') setTab(asked)
+  }, [asked])
   const recv = useOwedReceivables()
   const pay = useOwedPayables()
   const ret = useRetentionPage()
