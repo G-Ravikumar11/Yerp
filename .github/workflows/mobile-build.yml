@@ -102,6 +102,37 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew bundleRelease --no-daemon
 
+      # A release APK signed with the company key: the one that installs over the last, so the app's "New version available"
+      # can offer it. Needs the signing secrets above; without them (no ANDROID_KEYSTORE_PATH) these two steps are skipped,
+      # and the debug APK stays the only one, which cannot update a phone that holds an APK built by another run.
+      - name: Build signed release APK
+        if: env.ANDROID_KEYSTORE_PATH != ''
+        working-directory: mobile/android
+        env:
+          APP_VERSION_CODE: ${{ github.run_number }}
+          APP_VERSION_NAME: 1.0.${{ github.run_number }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      # android-v<run>: what /api/app/android/latest reads. Master (or main) only, like the screens below, and only a build
+      # that was signed: an unsigned one would be refused by the phone, and a debug one cannot update a release one.
+      - name: Publish the signed APK
+        if: env.ANDROID_KEYSTORE_PATH != '' && (github.ref_name == 'master' || github.ref_name == 'main')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          n=${{ github.run_number }}
+          apk=$(ls mobile/android/app/build/outputs/apk/release/*.apk | grep -v unsigned | head -n 1)
+          test -n "$apk" || { echo "No signed APK was produced"; exit 1; }
+          cp "$apk" "Yerp-$n.apk"
+          gh release delete "android-v$n" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "android-v$n" "Yerp-$n.apk" --target "$GITHUB_SHA" --title "Y ERP 1.0.$n" --notes "Y ERP 1.0.$n (${GITHUB_SHA::7}), signed. Install over the old one; nothing is lost."
+          gh release list --limit 200 --json tagName -q '.[].tagName' | grep '^android-v' | sed 's/^android-v//' | sort -n | head -n -5 |
+            while read -r old; do gh release delete "android-v$old" --yes --cleanup-tag; done
+
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -116,12 +147,13 @@ jobs:
           path: mobile/android/app/build/outputs/bundle/release/*.aab
           retention-days: 14
 
-      # Over-the-air updates: the screens alone, as web-<run>.zip on a release tagged web-v<run>. The server's
+      # Over-the-air updates: published from master (or main) only, never from a working branch such as abhi: a phone
+      # must not be handed screens nobody has merged. The screens alone, as web-<run>.zip on a release tagged web-v<run>. The server's
       # /api/app/web/latest points phones at the newest one, and they fetch it themselves, with no APK to install.
       # mobile/web-min-native.txt is the oldest APK (by version code) the screens work in: raise it to the run number
       # of the build that first carries any new native plugin, so older phones are not given screens they cannot run.
       - name: Publish the screens for over-the-air updates
-        if: github.ref_name == 'master' || github.ref_name == 'abhi'
+        if: github.ref_name == 'master' || github.ref_name == 'main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -204,7 +236,22 @@ jobs:
         run: |
           /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'Y ERP uses the camera to attach site photos and documents.'" Info.plist || true
           /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'Y ERP lets you pick photos to attach to logs and measurements.'" Info.plist || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string 'Y ERP uses your location when you clock in, so the day is saved at the right site or office.'" Info.plist || true
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" Info.plist || true
+
+      # Push notifications on an iPhone need the aps-environment entitlement, and the provisioning profile must have the
+      # Push Notifications capability switched on in the Apple developer account, or a signed build is refused.
+      # Untested here (no Mac): the first signed run is the test.
+      - name: Add the push notification entitlement
+        working-directory: mobile/ios/App
+        run: |
+          cat > App/App.entitlements <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>aps-environment</key><string>production</string>
+          </dict></plist>
+          PLIST
 
       # Signing is optional: with no Apple secrets set, the unsigned archive below is produced as before.
       # Secrets: IOS_CERT_P12_BASE64, IOS_CERT_PASSWORD, IOS_PROFILE_BASE64, IOS_PROFILE_NAME, IOS_TEAM_ID,
@@ -244,7 +291,7 @@ jobs:
           PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}
         run: |
           mkdir -p ../../build
-          xcodebuild -workspace App.xcworkspace             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             DEVELOPMENT_TEAM="$TEAM_ID"             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY="Apple Distribution"             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME"             -archivePath ../../build/App.xcarchive             clean archive
+          xcodebuild -workspace App.xcworkspace             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             DEVELOPMENT_TEAM="$TEAM_ID"             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY="Apple Distribution"             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME"             -archivePath ../../build/App.xcarchive             CURRENT_PROJECT_VERSION=${{ github.run_number }}             MARKETING_VERSION=1.0.${{ github.run_number }}             CODE_SIGN_ENTITLEMENTS=App/App.entitlements             clean archive
           cat > ../../build/ExportOptions.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -282,7 +329,7 @@ jobs:
         working-directory: mobile/ios/App
         run: |
           mkdir -p ../../build
-          xcodebuild -workspace App.xcworkspace             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             CODE_SIGN_IDENTITY=""             CODE_SIGNING_REQUIRED=NO             CODE_SIGNING_ALLOWED=NO             -archivePath ../../build/App.xcarchive             clean archive
+          xcodebuild -workspace App.xcworkspace             -scheme App             -configuration Release             -destination 'generic/platform=iOS'             CODE_SIGN_IDENTITY=""             CODE_SIGNING_REQUIRED=NO             CODE_SIGNING_ALLOWED=NO             -archivePath ../../build/App.xcarchive             CURRENT_PROJECT_VERSION=${{ github.run_number }}             MARKETING_VERSION=1.0.${{ github.run_number }}             CODE_SIGN_ENTITLEMENTS=App/App.entitlements             clean archive
 
       - name: Compress iOS Archive
         working-directory: mobile/build

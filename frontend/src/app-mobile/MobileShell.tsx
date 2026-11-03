@@ -4,11 +4,13 @@ import { ChevronLeft } from 'lucide-react'
 import { Button, Skeleton } from '@/components/ui'
 import { CompanyNotice } from '@/components/company/CompanyNotice'
 import { PageErrorBoundary } from '@/components/layout/PageErrorBoundary'
-import { registerPush } from '@/lib/mobile'
+import { SyncIndicator } from '@/components/layout/SyncIndicator'
+import { markScreensGood, registerPush } from '@/lib/mobile'
 import { trailFor } from '@/lib/nav'
 import { appUrl } from '@/lib/paths'
 import { useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
+import { useOffline } from '@/stores/offline'
 import { AddSheet } from './AddSheet'
 import { TabBar } from './TabBar'
 import './app-theme.css'
@@ -42,8 +44,14 @@ export default function MobileShell() {
     if (isAnonymous && (import.meta.env.PROD || import.meta.env.VITE_API_BASE_URL)) window.location.assign(appUrl('login'))
   }, [isAnonymous])
   useEffect(() => {
-    if (!isLoading && !isAnonymous) void registerPush()
-  }, [isLoading, isAnonymous])
+    if (isLoading || isAnonymous || error) return
+    void registerPush()
+    // What this person entered without signal goes up now that it is known who they are.
+    void useOffline.getState().flush()
+    // Signed in and still standing after a moment: these screens are good (the updater keeps them).
+    const t = window.setTimeout(markScreensGood, 1500)
+    return () => window.clearTimeout(t)
+  }, [isLoading, isAnonymous, error])
   useEffect(() => {
     window.scrollTo({ top: 0 })
     setAdding(false)
@@ -84,6 +92,10 @@ export default function MobileShell() {
           </PageErrorBoundary>
         )}
       </main>
+      {/* Changes kept on this phone, with Retry and Remove, just above the tab bar; nothing shows while all has been sent. */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar)+22px+env(safe-area-inset-bottom))] z-40 flex justify-center">
+        <SyncIndicator className="pointer-events-auto rounded-full px-4 py-2 shadow-[var(--app-card-shadow)]" />
+      </div>
       <TabBar onAdd={() => setAdding(true)} />
       <AddSheet open={adding} onClose={() => setAdding(false)} />
     </div>

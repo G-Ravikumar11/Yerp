@@ -191,6 +191,25 @@ def notify_employee(db, client_id, employee_id, title, message, link=""):
         logger.exception("Could not queue notification for employee %s", employee_id)
 
 
+def tell_approvers(db, client_id, title, message, rights=(), people=(), exclude=(), link="/next/approvals", owner=True):
+    """Put paper that now waits for a decision in front of those who can make it: their bell and, in the phone app, a push.
+    `rights` names the rights that decide it (everyone whose access includes one is told), `people` adds employees by id,
+    `exclude` leaves out whoever raised it, and the Master is told as well unless `owner` is False. Best-effort, like
+    notify_employee: never the reason the thing being raised fails. Does not commit; the caller does."""
+    try:
+        skip = {e for e in exclude if e}
+        told = []
+        for right in rights:
+            told += [e.id for e in holders_of(db, client_id, right, exclude=skip) if e.id not in told]
+        told += [p for p in people if p and p not in skip and p not in told]
+        for employee_id in told:
+            notify_employee(db, client_id, employee_id, title[:200], (message or title)[:500], link=link)
+        if owner:
+            push_to(db, client_id, title[:200], (message or title)[:500], link, owner=True)
+    except Exception:
+        logger.exception("Could not tell the approvers: %s", title)
+
+
 # NOTIFICATIONS
 #
 # A bill waiting on a signature, a receipt from a client, a contractor bill to pay:

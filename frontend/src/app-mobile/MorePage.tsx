@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ChevronRight, LogOut, Monitor, Moon, Search, Sun, X } from 'lucide-react'
 import { post } from '@/lib/api'
+import { forgetPush } from '@/lib/mobile'
 import { type NavEntry, visibleNav } from '@/lib/nav'
 import { appUrl } from '@/lib/paths'
 import { forgetLocalData } from '@/lib/query'
-import { initials, useSession } from '@/lib/session'
+import { initials, personKey, useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
-import { useOffline } from '@/stores/offline'
+import { isMine, useOffline } from '@/stores/offline'
 import { type Theme, useUI } from '@/stores/ui'
 import { ConfirmDialog } from '@/components/ui'
 import { Label, LargeTitle, Sheet } from './ui'
@@ -38,7 +39,7 @@ export default function MorePage() {
   const { user, can, isHeadOffice } = useSession()
   const theme = useUI((s) => s.theme)
   const setTheme = useUI((s) => s.setTheme)
-  const unsent = useOffline((s) => s.queue.length)
+  const unsent = useOffline((s) => s.queue.filter((q) => isMine(q, personKey())).length)
   const [asking, setAsking] = useState(false)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState<string | null>(null)
@@ -54,11 +55,14 @@ export default function MorePage() {
   ]
 
   const signOut = async () => {
+    // This phone stops getting their notices first, while the sign-in can still say whose they are.
+    await forgetPush()
     // Both, as the website does: this device may hold an owner's sign-in and a staff one.
     for (const path of user?.type === 'employee' ? ['/api/employee/auth/logout', '/api/client/logout'] : ['/api/client/logout', '/api/employee/auth/logout']) {
       try { await post(path) } catch { /* already signed out, or no signal: this device is done with them either way */ }
     }
-    useOffline.setState({ queue: [] })
+    // What this person entered without signal stays on the phone, theirs: it goes up when they sign in again, and nobody
+    // else's sign-in sends it. (Only the cached screens are cleared.)
     await forgetLocalData()
     window.location.assign(appUrl('login?signedout=1'))
   }
@@ -161,7 +165,7 @@ export default function MorePage() {
       <button type="button" onClick={() => (unsent ? setAsking(true) : void signOut())} className="mt-6 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-danger/10 text-[15px] font-semibold text-danger active:opacity-80">
         <LogOut className="size-[18px]" />Sign out
       </button>
-      <ConfirmDialog open={asking} onOpenChange={setAsking} title="Sign out with unsent changes?" description={`${unsent} change${unsent === 1 ? '' : 's'} made without signal ${unsent === 1 ? 'has' : 'have'} not been sent yet. Signing out now loses ${unsent === 1 ? 'it' : 'them'}.`} confirmLabel="Sign out anyway" tone="danger" onConfirm={() => void signOut()} />
+      <ConfirmDialog open={asking} onOpenChange={setAsking} title="Sign out with unsent changes?" description={`${unsent} change${unsent === 1 ? '' : 's'} made without signal ${unsent === 1 ? 'has' : 'have'} not been sent yet. ${unsent === 1 ? 'It stays' : 'They stay'} on this phone, yours alone, and ${unsent === 1 ? 'goes' : 'go'} up when you sign in again.`} confirmLabel="Sign out" onConfirm={() => void signOut()} />
     </div>
   )
 }

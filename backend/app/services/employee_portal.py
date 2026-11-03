@@ -384,6 +384,16 @@ def leave_balance_for(db: Session, emp: models.DBEmployee, for_year: Optional[in
     }
 
 
+def leave_approvers(db: Session, client_id: int, employee_id: int) -> list:
+    """Who may decide this person's leave, by the rule the decision itself applies: they hold the leave right and are
+    either above the person in the reporting line or HR (who manage people)."""
+    from app.core.permissions import employee_can
+    from app.services.approvals import build_approval_chain, holders_of
+    above = {step["employee_id"] for step in build_approval_chain(employee_id, client_id, db) if step["employee_id"]}
+    return [e.id for e in holders_of(db, client_id, "leave.approve", exclude=[employee_id])
+            if e.id in above or employee_can(e, "people.manage")]
+
+
 def decide_leave(
     db: Session,
     client_id: int,

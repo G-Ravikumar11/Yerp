@@ -39,11 +39,12 @@ const asNumber = (n: number) => (Number.isFinite(n) ? String(Math.round(n * 1000
 /** `base`: the list it returns to - the Store Hub's receipts unless opened from Store > Receive. */
 export default function GrnForm({ doc, base = '/store/hub/inward/grn' }: { doc?: Doc; base?: string }) {
   const nav = useNavigate()
+  // ?store= from Store > Receive; ?project= from the phone's + sheet, for the site it is on.
   const [params] = useSearchParams()
   const projects = useProjects()
   const [f, setF] = useState({
     store_id: doc?.store_id ?? Number(params.get('store') || 0), grn_date: doc?.date || today(), po_id: doc?.po_id ?? 0, supplier_name: doc?.supplier_name ?? '', challan_no: doc?.challan_no ?? '',
-    challan_date: doc?.challan_date ?? '', vehicle_no: doc?.vehicle_no ?? '', project_id: doc?.project_id ?? 0, remarks: doc?.remarks ?? '',
+    challan_date: doc?.challan_date ?? '', vehicle_no: doc?.vehicle_no ?? '', project_id: doc?.project_id ?? (Number(params.get('project')) || 0), remarks: doc?.remarks ?? '',
     gate_delivery: doc?.gate_delivery ?? false, driver_remarks: doc?.driver_remarks ?? '',
   })
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }))

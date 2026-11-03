@@ -61,14 +61,11 @@ export const useSiteCash = (status = '') =>
 export const setCashBox = (id: number, b: { job_id: number | null; custodian_id: number | null; imprest_amount: number }) =>
   put<{ message: string }>(`/api/site-cash/boxes/${id}`, b)
 
-export const spendSiteCash = (b: { account_id: number; amount: number; head: string; paid_to: string; spent_on: string; note: string; bill_no: string }) =>
-  post<{ expense: SiteExpense; message: string; warning?: string }>('/api/site-cash/expenses', b)
-
 /** The bill's photo, kept with the expense. */
-export function attachBillPhoto(id: number, file: File) {
+export function attachBillPhoto(id: number, file: File, key?: string) {
   const form = new FormData()
   form.append('file', file)
-  return api<{ message: string }>(`/api/site-cash/expenses/${id}/photo`, { method: 'POST', body: form })
+  return api<{ message: string }>(`/api/site-cash/expenses/${id}/photo`, { method: 'POST', body: form, headers: key ? { 'Idempotency-Key': key } : undefined })
 }
 
 export const decideSiteExpense = (id: number, decision: 'approve' | 'reject', note = '') =>

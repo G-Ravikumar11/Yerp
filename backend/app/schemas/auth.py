@@ -18,7 +18,8 @@ class ClientLogin(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     email: str
     password: str
-    remember_me: bool = Field(False, alias="rememberMe")
+    # None when the sign-in does not say: the website then keeps no cookie past the browser, the phone app keeps 30 days.
+    remember_me: Optional[bool] = Field(None, alias="rememberMe")
     # "app" when the phone app signs in (it holds the session to the app's limits); anything else is the website.
     channel: str = "web"
     # The CAPTCHA, when the page has been asked for one (app/core/login_guard.py).

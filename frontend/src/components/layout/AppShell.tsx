@@ -3,7 +3,8 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { trailFor } from '@/lib/nav'
 import { useSession } from '@/lib/session'
-import { registerPush } from '@/lib/mobile'
+import { markScreensGood, registerPush } from '@/lib/mobile'
+import { useOffline } from '@/stores/offline'
 import { useUI } from '@/stores/ui'
 import { Button, Skeleton } from '@/components/ui'
 import { CompanyNotice } from '@/components/company/CompanyNotice'
@@ -38,10 +39,15 @@ export function AppShell() {
     }
   }, [isAnonymous])
 
-  // In the native app, a signed-in phone is offered notifications.
+  // In the native app, a signed-in phone is offered notifications, and the screens it runs are kept once they have held up.
   useEffect(() => {
-    if (!isLoading && !isAnonymous) void registerPush()
-  }, [isLoading, isAnonymous])
+    if (isLoading || isAnonymous || error) return
+    void registerPush()
+    // What this person entered without signal goes up now that it is known who they are.
+    void useOffline.getState().flush()
+    const t = window.setTimeout(markScreensGood, 1500)
+    return () => window.clearTimeout(t)
+  }, [isLoading, isAnonymous, error])
 
   // A new page starts at its top, as a page does.
   useEffect(() => {

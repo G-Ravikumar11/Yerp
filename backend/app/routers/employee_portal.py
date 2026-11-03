@@ -20,7 +20,7 @@ from app.core.auth import end_every_session, get_client_user, require_items_acce
 from app.core.config import LOGIN_PER_MINUTE, logger
 from app.core.dates import _parse_date
 from app.core.files import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES
-from app.core.notifications import default_from_email, notify_employee, send_email_background
+from app.core.notifications import default_from_email, notify_employee, send_email_background, tell_approvers
 from app.core.permissions import DEFAULT_PERMISSION_ROLE, PERMISSION_ROLES, employee_can, is_head_office, permissions_for
 from app.core.security import RESET_TOKEN_TTL_MINUTES, issue_reset_token, rate_limiter, upgrade_password_hash
 from app.core.serials import allocate_bill_number, allocate_po_number
@@ -44,6 +44,7 @@ from app.services.employee_portal import (
     bill_money_from,
     bill_to_employee_dict,
     decide_leave,
+    leave_approvers,
     employee_bill_or_404,
     employee_can_access_job,
     filter_jobs_for_employee,
@@ -171,7 +172,8 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     request.session.pop('portal_user_id', None)
     request.session['employee_id'] = emp.id
     request.session['employee_client_id'] = emp.client_id
-    set_session_lifetime(request, body.get('rememberMe') is True, body.get('channel'))
+    said = body.get('rememberMe')
+    set_session_lifetime(request, said if isinstance(said, bool) else None, body.get('channel'))
     # Signing in is not clocking in. A shift starts when the person presses
     # Clock in, each one for themselves; opening the portal to read a payslip,
     # or from a phone left at home, must never count as being at work.
@@ -1115,6 +1117,10 @@ def request_leave(request: Request, body: dict, db: Session = Depends(get_db)):
         message=f"Your {leave_type} leave request for {days:g} day(s) has been submitted.",
         type="info",
     ))
+    # Those who decide it: the bell and, in the phone app, a push (the Master too).
+    tell_approvers(db, emp.client_id, "Leave to decide: %s" % employee_name(emp),
+                   f"{employee_name(emp)} asks for {days:g} day(s) of {leave_type} leave, {start_date} to {end_date}.",
+                   people=leave_approvers(db, emp.client_id, emp_id), exclude=[emp_id])
     db.commit()
     return {"message": "Leave request submitted", "days": days, "balance": leave_balance_for(db, emp)}
 

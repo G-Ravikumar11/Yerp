@@ -30,6 +30,16 @@ export type AppRight = 'app.site_edit' | 'app.approve' | 'app.download_pdf' | 'a
 type AppFields = { channel?: string; app_limited?: boolean; app_rights?: Partial<Record<AppRight, boolean>> }
 const ALL_RIGHTS: Record<AppRight, boolean> = { 'app.site_edit': true, 'app.approve': true, 'app.download_pdf': true, 'app.download_excel': true }
 
+/** Who is signed in, as a key that tells two people on one phone apart. '' when nobody is, or it is not known yet. */
+export function personKey(): string {
+  const u = queryClient.getQueryData<SessionUser | null>(['session'])
+  return u ? `${u.type}:${(u.email || '').toLowerCase()}` : ''
+}
+
+export function personName(): string {
+  return queryClient.getQueryData<SessionUser | null>(['session'])?.name ?? ''
+}
+
 /** What the server said about the channel, as the screens use it. An older server says nothing: it is the website. */
 function appFields(me: AppFields): Pick<SessionUser, 'channel' | 'appLimited' | 'appRights'> {
   return { channel: me.channel === 'app' ? 'app' : 'web', appLimited: !!me.app_limited, appRights: { ...ALL_RIGHTS, ...(me.app_rights ?? {}) } }

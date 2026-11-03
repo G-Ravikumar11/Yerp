@@ -28,6 +28,30 @@ def test_unticked_or_missing_gives_a_session_cookie(account):
         assert c.get("/api/client/me").status_code == 200
 
 
+def test_the_phone_app_is_remembered_for_the_full_period_unless_it_says_not(account):
+    # No answer from the app: stays signed in. An explicit "no" is respected, and the website is unchanged.
+    _, cookie = sign_in(account, channel="app")
+    assert f"Max-Age={REMEMBER_MAX_AGE}" in cookie
+    _, cookie = sign_in(account, channel="app", rememberMe=False)
+    assert "max-age" not in cookie.lower()
+    _, cookie = sign_in(account, channel="web")
+    assert "max-age" not in cookie.lower()
+
+
+def test_staff_in_the_phone_app_are_remembered_too(tenant):
+    from conftest import make_employee
+    emp = make_employee(tenant, permission_role="staff", password="Crew1234")
+    tenant.put("/api/employees/%d" % emp["id"], json={"status": "active"})
+    kept = {}
+    for label, extra in (("app", {"channel": "app"}), ("app-no", {"channel": "app", "rememberMe": False}), ("web", {})):
+        with TestClient(main.app) as c:
+            res = c.post("/api/employee/auth/login", json={"email": emp["email"], "password": "Crew1234", **extra})
+            assert res.status_code == 200, res.text
+            cookie = next(v for k, v in res.headers.multi_items() if k == "set-cookie" and v.startswith("session="))
+            kept[label] = "max-age" in cookie.lower()
+    assert kept == {"app": True, "app-no": False, "web": False}
+
+
 def test_the_server_enforces_the_shorter_lifetime(account, monkeypatch):
     c, _ = sign_in(account, rememberMe=False)
     real = time.time

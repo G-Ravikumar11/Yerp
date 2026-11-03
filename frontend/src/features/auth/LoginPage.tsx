@@ -5,6 +5,7 @@ import { Eye, EyeOff } from 'lucide-react'
 import { api, ApiError, apiUrl } from '@/lib/api'
 import { AuthLayout, Notice, YahooMark, nextTarget } from './AuthLayout'
 import { codeLine } from '@/lib/errorCodes'
+import { markScreensGood } from '@/lib/mobile'
 import { appUrl } from '@/lib/paths'
 import { CaptchaBox, type CaptchaValue } from './CaptchaBox'
 
@@ -46,7 +47,8 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [rememberMe, setRememberMe] = useState(false)
+  // A phone stays signed in unless the person unticks this; the website asks every time.
+  const [rememberMe, setRememberMe] = useState(native)
   const [busy, setBusy] = useState(false)
   // The check (CAPTCHA), once the server has asked for one; a new one is drawn after every try.
   const [askCheck, setAskCheck] = useState(false)
@@ -58,6 +60,7 @@ export default function LoginPage() {
     if (params.get('signedout')) {
       // Arrived from Sign out: end whatever sign-in this browser still holds, and show the form.
       for (const u of ['/api/client/logout', '/api/employee/auth/logout', '/api/portal/logout']) void api(u, { method: 'POST', quiet: true }).catch(() => undefined)
+      markScreensGood()
       return
     }
     // Already signed in: go straight on. All three kinds of account are asked at once, so a signed-in person leaves
@@ -68,6 +71,8 @@ export default function LoginPage() {
       const answers = await Promise.all(doors.map(([url]) => api(url, { quiet: true }).then(() => true, () => false)))
       const door = answers.indexOf(true)
       if (door >= 0) go(doors[door][1])
+      // Nobody is signed in on this phone: the form is as far as these screens can be shown to work.
+      else markScreensGood()
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

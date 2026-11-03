@@ -4,6 +4,7 @@ import hashlib
 import os
 import secrets
 import time
+from typing import Optional
 
 from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
@@ -76,14 +77,18 @@ def get_client_user(request: Request, db: Session):
     return client
 
 
-def set_session_lifetime(request: Request, remember: bool, channel: str = "web"):
+def set_session_lifetime(request: Request, remember: Optional[bool], channel: str = "web"):
     """Stamp this sign-in as persistent (Remember me) or browser-session only. The middleware turns the stamp
-    into the cookie's lifetime and enforces `exp` on every later request, so a copied cookie cannot outlive it."""
+    into the cookie's lifetime and enforces `exp` on every later request, so a copied cookie cannot outlive it.
+    `remember` is None when the sign-in did not say: the website then keeps a session cookie, but a phone stays
+    signed in for the full remember period, since nobody wants to type a password into a phone every day."""
     from app.core.config import REMEMBER_MAX_AGE, SESSION_MAX_AGE
-    request.session["remember"] = bool(remember)
+    app = channel == "app"
+    remember = app if remember is None else bool(remember)
+    request.session["remember"] = remember
     # Where this sign-in came from. Signed in the cookie, so it cannot be changed without signing in again; the phone app's
     # limits (core/app_limits.py) hold for the life of the session. Anything but "app" is the website, as before.
-    request.session["channel"] = "app" if channel == "app" else "web"
+    request.session["channel"] = "app" if app else "web"
     request.session["exp"] = int(time.time()) + (REMEMBER_MAX_AGE if remember else SESSION_MAX_AGE)
 
 

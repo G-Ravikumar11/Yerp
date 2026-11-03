@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui'
 import { today } from '@/lib/format'
 import { initials, useSession } from '@/lib/session'
 import { cn, compactINR } from '@/lib/utils'
+import { ClockPanel } from './ClockPanel'
 import { useCurrentSite, useSite } from './site'
 import { Label, Pill, roundBtn, Sheet } from './ui'
 
@@ -35,12 +36,13 @@ function Ring({ percent }: { percent: number }) {
   )
 }
 
-const QUICK: { label: string; path: string; perm?: string; icon: LucideIcon; from: string; to: string }[] = [
-  { label: 'Diary', path: '/projects/diary', perm: 'site.record', icon: BookOpen, from: '#8b5cf6', to: '#a78bfa' },
-  { label: 'Tasks', path: '/projects/programme', icon: ListChecks, from: '#10b981', to: '#34d399' },
-  { label: 'Measure', path: '/subcontractors/measurement-book', perm: 'site.record', icon: Ruler, from: '#0ea5e9', to: '#38bdf8' },
-  { label: 'Goods in', path: '/store/hub/inward/grn/new', perm: 'store.inward.create', icon: PackageCheck, from: '#f59e0b', to: '#fbbf24' },
-  { label: 'Safety', path: '/projects/safety', icon: ShieldAlert, from: '#ef4444', to: '#f87171' },
+/** Each opens on the site chosen above, as the + sheet does (the diary on today's form, the book on its entry box). */
+const QUICK: { label: string; path: (site: number) => string; perm?: string; icon: LucideIcon; from: string; to: string }[] = [
+  { label: 'Diary', path: (s) => `/projects/diary?job=${s}&today=1`, perm: 'site.record', icon: BookOpen, from: '#8b5cf6', to: '#a78bfa' },
+  { label: 'Tasks', path: (s) => `/projects/programme?job=${s}`, icon: ListChecks, from: '#10b981', to: '#34d399' },
+  { label: 'Measure', path: (s) => `/subcontractors/measurement-book?site=${s}&add=1`, perm: 'site.record', icon: Ruler, from: '#0ea5e9', to: '#38bdf8' },
+  { label: 'Goods in', path: (s) => `/store/hub/inward/grn/new?project=${s}`, perm: 'store.inward.create', icon: PackageCheck, from: '#f59e0b', to: '#fbbf24' },
+  { label: 'Safety', path: () => '/projects/safety', icon: ShieldAlert, from: '#ef4444', to: '#f87171' },
 ]
 
 /** One figure on the blue card. */
@@ -101,6 +103,9 @@ export default function TodayPage() {
         </div>
       </div>
 
+      {/* Staff clock in and out here; the account holder and the company's team have no clock. */}
+      {user?.type === 'employee' && <ClockPanel />}
+
       {/* Your sites, as circles: the open one has the blue ring. */}
       <Label action={<Link to="/projects" className="text-sm font-semibold text-primary">See all</Link>}>Your sites</Label>
       {loadingSites ? <Skeleton className="h-20 w-2/3 rounded-full" /> : (
@@ -142,7 +147,7 @@ export default function TodayPage() {
           <Label>Quick actions</Label>
           <div className="grid grid-cols-5 gap-2 text-center">
             {quick.map(({ label, path, icon: Icon, from, to }) => (
-              <Link key={label} to={path} className="active:scale-95">
+              <Link key={label} to={path(site?.id ?? 0)} className="active:scale-95">
                 <span className="mx-auto grid size-[54px] place-items-center rounded-[18px] text-white shadow-[var(--app-card-shadow)]" style={{ background: `linear-gradient(135deg, ${from}, ${to})` }}><Icon className="size-[22px]" /></span>
                 <span className="mt-1.5 block text-[11.5px] font-semibold text-muted-foreground">{label}</span>
               </Link>

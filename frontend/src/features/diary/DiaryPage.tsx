@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { FileSpreadsheet, FileText, Image, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -6,17 +7,28 @@ import { FilesModal } from '@/components/data/FilesModal'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { Badge, Button, Skeleton, Stat, StatGrid } from '@/components/ui'
 import { useDiaries, useLabourHistory, type DiaryRow } from '@/api/diary'
-import { formatDate } from '@/lib/format'
+import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { DiaryFormModal } from './DiaryFormModal'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** The daily site record: who turned up, what the weather did, what got built and what stopped it. */
 export default function DiaryPage() {
-  const [job, setJob] = useState(0)
+  // The phone's + sheet sends the site it is on (?job=) and asks for today's form (&today=1); the website just opens the page.
+  const [params, setParams] = useSearchParams()
+  const [job, setJob] = useState(Number(params.get('job')) || 0)
+  const wantsToday = useRef(params.get('today') === '1')
   const [open, setOpen] = useState<number | 'new' | null>(null)
   const [photos, setPhotos] = useState<DiaryRow | null>(null)
   const q = useDiaries(job)
+  // Today's diary for that site: the day already started if there is one, else a new day.
+  useEffect(() => {
+    if (!wantsToday.current || !job || !q.data) return
+    wantsToday.current = false
+    const started = q.data.diaries.find((d) => d.diary_date === today())
+    setOpen(started ? started.id : 'new')
+    setParams({}, { replace: true })
+  }, [job, q.data, setParams])
   const labour = useLabourHistory(job)
   const s = q.data?.summary
   const columns: TableColumn<DiaryRow>[] = [
