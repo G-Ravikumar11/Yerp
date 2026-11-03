@@ -107,7 +107,7 @@ from app.models.hr import (
     DBCustomHoliday,
     DBSiteGeofence,
 )
-from app.models.celebrations import DBSpecialDay, DBCelebrationReaction, DBCelebrationWish, DBAnnouncement
+from app.models.celebrations import DBSpecialDay, DBCelebrationReaction, DBCelebrationWish, DBAnnouncement, DBAnnouncementMedia
 from app.models.invoicing import (
     DBInvoice,
     DBPayment,
