@@ -254,8 +254,9 @@ def test_the_portfolio_puts_the_worst_job_first(tenant):
 
     out = tenant.get("/api/jobs-pnl").json()
     assert out["projects"][0]["name"] == "Bleeding site"
-    assert out["projects"][0]["losing"] is True
-    assert out["summary"]["losing_money"] == 2
+    # Cost with nothing billed to the client yet is work still to bill, not money lost.
+    assert out["projects"][0]["losing"] is False and out["projects"][0]["not_billed"] is True
+    assert out["summary"]["losing_money"] == 0 and out["summary"]["cost_not_billed"] == 20500
     assert out["summary"]["incurred"] == 20500
 
 

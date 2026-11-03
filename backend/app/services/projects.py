@@ -194,8 +194,15 @@ def job_costing(db, client_id, job):
         expenses = money(pre["expenses"].get(job.id, 0.0))
     else:
         expenses = money(site_expenses_by_job(db, client_id, [job.id]).get(job.id, 0.0))
-    total_cost = money(spent + labour + expenses)
-    budget = money(job.budget or 0)
+    # Cost so far is the profit account's: contractors' bills, material from the store, diaries and plant as well as the
+    # supplier bills - with the hours clocked on top, as Cost by Project counts them - so every screen says the same.
+    # A list costing many jobs reads the profit account's tables once for all of them, not once a project.
+    if pre is not None and "pnl" not in pre:
+        pre["pnl"] = preload_pnl(db, client_id)
+    pnl = project_pnl(db, client_id, job, pre=pre["pnl"] if pre is not None else None)
+    total_cost = money(pnl["cost"]["incurred"] + labour)
+    # The budget built line by line on the BOQ, where there is one; the figure typed on the project otherwise.
+    budget = money(pnl["value"]["budgeted_cost"] or job.budget or 0)
 
     return {
         "quoted": quoted,
@@ -323,8 +330,10 @@ def cost_jobs(db, client_id, jobs):
     managers = {e.id: employee_name(e) for e in db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client_id).all()}
 
+    pre = preload_pnl(db, client_id)
     out = []
     for job in jobs:
+        pnl = project_pnl(db, client_id, job, pre=pre)
         real_bills = [b for b in bills.get(job.id, [])
                       if (b.approval_status or "none") != "rejected" and b.status != "Cancelled"]
         spent = money(sum(b.total or 0 for b in real_bills))
@@ -342,8 +351,8 @@ def cost_jobs(db, client_id, jobs):
 
         quoted = money(job.quoted_value or 0) or ordered
         expenses = money(expenses_by_job.get(job.id, 0.0))
-        total_cost = money(spent + labour + expenses)
-        budget = money(job.budget or 0)
+        total_cost = money(pnl["cost"]["incurred"] + labour)
+        budget = money(pnl["value"]["budgeted_cost"] or job.budget or 0)
 
         out.append({
             "id": job.id, "number": job.number, "name": job.name,
@@ -586,6 +595,11 @@ def _replace_diary_lines(db, diary, labour, plant):
     recost_diary(db, diary)
 
 
+def _boq_money(db, client_id, job_ids=None):
+    from app.services.budgeting import boq_money_by_job      # imported here: budgeting reaches back to this module
+    return boq_money_by_job(db, client_id, job_ids)
+
+
 def preload_pnl_for_job(db, client_id, job_id):
     from collections import defaultdict
     def one(rows):
@@ -635,6 +649,7 @@ def preload_pnl_for_job(db, client_id, job_id):
         "settled": settled_amounts(db, client_id),
         "credits": preload_credits(db, client_id),
         "expenses": site_expenses_by_job(db, client_id, [job_id]),
+        "boq": _boq_money(db, client_id, [job_id]),
     }
 
 
@@ -693,6 +708,7 @@ def preload_pnl(db, client_id):
         "settled": settled_amounts(db, client_id),
         "credits": preload_credits(db, client_id),
         "expenses": site_expenses_by_job(db, client_id),
+        "boq": _boq_money(db, client_id),
     }
 
 
@@ -703,7 +719,11 @@ def project_pnl(db, client_id, job, pre=None):
     wos = pre["wos"].get(job.id, [])
     live = [w for w in wos if (w.approval_status or "none") != "rejected"]
     wo_ids = [w.id for w in live]
-    order_value = money(sum(w.total_value or 0 for w in live))
+    # The BOQ is the client's order: where the project has one, it is what the project was sold for (its approved extra
+    # items and changes are in it), and the Budgeting tab is what it was budgeted to cost. The old client work orders are
+    # read only for a project that has no BOQ.
+    boq = (pre.get("boq") or {}).get(job.id) or {}
+    order_value = boq["value"] if boq.get("value") else money(sum(w.total_value or 0 for w in live))
 
     # --- earned ----------------------------------------------------------
     invoices = [i for i in pre["invoices"].get(job.id, [])
@@ -771,10 +791,14 @@ def project_pnl(db, client_id, job, pre=None):
     site_expenses = money((pre.get("expenses") or {}).get(job.id, 0.0))
 
     incurred = money(bill_cost + material + labour + plant + subcontract + equipment + site_expenses - recovered)
-    budgeted = money(sum(pre["bom"].get(i, 0.0) for i in wo_ids)) if wo_ids else 0.0
+    budgeted = boq["budget"] if boq.get("budget") else (money(sum(pre["bom"].get(i, 0.0) for i in wo_ids)) if wo_ids else 0.0)
 
     revenue = money(max(invoiced, certified))
     margin = money(revenue - incurred)
+    # Nothing billed to the client yet is not a loss: the work is in hand and its bill is still to go. A project is losing
+    # money when what it has been paid for is less than what it cost, or when what it will cost passes what it was sold for.
+    forecast = money(incurred + committed)
+    losing = (revenue > 0 and margin < 0) or (order_value > 0 and forecast > order_value)
 
     return {
         "job": {"id": job.id, "number": job.number or "", "name": job.name or "",
@@ -803,13 +827,16 @@ def project_pnl(db, client_id, job, pre=None):
             "material_recovered_from_contractors": recovered,
             "incurred": incurred,
             "committed_not_yet_billed": committed,
-            "forecast": money(incurred + committed),
+            "forecast": forecast,
         },
         "result": {
             "margin": margin,
             "margin_percent": round(margin / revenue * 100, 1) if revenue else 0.0,
             "cost_per_manday": money(incurred / mandays) if mandays else 0.0,
             "mandays": mandays,
+            "losing": losing,
+            # Cost on the project and nothing billed for it yet.
+            "not_billed": incurred > 0 and revenue <= 0,
             # Costing more than it was budgeted to is the earliest warning
             # there is, and it arrives long before the revenue does.
             "over_budget": bool(budgeted) and incurred > budgeted,

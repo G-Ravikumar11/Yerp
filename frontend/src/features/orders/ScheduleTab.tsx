@@ -154,7 +154,9 @@ export function ScheduleTab({
   startPicking?: boolean
   onPicked?: () => void
 }) {
-  const budgets = order.budgets ?? []
+  // On a project with a BOQ the BOQ's budget is the budget, so the cost centres are not asked for.
+  const onBoq = !!order.on_boq
+  const budgets = onBoq ? [] : order.budgets ?? []
   const file = useRef<HTMLInputElement>(null)
   const [chargeTo, setChargeTo] = useState('')
   const [pending, setPending] = useState<File | null>(null)
@@ -215,14 +217,14 @@ export function ScheduleTab({
         readOnly: (r) => r.is_header,
         validate: (v) => ((v as number) < 0 || (v as number) > 100 ? '0 to 100' : null),
       },
-      {
+      ...(onBoq ? [] : [{
         id: 'budget_id',
         header: 'Cost centre',
-        type: 'select',
+        type: 'select' as const,
         width: 190,
-        readOnly: (r) => r.is_header,
+        readOnly: (r: LineRow) => r.is_header,
         options: budgets.map((b) => ({ value: String(b.id), label: b.name || b.code })),
-      },
+      }]),
       { id: 'is_header', header: 'Heading', type: 'checkbox', width: 84 },
       {
         id: 'against_boq',
@@ -233,7 +235,7 @@ export function ScheduleTab({
         get: (r) => (r.is_header || !r.item_description.trim() ? '' : r.boq_parts?.length ? `${r.boq_parts.length} BOQ ${r.boq_parts.length === 1 ? 'line' : 'lines'}` : r.boq_key ? 'In BOQ' : 'Not in BOQ'),
       },
     ],
-    [vocab, budgets, subtotals],
+    [vocab, budgets, subtotals, onBoq],
   )
 
   const read = useAction(
@@ -333,7 +335,9 @@ export function ScheduleTab({
               <a href="/api/wo/boq/template">Template</a>
             </Button>
             <span className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
-            {order.job_id ? (
+            {onBoq ? (
+              <span className="text-[13px] text-muted-foreground">Held against the BOQ&rsquo;s budget (Projects &rsaquo; Budgeting).</span>
+            ) : order.job_id ? (
               <>
                 <div className="w-44">
                   <Select aria-label="Cost centre for every line" value={chargeTo} onChange={(e) => setChargeTo(e.target.value)} placeholder="Charge every line to..." options={budgets.map((b) => ({ value: b.id, label: b.name || b.code }))} />

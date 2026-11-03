@@ -121,12 +121,6 @@ def job_money(db, client_id, job, pre=None):
     """
     pre = pre or preload_pnl_for_job(db, client_id, job.id)
     wos = pre["wos"].get(job.id, [])
-    live_wos = [w for w in wos if (w.approval_status or "none") != "rejected"]
-    wo_ids = [w.id for w in live_wos]
-
-    sold = money(sum(w.total_value or 0 for w in live_wos))
-    budgeted = money(sum(pre["bom"].get(i, 0.0) for i in wo_ids)) if wo_ids else 0.0
-
     # --- what has actually been incurred ---------------------------------
     bills = pre["bills"].get(job.id, [])
     real_bills = [b for b in bills
@@ -148,6 +142,8 @@ def job_money(db, client_id, job, pre=None):
     # diary and cement issued from the store showed nothing incurred at all.
     pnl = project_pnl(db, client_id, job, pre=pre)
     c = pnl["cost"]
+    # What it was sold for and budgeted at, as the profit account reads them: the BOQ and its budget where there is one.
+    sold, budgeted = pnl["value"]["order_value"], pnl["value"]["budgeted_cost"]
     labour = money(c["labour"] + staff_time)
     incurred = money(c["incurred"] + staff_time)
 

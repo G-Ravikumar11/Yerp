@@ -857,7 +857,8 @@ def portfolio_pnl_payload(db, client):
             "mandays": p["result"]["mandays"],
             "over_budget": p["result"]["over_budget"],
             "outstanding": p["earned"]["outstanding"],
-            "losing": p["result"]["margin"] < 0,
+            "losing": p["result"]["losing"],
+            "not_billed": p["result"]["not_billed"],
         })
     rows.sort(key=lambda r: r["margin"])
     return {
@@ -867,7 +868,9 @@ def portfolio_pnl_payload(db, client):
             "order_value": money(sum(r["order_value"] for r in rows)),
             "revenue": money(sum(r["revenue"] for r in rows)),
             "incurred": money(sum(r["incurred"] for r in rows)),
-            "margin": money(sum(r["margin"] for r in rows)),
+            # Margin on what has been billed; the cost of projects not billed at all yet is shown beside it, not taken off it.
+            "margin": money(sum(r["margin"] for r in rows if not r["not_billed"])),
+            "cost_not_billed": money(sum(r["incurred"] for r in rows if r["not_billed"])),
             "losing_money": len([r for r in rows if r["losing"]]),
             "owed_to_us": money(sum(r["outstanding"] for r in rows)),
         },

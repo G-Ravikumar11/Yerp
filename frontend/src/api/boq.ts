@@ -113,6 +113,7 @@ export interface TrackerRow {
   contractor_cost?: number
   orders?: string[]
   left_to_give?: number
+  left_to_execute?: number
   executed?: number
   contractor_billed?: number
   client_executed?: number

@@ -473,6 +473,7 @@ def wo_dict(db, order, detail=False):
             row["copied_from"] = src[0] if src else ""
         row["budgets"] = (wo_budget_rows(db, order.client_id, order.job_id, order)
                           if order.job_id else [])
+        row["on_boq"] = on_boq_budget(db, order)
         row["budget_warnings"] = [
             "%s is allocated %s; this order takes it to %s."
             % (b["name"] or b["code"] or "A cost centre",
@@ -900,6 +901,11 @@ def wo_ready_to_submit(db, order):
     return missing
 
 
+def on_boq_budget(db, order):
+    """Whether the order's project has a BOQ, so its budget is the BOQ's and not a cost centre's."""
+    return bool(order.job_id) and boq_of_job(db, order.client_id, order.job_id) is not None
+
+
 def wo_budget_missing(db, order):
     """Every order spends a budget, and says which.
 
@@ -910,6 +916,10 @@ def wo_budget_missing(db, order):
     """
     if not order.job_id:
         return ["the project it is for, so it can be held against that project's budget"]
+    # On a project with a BOQ, every line is a line of that BOQ and the BOQ's budget (the Budgeting tab) is what it is
+    # held against, so no cost centre is asked for as well. The BOQ tracker shows a contractor rate above ours.
+    if on_boq_budget(db, order):
+        return []
     heads = {b.id: b for b in db.query(models.DBProjectBudget).filter(
         models.DBProjectBudget.client_id == order.client_id,
         models.DBProjectBudget.job_id == order.job_id,

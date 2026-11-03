@@ -160,6 +160,8 @@ export interface Order {
   approval_route?: RouteStep[]
   copied_from?: string
   budgets?: BudgetRow[]
+  /** The project has a BOQ, so the order is held against its budget (the Budgeting tab) and asks for no cost centre. */
+  on_boq?: boolean
   budget_warnings?: string[]
   /** What would stop this revision being approved now: a bill still open on the order it replaces, lines it drops. */
   revision_blockers?: string[]

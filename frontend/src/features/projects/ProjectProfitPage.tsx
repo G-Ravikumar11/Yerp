@@ -3,18 +3,20 @@ import { Download, Printer, Search } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Input, Stat, StatGrid } from '@/components/ui'
-import { usePnl, type PnlRow } from '@/api/costs'
+import { usePnl, type PnlRow } from '@/api/costs'
+import { JOB_STATUS } from '@/api/projects'
 import { ProjectPlantCosts } from '@/features/equipment/PlantChecks'
 import { cn, compactINR } from '@/lib/utils'
 import { alphabetical, percent, rupees } from './figures'
 
-type Filter = 'all' | 'losing' | 'over' | 'ontrack'
+type Filter = 'all' | 'losing' | 'over' | 'unbilled' | 'ontrack'
 
 const FILTERS: { value: Filter; label: string; test: (r: PnlRow) => boolean }[] = [
   { value: 'all', label: 'All', test: () => true },
-  { value: 'losing', label: 'losing money', test: (r) => r.losing },
+  { value: 'losing', label: 'Losing money', test: (r) => r.losing },
   { value: 'over', label: 'Over budget', test: (r) => r.over_budget && !r.losing },
-  { value: 'ontrack', label: 'On track', test: (r) => !r.losing && !r.over_budget },
+  { value: 'unbilled', label: 'Not billed yet', test: (r) => !!r.not_billed && !r.losing && !r.over_budget },
+  { value: 'ontrack', label: 'On track', test: (r) => !r.losing && !r.over_budget && !r.not_billed },
 ]
 
 /** What each project earned against what it truly cost - material, labour and plant included - listed A to Z. */
@@ -72,15 +74,16 @@ export default function ProjectProfitPage() {
     },
     {
       id: 'm', header: 'Margin', align: 'right', sort: (r) => r.margin,
-      cell: (r) => (
+      // Nothing billed yet is no margin at all, not a loss of what it has cost so far.
+      cell: (r) => (r.not_billed && !r.losing ? <span className="text-xs text-muted-foreground">Not billed yet</span> : (
         <div className={r.losing ? 'text-danger' : 'text-success'}>
           <div className="font-semibold">{rupees(r.margin)}</div>
           <div className="mt-0.5 text-xs font-medium opacity-90">{r.margin_percent}%</div>
         </div>
-      ),
+      )),
     },
     { id: 'md', header: 'Mandays', hideBelow: 'lg', align: 'right', sort: (r) => r.mandays, cell: (r) => <span className="text-muted-foreground">{r.mandays.toLocaleString('en-IN')}</span> },
-    { id: 'st', header: 'Status', cell: (r) => (r.losing ? <Badge tone="danger" dot>losing money</Badge> : r.over_budget ? <Badge tone="warning" dot>Over budget</Badge> : <Badge tone="success" dot>{r.status || 'Live'}</Badge>) },
+    { id: 'st', header: 'Status', cell: (r) => (r.losing ? <Badge tone="danger" dot>Losing money</Badge> : r.over_budget ? <Badge tone="warning" dot>Over budget</Badge> : r.not_billed ? <Badge tone="neutral" dot>Not billed yet</Badge> : <Badge tone="success" dot>{JOB_STATUS[r.status] ?? (r.status || 'Live')}</Badge>) },
     {
       id: 'x', header: '', align: 'right', width: '3rem',
       cell: (r) => <Button size="icon-sm" variant="ghost" asChild><a href={`/api/jobs/${r.job_id}/pnl.xlsx`} aria-label={`Download the workbook for ${r.name}`} title="Download as a workbook"><Download /></a></Button>,
@@ -100,7 +103,7 @@ export default function ProjectProfitPage() {
         <Stat label="Order book" value={compactINR(s?.order_value)} loading={q.isPending} />
         <Stat label="Revenue" value={compactINR(s?.revenue)} loading={q.isPending} />
         <Stat label="Cost incurred" value={compactINR(s?.incurred)} loading={q.isPending} />
-        <Stat label="Margin" value={compactINR(s?.margin)} tone={(s?.margin ?? 0) < 0 ? 'danger' : 'success'} loading={q.isPending} />
+        <Stat label="Margin" value={compactINR(s?.margin)} tone={(s?.margin ?? 0) < 0 ? 'danger' : 'success'} sub={s?.cost_not_billed ? `${compactINR(s.cost_not_billed)} spent on work not billed yet` : 'On what has been billed'} loading={q.isPending} />
         <Stat label="Owed to us" value={compactINR(s?.owed_to_us)} loading={q.isPending} />
       </StatGrid>
 

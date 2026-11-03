@@ -225,3 +225,41 @@ def suggest_items(db, client_id, q, limit=15):
     return [{"code": i.item_code, "name": i.item_name, "uom": i.units_of_measure or "",
              "rate": money(i.last_rate or i.purchase_rate or 0)}
             for i in query.order_by(models.DBItem.item_name).limit(limit).all()]
+
+
+def boq_money_by_job(db, client_id, job_ids=None):
+    """{project id: {"value": what its BOQ is worth, "budget": what the Budgeting tab says it will cost}} for the projects
+    that have a BOQ - in four queries, however many projects. The BOQ is the client's order, so this is what a project is
+    sold for and budgeted at wherever the money of a project is shown. The budget counts only the lines that have been
+    budgeted, with the project's overheads and contingency on top, as the Budgeting tab totals them."""
+    from sqlalchemy import func
+    from app.constants.boq import BOQ_PRICED
+    q = db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id, models.DBBoq.job_id.isnot(None))
+    if job_ids is not None:
+        q = q.filter(models.DBBoq.job_id.in_(list(job_ids) or [0]))
+    boqs = q.all()
+    if not boqs:
+        return {}
+    revs = {r.boq_id: r.id for r in db.query(models.DBBoqRevision).filter(
+        models.DBBoqRevision.boq_id.in_([b.id for b in boqs])).all()
+        if any(b.id == r.boq_id and b.current_rev == r.rev_no for b in boqs)}
+    job_of_rev = {revs[b.id]: b.job_id for b in boqs if b.id in revs}
+    jobs = set(job_of_rev.values())
+    unit = {}
+    for job_id, key, per_unit in db.query(models.DBBoqBudgetItem.job_id, models.DBBoqBudgetItem.boq_key,
+                                          func.sum(models.DBBoqBudgetItem.coefficient * models.DBBoqBudgetItem.rate)).filter(
+            models.DBBoqBudgetItem.client_id == client_id, models.DBBoqBudgetItem.job_id.in_(jobs or {0})).group_by(
+            models.DBBoqBudgetItem.job_id, models.DBBoqBudgetItem.boq_key).all():
+        unit[(job_id, key)] = float(per_unit or 0)
+    extra = {s.job_id: ((s.overhead_percent or 0.0) + (s.contingency_percent or 0.0)) / 100
+             for s in db.query(models.DBBoqBudget).filter(models.DBBoqBudget.client_id == client_id,
+                                                          models.DBBoqBudget.job_id.in_(jobs or {0})).all()}
+    out = {j: {"value": 0.0, "budget": 0.0} for j in jobs}
+    for rev_id, key, qty, amount in db.query(models.DBBoqLine.revision_id, models.DBBoqLine.key, models.DBBoqLine.quantity,
+                                             models.DBBoqLine.amount).filter(
+            models.DBBoqLine.revision_id.in_(list(job_of_rev) or [0]), models.DBBoqLine.kind.in_(BOQ_PRICED)).all():
+        job_id = job_of_rev[rev_id]
+        out[job_id]["value"] += amount or 0
+        if (job_id, key) in unit:
+            out[job_id]["budget"] += (qty or 0) * unit[(job_id, key)]
+    return {j: {"value": money(v["value"]), "budget": money(v["budget"] * (1 + extra.get(j, 0.0)))} for j, v in out.items()}

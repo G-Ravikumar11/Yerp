@@ -529,6 +529,7 @@ def boq_tracker_data(db, client, boq):
                      "item_code": l.item_code or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
                      "given": money(g["qty"]), "contractor_rate": contractor_rate, "contractor_cost": money(g["cost"]), "orders": g["orders"],
                      "left_to_give": money(max(0.0, (l.quantity or 0) - g["qty"])),
+                     "left_to_execute": money(max(0.0, (l.quantity or 0) - max(executed, c_done))),
                      "executed": executed, "contractor_billed": contractor_billed, "client_executed": c_done, "client_billed": c_billed,
                      "margin_percent": round(((l.rate or 0) - contractor_rate) / l.rate * 100, 1) if g["qty"] and l.rate else None,
                      "percent_done": round(max(executed, c_done) / l.quantity * 100, 1) if l.quantity else 0.0,
