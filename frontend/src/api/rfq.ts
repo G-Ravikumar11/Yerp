@@ -51,7 +51,7 @@ export const openRfq = (b: RfqInput) => post<{ rfq: { id: number }; message: str
 /** Correct an open enquiry. Its items can change only until the first quote is in. */
 export const editRfq = (id: number, b: RfqInput) => put<{ rfq: Rfq; message: string }>(`/api/rfqs/${id}`, b)
 export const cancelRfq = (id: number, reason: string) => post<{ message: string }>(`/api/rfqs/${id}/cancel`, { reason })
-export const openRfqFromOrder = (wo: number) => post<{ rfq: { id: number }; message: string }>(`/api/rfqs/from-work-order/${wo}`)
+export const openRfqFromBoq = (boq: number) => post<{ rfq: { id: number }; message: string }>(`/api/rfqs/from-boq/${boq}`)
 export const recordQuote = (id: number, b: Record<string, unknown>) => post<{ message: string; quote_id: number }>(`/api/rfqs/${id}/quotes`, b)
 export const awardRfq = (id: number, b: { mode: string; supplier_name: string; reason: string; awards?: { rfq_line_id: number; supplier_name: string }[] }) => post<{ message: string }>(`/api/rfqs/${id}/award`, b)
 

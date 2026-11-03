@@ -55,7 +55,7 @@ from app.core.units import canonical_unit
 from app.services.projects import job_or_404, resolve_job_id
 from app.services import late_delivery, rate_contracts, supplier_scorecard  # noqa: F401  (register their scheduled jobs)
 from app.services.store_cutover import refuse_if_moved
-from app.services.stores import material_required
+from app.services.stores import boq_material_required, material_required
 from app.services.subcontract_orders import work_order_or_404
 
 
@@ -799,6 +799,32 @@ def create_rfq(body: RfqIn, request: Request, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "rfq": rfq_dict(db, r), "skipped": [d for d, _r in skipped],
             "message": "%s opened.%s" % (r.number, (" Left out, already being bought: %s." % gone) if gone else "")}
+
+
+@router.post("/api/rfqs/from-boq/{boq_id}")
+def rfq_from_boq(boq_id: int, request: Request, db: Session = Depends(get_db)):
+    """An enquiry for what the project's BOQ budget still needs: the materials its lines take, less what is in the
+    store and already on order. The BOQ is the client's order, so this is the enquiry a project is bought from."""
+    client, actor_id, actor_name = wo_actor(request, db, "purchase.manage")
+    boq = db.query(models.DBBoq).filter(models.DBBoq.client_id == client.id, models.DBBoq.id == boq_id).first()
+    if boq is None:
+        raise HTTPException(404, "BOQ not found")
+    rows = [r for r in boq_material_required(db, client.id, boq.job_id) if not r["covered"]]
+    if not rows:
+        budgeted = db.query(models.DBBoqBudgetItem).filter(
+            models.DBBoqBudgetItem.client_id == client.id, models.DBBoqBudgetItem.job_id == boq.job_id,
+            models.DBBoqBudgetItem.kind == "MATERIAL").count()
+        raise HTTPException(409, ("%s needs nothing more - the store and the orders already cover its budget." % boq.number)
+                            if budgeted else
+                            ("%s has no materials in its budget yet - add them in Projects > Budgeting, then raise the enquiry." % boq.number))
+    r = _make_rfq(db, client, actor_name, "Material for %s" % boq.number, boq.job_id, "", "",
+                  [{"item_code": x["item_code"], "description": x["item_name"] or x["item_code"],
+                    "uom": x["uom"], "qty": x["to_buy"]} for x in rows])
+    r.created_by_id = actor_id
+    db.commit()
+    return {"ok": True, "rfq": rfq_dict(db, r),
+            "message": "%s opened for %d item%s %s still needs."
+                       % (r.number, len(rows), "" if len(rows) == 1 else "s", boq.number)}
 
 
 @router.post("/api/rfqs/from-work-order/{wo_id}")

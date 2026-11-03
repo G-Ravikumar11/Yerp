@@ -134,6 +134,21 @@ def test_an_enquiry_straight_from_what_an_order_still_needs(tenant):
     assert r["lines"][0]["qty"] == 1000
 
 
+def test_an_enquiry_straight_from_what_the_boq_budget_still_needs(tenant):
+    """The BOQ is the client's order: its budget's materials, times each line's quantity, are what the enquiry asks for."""
+    from test_budgeting import keyed, put_line, RCC_ITEMS
+    jid, k = keyed(tenant)
+    boq = tenant.get("/api/boqs").json()["boqs"][0]
+    empty = tenant.post("/api/rfqs/from-boq/%d" % boq["id"])
+    assert empty.status_code == 409 and "no materials in its budget" in empty.json()["detail"]
+    put_line(tenant, jid, k["RCC"], RCC_ITEMS)                 # 120 cum of RCC, 1 cum of ready-mix each
+    res = tenant.post("/api/rfqs/from-boq/%d" % boq["id"])
+    assert res.status_code == 200, res.text
+    r = tenant.get("/api/rfqs/%d" % res.json()["rfq"]["id"]).json()
+    assert r["rfq"]["job_id"] == jid
+    assert [(l["description"], l["uom"], l["qty"]) for l in r["lines"]] == [("Ready-mix M25", "cum", 120)]   # labour is not bought
+
+
 def test_another_tenant_cannot_see_or_quote(tenant, second_tenant):
     r = rfq(tenant)
     assert second_tenant.get("/api/rfqs/%d" % r["rfq"]["id"]).status_code == 404

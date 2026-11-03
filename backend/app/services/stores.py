@@ -385,10 +385,37 @@ def material_required(db, client_id, wo):
         row["needed"] = money(row["needed"] + (b.qty or 0))
         if b.rate:
             row["rate"] = unit_rate(b.rate)
+    return shortfall(db, client_id, needed)
+
+
+def boq_material_required(db, client_id, job_id):
+    """What the project's BOQ budget still needs bought: each priced BOQ line's quantity times the materials one unit
+    of it takes, less what is in the store and on order, the same way an order's budget is read."""
+    from app.services.boq import boq_lines_of_job
+    qty = {l.key: l.quantity or 0.0 for l in boq_lines_of_job(db, client_id, job_id)}
+    needed = {}
+    for i in db.query(models.DBBoqBudgetItem).filter(
+            models.DBBoqBudgetItem.client_id == client_id, models.DBBoqBudgetItem.job_id == job_id,
+            models.DBBoqBudgetItem.kind == "MATERIAL").all():
+        if i.boq_key not in qty:
+            continue
+        code = (i.item_code or "").strip()
+        # A material typed into the budget without an item code is asked for by its name.
+        key = code or "%s|%s" % ((i.description or "").strip().lower(), (i.uom or "").strip().lower())
+        row = needed.setdefault(key, {"item_code": code, "item_name": i.description or "",
+                                      "uom": i.uom or "", "needed": 0.0, "rate": unit_rate(i.rate)})
+        row["needed"] = money(row["needed"] + qty[i.boq_key] * (i.coefficient or 0))
+    return shortfall(db, client_id, needed)
+
+
+def shortfall(db, client_id, needed):
+    """{key: {item_code, item_name, uom, needed, rate}} less what the store holds and what is on open purchase orders,
+    row by row. Only rows with an item code can be matched to the store and the orders."""
     if not needed:
         return []
 
-    balances = current_stock(db, client_id, codes=set(needed))
+    codes = {r["item_code"] for r in needed.values() if r["item_code"]}
+    balances = current_stock(db, client_id, codes=codes)
 
     # Quantity sitting on purchase orders that have not been fully received.
     on_order = {}
@@ -421,13 +448,14 @@ def material_required(db, client_id, wo):
                 on_order[code] = money(max(0.0, on_order[code] - got))
 
     rows = []
-    for code, r in sorted(needed.items()):
-        in_store = money(balances.get(code, {}).get("on_hand", 0.0))
-        ordered = money(on_order.get(code, 0.0))
+    for _key, r in sorted(needed.items()):
+        code = r["item_code"]
+        in_store = money(balances.get(code, {}).get("on_hand", 0.0)) if code else 0.0
+        ordered = money(on_order.get(code, 0.0)) if code else 0.0
         short = money(r["needed"] - in_store - ordered)
         # A rate the store has actually paid beats one typed into a budget
         # months ago; the budget rate is the fallback, not the truth.
-        paid = unit_rate(balances.get(code, {}).get("rate", 0.0))
+        paid = unit_rate(balances.get(code, {}).get("rate", 0.0)) if code else 0.0
         rows.append({
             "item_code": code, "item_name": r["item_name"], "uom": r["uom"],
             "needed": r["needed"], "in_store": in_store, "on_order": ordered,

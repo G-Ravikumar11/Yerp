@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Lock } from 'lucide-react'
 import { DataGrid, type Column } from '@/components/grid'
 import { Button, Field, Input, Modal, Select, Tabs, Textarea } from '@/components/ui'
-import { editRfq, openRfq, openRfqFromOrder, rfqKeys, type Statement } from '@/api/rfq'
+import { editRfq, openRfq, openRfqFromBoq, rfqKeys, type Statement } from '@/api/rfq'
 import { useItems, useItemVocabulary } from '@/api/items'
-import { usePlacedOrders } from '@/api/stock'
+import { useBoqs } from '@/api/boq'
 import { projectLabel, useProjects } from '@/api/projects'
 import { useAction } from '@/lib/mutate'
 import { formatQty, today } from '@/lib/format'
@@ -14,7 +15,7 @@ const blank = (): Row => ({ item_code: '', description: '', uom: '', qty: null }
 
 /**
  * A new enquiry, or an open one put right. The items come from the item master (or are typed, for something not in
- * it); a work order's budget can fill them instead. Once a supplier has quoted, the items stay as they were priced.
+ * it); the BOQ's budget can fill them instead. Once a supplier has quoted, the items stay as they were priced.
  */
 export function EnquiryFormModal({ open, statement, onClose, onSaved }: { open: boolean; statement?: Statement | null; onClose: () => void; onSaved: (id: number) => void }) {
   const editing = !!statement
@@ -28,13 +29,13 @@ export function EnquiryFormModal({ open, statement, onClose, onSaved }: { open: 
 
 function Form({ statement, onClose, onSaved }: { statement: Statement | null; onClose: () => void; onSaved: (id: number) => void }) {
   const jobs = useProjects()
-  const orders = usePlacedOrders()
+  const boqs = useBoqs()
   const rm = useItems('RM', '')
   const vocab = useItemVocabulary()
   const r = statement?.rfq
   const locked = !!statement && statement.suppliers.length > 0
-  const [from, setFrom] = useState<'list' | 'order'>('list')
-  const [wo, setWo] = useState('')
+  const [from, setFrom] = useState<'list' | 'boq'>('list')
+  const [boq, setBoq] = useState('')
   const [title, setTitle] = useState(r?.title ?? '')
   const [job, setJob] = useState(r?.job_id ? String(r.job_id) : '')
   const [needed, setNeeded] = useState(r?.needed_by ?? '')
@@ -67,13 +68,14 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
     lines: lines.map((x) => ({ item_code: x.item_code, description: (x.description || master.get(x.item_code)?.item_name || x.item_code).trim(), uom: x.uom, qty: x.qty ?? 0 })) })
   const save = useAction(
     () => (statement ? editRfq(statement.rfq.id, body()).then((x) => ({ ...x, id: statement.rfq.id }))
-      : (from === 'order' ? openRfqFromOrder(Number(wo)) : openRfq(body())).then((x) => ({ ...x, id: x.rfq.id }))),
+      : (from === 'boq' ? openRfqFromBoq(Number(boq)) : openRfq(body())).then((x) => ({ ...x, id: x.rfq.id }))),
     { invalidate: [rfqKeys.all], onSuccess: (x) => onSaved(x.id) },
   )
-  const fromOrder = !statement && from === 'order'
+  const fromBoq = !statement && from === 'boq'
+  const boqList = boqs.data?.boqs ?? []
   // Why the button is greyed out, in words: the first box still to fill.
   const missing = (() => {
-    if (fromOrder) return wo ? null : 'choose the work order'
+    if (fromBoq) return boq ? null : boqList.length ? 'choose the BOQ' : 'add a BOQ first'
     if (!title.trim()) return 'fill in What is it for'
     if (lines.length) return null
     const started = live.map((x, i) => ({ x, n: i + 1 })).filter(({ x }) => x.item_code || x.description.trim() || x.qty)
@@ -89,13 +91,18 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
   return (
     <div className="grid gap-5">
       {!statement && (
-        <Tabs label="How to list the items" value={from} onChange={setFrom} items={[{ value: 'list', label: 'List the items' }, { value: 'order', label: "From a work order's budget" }]} />
+        <Tabs label="How to list the items" value={from} onChange={setFrom} items={[{ value: 'list', label: 'List the items' }, { value: 'boq', label: "From the BOQ's budget" }]} />
       )}
-      {fromOrder ? (
+      {fromBoq ? (
         <div className="grid gap-2">
-          <Field label="Work order" htmlFor="rn-wo" hint="The enquiry asks for what its budget still needs: less what is in the store and already on order.">
-            <Select id="rn-wo" value={wo} placeholder="Choose the work order" onChange={(e) => setWo(e.target.value)} options={(orders.data ?? []).map((w) => ({ value: w.id, label: `${w.number} - ${w.job_name}` }))} />
+          <Field label="BOQ" htmlFor="rn-boq" hint="The enquiry asks for the materials its budget still needs: less what is in the store and already on order.">
+            <Select id="rn-boq" value={boq} placeholder="Choose the BOQ" onChange={(e) => setBoq(e.target.value)} options={boqList.map((b) => ({ value: b.id, label: `${b.number} - ${b.project}` }))} />
           </Field>
+          {boqs.isSuccess && !boqList.length && (
+            <p className="text-sm text-muted-foreground">
+              No BOQ yet. Add the project's BOQ in <Link to="/projects/boq" className="text-primary underline">Projects &rsaquo; BOQ</Link> and its materials in <Link to="/projects/budgeting" className="text-primary underline">Budgeting</Link>, then raise the enquiry from it. Until then, use List the items.
+            </p>
+          )}
         </div>
       ) : (
         <>
@@ -134,7 +141,7 @@ function Form({ statement, onClose, onSaved }: { statement: Statement | null; on
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
         {save.error ? <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>
           : missing ? <p className="mr-auto text-[13px] text-muted-foreground">To {statement ? 'save' : 'open it'}, {missing}.</p>
-          : !fromOrder && !locked && <p className="mr-auto text-xs text-muted-foreground">{lines.length} {lines.length === 1 ? 'item' : 'items'}{half ? ` · ${half} without a quantity, left out` : ''}</p>}
+          : !fromBoq && !locked && <p className="mr-auto text-xs text-muted-foreground">{lines.length} {lines.length === 1 ? 'item' : 'items'}{half ? ` · ${half} without a quantity, left out` : ''}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button loading={save.isPending} disabled={!ready} onClick={() => save.mutate()}>{statement ? 'Save changes' : 'Open the enquiry'}</Button>
       </div>
