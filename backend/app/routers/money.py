@@ -1866,7 +1866,8 @@ def advances(request: Request, job_id: int = 0, db: Session = Depends(get_read_d
 def advance_staff(request: Request, db: Session = Depends(get_read_db)):
     """The names of the staff an advance can be paid to - only the names, for accounts, who do not see the people list."""
     client = require_items_access(request, db, "bills.view_all")
+    from app.constants.common import PAYROLL_EXCLUDED_STATUSES
     from app.services.hr import employee_name
     staff = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id,
-                                               (models.DBEmployee.status == "active") | models.DBEmployee.status.is_(None)).all()
+                                               models.DBEmployee.status.notin_(PAYROLL_EXCLUDED_STATUSES)).all()
     return {"staff": sorted(({"id": e.id, "name": employee_name(e)} for e in staff), key=lambda r: r["name"].lower())}

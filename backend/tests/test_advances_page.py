@@ -39,8 +39,10 @@ def test_a_staff_advance_is_listed_until_it_comes_back(tenant):
 
 
 def test_the_staff_an_advance_can_go_to_are_listed_by_name(tenant):
-    res = tenant.get("/api/advances/staff")
-    assert res.status_code == 200 and isinstance(res.json()["staff"], list)
+    from conftest import make_employee
+    e = make_employee(tenant)                         # new staff are "onboarding", and may be given an advance
+    names = [r["id"] for r in tenant.get("/api/advances/staff").json()["staff"]]
+    assert e["id"] in names
 
 
 def test_another_company_sees_none_of_it(tenant, second_tenant):
