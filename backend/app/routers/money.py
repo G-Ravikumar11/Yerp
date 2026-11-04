@@ -16,6 +16,7 @@ from app.core.auth import (
     current_member, get_client_user, owned_or_404, require_items_access, session_employee, session_person, wo_actor,
 )
 from app.core.cache import cached_read
+from app.core.site_scope import scope_key
 from app.core.currency import amount_in_words, inr, money
 from app.core.dates import ageing_bucket, days_after
 from app.core.notifications import notify, tell_approvers
@@ -77,7 +78,7 @@ def profit_loss_report(request: Request, date_from: str = "", date_to: str = "",
 def balance_sheet_report(request: Request, db: Session = Depends(get_read_db)):
     """Assets, liabilities and equity today. Equity is assets less liabilities, so it balances by construction."""
     client = require_items_access(request, db, "reports.view")
-    return balance_sheet(db, client)
+    return cached_read(("balance-sheet", client.id, scope_key(db)), lambda: balance_sheet(db, client))
 
 
 @router.get("/api/reports/cash-summary")
@@ -154,7 +155,7 @@ def costs_by_project(request: Request, db: Session = Depends(get_db)):
     """Every project on one screen, with the money on each."""
     client = require_items_access(request, db, "reports.view")
     # Nineteen queries to add up; kept until anything is saved.
-    return cached_read(("costs-by-project", client.id), lambda: costs_by_project_payload(db, client), ttl=60)
+    return cached_read(("costs-by-project", client.id, scope_key(db)), lambda: costs_by_project_payload(db, client), ttl=60)
 
 
 def costs_by_project_payload(db, client):
@@ -306,7 +307,8 @@ def _party_positions(rows, credits, on_account, name_of):
 @router.get("/api/money/receivables")
 def receivables(request: Request, db: Session = Depends(get_read_db)):
     """What customers owe, and how long they have owed it."""
-    return receivables_payload(db, require_items_access(request, db, "bills.view_all"))
+    client = require_items_access(request, db, "bills.view_all")
+    return cached_read(("receivables", client.id, scope_key(db)), lambda: receivables_payload(db, client))
 
 
 def receivables_payload(db, client):
@@ -361,7 +363,8 @@ def payables(request: Request, db: Session = Depends(get_read_db)):
     somebody signed for it - so it belongs here beside the supplier invoices
     rather than out of sight on the subcontract screen.
     """
-    return payables_payload(db, require_items_access(request, db, "bills.view_all"))
+    client = require_items_access(request, db, "bills.view_all")
+    return cached_read(("payables", client.id, scope_key(db)), lambda: payables_payload(db, client))
 
 
 def payables_payload(db, client):

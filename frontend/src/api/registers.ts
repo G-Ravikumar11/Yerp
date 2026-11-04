@@ -53,21 +53,22 @@ export interface Guarantee {
   order_status?: string
 }
 
-export interface Advance {
-  contractor: string
-  order_id: number
-  order: string
-  advance: number
-  recovery_percent: number
-  recovered: number
-  percent_recovered: number
-  outstanding: number
-  secured_by_bg: boolean
-  /** secured | partly secured | unsecured | nothing out - by a guarantee in force that covers what is out. */
-  security?: string
-  bg_cover?: number
-  order_status?: string
-}
+// Unused: only the old Advances tab read it; see api/advances.ts.
+// export interface Advance {
+//   contractor: string
+//   order_id: number
+//   order: string
+//   advance: number
+//   recovery_percent: number
+//   recovered: number
+//   percent_recovered: number
+//   outstanding: number
+//   secured_by_bg: boolean
+//   /** secured | partly secured | unsecured | nothing out - by a guarantee in force that covers what is out. */
+//   security?: string
+//   bg_cover?: number
+//   order_status?: string
+// }
 
 export const useTdsRegister = (year: string, quarter: string) =>
   useQuery({ queryKey: ['registers', 'tds', year, quarter], queryFn: () => get<TdsRegister>(`/api/registers/tds?year=${encodeURIComponent(year)}&quarter=${encodeURIComponent(quarter)}`), placeholderData: (p) => p })
@@ -75,5 +76,6 @@ export const useTdsRegister = (year: string, quarter: string) =>
 export const useGuarantees = () =>
   useQuery({ queryKey: ['registers', 'guarantees'], queryFn: () => get<{ guarantees: Guarantee[]; summary: { held: number; lapsing_soon: number; lapsed: number; no_expiry: number } }>('/api/registers/guarantees') })
 
-export const useAdvances = () =>
-  useQuery({ queryKey: ['registers', 'advances'], queryFn: () => get<{ advances: Advance[]; summary: { given: number; recovered: number; outstanding: number; unsecured: number } }>('/api/registers/advances') })
+// Unused: the Advances page reads /api/advances (api/advances.ts) since 2026-11-04.
+// export const useAdvances = () =>
+//   useQuery({ queryKey: ['registers', 'advances'], queryFn: () => get<{ advances: Advance[]; summary: { given: number; recovered: number; outstanding: number; unsecured: number } }>('/api/registers/advances') })

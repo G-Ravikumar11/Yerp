@@ -18,6 +18,7 @@ from app.core import checks
 from app.core.auth import (get_client_user, owned_or_404, refuse_ho_coordinator, require_erp_read, require_items_access, require_owner,
                             session_person, wo_actor)
 from app.core.cache import cached_read
+from app.core.site_scope import scope_key
 from app.core.config import logger
 from app.core.currency import DEFAULT_CURRENCY, money, totals_by_currency
 from app.core.gst import GST_STATES
@@ -53,7 +54,6 @@ from app.services.projects import (
     _apply_activity,
     book_measured,
     _free_code,
-    status_after_progress,
     _d,
     _hit,
     _replace_diary_lines,
@@ -411,6 +411,11 @@ def jobs_summary(request: Request, db: Session = Depends(get_read_db)):
     it worse. Everything is read once here and grouped in memory instead.
     """
     client = require_items_access(request, db, ("reports.view", "bills.view_all", "workorders.manage"))
+    # Read from every table at once, then kept until anything is saved (the Projects screen asks on each visit).
+    return cached_read(("jobs-summary", client.id, scope_key(db)), lambda: jobs_summary_payload(db, client))
+
+
+def jobs_summary_payload(db, client):
     jobs = db.query(models.DBJob).filter(
         models.DBJob.client_id == client.id,
         ~models.DBJob.status.in_(JOB_CLOSED_STATUSES),
@@ -836,7 +841,7 @@ def portfolio_pnl(request: Request, db: Session = Depends(get_db)):
     """
     client = require_items_access(request, db, "reports.view")
     # Nineteen queries to add up; kept until anything is saved.
-    return cached_read(("jobs-pnl", client.id), lambda: portfolio_pnl_payload(db, client), ttl=60)
+    return cached_read(("jobs-pnl", client.id, scope_key(db)), lambda: portfolio_pnl_payload(db, client), ttl=60)
 
 
 def portfolio_pnl_payload(db, client):
@@ -926,7 +931,7 @@ def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
     # beside the project list's own.
     from app.services.attention_buying import buying_items, with_buying
     from app.services.doc_control import attention_items as doc_attention
-    return cached_read(("attention", client.id), lambda: with_buying(attention_payload(db, client.id), buying_items(db, client.id) + doc_attention(db, client.id)))
+    return cached_read(("attention", client.id, scope_key(db)), lambda: with_buying(attention_payload(db, client.id), buying_items(db, client.id) + doc_attention(db, client.id)))
 
 
 @router.get("/api/jobs/{job_id}/equipment")

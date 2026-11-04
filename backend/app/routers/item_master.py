@@ -11,7 +11,7 @@ from app import models
 from app.db import get_db, get_read_db
 
 from app.core.audit import log_audit
-from app.core.queries import by_id, prime
+from app.core.queries import by_id
 from app.core.auth import require_erp_read, wo_actor
 from app.core.currency import unit_rate
 from app.core.sheets import read_sheet_rows, sheet_response

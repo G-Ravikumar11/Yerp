@@ -16,7 +16,6 @@ from app.core.naming import short_name
 from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
 from app.core.units import canonical_unit
-from app.schemas.items import ItemIn
 from app.services.items import CATEGORY_BY_KIND, issue_item_codes
 
 
@@ -776,5 +775,4 @@ def bv_apply(db, client, boq, vo):
 # so they are imported last, after everything above has been defined.
 from app.services.approvals import chain_rung, hierarchy_chain, raised_by_owner
 from app.services.client_billing import billed_qty_to_date, measured_to_date
-from app.services.items import build_item
 from app.services.subcontract_billing import sub_bill_step_name

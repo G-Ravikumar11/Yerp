@@ -681,7 +681,8 @@ def get_subcon_issues(db, subcontractor_id, upto_date) -> List[SubconIssueLine]:
     back = _taken_back(db, ids, (DocStatus.POSTED.value,))
     recs = {r.issue_line_id: r for r in db.query(DBStoreRecovery).filter(DBStoreRecovery.issue_line_id.in_(ids or [0]), DBStoreRecovery.source == "ISSUE", DBStoreRecovery.status == "OPEN").all()}
     out = []
-    spoken = {}
+    # Unused: worked out and never read.
+    # spoken = {}
     for l, issue in rows:
         returned = back.get(l.id, (ZERO, ZERO))[0]
         rec = recs.get(l.id)

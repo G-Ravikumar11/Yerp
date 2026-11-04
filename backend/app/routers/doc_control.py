@@ -1,5 +1,5 @@
 """Document control under /api/doc-control: transmittals, RFIs and submittals (services/doc_control.py)."""
-from datetime import date, datetime
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request

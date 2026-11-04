@@ -13,11 +13,9 @@ a formula on another row becomes a dependency (=+D9 starts the day row 9 ends: F
 =+C23+2 two days after it starts: SS+2). A sheet this export wrote comes back exactly, by its hidden ID and Parent.
 """
 import io
-import re
 from datetime import date, datetime, timedelta
 
-from fastapi import HTTPException
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -128,7 +126,8 @@ def export_xlsx(view):
         """The first working day on or after expr."""
         return expr if calendar_days else "WORKDAY.INTL(%s-1,1,WeekMask,Holidays)" % expr
 
-    rng = lambda col: "$%s$%d:$%s$%d" % (col, FIRST, col, last)
+    # Unused: worked out and never read.
+    # rng = lambda col: "$%s$%d:$%s$%d" % (col, FIRST, col, last)
     for r in rows:
         y = at[r["id"]]
         ws["%s%d" % (SNO, y)] = r["wbs"]

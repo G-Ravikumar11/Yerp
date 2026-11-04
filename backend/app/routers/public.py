@@ -6,7 +6,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db, get_read_db
+from app.db import get_read_db
 
 from app.core import identity
 from app.core.dates import _parse_date

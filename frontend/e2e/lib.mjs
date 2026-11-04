@@ -193,8 +193,12 @@ export async function setValue(page, selector, value) {
   )
 }
 
-/** Wait for every toast to leave - they sit bottom-right and can cover what a test is about to click. */
-export const toastsGone = (page, timeout = 12000) => page.waitForFunction(() => !document.querySelector('[aria-live=polite] [role=status], [aria-live=polite] [role=alert]'), { timeout })
+/** Clear every toast off the screen. */
+export const toastsGone = async (page, timeout = 12000) => {
+  // A message stays until it is closed, so close them: they sit bottom-right and can cover what a test is about to click.
+  await page.evaluate(() => document.querySelectorAll('[aria-live=polite] button[aria-label]').forEach((b) => b.click()))
+  await page.waitForFunction(() => !document.querySelector('[aria-live=polite] [role=status], [aria-live=polite] [role=alert]'), { timeout })
+}
 
 /** The body text of the first toast on screen. */
 export const toastText = (page) => page.evaluate(() => document.querySelector('[aria-live=polite] [role=status], [aria-live=polite] [role=alert]')?.textContent.trim() ?? '')
@@ -211,7 +215,8 @@ export async function approvedOrder(page, { subject = 'E2E order', lines } = {})
   const vocab = (await api(page, 'GET', '/api/wo/vocabulary')).data
   const contractor = (await api(page, 'GET', '/api/wo/contractors')).data.contractors.find((c) => c.registration_status === 'APPROVED')
   const unit = (await api(page, 'GET', '/api/wo/business-units')).data.business_units[0]
-  const job = vocab.jobs[0]
+  // A project of its own: on one with a BOQ every line has to come from that BOQ, and these lines are free-standing.
+  const job = (await api(page, 'POST', '/api/jobs', { name: `E2E site ${Date.now()}`, customer_name: 'E2E client', status: 'in_progress' })).data
   let budgets = (await api(page, 'GET', `/api/wo/projects/${job.id}/budgets`)).data.budgets
   if (!budgets.length) {
     await api(page, 'POST', `/api/wo/projects/${job.id}/budgets`, { name: 'E2E civil', code: 'E2E', allocated_amount: 900000000 })

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { daysAgo, formatDate, formatPercent, formatQty, plural, today } from './format'
+import { daysAgo, formatDate, formatQty, plural, today } from './format'
 import { today as storeToday } from '@/features/store/inward/api'
 
 describe('formatDate', () => {
@@ -29,13 +29,14 @@ describe('formatQty', () => {
   })
 })
 
-describe('formatPercent', () => {
-  it('shows a dash for zero or missing', () => {
-    expect(formatPercent(0)).toBe('-')
-    expect(formatPercent(null)).toBe('-')
-    expect(formatPercent(18)).toBe('18%')
-  })
-})
+// Unused: formatPercent is commented out in format.ts.
+// describe('formatPercent', () => {
+//   it('shows a dash for zero or missing', () => {
+//     expect(formatPercent(0)).toBe('-')
+//     expect(formatPercent(null)).toBe('-')
+//     expect(formatPercent(18)).toBe('18%')
+//   })
+// })
 
 describe('plural', () => {
   it('chooses singular only for exactly one', () => {

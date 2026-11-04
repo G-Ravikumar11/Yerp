@@ -418,7 +418,7 @@ def refuse_cancel_with_money(db, client_id, doc_type, bill, verb):
     got = money(settled_on(db, client_id, doc_type, bill.id))
     if got > 0:
         raise HTTPException(409, "%s has %s %s against it. Void those entries under "
-                                 "Payments & Ledgers before cancelling it."
+                                 "Ledgers & Bank before cancelling it."
                                  % (bill.number, inr(got), verb))
 
 

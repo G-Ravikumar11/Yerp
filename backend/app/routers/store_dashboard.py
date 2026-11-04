@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.core.store_auth import store_actor
-from app.db import get_db, get_read_db
+from app.db import get_read_db
 from app.routers.store_lookup import ANY_VIEW
 from app.routers.store_reports import _scope, jsonable
 from app.services import store_dashboard

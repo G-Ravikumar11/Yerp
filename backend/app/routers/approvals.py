@@ -95,10 +95,11 @@ def get_pending_approvals(request: Request, db: Session = Depends(get_read_db)):
     client = get_client_user(request, db)
 
     # Find all employees belonging to this client
-    employee_ids = [e.id for e in db.query(models.DBEmployee).filter(
-        models.DBEmployee.client_id == client.id,
-        models.DBEmployee.status == "active"
-    ).all()]
+    # Unused: worked out and never read.
+    # employee_ids = [e.id for e in db.query(models.DBEmployee).filter(
+    #     models.DBEmployee.client_id == client.id,
+    #     models.DBEmployee.status == "active"
+    # ).all()]
 
     # Every pending step: those addressed to staff, and those addressed to
     # the owner, which carry no employee at all.

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, aliased, joinedload, undefer
 
 from app import models
 from app.core import passwords
-from app.core.queries import by_id, execute_together, prime
+from app.core.queries import execute_together
 from app.db import get_db, get_read_db
 
 from app.constants.hr import ONBOARDING_STAGES, ORG_DOMAIN_KEY
@@ -1814,7 +1814,8 @@ def expiring_documents(request: Request, days: int = 60, db: Session = Depends(g
     client = require_items_access(request, db, "people.manage")
     days = max(1, min(days, 365))
     horizon = (datetime.now().date() + timedelta(days=days))
-    today = datetime.now().date()
+    # Unused: worked out and never read.
+    # today = datetime.now().date()
 
     rows = with_request_links(db.query(models.DBDocumentRequest)).filter(
         models.DBDocumentRequest.client_id == client.id,

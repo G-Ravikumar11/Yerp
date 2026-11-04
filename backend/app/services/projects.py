@@ -1580,7 +1580,7 @@ def classify_schedule_rows(rows):
 
 
 def schedule_import_preview(db, client_id, job, raw, sheet_name=""):
-    from app.core.sheets import cell_text, read_xlsx_outline, sheet_note
+    from app.core.sheets import read_xlsx_outline, sheet_note
     rows = read_xlsx_outline(raw, sheet_name)
     if not rows:
         raise HTTPException(400, "Nothing could be read from that sheet." + sheet_note())
@@ -2454,7 +2454,7 @@ def fixed_asset_attention(db, client_id):
 # Names this module only needs once it is running. They come from modules that in turn need this one,
 # so they are imported last, after everything above has been defined.
 from app.services.crm import next_customer_code, settled_amounts, sync_lead_from_estimate
-from app.services.hr import employee_name, employee_site_ids
+from app.services.hr import employee_name
 from app.services.money import material_recovered_by_job
 from app.services.quality import cube_dict
 from app.services.subcontract_billing import _live_releases, release_attention, released_by_job

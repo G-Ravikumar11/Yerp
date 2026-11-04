@@ -55,7 +55,7 @@ from app.services.employee_portal import (
     target_hours_for,
     working_days_between,
 )
-from app.services.hr import employee_name, employee_site_ids, request_to_dict, resolve_employee_job_id, with_request_links
+from app.services.hr import employee_name, request_to_dict, resolve_employee_job_id, with_request_links
 from app.services.holidays import custom_holidays
 from app.services.invoicing import bill_gst_split, check_bill_lines, refuse_duplicate_bill
 from app.services.procurement import (
@@ -1283,7 +1283,8 @@ def get_weekly_chart(request: Request, db: Session = Depends(get_read_db)):
         raise HTTPException(status_code=401, detail="Not authenticated")
     from datetime import timedelta
     today = datetime.now()
-    start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%d")
+    # Unused: worked out and never read.
+    # start = (today - timedelta(days=today.weekday())).strftime("%Y-%m-%d")
     week_days = []
     for i in range(7):
         d = (today - timedelta(days=today.weekday() - i)).strftime("%Y-%m-%d")

@@ -2,7 +2,6 @@
 import re
 
 from fastapi import HTTPException
-from sqlalchemy import func
 
 from app import models
 from app.core.currency import unit_rate

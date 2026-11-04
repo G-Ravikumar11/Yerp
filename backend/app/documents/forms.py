@@ -293,7 +293,8 @@ def ra_form_spec(db, client, bill):
     job = db.query(models.DBJob).filter(models.DBJob.id == bill.job_id).first()
     wo = b.get("work_order_detail") or {}
     buyer = einvoice_buyer(db, client.id, job) if job else None
-    our = b.get("our") or {}
+    # Unused: worked out and never read.
+    # our = b.get("our") or {}
     company = letterhead(db, client)
     card = customer_card(buyer)
     b_addr = ", ".join(x for x in ((buyer.address if buyer else "") or "", (getattr(buyer, "city", "") or "") if buyer else "",
@@ -459,7 +460,8 @@ def po_form_spec(db, client, order):
     sig = doc_signatories(db, client.id)
     sup = next((s for s in db.query(models.DBSupplier).filter(models.DBSupplier.client_id == client.id).all()
                 if norm_name(s.name) == norm_name(order.supplier_name)), None)
-    our = d.get("our") or our_party(db, client.id)
+    # Unused: worked out and never read.
+    # our = d.get("our") or our_party(db, client.id)
     company = letterhead(db, client)
     job = db.query(models.DBJob).filter(models.DBJob.id == order.job_id).first() if order.job_id else None
     rows, sub = [], 0.0

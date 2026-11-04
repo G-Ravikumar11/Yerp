@@ -76,7 +76,8 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
                  "raising another - two live bills claiming the same "
                  "measurements is how work gets paid for twice." % open_bill.number)
 
-    measured = measured_to_date(db, wo.id)
+    # Unused: worked out and never read.
+    # measured = measured_to_date(db, wo.id)
     billed = billed_qty_to_date(db, wo.id)
     lines = db.query(models.DBWorkOrderLine).filter(
         models.DBWorkOrderLine.work_order_id == wo.id).all()

@@ -13,9 +13,10 @@ export function formatQty(value: number | null | undefined, max = 3): string {
   return value.toLocaleString('en-IN', { maximumFractionDigits: max })
 }
 
-export function formatPercent(value: number | null | undefined): string {
-  return value ? `${value}%` : '-'
-}
+// Unused: no screen shows a percentage through it.
+// export function formatPercent(value: number | null | undefined): string {
+//   return value ? `${value}%` : '-'
+// }
 
 /** Today's date on this device's clock, as yyyy-mm-dd. (The UTC date is yesterday's for the first hours of an Indian morning.) */
 export const today = () => daysAgo(0)

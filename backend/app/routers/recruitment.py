@@ -18,7 +18,7 @@ from app.constants.recruitment import (
     OFFER_STATUSES,
 )
 from app.core.audit import log_audit
-from app.core.auth import get_client_user, require_items_access, require_people_admin
+from app.core.auth import require_items_access, require_people_admin
 from app.core.currency import esc, money
 from app.core.dates import _parse_date
 from app.core.files import MAX_DOCUMENT_BYTES
@@ -367,7 +367,7 @@ def list_offers(sub_id: int, request: Request, db: Session = Depends(get_read_db
 @router.post("/api/recruitment/submissions/{sub_id}/offers")
 def create_offer(sub_id: int, request: Request, body: OfferIn, db: Session = Depends(get_db)):
     client = require_items_access(request, db, "recruitment.manage")
-    sub = _get_submission_for_client(db, client.id, sub_id)
+    _get_submission_for_client(db, client.id, sub_id)
     live = db.query(models.DBOffer).filter(
         models.DBOffer.submission_id == sub_id,
         models.DBOffer.status.in_(["draft", "sent", "accepted"]),

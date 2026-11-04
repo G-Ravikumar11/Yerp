@@ -87,7 +87,7 @@ GST_HEADS = {"output_cgst": "Central Tax", "output_sgst": "State Tax", "output_i
              "input_cgst": "Central Tax", "input_sgst": "State Tax", "input_igst": "Integrated Tax", "input_gst": ""}
 # Heads that are the site's own cost (Direct Expenses in Tally); the rest are overheads.
 DIRECT_HEADS = {"Site expenses", "Diesel & fuel", "Machinery hire", "Transport & freight", "Repairs & maintenance"}
-PARTY_GROUP = {"client": "Sundry Debtors", "supplier": "Sundry Creditors", "contractor": "Sundry Creditors", "other": "Sundry Creditors"}
+PARTY_GROUP = {"client": "Sundry Debtors", "supplier": "Sundry Creditors", "contractor": "Sundry Creditors", "staff": "Loans & Advances (Asset)", "other": "Sundry Creditors"}
 COST_CATEGORY = "Primary Cost Category"
 
 

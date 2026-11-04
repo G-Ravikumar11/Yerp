@@ -38,7 +38,6 @@ from app.schemas.auth import (
 from app.services.employee_portal import stop_the_clock
 from app.services.auth import (
     find_valid_reset,
-    google_configured,
     reset_email_bodies,
     superadmin_google_emails,
     yahoo_configured,

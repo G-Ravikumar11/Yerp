@@ -314,7 +314,8 @@ def send_invoice_email(number: str, background_tasks: BackgroundTasks, request: 
     if not validate_email_address(inv.email):
         raise HTTPException(status_code=400, detail=f"Invalid email address: {inv.email}")
 
-    user = request.session.get('user', {})
+    # Unused: worked out and never read.
+    # user = request.session.get('user', {})
     from_email = default_from_email()
     if not from_email:
         raise HTTPException(status_code=400, detail="No sender email configured.")
@@ -326,8 +327,10 @@ def send_invoice_email(number: str, background_tasks: BackgroundTasks, request: 
     company_email = settings_map.get("email", "") or (inv_client.email if inv_client else "")
     company_phone = settings_map.get("phone_number", "") or (inv_client.phone_number if inv_client else "")
     company_address = settings_map.get("company_address", "") or (inv_client.address if inv_client else "")
-    company_abn = settings_map.get("company_abn", "") or (inv_client.abn if inv_client else "")
-    company_website = settings_map.get("company_website", "") or (inv_client.website if inv_client else "")
+    # Unused: worked out and never read.
+    # company_abn = settings_map.get("company_abn", "") or (inv_client.abn if inv_client else "")
+    # Unused: worked out and never read.
+    # company_website = settings_map.get("company_website", "") or (inv_client.website if inv_client else "")
 
     cur = (inv.currency or settings_map.get("currency") or (inv_client.currency if inv_client else "") or DEFAULT_CURRENCY).upper()
     cur_symbol = currency_symbol(cur)
@@ -699,7 +702,7 @@ def update_bill(bill_id: int, request: Request, body: dict = None, db: Session =
 
     # What has been paid is what the ledger says; it is never typed in here.
     if "amount_paid" in body and _bill_field_changed(bill, "amount_paid", body.get("amount_paid")):
-        raise HTTPException(409, "Payments on a bill are recorded under Payments & Ledgers, not by editing it.")
+        raise HTTPException(409, "Payments on a bill are recorded under Ledgers & Bank, not by editing it.")
     # A bill's status moves by approval and by payment. The one step taken here is the Master accepting a draft they
     # entered themselves (no approval chain, nothing paid) as owed.
     new_status = body.get("status")
@@ -799,7 +802,7 @@ def delete_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
     paid = money(already_settled(db, client.id, "supplier_bill", bill, money(bill.total or bill.amount or 0)))
     if paid > 0:
         raise HTTPException(409, "%s has %s paid against it. Void those payments under "
-                                 "Payments & Ledgers first, or keep the bill."
+                                 "Ledgers & Bank first, or keep the bill."
                                  % (bill.number or "This bill", inr(paid)))
     db.query(models.DBBillLineItem).filter(models.DBBillLineItem.bill_id == bill.id).delete()
     log_audit(db, client.id, "bill_deleted", "bill", bill.id, bill.number, "", request)

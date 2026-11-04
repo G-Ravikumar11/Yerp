@@ -1276,7 +1276,7 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                                      "measurement book first, or amend the order down to what was done."
                                      % order.wo_number)
         if advance_paid(db, client.id, order.id) > 0:
-            raise HTTPException(409, "An advance of %s has been paid on %s. Void it under Payments & Ledgers "
+            raise HTTPException(409, "An advance of %s has been paid on %s. Void it under Ledgers & Bank "
                                      "before cancelling." % (inr(advance_paid(db, client.id, order.id)), order.wo_number))
 
     order.status = allowed[action]
@@ -1945,7 +1945,7 @@ from app.services.approvals import (
 from app.services.client_billing import billed_qty_to_date, measured_to_date
 from app.services.crm import advance_paid, next_item_code, norm_name, settled_on, standard_unit
 from app.services.invoicing import active_irn
-from app.services.subcontract_billing import _live_releases, released_retention, sub_gross_measured
+from app.services.subcontract_billing import released_retention, sub_gross_measured
 from app.services.boq import boq_of_job, boq_parts_of, boq_tie_subcontract_lines
 from app.services.subcontract_rules import (
     advance_outstanding,

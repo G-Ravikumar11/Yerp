@@ -86,7 +86,8 @@ def purchased_items(db, client_id):
 
 def stock_by_category(db, client_id, items=None):
     """Every purchased material with what the store holds now, under its category: the physical stock sheet."""
-    M = models
+    # Unused: worked out and never read.
+    # M = models
     items = purchased_items(db, client_id) if items is None else items
     held = current_stock(db, client_id)
     groups = OrderedDict()

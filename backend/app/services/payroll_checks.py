@@ -8,7 +8,6 @@ payslips as they then stand.
 from app import models
 from app.documents import ecr, esic, neft
 from app.services import payroll_exports
-from app.services.payroll_month import month_of
 
 WAGE_SWING = 20.0          # per cent change in net pay from the month before that is worth a look
 

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Button, Field, Input, Modal, NumField, Select } from '@/components/ui'
 import { ledgerKeys, PARTY_LABEL, recordOnAccount, useAccounts } from '@/api/ledger'
 import { PAY_MODES } from '@/api/money'
-import { useAdvanceStaff } from '@/api/advances'
+import { advanceKeys, useAdvanceStaff } from '@/api/advances'
 import { projectLabel, useProjects } from '@/api/projects'
 import { mustAsk, paymentKeys, raisePaymentRequest, usePaymentRules } from '@/api/payments'
 import { useAction } from '@/lib/mutate'
@@ -37,7 +37,7 @@ function Form({ direction, onClose, partyType, jobId }: { direction: 'IN' | 'OUT
   const ask = direction === 'OUT' && mustAsk(rules.data, amount)
   const save = useAction(() => (ask
     ? raisePaymentRequest({ doc_type: 'on_account', party_type: type, party_name: party.trim(), amount, mode, note, account_id: Number(account || only) || null, job_id: Number(job) || null })
-    : recordOnAccount({ direction, party_type: type, party_name: party.trim(), amount, paid_on: on, mode, reference: ref, note, account_id: Number(account || only) || null, job_id: Number(job) || null })), { invalidate: [ledgerKeys.all, ['owed'], paymentKeys.all], onSuccess: onClose })
+    : recordOnAccount({ direction, party_type: type, party_name: party.trim(), amount, paid_on: on, mode, reference: ref, note, account_id: Number(account || only) || null, job_id: Number(job) || null })), { invalidate: [ledgerKeys.all, ['owed'], paymentKeys.all, advanceKeys.all], onSuccess: onClose })
   return (
     <div>
       <div className="grid gap-4 sm:grid-cols-2">

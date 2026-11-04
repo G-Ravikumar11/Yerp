@@ -30,7 +30,8 @@ export const useHseCheck = (job: number) => useQuery({ queryKey: ['safety', 'hse
 
 export const useSafety = (job: number) => useQuery({ queryKey: ['safety', job], enabled: job >= 0, queryFn: () => get<SafetyData>(`/api/safety${job ? `?job_id=${job}` : ''}`) })
 
-export interface IncidentInput { job_id: number; kind: string; happened_on: string; happened_at: string; location: string; description: string; injured_name: string; injury: string; treatment: string; lost_days: number; immediate_action: string }
+// Unused: nothing sends an incident in this shape.
+// export interface IncidentInput { job_id: number; kind: string; happened_on: string; happened_at: string; location: string; description: string; injured_name: string; injury: string; treatment: string; lost_days: number; immediate_action: string }
 export const closeIncident = (id: number, b: { root_cause: string; corrective_action: string }) => post<{ incident: { number: string } }>(`/api/safety/incidents/${id}/close`, b)
 export const recordTalk = (b: { job_id: number; topic: string; attendees: number; attendee_names: string }) => post<{ message?: string }>('/api/safety/talks', b)
 export interface PermitInput { job_id: number; kind: string; location: string; description: string; receiver: string; valid_from: string; valid_to: string; precautions: { item: string; done: boolean }[] }

@@ -12,7 +12,7 @@ from app.db import get_db, get_read_db
 from app.constants.approvals import PO_APPROVED, PO_AWAITING_APPROVAL, PO_REJECTED
 from app.constants.common import GRN_EDITABLE, PURCHASE_ORDER_STATUSES
 from app.core.audit import log_audit
-from app.core.queries import by_id, prime
+from app.core.queries import by_id
 from app.core.auth import require_erp_read, require_items_access, session_employee, wo_actor
 from app.core.currency import amount_in_words, inr, money, tax_percent_of, unit_rate
 from app.core.dates import days_after

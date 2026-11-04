@@ -125,7 +125,7 @@ async def erp_items_analyse(request: Request, file: UploadFile = File(...),
     left over, so the sheet can be fixed on screen and committed - instead of
     being bounced back to Excel to be uploaded again.
     """
-    client = require_items_access(request, db)
+    require_items_access(request, db)
     header, body = await read_sheet_rows(file, sheet)
     mapping, unmapped = map_headers(header)
     if "item_code" not in mapping.values():

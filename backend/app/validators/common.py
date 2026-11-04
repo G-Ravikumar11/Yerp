@@ -126,7 +126,8 @@ def validate_items(db, client_id, rows, kind):
 def check_item_row(row, kind, seen, taken):
     """What is left wrong after the repairs, and what could be done about it."""
     problems = []
-    line = row.get("_line")
+    # Unused: worked out and never read.
+    # line = row.get("_line")
     code = (row.get("item_code") or "").strip().upper()
 
     if not code:

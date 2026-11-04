@@ -1,5 +1,4 @@
 """The contractor compliance endpoints."""
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session

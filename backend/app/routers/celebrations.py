@@ -1,5 +1,5 @@
 """Birthdays and special days: shown to everybody, reacted to with an emoji, answered with a message. HR adds special days."""
-from datetime import date, datetime
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request

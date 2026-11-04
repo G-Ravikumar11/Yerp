@@ -157,3 +157,24 @@ def test_company_wide_staff_and_staff_on_no_site_still_see_every_boq(tenant, por
     jb, boq_b, _, _ = boq_with_variation(tenant, "Bravo BOQ site")
     staff_on(tenant, portal, [])
     assert {b["id"] for b in portal.get("/api/boqs").json()["boqs"]} == {boq_a, boq_b}
+
+
+def test_a_cached_answer_is_kept_apart_by_the_sites_of_whoever_asked(tenant, portal):
+    """Screens kept for a minute (the Command Center's attention list, the project board) are kept per company and per
+    site limit: a member of staff on one site gets their own copy, not the owner's, and the owner never gets theirs."""
+    from app.core.auth import ACTING_EMPLOYEE
+    from app.core.site_scope import scope_key
+    from app.db import SessionLocal
+    from app import models
+    a, _ = two_projects(tenant)
+    e = staff_on(tenant, portal, [a["id"]])
+    db = SessionLocal()
+    try:
+        assert scope_key(db) is None                                    # nobody acting: the owner's answer
+        token = ACTING_EMPLOYEE.set(db.query(models.DBEmployee).get(e["id"]))
+        try:
+            assert scope_key(db) == (a["id"],)
+        finally:
+            ACTING_EMPLOYEE.reset(token)
+    finally:
+        db.close()

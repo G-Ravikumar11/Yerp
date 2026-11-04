@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
-import { useAdvances, useGuarantees, type Advance, type Guarantee } from '@/api/registers'
+import { useGuarantees, type Guarantee } from '@/api/registers'
 import { formatDate } from '@/lib/format'
 import { returnGuarantee } from '@/api/orders'
 import { useAction } from '@/lib/mutate'
@@ -56,28 +56,29 @@ export function GuaranteesTab() {
   )
 }
 
-/** Advances given to contractors, and how much has come back through their bills. */
-export function AdvancesTab() {
-  const q = useAdvances()
-  const s = q.data?.summary
-  const columns: TableColumn<Advance>[] = [
-    { id: 'c', header: 'Contractor', cell: (r) => r.contractor },
-    { id: 'o', header: 'Order', cell: (r) => <div>{order(r.order_id, r.order)}{r.order_status === 'CLOSED' && <div className="text-[11px] text-muted-foreground">closed</div>}</div> },
-    { id: 'a', header: 'Advance', align: 'right', cell: (r) => formatINR(r.advance) },
-    { id: 'p', header: 'Recovery', hideBelow: 'md', align: 'right', cell: (r) => `${r.recovery_percent}%` },
-    { id: 'r', header: 'Recovered', align: 'right', cell: (r) => <div className="flex flex-col items-end">{formatINR(r.recovered)}<div className="mt-1 h-1.5 w-24 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round(r.percent_recovered)} aria-valuemin={0} aria-valuemax={100}><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, r.percent_recovered))}%` }} /></div></div> },
-    { id: 'out', header: 'Still out', align: 'right', cell: (r) => <span className="font-semibold">{formatINR(r.outstanding)}</span> },
-    { id: 's', header: 'Security', cell: (r) => { const sec = r.security ?? (r.secured_by_bg ? 'secured' : 'unsecured'); return <Badge tone={sec === 'secured' || sec === 'nothing out' ? 'success' : sec === 'partly secured' ? 'warning' : 'danger'}>{sec === 'secured' ? 'BG held' : sec}</Badge> } },
-  ]
-  return (
-    <>
-      <StatGrid className="xl:grid-cols-4">
-        <Stat label="Advances given" value={compactINR(s?.given)} loading={q.isPending} />
-        <Stat label="Recovered so far" value={compactINR(s?.recovered)} loading={q.isPending} />
-        <Stat label="Still out" value={compactINR(s?.outstanding)} loading={q.isPending} />
-        <Stat label="Out with no guarantee" value={compactINR(s?.unsecured)} tone={s?.unsecured ? 'warning' : undefined} loading={q.isPending} />
-      </StatGrid>
-      <DataTable label="Advances" rows={q.data?.advances ?? []} columns={columns} rowKey={(r) => r.order_id} loading={q.isPending} empty="No advances on any live order." />
-    </>
-  )
-}
+// Unused: Advances has its own page (Accounts > Advances, features/money/AdvancesPage.tsx) since 2026-11-04.
+// /** Advances given to contractors, and how much has come back through their bills. */
+// export function AdvancesTab() {
+//   const q = useAdvances()
+//   const s = q.data?.summary
+//   const columns: TableColumn<Advance>[] = [
+//     { id: 'c', header: 'Contractor', cell: (r) => r.contractor },
+//     { id: 'o', header: 'Order', cell: (r) => <div>{order(r.order_id, r.order)}{r.order_status === 'CLOSED' && <div className="text-[11px] text-muted-foreground">closed</div>}</div> },
+//     { id: 'a', header: 'Advance', align: 'right', cell: (r) => formatINR(r.advance) },
+//     { id: 'p', header: 'Recovery', hideBelow: 'md', align: 'right', cell: (r) => `${r.recovery_percent}%` },
+//     { id: 'r', header: 'Recovered', align: 'right', cell: (r) => <div className="flex flex-col items-end">{formatINR(r.recovered)}<div className="mt-1 h-1.5 w-24 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round(r.percent_recovered)} aria-valuemin={0} aria-valuemax={100}><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(0, Math.min(100, r.percent_recovered))}%` }} /></div></div> },
+//     { id: 'out', header: 'Still out', align: 'right', cell: (r) => <span className="font-semibold">{formatINR(r.outstanding)}</span> },
+//     { id: 's', header: 'Security', cell: (r) => { const sec = r.security ?? (r.secured_by_bg ? 'secured' : 'unsecured'); return <Badge tone={sec === 'secured' || sec === 'nothing out' ? 'success' : sec === 'partly secured' ? 'warning' : 'danger'}>{sec === 'secured' ? 'BG held' : sec}</Badge> } },
+//   ]
+//   return (
+//     <>
+//       <StatGrid className="xl:grid-cols-4">
+//         <Stat label="Advances given" value={compactINR(s?.given)} loading={q.isPending} />
+//         <Stat label="Recovered so far" value={compactINR(s?.recovered)} loading={q.isPending} />
+//         <Stat label="Still out" value={compactINR(s?.outstanding)} loading={q.isPending} />
+//         <Stat label="Out with no guarantee" value={compactINR(s?.unsecured)} tone={s?.unsecured ? 'warning' : undefined} loading={q.isPending} />
+//       </StatGrid>
+//       <DataTable label="Advances" rows={q.data?.advances ?? []} columns={columns} rowKey={(r) => r.order_id} loading={q.isPending} empty="No advances on any live order." />
+//     </>
+//   )
+// }

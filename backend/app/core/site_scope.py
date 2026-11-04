@@ -46,6 +46,16 @@ def allowed_jobs(session, emp):
     return got
 
 
+def scope_key(session):
+    """What a cached answer has to be kept apart by, besides the company: the sites the member of staff asking is limited
+    to (None when they are not). Without it one person's narrowed answer is served to everybody for a minute."""
+    emp = ACTING_EMPLOYEE.get()
+    if emp is None:
+        return None
+    allowed = allowed_jobs(session, emp)
+    return None if allowed is None else tuple(sorted(allowed))
+
+
 def out_of_reach(session, client_id, job_id):
     """True when the project exists in this company but this member of staff is not put on it. Asked only after a lookup
     found nothing, so a screen can say why ("you are not assigned to that site") instead of "not found"."""

@@ -230,7 +230,8 @@ def _text(data: bytes) -> str:
 
 def _as_picture(data: bytes, content_type: str):
     """A picture the vision model takes: JPEG, PNG, WebP and GIF as they are; BMP or TIFF made into a JPEG."""
-    media = (content_type or "").lower()
+    # Unused: worked out and never read.
+    # media = (content_type or "").lower()
     if data[:3] == b"\xff\xd8\xff":
         return data, "image/jpeg"
     if data.startswith(b"\x89PNG"):

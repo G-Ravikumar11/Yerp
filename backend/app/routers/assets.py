@@ -38,7 +38,6 @@ from app.services.assets import (
     asset_costs,
     asset_dict,
     asset_or_404,
-    asset_service_state,
     check_unique_asset,
     book_dict,
     book_schedule,
@@ -47,7 +46,6 @@ from app.services.assets import (
     fy_label,
     fy_start_year,
     closed_years,
-    hire_cost_for,
     next_asset_code,
     tax_block_schedule,
 )

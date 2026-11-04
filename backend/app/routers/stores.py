@@ -267,10 +267,9 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
     issue.status = "POSTED"
     issue.posted_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     # It is theirs to pay for, recovered from their next bill on its own.
-    charged = 0.0
     if recover_order:
-        charged = charge_issue_to_contractor(db, client.id, issue, recover_order,
-                                       float((body or {}).get("markup_percent") or 0))
+        charge_issue_to_contractor(db, client.id, issue, recover_order,
+                                   float((body or {}).get("markup_percent") or 0))
         issue.issued_to = issue.issued_to or ("Recover from " + (recover_order.wo_number or ""))
     log_audit(db, client.id, "stock_issued", "stock_issue", issue.id,
               issue.number or "", "%s lines, %s" % (len(lines), inr(issue.total_value)),

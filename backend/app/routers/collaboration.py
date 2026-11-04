@@ -33,7 +33,6 @@ from app.services.collaboration import (
     find_mentions,
     meeting_rooms,
     signaling,
-    thread_or_404,
 )
 from app.services.chat_work import (
     CATEGORIES, EMOJI, PRIORITIES, TASK_STATUSES, chat_scope, clean_members, due_notices, history, keys, link_target,

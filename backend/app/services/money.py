@@ -399,7 +399,7 @@ def already_settled(db, client_id, doc_type, doc, worth):
 
     The ledger's entries, and for a bill marked paid before the ledger kept its payments (no entry behind it) what the
     mark said: paying such a bill again from the ledger paid it twice - a 1.18 lakh supplier bill marked paid on the
-    Bills screen could be paid another 1.18 lakh under Payments & Ledgers."""
+    Bills screen could be paid another 1.18 lakh under Ledgers & Bank."""
     got = settled_on(db, client_id, doc_type, doc.id)
     if doc_type in ("ra_bill", "sub_bill") and (doc.status or "") == "PAID" and not got:
         return worth

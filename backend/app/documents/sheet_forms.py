@@ -28,7 +28,6 @@ from datetime import date, datetime
 try:
     import openpyxl
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.utils import get_column_letter
     XLSX_AVAILABLE = True
 except ImportError:  # pragma: no cover
     XLSX_AVAILABLE = False

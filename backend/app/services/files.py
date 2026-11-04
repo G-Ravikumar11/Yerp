@@ -172,7 +172,8 @@ def _check_sheet_rows(db, client_id, kind, rows):
     if kind == "po_lines":
         master = {i.item_code.upper(): i for i in db.query(models.DBItem).filter(
             models.DBItem.client_id == client_id, models.DBItem.kind == "RM").all()}
-    seen = set()
+    # Unused: worked out and never read.
+    # seen = set()
     for i, r in enumerate(rows):
         p = []
         if kind == "po_lines":

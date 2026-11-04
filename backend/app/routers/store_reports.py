@@ -9,7 +9,6 @@ import io
 import json
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import List, Optional
 
 import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Request

@@ -555,7 +555,8 @@ def indent_dict(db, indent, detail=False):
     boq = db.get(models.DBBoqLine, indent.boq_item_id) if indent.boq_item_id else None
     lines = svc.indent_lines(db, indent)
     done = svc.indent_fulfilled(db, indent)
-    asked = sum((Decimal(str(l.qty)) for l in lines), ZERO)
+    # Unused: worked out and never read.
+    # asked = sum((Decimal(str(l.qty)) for l in lines), ZERO)
     approved = sum((Decimal(str(l.approved_qty or 0)) for l in lines), ZERO)
     out = {"id": indent.id, "number": indent.number, "status": indent.status, "store_id": indent.store_id, "store_code": store.code if store else "", "store_name": store.name if store else "",
            "date": _iso(indent.indent_date), "required_by": _iso(indent.required_by), "project_id": indent.project_id, "project": ("%s - %s" % (job.number, job.name)) if job else "",

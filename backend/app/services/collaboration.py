@@ -7,9 +7,6 @@ from fastapi import HTTPException, WebSocket
 
 from app import models
 
-from app.constants.common import CHAT_MAX_BODY
-from app.core.auth import get_employee_user, require_items_access
-from app.core.notifications import notify
 
 
 # VIDEO MEETINGS - WebRTC Signaling Server

@@ -46,3 +46,21 @@ def test_the_staff_an_advance_can_go_to_are_listed_by_name(tenant):
 def test_another_company_sees_none_of_it(tenant, second_tenant):
     _on_account(tenant, "supplier", "Sri Cement Traders", 50_000)
     assert second_tenant.get("/api/advances").json()["on_account"] == []
+
+
+def test_a_kept_screen_changes_the_moment_a_bill_is_paid(tenant):
+    """Money to Pay is kept for a minute between saves: paying a bill has to take it off at once, not a minute later."""
+    from test_subcontractor_bills import live_order, measure, raise_bill
+    o = live_order(tenant, pay_advance=False)
+    item = tenant.get("/api/sub-mb/%d" % o["id"]).json()["lines"][0]["item_id"]
+    measure(tenant, o["id"], item, 1)
+    bill = raise_bill(tenant, o["id"]).json()["bill"]
+    assert tenant.post("/api/sub-bills/%d/submit" % bill["id"], json={}).status_code == 200
+    assert tenant.post("/api/sub-bills/%d/certify" % bill["id"], json={}).status_code == 200
+    rows = tenant.get("/api/money/payables").json()["bills"]
+    row = next(r for r in rows if r["number"] == bill["number"])
+    res = tenant.post("/api/money/entries", json={
+        "doc_type": row["doc_type"], "doc_id": row["id"], "amount": row["outstanding"], "paid_on": "2026-11-01",
+        "mode": "Bank transfer", "reference": "UTR1", "note": "", "account_id": None})
+    assert res.status_code == 200, res.text
+    assert not [r for r in tenant.get("/api/money/payables").json()["bills"] if r["number"] == bill["number"]]
