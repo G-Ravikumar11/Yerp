@@ -88,10 +88,8 @@ export const PAGE_INFO: Record<string, string> = {
 
   '/money/dashboard': "The accounts at a glance: total receivables, payables, expenses, cash position and overdue amount, insights drawn from the books, and the cash flow and revenue against expense trends.",
   '/money/ledgers': 'Payments and ledgers: what has been paid to or received from each party, and the running balance.',
-  '/money/ledgers?tab=requests': 'Payments waiting for a decision: accounts ask, the accounts head checks, and the MD releases those over the limit. Once approved, accounts pay them here.',
-  '/money/owed': 'What is owed to you and by you - with ageing and retention held - so you know who to chase and when to pay.',
-  '/money/owed?tab=owe': 'Every approved supplier and contractor bill still to be paid, with ageing and a project filter. Accounts pay them; with payment approval on, the accounts head checks first and the MD releases the large ones.',
-  '/money/owed?tab=owed': 'What clients owe you, with ageing, so you know who to chase and when.',
+  '/money/approvals': 'Payments waiting for a decision: accounts ask, the accounts head checks, and the MD releases those over the limit. Once approved, accounts pay them here.',
+  '/money/owed': 'What you have to pay, what you have to receive and the retention held, with ageing and a project filter. Accounts pay the approved bills here; with payment approval on, the accounts head checks first and the MD releases the large ones.',
   '/money/expenses': 'Every day’s spend - diesel, transport, sundries, rentals - entered by the site from its cash box or by accounts, by category, project and status. The Site cash boxes tab is each site’s box.',
   '/money/advances': 'Every advance paid ahead of a bill, site by site: mobilisation advances to contractors, money paid on account to suppliers and contractors, and staff advances and the cash staff hold for the site.',
   '/money/cash-flow': 'Money in and money out each month across every bank account and cash box, the balance left, and what is still outstanding by age.',

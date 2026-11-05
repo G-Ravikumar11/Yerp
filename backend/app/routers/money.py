@@ -1370,6 +1370,25 @@ def tally_summary(request: Request, date_from: str = "", date_to: str = "", db: 
     return tally.Books(db, client, f, t).summary()
 
 
+@router.get("/api/tally/vouchers")
+def tally_voucher_list(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    """The period's vouchers to read on the page, each with its ledger lines: what the XML holds, in words."""
+    client = require_items_access(request, db, "bills.view_all")
+    f, t = _tally_period(date_from, date_to)
+    return {"vouchers": tally.Books(db, client, f, t).rows()}
+
+
+@router.get("/api/tally/vouchers.xlsx")
+def tally_voucher_sheet(request: Request, date_from: str = "", date_to: str = "", db: Session = Depends(get_db)):
+    """The same vouchers as a workbook, one row a ledger line - for the accountant to read and check against Tally."""
+    client = require_items_access(request, db, "bills.view_all")
+    f, t = _tally_period(date_from, date_to)
+    rows = [(v["date"], v["type"], v["number"], l["ledger"], l["debit"] or "", l["credit"] or "", v["project"], v["narration"])
+            for v in tally.Books(db, client, f, t).rows() for l in v["lines"]]
+    return sheet_response(("Date", "Voucher", "Number", "Ledger", "Debit", "Credit", "Project", "Narration"), rows,
+                          "yerp_vouchers_%s_%s.xlsx" % (f or "start", t or "today"))
+
+
 def _tally_file(xml, name):
     from fastapi.responses import Response
     return Response(content=xml.encode("utf-8"), media_type="application/xml",

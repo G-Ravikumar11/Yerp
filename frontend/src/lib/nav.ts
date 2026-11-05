@@ -143,11 +143,10 @@ const NAV: NavEntry[] = [
     icon: Wallet,
     items: [
       { label: 'Finance Dashboard', path: '/money/dashboard', perm: 'bills.view_all' },
-      // Who is owed and who owes us is one page, its tabs reached straight from here; retention is its third tab.
-      { label: 'Money to Pay', path: '/money/owed?tab=owe', perm: 'bills.view_all' },
-      { label: 'Money to Receive', path: '/money/owed?tab=owed', perm: 'bills.view_all' },
+      // One page: to pay, to receive and retention are its tabs, and only its tabs.
+      { label: 'Pay & Receive', path: '/money/owed', perm: 'bills.view_all' },
       { label: 'Supplier Bills', path: '/money/supplier-bills', perm: 'bills.view_all' },
-      { label: 'Payment Approvals', path: '/money/ledgers?tab=requests', perm: 'bills.view_all' },
+      { label: 'Payment Approvals', path: '/money/approvals', perm: 'bills.view_all' },
       { label: 'Daily Expenses', path: '/money/expenses', perm: 'bills.view_all' },
       { label: 'Advances', path: '/money/advances', perm: 'bills.view_all' },
       { label: 'Ledgers & Bank', path: '/money/ledgers', perm: 'bills.view_all' },
@@ -197,12 +196,6 @@ export function trailFor(pathname: string, staff = false): Trail {
       const hit = e.items.find((i) => i.path === pathname)
       if (hit) return [...home, { label: e.label }, { label: hit.label }]
     }
-  }
-  // A page reached from the menu only by its tabs (/money/owed?tab=owe): named after the group, under its first entry.
-  for (const e of NAV) {
-    if (e.kind !== 'group') continue
-    const tabbed = e.items.find((i) => i.path.split('?')[0] === pathname)
-    if (tabbed) return [...home, { label: e.label }, { label: tabbed.label }]
   }
   const store: Trail = [...home, { label: 'Store', path: '/store' }]
   const desk = DESK_PAGES.find(([p]) => pathname === p || pathname.startsWith(p + '/'))

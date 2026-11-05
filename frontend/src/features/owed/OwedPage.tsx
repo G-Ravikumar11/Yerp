@@ -46,7 +46,7 @@ export default function OwedPage() {
   const { can } = useSession()
   const [params] = useSearchParams()
   const asked = params.get('tab')
-  const [tab, setTab] = useState<Tab>(asked === 'owe' || asked === 'retention' ? asked : 'owed')
+  const [tab, setTab] = useState<Tab>(asked === 'owed' || asked === 'retention' ? asked : 'owe')
   // A link from elsewhere (the sidebar, an attention item) names its tab in the address; opening a different one
   // while this page is already up - the two deep links share one route - still has to land on the one asked for.
   useEffect(() => {

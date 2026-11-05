@@ -67,7 +67,7 @@ export default function ExpensesPage() {
       .map((r) => ({
         key: `request-${r.id}`, number: r.number, party: r.party_name || '-', project: r.project || 'Head office',
         amount: r.amount, date: r.requested_at, head: r.head || 'Other', by: 'Payment request', status: r.status_label || r.status,
-        tone: REQUEST_TONE[r.status], href: '/money/ledgers?tab=requests', external: false,
+        tone: REQUEST_TONE[r.status], href: '/money/approvals', external: false,
       }))
     // Spent on site out of a cash box and not checked yet: booked (and listed above) once accounts accept it.
     const site: Row[] = (waiting.data?.expenses ?? []).filter((x) => x.status === 'SUBMITTED').map((x) => ({

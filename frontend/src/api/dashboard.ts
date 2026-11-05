@@ -123,7 +123,7 @@ export function attentionHref(view: string): { to: string; external: boolean } {
     'customers-view': '/clients/customers',
     'money-view': '/money/owed',
     'ledger-view': '/money/ledgers',
-    'payments-view': '/money/ledgers?tab=requests',
+    'payments-view': '/money/approvals',
     'sitecash-view': '/money/expenses?tab=cash',
     'bills-view': '/money/supplier-bills',
     'gst-view': '/money/gst',

@@ -12,8 +12,9 @@ What goes across
     supplier's state; a bill still waiting for approval is left out), contractor RA bills (a journal: their work and its
     GST against what is owed them, the TDS and labour cess we deduct, retention we hold and advance we recover), credit
     notes (to a client, a Credit Note; from a contractor's bill, a Debit Note), and the fixed assets' depreciation for
-    each closed year and their sale (journals). Every line of income or cost carries its project as a cost centre, so
-    Tally can show each site's P&L too.
+    each closed year and their sale (journals), retention released (a journal moving it from the retention ledger to
+    the party), and the payroll of each approved month (a journal, then a payment when the month is paid). Every line of
+    income or cost carries its project as a cost centre, so Tally can show each site's P&L too.
 
     An asset's purchase is not sent: it reaches Tally through the supplier's bill, which is not linked to the asset,
     and a second voucher would double it. The CA books that bill to the asset's ledger.
@@ -67,6 +68,14 @@ LEDGERS = {
     "retention_payable": ("Retention Money Payable", "Current Liabilities", False),
     "contractor_advance": ("Mobilisation Advance to Contractors", "Loans & Advances (Asset)", False),
     "contractor_recoveries": ("Recoveries from Contractors", "Direct Incomes", True),
+    "salaries": ("Salaries & Wages", "Indirect Expenses", False),
+    "employer_contribution": ("Employer PF & ESI", "Indirect Expenses", False),
+    "salaries_payable": ("Salaries Payable", "Current Liabilities", False),
+    "salary_tds": ("TDS Payable - Salaries", "Duties & Taxes", False),
+    "pf_payable": ("PF Payable", "Current Liabilities", False),
+    "esi_payable": ("ESI Payable", "Current Liabilities", False),
+    "pt_payable": ("Professional Tax Payable", "Duties & Taxes", False),
+    "salary_deductions": ("Other Salary Deductions", "Current Liabilities", False),
     "unassigned_bank": ("Bank (account not recorded)", "Bank Accounts", False),
     "cash": ("Cash", "Cash-in-Hand", False),
 }
@@ -81,6 +90,9 @@ LABELS = {
     "unassigned_bank": "Payments with no bank account recorded", "cash": "Cash paid with no cash box recorded",
     "fixed_assets": "Fixed assets (book value)", "depreciation": "Depreciation on fixed assets",
     "asset_sale_gain": "Profit or loss on selling an asset", "asset_sale_proceeds": "What a sold asset fetched",
+    "salaries": "Salaries (gross)", "employer_contribution": "Employer's PF and ESI", "salaries_payable": "Net salaries owed",
+    "salary_tds": "TDS on salaries", "pf_payable": "PF owed", "esi_payable": "ESI owed", "pt_payable": "Professional tax owed",
+    "salary_deductions": "Other deductions from salaries",
 }
 # GST ledgers carry their duty head in Tally, so its GST reports pick them up.
 GST_HEADS = {"output_cgst": "Central Tax", "output_sgst": "State Tax", "output_igst": "Integrated Tax",
@@ -142,6 +154,8 @@ class Books:
         self._contractor_bills()
         self._credit_notes()
         self._fixed_assets()
+        self._retention_releases()
+        self._payroll()
         self.vouchers.sort(key=lambda v: (v["date"], v["type"], v["number"]))
 
     # --- naming ---
@@ -261,7 +275,8 @@ class Books:
                 ledger = self.head(e.head, income=e.doc_type == "income")
                 say = "%s - %s%s%s" % (e.head, e.party_name or "", ref, (". " + e.note) if e.note else "")
             else:
-                ledger = self.party(e.party_name, e.party_type)
+                # A mobilisation advance goes to its own ledger: that is the one the RA bills take it back from.
+                ledger = self.std("contractor_advance") if e.doc_type == "sub_advance" else self.party(e.party_name, e.party_type)
                 say = "%s %s%s%s" % ("Received from" if e.direction == "IN" else "Paid to", e.party_name or "",
                                      (" against " + e.doc_number) if e.doc_number else " on account", ref)
             bill = (e.doc_number or "", "Agst Ref") if e.doc_number else (("%s on account" % e.number, "Advance")
@@ -437,6 +452,123 @@ class Books:
                               (self.std("asset_sale_gain"), money(book - value))],
                              "yerp-%d-assetsale-%d" % (self.client.id, b.id))
 
+    def _retention_releases(self):
+        """Retention given back. Held on its own ledger since the bill, it moves to the party the day it is released: a
+        claim on the client, or a sum owed to the contractor. Whatever else came off the release is one balancing line."""
+        from app.services.subcontract_billing import release_party
+        for r in self.db.query(models.DBRetentionRelease).filter(models.DBRetentionRelease.client_id == self.client.id,
+                                                                 models.DBRetentionRelease.status.in_(("CERTIFIED", "PAID"))).all():
+            on = (r.release_on or r.created_at or "")[:10]
+            if not (self.date_from <= on <= self.date_to):
+                continue
+            party_type, name, _ = release_party(self.db, r)
+            party = self.party(name, party_type)
+            amount, net = money(r.amount), money(r.net_amount)
+            cgst, sgst, igst = money(r.cgst_amount), money(r.sgst_amount), money(r.igst_amount)
+            other = money(amount + cgst + sgst + igst - net)
+            if (r.side or "client") == "client":
+                lines = [(party, net, r.number, "New Ref"), (self.std("client_deductions"), other),
+                         (self.std("retention_receivable"), -amount), (self.std("output_cgst"), -cgst),
+                         (self.std("output_sgst"), -sgst), (self.std("output_igst"), -igst)]
+            else:
+                lines = [(self.std("retention_payable"), amount), (self.std("input_cgst"), cgst), (self.std("input_sgst"), sgst),
+                         (self.std("input_igst"), igst), (party, -net, r.number, "New Ref"),
+                         (self.std("contractor_recoveries"), -other)]
+            self.add("Journal", r.number, on, "Retention released: %s%s" % (name, (" - " + r.stage) if r.stage else ""),
+                     lines, "yerp-%d-retention-%d" % (self.client.id, r.id), r.job_id)
+
+    def _payslips_by_month(self):
+        from app.services.payroll_month import month_of
+        out = {}
+        for p in self.db.query(models.DBPayslip).filter(models.DBPayslip.client_id == self.client.id).all():
+            out.setdefault(month_of(p.period_end, p.period_start, p.pay_date), []).append(p)
+        out.pop("", None)
+        return out
+
+    def _payroll(self):
+        """Each approved month as one journal on its last day: the gross and the employer's PF and ESI as cost, against
+        what is owed to the staff, the tax office, PF and ESI. Once the month is paid, a payment clears what the staff
+        were owed. Payroll keeps no bank account, so it goes across on the unrecorded bank ledger for the CA to point."""
+        import calendar
+        from app.services.payroll_month import RELEASED_MONTHS
+        months = {m.month: m for m in self.db.query(models.DBPayrollMonth).filter(
+            models.DBPayrollMonth.client_id == self.client.id, models.DBPayrollMonth.status.in_(RELEASED_MONTHS)).all()}
+        for month, slips in sorted(self._payslips_by_month().items()):
+            row = months.get(month)
+            if row is None:
+                continue
+
+            def total(field):
+                return money(sum(getattr(p, field) or 0 for p in slips))
+            gross, net, tds, pt = total("gross_pay"), total("net_pay"), total("tax_amount"), total("professional_tax")
+            pf, esi, er_pf, er_esi = total("retirement"), total("insurance"), total("employer_pf"), total("employer_esi")
+            other = money(gross - net - tds - pt - pf - esi)
+            year, mon = int(month[:4]), int(month[5:7])
+            end = "%s-%02d" % (month, calendar.monthrange(year, mon)[1])
+            if self.date_from <= end <= self.date_to:
+                self.add("Journal", "PAY/%s" % month, end, "Payroll for %s: %d payslip%s" % (month, len(slips), "" if len(slips) == 1 else "s"),
+                         [(self.std("salaries"), gross), (self.std("employer_contribution"), money(er_pf + er_esi)),
+                          (self.std("salaries_payable"), -net), (self.std("salary_tds"), -tds), (self.std("pt_payable"), -pt),
+                          (self.std("pf_payable"), -money(pf + er_pf)), (self.std("esi_payable"), -money(esi + er_esi)),
+                          (self.std("salary_deductions"), -other)],
+                         "yerp-%d-payroll-%s" % (self.client.id, month))
+            paid = (row.paid_at or "")[:10]
+            if paid and self.date_from <= paid <= self.date_to:
+                self.add("Payment", "PAY/%s/PAID" % month, paid, "Salaries paid for %s" % month,
+                         [(self.std("salaries_payable"), net), (self.std("unassigned_bank"), -net)],
+                         "yerp-%d-payrollpaid-%s" % (self.client.id, month))
+
+    def left_out(self):
+        """What the company has recorded in the period that is not in this export, and why - so a short list of vouchers
+        can be read for what it is. Nothing here is a voucher until the step named has been taken."""
+        out = []
+
+        def note(what, amounts, why, where):
+            if amounts:
+                out.append({"what": what, "count": len(amounts), "amount": money(sum(amounts)), "why": why, "where": where})
+
+        def inside(on):
+            return self.date_from <= (on or "")[:10] <= self.date_to
+        c = self.client.id
+        gone = ("CERTIFIED", "PAID", "CANCELLED", "REJECTED")
+        note("Client RA bills", [b.this_bill or 0 for b in self.db.query(models.DBRABill).filter(
+            models.DBRABill.client_id == c, models.DBRABill.status.notin_(gone)).all() if inside(b.created_at)],
+            "Not certified yet. A bill goes across on the day it is certified.", "/clients/measurement")
+        note("Contractor RA bills", [b.this_bill or 0 for b in self.db.query(models.DBSubBill).filter(
+            models.DBSubBill.client_id == c, models.DBSubBill.status.notin_(gone)).all() if inside(b.bill_date or b.created_at)],
+            "Not certified yet. A bill goes across on the day it is certified.", "/subcontractors/ra-bills")
+        note("Supplier bills", [b.total or b.amount or 0 for b in self.db.query(models.DBBill).filter(models.DBBill.client_id == c).all()
+                                if ((b.status or "") in ("Draft", "Awaiting Approval") or (b.approval_status or "none") == "pending")
+                                and inside(b.issue_date or b.created_at)],
+             "Still a draft or waiting for approval.", "/money/supplier-bills")
+        note("Site cash spends", [x.amount or 0 for x in self.db.query(models.DBSiteCashExpense).filter(
+            models.DBSiteCashExpense.client_id == c, models.DBSiteCashExpense.status == "SUBMITTED").all() if inside(x.spent_on)],
+            "Waiting for accounts to check them against the bill.", "/money/expenses?tab=cash")
+        note("Payment requests", [r.amount or 0 for r in self.db.query(models.DBPaymentRequest).filter(
+            models.DBPaymentRequest.client_id == c, models.DBPaymentRequest.status.in_(("PENDING", "AWAITING_MD", "APPROVED"))).all()
+            if inside(r.requested_at)], "Not paid yet. A payment goes across when it is made.", "/money/approvals")
+        from app.services.payroll_month import RELEASED_MONTHS
+        released = {m for (m,) in self.db.query(models.DBPayrollMonth.month).filter(
+            models.DBPayrollMonth.client_id == c, models.DBPayrollMonth.status.in_(RELEASED_MONTHS)).all()}
+        note("Payslips", [p.gross_pay or 0 for month, slips in self._payslips_by_month().items() if month not in released
+                          for p in slips if inside(month + "-28")],
+             "Their month has not been approved in Payroll.", "/people/payroll")
+        plant = [x.amount or 0 for x in self.db.query(models.DBPlantFuel).filter(models.DBPlantFuel.client_id == c).all() if inside(x.filled_at)]
+        plant += [x.amount or 0 for x in self.db.query(models.DBPlantExpense).filter(models.DBPlantExpense.client_id == c).all()
+                  if inside(x.spent_on)]
+        plant += [x.amount or 0 for x in self.db.query(models.DBPlantRentalInvoice).filter(models.DBPlantRentalInvoice.client_id == c).all() if inside(x.invoice_date)]
+        note("Plant fuel, hire and running costs", plant,
+             "Project costs kept in the plant registers. Not sent: the supplier's bill for them is what goes across, so they are not counted twice.",
+             "/projects/equipment")
+        return out
+
+    def rows(self):
+        """Every voucher as the page lists it, oldest first."""
+        return [{"date": v["date"], "type": v["type"], "number": v["number"], "narration": v["narration"], "project": v["centre"],
+                 "amount": money(sum(a for _, a, *_ in v["lines"] if a > 0)), "cancelled": v.get("action") == "Cancel",
+                 "lines": [{"ledger": l, "debit": a if a > 0 else 0, "credit": -a if a < 0 else 0} for l, a, *_ in v["lines"]]}
+                for v in self.vouchers]
+
     def summary(self):
         by = {}
         for v in self.vouchers:
@@ -445,7 +577,7 @@ class Books:
             s["count"] += 1
             s["amount"] = money(s["amount"] + sum(a for _, a, *_ in v["lines"] if a > 0))
         return {"vouchers": sorted(by.values(), key=lambda s: s["type"]), "ledgers": len(self.ledgers),
-                "cost_centres": len(self.cost_centres), "warnings": self.warnings}
+                "cost_centres": len(self.cost_centres), "warnings": self.warnings, "left_out": self.left_out()}
 
 
 def _envelope(report, company, messages):
