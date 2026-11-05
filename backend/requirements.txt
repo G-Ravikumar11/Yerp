@@ -31,3 +31,5 @@ holidays==0.106
 argon2-cffi==25.1.0
 # Time zones where the system has none of its own (Windows); each project reads its own today.
 tzdata
+# Reading AutoCAD DXF files for the quantity take-off (app/services/takeoff.py).
+ezdxf==1.4.5

@@ -14,6 +14,7 @@ import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { AddDrawingModal, HistoryModal, RevisionModal } from './DrawingModals'
 import { Plan3DModal } from './Plan3DModal'
+import { TakeoffModal } from './TakeoffModal'
 
 const tone = (s: string) => (s === 'Good for construction' ? 'success' : s === 'For approval' ? 'warning' : 'neutral') as 'success' | 'warning' | 'neutral'
 
@@ -52,6 +53,7 @@ export default function DrawingsPage() {
   const [revising, setRevising] = useState<Drawing | null>(null)
   const [history, setHistory] = useState<number | null>(null)
   const [view3d, setView3d] = useState<Drawing | null>(null)
+  const [takeoff, setTakeoff] = useState<Drawing | null>(null)
   const words = search.toLowerCase()
   // In the order the sheets were added, each with its serial number; a filter hides rows but never renumbers them.
   const inOrder = (d?.drawings ?? []).slice().sort((a, b) => a.id - b.id)
@@ -78,6 +80,7 @@ export default function DrawingsPage() {
           {w.current_file_id && <Button size="sm" variant="outline" asChild><OpenFile id={w.current_file_id} name={`${w.number} ${w.title}`}>Open</OpenFile></Button>}
           <Button size="sm" variant="outline" onClick={() => setRevising(w)}>New revision</Button>
           {w.current_file_id && <Button size="sm" variant="outline" onClick={() => setView3d(w)}>3D</Button>}
+          {w.current_file_id && <Button size="sm" variant="outline" onClick={() => setTakeoff(w)}>Quantities</Button>}
           <Button size="sm" variant="outline" onClick={() => setHistory(w.id)}>History</Button>
         </div>
       ),
@@ -109,6 +112,7 @@ export default function DrawingsPage() {
       <AddDrawingModal job={job} disciplines={d?.disciplines ?? []} open={adding} onClose={() => setAdding(false)} onAdded={(id, number) => { setAdding(false); setRevising(d?.drawings.find((w) => w.id === id) ?? ({ id, number, title: '', discipline: '', current_revision: '', revisions: 0, status: '', received_on: '', current_file_id: null } as Drawing)) }} />
       <RevisionModal drawing={revising} statuses={d?.statuses ?? []} onClose={() => setRevising(null)} />
       <Plan3DModal drawing={view3d} onClose={() => setView3d(null)} />
+      <TakeoffModal drawing={takeoff} onClose={() => setTakeoff(null)} />
       <HistoryModal id={history} onClose={() => setHistory(null)} />
     </>
   )

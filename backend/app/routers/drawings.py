@@ -1,4 +1,5 @@
 """The drawings endpoints."""
+import io
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -12,10 +13,10 @@ from app.db import get_db, get_read_db
 from app.constants.common import DRAWING_STATUSES
 from app.core.audit import log_audit
 from app.core.auth import require_erp_read, wo_actor
-from app.core.files import store_file
+from app.core.files import file_bytes, store_file
 from app.core.config import logger
 from app.schemas.drawings import DrawingStatusIn
-from app.services import purge
+from app.services import purge, takeoff
 from app.services.drawing_rules import ever_gfc, is_later, log_status
 from app.services.projects import drawing_dict
 
@@ -40,6 +41,55 @@ def get_drawing(did: int, request: Request, db: Session = Depends(get_read_db)):
                          .order_by(models.DBAuditLog.id).all()]
     out["deletable"] = not ever_gfc(db, d)
     return {"drawing": out}
+
+
+@router.post("/api/drawings/{did}/takeoff")
+def drawing_takeoff(did: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """The quantities on the current sheet and the material they take. Exact from a DXF, an estimate from a picture or PDF;
+    nothing is saved. body: assumptions, kinds (layer name -> wall, slab, door, window, ignore), width_m (a picture's real width)."""
+    client = require_erp_read(request, db)
+    body = body or {}
+    d = db.query(models.DBDrawing).filter(models.DBDrawing.id == did, models.DBDrawing.client_id == client.id).first()
+    if not d:
+        raise HTTPException(404, "Drawing not found")
+    cur = db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.drawing_id == d.id, models.DBDrawingRevision.file_id.isnot(None)).order_by(
+        models.DBDrawingRevision.id.desc()).first()
+    f = db.query(models.DBFile).filter(models.DBFile.id == cur.file_id, models.DBFile.client_id == client.id).first() if cur else None
+    if not f:
+        raise HTTPException(409, "Add a revision with the drawing first: a DXF from AutoCAD, or a picture or PDF of the plan.")
+    a = takeoff.clean_assumptions(body.get("assumptions"))
+    name = (f.name or "").lower()
+    head = {"drawing": "%s %s" % (d.number or "", d.title or ""), "revision": cur.revision, "assumptions": a}
+    if name.endswith(".dwg"):
+        raise HTTPException(400, "A DWG cannot be read directly. In AutoCAD use Save As, choose DXF, and add that file as a new revision of this drawing.")
+    if name.endswith(".dxf"):
+        read = takeoff.read_dxf(file_bytes(db, f))
+        kinds = {k: v for k, v in (body.get("kinds") or {}).items() if v in takeoff.KINDS}
+        for row in read["layers"]:
+            row["kind"] = kinds.get(row["name"], row["kind"])
+        q = takeoff.cad_quantities(read["layers"], kinds, a)
+        return {**head, **read, "quantities": q, "materials": takeoff.materials(q, a)}
+    from app.ai.drawing_3d import _picture_of, drawing_to_3d
+    trace = drawing_to_3d(did, request, db)
+    if not trace.get("available"):
+        raise HTTPException(409, trace.get("message") or "The plan could not be read.")
+    width = body.get("width_m") or trace.get("width_m")
+    try:
+        width = float(width) if width else 0.0
+    except (TypeError, ValueError):
+        width = 0.0
+    out = {**head, "source": "picture", "exact": False, "width_m": width or None, "width_read": trace.get("width_m"),
+           "low_confidence": bool(trace.get("low_confidence")), "layers": []}
+    if not width:
+        return {**out, "needs_width": True, "quantities": {}, "materials": []}
+    from PIL import Image
+    try:
+        w, h = Image.open(io.BytesIO(_picture_of(file_bytes(db, f), (f.content_type or "").lower()))).size
+        aspect = h / w
+    except Exception:
+        raise HTTPException(400, "The sheet's proportions could not be read. Add the plan as a JPG or PNG.")
+    q = takeoff.plan_quantities(trace, width, aspect)
+    return {**out, "quantities": q, "materials": takeoff.materials(q, a)}
 
 
 @router.post("/api/drawings/{did}/revisions")

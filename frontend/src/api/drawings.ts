@@ -62,5 +62,24 @@ export interface Plan3D {
   revision?: string
   low_confidence?: boolean
 }
+export interface TakeoffLayer { name: string; length_m: number; area_sqm: number; blocks: number; kind: string }
+export interface Takeoff {
+  drawing: string
+  revision: string
+  source: 'cad' | 'picture'
+  exact: boolean
+  units?: string
+  units_stated?: boolean
+  width_m?: number | null
+  needs_width?: boolean
+  low_confidence?: boolean
+  layers: TakeoffLayer[]
+  quantities: { wall_m?: number; floor_sqm?: number; doors?: number; windows?: number }
+  materials: { group: string; item: string; quantity: number; uom: string; how: string }[]
+  assumptions: Record<string, number>
+}
+/** The quantities on the current sheet and the material they take. Nothing is saved. */
+export const drawingTakeoff = (id: number, b: { assumptions?: Record<string, number>; kinds?: Record<string, string>; width_m?: number }) => post<Takeoff>(`/api/drawings/${id}/takeoff`, b)
+
 /** Trace the current sheet's floor plan into walls and rooms. Nothing is saved. */
 export const planTo3d = (id: number) => post<Plan3D>(`/api/ai/drawings/${id}/to-3d`, {})
