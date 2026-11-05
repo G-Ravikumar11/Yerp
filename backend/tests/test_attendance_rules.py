@@ -136,8 +136,8 @@ def test_the_staff_portal_follows_the_same_rules(client, tenant):
     emp = make_employee(tenant, password="EmpPass123")
     settings(tenant, require_location=True, allow_remote=False, **OFFICE)
     client.post("/api/employee/auth/login", json={"email": emp["email"], "password": "EmpPass123"})
-    assert client.post("/api/employee/attendance/clock-in", json={}).status_code == 400
-    assert client.post("/api/employee/attendance/clock-in", json=FAR_AWAY).status_code == 400
+    assert client.post("/api/employee/attendance/clock-in", json={}).status_code == 403
+    assert client.post("/api/employee/attendance/clock-in", json=FAR_AWAY).status_code == 403
     assert client.post("/api/employee/attendance/clock-in", json=AT_OFFICE).status_code == 200
 
 

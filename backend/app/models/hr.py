@@ -82,6 +82,8 @@ class DBEmployee(Base):
 
     emergency_contact = Column(String, default="")
     emergency_phone = Column(String, default="")
+    # Field staff with no fixed site: Job Lock lets them clock in anywhere.
+    job_lock_exempt = Column(Boolean, default=False)
 
     # Optional; the employee gives them in their own portal. Aadhaar is kept as 12 digits and shown masked to HR.
     gender = Column(String, default="")
@@ -280,6 +282,10 @@ class DBAttendance(Base):
     location_lat = Column(Float, default=0.0)
     location_lng = Column(Float, default=0.0)
     location_label = Column(String, default="")
+    # How sure the phone was of the position (metres), which phone it was, and anything about the punch worth a second look.
+    location_accuracy = Column(Float, default=0.0)
+    device_id = Column(String, default="")
+    location_flag = Column(String, default="")
     break_start = Column(String, default="")
     break_minutes = Column(Float, default=0.0)
     is_on_break = Column(Boolean, default=False)
@@ -309,6 +315,10 @@ class DBAttendanceSettings(Base):
     max_overtime_hours = Column(Float, default=4.0)
     allow_remote = Column(Boolean, default=True)
     require_location = Column(Boolean, default=True)
+    # Job Lock: staff clock in only inside the fence of a site they are assigned to, or the office. Over allow_remote.
+    job_lock = Column(Boolean, default=True)
+    # A position less sure than this many metres is refused: a laptop, or a phone indoors, can be a kilometre out.
+    max_gps_accuracy = Column(Float, default=150.0)
     # ISO weekday numbers, Monday = 1 through Sunday = 7.
     working_days = Column(String, default="1,2,3,4,5")
     # Whether signing in to the portal counts as starting a shift. Off means
@@ -504,6 +514,24 @@ class DBCustomHoliday(Base):
     name = Column(String, nullable=False)
     created_by = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBClockRefusal(Base):
+    """A clock-in Job Lock turned away: who, when, where they were and why, for HR to read."""
+    __tablename__ = "clock_refusals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"), index=True)
+    lat = Column(Float, default=0.0)
+    lng = Column(Float, default=0.0)
+    accuracy = Column(Float, default=0.0)
+    distance_m = Column(Float, nullable=True)      # from the nearest place they may clock in
+    nearest = Column(String, default="")
+    reason = Column(String, default="")
+    ip_address = Column(String, default="")
+    device_info = Column(String, default="")
 
 
 class DBSiteGeofence(Base):

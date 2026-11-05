@@ -138,6 +138,10 @@ HR_PAYROLL_COLUMNS = (
     ("attendance_settings", "late_threshold", "INTEGER DEFAULT 3"),
     ("attendance_settings", "late_penalty_lop", "FLOAT DEFAULT 0.5"),
     ("attendance_settings", "auto_email_on_approval", "BOOLEAN DEFAULT FALSE"),
+    # Job Lock.
+    ("attendance_settings", "job_lock", "BOOLEAN DEFAULT TRUE"), ("attendance_settings", "max_gps_accuracy", "FLOAT DEFAULT 150"),
+    ("attendance", "location_accuracy", "FLOAT DEFAULT 0"), ("attendance", "device_id", "VARCHAR DEFAULT ''"),
+    ("attendance", "location_flag", "VARCHAR DEFAULT ''"), ("employees", "job_lock_exempt", "BOOLEAN DEFAULT FALSE"),
 )
 
 # One overtime entry per person per day. Run after any duplicates are removed, or the index cannot be built.

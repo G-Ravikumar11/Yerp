@@ -15,14 +15,28 @@ const k = (...p: unknown[]) => ['staff', ...p] as const
 
 export const useToday = () => useQuery({ queryKey: k('today'), queryFn: () => get<Today>('/api/employee/today') })
 
-/** Clocked in where the phone is: the server matches the position to a site. */
+/** This phone, the same each day: the server notices two people clocking in from one. */
+function deviceId() {
+  try {
+    let id = localStorage.getItem('yerp.device')
+    if (!id) {
+      id = crypto.randomUUID()
+      localStorage.setItem('yerp.device', id)
+    }
+    return id
+  } catch {
+    return ''
+  }
+}
+
+/** Clocked in where the phone is now, never where it was a minute ago: the server matches the position to the person's sites. */
 export async function clock(which: 'in' | 'out') {
   const coords = await new Promise<GeolocationCoordinates | null>((res) => {
     if (!navigator.geolocation) return res(null)
-    navigator.geolocation.getCurrentPosition((p) => res(p.coords), () => res(null), { timeout: 8000, enableHighAccuracy: true, maximumAge: 60000 })
+    navigator.geolocation.getCurrentPosition((p) => res(p.coords), () => res(null), { timeout: 15000, enableHighAccuracy: true, maximumAge: 0 })
   })
-  const body: Record<string, unknown> = { device_info: navigator.userAgent.slice(0, 120) }
-  if (coords) Object.assign(body, { latitude: coords.latitude, longitude: coords.longitude })
+  const body: Record<string, unknown> = { device_info: navigator.userAgent.slice(0, 120), device_id: deviceId() }
+  if (coords) Object.assign(body, { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy })
   return post<{ message?: string }>(`/api/employee/attendance/clock-${which}`, body)
 }
 

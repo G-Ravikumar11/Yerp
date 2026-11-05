@@ -106,6 +106,7 @@ from app.models.hr import (
     DBDepartmentSite,
     DBCustomHoliday,
     DBSiteGeofence,
+    DBClockRefusal,
 )
 from app.models.celebrations import DBSpecialDay, DBCelebrationReaction, DBCelebrationWish, DBAnnouncement, DBAnnouncementMedia
 from app.models.invoicing import (

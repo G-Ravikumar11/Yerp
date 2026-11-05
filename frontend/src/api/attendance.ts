@@ -50,6 +50,10 @@ export interface AttSettings {
   max_overtime_hours: number
   allow_remote: boolean
   require_location: boolean
+  /** Job Lock: staff clock in only at the office or a site they are assigned to. */
+  job_lock?: boolean
+  /** The weakest GPS accepted, in metres. */
+  max_gps_accuracy?: number
   working_days: string
   /** Lates in a month that cost late_penalty_lop days of pay, and how many days each such group costs. */
   late_threshold?: number
@@ -73,3 +77,14 @@ export const clockFor = (employee_id: number, which: 'in' | 'out') => post<{ mes
 export const saveAttSettings = (b: AttSettings) => put<{ message?: string }>('/api/attendance/settings', b)
 export const announceOvertime = (b: { employee_id: number; date: string; hours: number; reason: string }) => post<{ message: string }>('/api/attendance/overtime/announce', b)
 export const exportAttendance = (date: string) => get<Record<string, unknown>[]>(`/api/attendance/export${date ? `?start_date=${date}&end_date=${date}` : ''}`)
+
+export interface JobLock {
+  on: boolean
+  office_set: boolean
+  sites_without_location: { id: number; name: string }[]
+  staff: { id: number; name: string; job_title: string; exempt: boolean; sites: string[] }[]
+  refused: { id: number; at: string; employee: string; reason: string; lat: number; lng: number; accuracy: number; distance_m: number | null; nearest: string }[]
+  flagged: { id: number; date: string; clock_in: string; employee: string; flag: string; lat: number; lng: number }[]
+}
+export const useJobLock = () => useQuery({ queryKey: [...attKeys.all, 'job-lock'], queryFn: () => get<JobLock>('/api/attendance/job-lock') })
+export const setJobLockExempt = (id: number, exempt: boolean) => put<{ message: string }>(`/api/attendance/job-lock/exempt/${id}`, { exempt })

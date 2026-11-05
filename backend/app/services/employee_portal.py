@@ -526,6 +526,124 @@ def check_clock_in_location(db: Session, client_id: int, settings: Optional[mode
         raise HTTPException(status_code=400, detail="You are not at the office or on a project site. Remote clock-in is switched off.")
 
 
+def job_lock_places(db: Session, client_id: int, emp: models.DBEmployee, settings) -> Tuple[list, list]:
+    """Where this person may clock in: [(name, lat, lng, radius, job or None)] - the office, and the fence of each site they
+    are assigned to, or of every site for somebody on no particular site - and the assigned sites with no fence yet."""
+    places = []
+    if settings is not None and settings.office_lat and settings.office_lng:
+        places.append((settings.office_name or "the office", settings.office_lat, settings.office_lng,
+                       float(settings.geofence_radius or 200.0), None))
+    allowed = accessible_job_ids_for(db, emp)
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client_id).all()}
+    fenced = set()
+    for g in db.query(models.DBSiteGeofence).filter(models.DBSiteGeofence.client_id == client_id).all():
+        if not g.lat or not g.lng or g.job_id not in jobs:
+            continue
+        fenced.add(g.job_id)
+        if allowed is None or g.job_id in allowed:
+            j = jobs[g.job_id]
+            places.append((("%s %s" % (j.number or "", j.name or "")).strip(), g.lat, g.lng, float(g.radius_m or 300.0), j))
+    unfenced = [jobs[i] for i in (allowed or []) if i in jobs and i not in fenced]
+    return places, unfenced
+
+
+def _say_distance(metres: float) -> str:
+    return ("%.1f km" % (metres / 1000.0)) if metres >= 1000 else ("%d m" % metres)
+
+
+def job_lock_refuse(db, client_id, emp, why, lat=0.0, lng=0.0, accuracy=0.0, distance=None, nearest="", ip="", device=""):
+    """Written down before it is refused: the refusal rolls the request back, and HR needs to see it was tried."""
+    db.add(models.DBClockRefusal(client_id=client_id, employee_id=emp.id, lat=lat or 0.0, lng=lng or 0.0, accuracy=accuracy or 0.0,
+                                 distance_m=distance, nearest=nearest, reason=why[:300], ip_address=ip, device_info=(device or "")[:200]))
+    db.commit()
+    raise HTTPException(status_code=403, detail=why)
+
+
+def job_lock_check(db, client_id, emp, settings, lat, lng, accuracy=None, ip="", device=""):
+    """Job Lock, on the server where a phone cannot talk its way past it. Returns (the site they are on, or None; anything
+    worth a second look). Refuses a clock-in with no position, with a position too unsure to trust, or outside every place
+    this person may clock in. Nobody is locked out by a set-up not finished: with no fence to check against the clock-in
+    goes through and says so, and HR sees it in Job Lock."""
+    if settings is not None and settings.job_lock is False:
+        return None, ""
+    if getattr(emp, "job_lock_exempt", False):
+        return None, ""
+    places, unfenced = job_lock_places(db, client_id, emp, settings)
+    if not places:
+        return None, "No site location set to check against"
+    try:
+        point = (float(lat), float(lng)) if lat and lng else None
+    except (TypeError, ValueError):
+        point = None
+    if point is not None and not (math.isfinite(point[0]) and math.isfinite(point[1])):
+        point = None
+    if point is None:
+        job_lock_refuse(db, client_id, emp, "Your location is needed to clock in. Turn on location for this app and try again.", ip=ip, device=device)
+    try:
+        sure = float(accuracy) if accuracy is not None else None
+    except (TypeError, ValueError):
+        sure = None
+    limit = float((settings.max_gps_accuracy if settings is not None else None) or 150.0)
+    if sure is not None and sure > limit:
+        job_lock_refuse(db, client_id, emp, "Your phone could only place you to within %d m. Step outside, wait a moment and try again." % sure,
+                        point[0], point[1], sure, ip=ip, device=device)
+    best = None
+    for name, plat, plng, radius, job in places:
+        d = distance_m(plat, plng, *point)
+        if d <= radius and (best is None or d < best[0]):
+            best = (d, job)
+    flags = []
+    if sure is None:
+        flags.append("No GPS accuracy reported")
+    elif sure <= 1:
+        flags.append("GPS accuracy too perfect (%.1f m): possible fake location" % sure)
+    if best is not None:
+        return best[1], "; ".join(flags)
+    if unfenced:
+        # Their own site has no fence, so nothing says they are not on it. Let through, and shown to HR.
+        flags.append("Outside every fence, but %s has no location set" % (unfenced[0].name or "their site"))
+        return None, "; ".join(flags)
+    nearest = min(places, key=lambda p: distance_m(p[1], p[2], *point))
+    away = distance_m(nearest[1], nearest[2], *point)
+    other, _ = site_for_point(db, client_id, *point)
+    if other is not None:
+        why = "You are at %s, which is not one of your sites. Ask HR to add you to it." % (other.name or "another site")
+    else:
+        why = "You are %s from %s. You can only clock in at your own site." % (_say_distance(away), nearest[0])
+    job_lock_refuse(db, client_id, emp, why, point[0], point[1], sure or 0.0, round(away, 1), nearest[0], ip, device)
+
+
+def same_device_flag(db, client_id, emp_id, device_id, today) -> str:
+    """Two people clocking in from one phone on one day: often a friend punching for somebody who is not there."""
+    if not device_id:
+        return ""
+    other = db.query(models.DBAttendance).filter(models.DBAttendance.client_id == client_id, models.DBAttendance.date == today,
+                                                 models.DBAttendance.device_id == device_id, models.DBAttendance.employee_id != emp_id).first()
+    if other is None:
+        return ""
+    who = db.query(models.DBEmployee).filter(models.DBEmployee.id == other.employee_id).first()
+    return "Same phone as %s today" % (("%s %s" % (who.first_name or "", who.last_name or "")).strip() if who else "someone else")
+
+
+def clock_out_flag(db, client_id, emp, settings, lat, lng) -> str:
+    """Clocking out is never refused - nobody is held on the clock - but leaving from somewhere else is shown to HR."""
+    if (settings is not None and settings.job_lock is False) or getattr(emp, "job_lock_exempt", False):
+        return ""
+    places, unfenced = job_lock_places(db, client_id, emp, settings)
+    if not places or unfenced:
+        return ""
+    try:
+        point = (float(lat), float(lng)) if lat and lng else None
+    except (TypeError, ValueError):
+        point = None
+    if point is None:
+        return "Clocked out with no location"
+    if any(distance_m(p[1], p[2], *point) <= p[3] for p in places):
+        return ""
+    away = min(distance_m(p[1], p[2], *point) for p in places)
+    return "Clocked out %s from site" % _say_distance(away)
+
+
 def site_for_point(
     db: Session,
     client_id: int,

@@ -38,6 +38,9 @@ from app.services.auth import reset_email_bodies
 from app.services.employee_portal import (
     attendance_settings_for,
     check_clock_in_location,
+    clock_out_flag,
+    job_lock_check,
+    same_device_flag,
     minutes_since,
     running_shift,
     end_shift,
@@ -272,15 +275,21 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
     device = ""
     lat = lng = 0.0
     loc_label = ""
+    accuracy, device_id = None, ""
     if body:
-        ip = body.get("ip_address", ip)
+        # The address is the one the request came from: a phone does not get to say where it is calling from.
         device = body.get("device_info", "")
         lat = body.get("latitude", 0.0)
         lng = body.get("longitude", 0.0)
+        accuracy = body.get("accuracy")
+        device_id = str(body.get("device_id") or "")[:64]
         loc_label = body.get("location_label", "")
     check_type = "manual"
     settings = attendance_settings_for(db, client_id)
+    me = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client_id).first()
+    locked_site, flag = job_lock_check(db, client_id, me, settings, lat, lng, accuracy, ip, device)
     check_clock_in_location(db, client_id, settings, lat, lng)
+    flag = "; ".join(x for x in (flag, same_device_flag(db, client_id, emp_id, device_id, today)) if x)
     if lat and lng:
         if settings and settings.office_lat and settings.office_lng:
             from math import radians, cos, sin, asin, sqrt
@@ -312,7 +321,8 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
         except (ValueError, TypeError):
             pass
 
-    site, _ = site_for_point(db, client_id, lat, lng)
+    # Tagged to the site they are allowed on, when one fence overlaps another's.
+    site = locked_site or site_for_point(db, client_id, lat, lng)[0]
     if site:
         check_type = "site"
         loc_label = loc_label or "%s %s" % (site.number, site.name)
@@ -328,6 +338,9 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
         existing.location_lat = lat
         existing.location_lng = lng
         existing.location_label = loc_label
+        existing.location_accuracy = float(accuracy or 0)
+        existing.device_id = device_id
+        existing.location_flag = flag
         att = existing
     else:
         att = models.DBAttendance(
@@ -335,6 +348,7 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
             clock_in=now_str, status=status, check_type=check_type,
             ip_address=ip, device_info=device,
             location_lat=lat, location_lng=lng, location_label=loc_label,
+            location_accuracy=float(accuracy or 0), device_id=device_id, location_flag=flag,
             job_id=site.id if site else None,
         )
         db.add(att)
@@ -361,12 +375,16 @@ def _todays_attendance(request, db):
 
 
 @router.post("/api/employee/attendance/clock-out")
-def employee_clock_out(request: Request, db: Session = Depends(get_db)):
+def employee_clock_out(request: Request, body: dict = None, db: Session = Depends(get_db)):
     att, client_id, _today = _todays_attendance(request, db)
     if not att or not att.clock_in:
         raise HTTPException(status_code=400, detail="No clock-in found for today")
     if att.clock_out:
         raise HTTPException(status_code=400, detail="Already clocked out")
+    me = db.query(models.DBEmployee).filter(models.DBEmployee.id == att.employee_id, models.DBEmployee.client_id == client_id).first()
+    left = clock_out_flag(db, client_id, me, attendance_settings_for(db, client_id), (body or {}).get("latitude"), (body or {}).get("longitude"))
+    if left:
+        att.location_flag = "; ".join(x for x in (att.location_flag, left) if x)
     end_shift(db, att, client_id)
     db.commit()
     return {"message": "Clocked out", "total_hours": att.total_hours, "overtime_hours": att.overtime_hours, "break_minutes": att.break_minutes}

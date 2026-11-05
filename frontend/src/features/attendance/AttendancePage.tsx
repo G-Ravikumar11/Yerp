@@ -3,16 +3,18 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { Tabs } from '@/components/ui'
 import { AnalyticsTab } from './AnalyticsTab'
 import { HistoryTab } from './HistoryTab'
+import { JobLockTab } from './JobLockTab'
 import { OvertimeTab } from './OvertimeTab'
 import { SettingsTab } from './SettingsTab'
 import { TodayTab } from './TodayTab'
 
-type Tab = 'today' | 'history' | 'analytics' | 'overtime' | 'settings'
+type Tab = 'today' | 'history' | 'analytics' | 'overtime' | 'joblock' | 'settings'
 const TABS = [
   { value: 'today', label: 'Today' },
   { value: 'history', label: 'History' },
   { value: 'analytics', label: 'Analytics' },
   { value: 'overtime', label: 'Overtime' },
+  { value: 'joblock', label: 'Job Lock' },
   { value: 'settings', label: 'Settings' },
 ] as const
 
@@ -26,6 +28,7 @@ export default function AttendancePage() {
       {tab === 'history' && <HistoryTab />}
       {tab === 'analytics' && <AnalyticsTab />}
       {tab === 'overtime' && <OvertimeTab />}
+      {tab === 'joblock' && <JobLockTab />}
       {tab === 'settings' && <SettingsTab />}
     </>
   )

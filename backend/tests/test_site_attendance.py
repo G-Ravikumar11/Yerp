@@ -48,6 +48,7 @@ def test_a_clock_in_on_site_lands_on_the_project(tenant, client):
 def test_a_clock_in_off_every_site_says_so(tenant, client):
     j = job(tenant)
     tenant.put("/api/jobs/%d/site-location" % j["id"], json={"lat": SITE[0], "lng": SITE[1], "radius_m": 300})
+    tenant.put("/api/attendance/settings", json={"job_lock": False})      # with it on, this clock-in is refused: test_job_lock.py
     out = staff_in(tenant, client, *FAR)
     assert out["check_type"] != "site" and out["site"] is None
     day = tenant.get("/api/attendance/by-site").json()
@@ -60,7 +61,7 @@ def test_a_clock_in_with_a_position_is_office_or_field_and_without_one_is_refuse
     """What the phone's location permission is for: with the position the day is saved as office or field. Without one it
     is refused while the company requires location (the default once attendance is set up), and saved as manual when the
     company has switched that off."""
-    res = tenant.put("/api/attendance/settings", json={"office_name": "Head Office", "office_lat": SITE[0], "office_lng": SITE[1], "geofence_radius": 300})
+    res = tenant.put("/api/attendance/settings", json={"job_lock": False, "office_name": "Head Office", "office_lat": SITE[0], "office_lng": SITE[1], "geofence_radius": 300})
     assert res.status_code == 200, res.text
     # Everybody is made first: the owner's browser is the one that signs in as staff in the other tests here.
     people = [make_employee(tenant, password="EmpPass123") for _ in range(4)]

@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db, get_read_db
 
+from app.constants.common import PAYROLL_EXCLUDED_STATUSES
+from app.constants.projects import JOB_CLOSED_STATUSES
+from app.core.audit import log_audit
 from app.core.auth import get_client_user, require_erp_read, require_items_access
 from app.core.queries import by_id, prime
 from app.core.dates import DEFAULT_WORKING_DAYS
@@ -364,8 +367,10 @@ def update_attendance_settings(request: Request, body: dict = None, db: Session 
                 val = _whole_number(val, "Lates before a penalty", 1, 31)
             elif key == "late_penalty_lop":
                 val = _number_between(val, "Late penalty", 0, 1)
-            elif key == "auto_email_on_approval":
+            elif key in ("auto_email_on_approval", "job_lock"):
                 val = bool(val)
+            elif key == "max_gps_accuracy":
+                val = _number_between(val, "Weakest GPS accepted", 10, 5000)
             setattr(settings, key, val)
     db.commit()
     return {"message": "Settings saved"}
@@ -383,6 +388,7 @@ def get_attendance_settings(request: Request, db: Session = Depends(get_read_db)
             "allow_remote": True, "require_location": True,
             "working_days": DEFAULT_WORKING_DAYS,
             "late_threshold": 3, "late_penalty_lop": 0.5, "auto_email_on_approval": False,
+            "job_lock": True, "max_gps_accuracy": 150.0,
         }
     return {
         "office_name": settings.office_name, "office_lat": settings.office_lat,
@@ -396,7 +402,55 @@ def get_attendance_settings(request: Request, db: Session = Depends(get_read_db)
         "late_threshold": settings.late_threshold if settings.late_threshold is not None else 3,
         "late_penalty_lop": settings.late_penalty_lop if settings.late_penalty_lop is not None else 0.5,
         "auto_email_on_approval": bool(settings.auto_email_on_approval),
+        "job_lock": settings.job_lock is not False, "max_gps_accuracy": settings.max_gps_accuracy or 150.0,
     }
+
+
+@router.get("/api/attendance/job-lock")
+def job_lock_view(request: Request, db: Session = Depends(get_read_db)):
+    """Job Lock at a glance: sites people cannot be checked on yet, who may clock in where, who was turned away, and the
+    punches that went through but are worth a second look."""
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
+    settings = attendance_settings_for(db, client.id)
+    people = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client.id,
+                                                models.DBEmployee.status.notin_(PAYROLL_EXCLUDED_STATUSES)).all()
+    names = {e.id: ("%s %s" % (e.first_name or "", e.last_name or "")).strip() for e in people}
+    jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client.id).all()}
+    fenced = {g.job_id for g in db.query(models.DBSiteGeofence).filter(models.DBSiteGeofence.client_id == client.id).all() if g.lat and g.lng}
+    sites_of = {}
+    for row in db.query(models.DBEmployeeSite).filter(models.DBEmployeeSite.employee_id.in_(list(names) or [0])).all():
+        sites_of.setdefault(row.employee_id, []).append(row.job_id)
+    staff = [{"id": e.id, "name": names[e.id], "job_title": e.job_title or "", "exempt": bool(e.job_lock_exempt),
+              "sites": [jobs[j].name or jobs[j].number or "" for j in sites_of.get(e.id, []) if j in jobs]}
+             for e in sorted(people, key=lambda x: names[x.id].lower())]
+    open_jobs = [j for j in jobs.values() if (j.status or "") not in JOB_CLOSED_STATUSES]
+    refused = db.query(models.DBClockRefusal).filter(models.DBClockRefusal.client_id == client.id).order_by(
+        models.DBClockRefusal.id.desc()).limit(100).all()
+    flagged = db.query(models.DBAttendance).filter(models.DBAttendance.client_id == client.id, models.DBAttendance.location_flag != "",
+                                                   models.DBAttendance.location_flag.isnot(None)).order_by(models.DBAttendance.id.desc()).limit(100).all()
+    return {
+        "on": settings is None or settings.job_lock is not False,
+        "office_set": bool(settings and settings.office_lat and settings.office_lng),
+        "sites_without_location": [{"id": j.id, "name": ("%s %s" % (j.number or "", j.name or "")).strip()} for j in open_jobs if j.id not in fenced],
+        "staff": staff,
+        "refused": [{"id": r.id, "at": r.at, "employee": names.get(r.employee_id, ""), "reason": r.reason, "lat": r.lat, "lng": r.lng,
+                     "accuracy": r.accuracy, "distance_m": r.distance_m, "nearest": r.nearest} for r in refused],
+        "flagged": [{"id": a.id, "date": a.date, "clock_in": a.clock_in or "", "employee": names.get(a.employee_id, ""),
+                     "flag": a.location_flag, "lat": a.location_lat, "lng": a.location_lng} for a in flagged],
+    }
+
+
+@router.put("/api/attendance/job-lock/exempt/{employee_id}")
+def job_lock_exempt(employee_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Field staff with no fixed site - a surveyor, a driver - are let off the lock by name, by whoever manages people."""
+    client = require_items_access(request, db, "people.manage")
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == employee_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(404, "Employee not found")
+    emp.job_lock_exempt = bool((body or {}).get("exempt"))
+    log_audit(db, client.id, "job_lock_exempt", "employee", emp.id, emp.first_name or "", str(emp.job_lock_exempt), request)
+    db.commit()
+    return {"ok": True, "message": "%s can clock in anywhere." % emp.first_name if emp.job_lock_exempt else "%s is back under Job Lock." % emp.first_name}
 
 
 @router.get("/api/attendance/by-site")
