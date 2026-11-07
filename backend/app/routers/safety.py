@@ -33,6 +33,14 @@ router = APIRouter()
 router.include_router(checks_router)
 
 
+@router.get("/api/safety/man-hours")
+def safety_man_hours(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
+    """Safe man-hours since the last lost-time injury, the hours behind them and the rates per million man-hours."""
+    from app.services.safety_hours import safe_hours
+    client = require_erp_read(request, db)
+    return safe_hours(db, client.id, job_id)
+
+
 @router.get("/api/safety")
 def safety_overview(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     """Everything on the safety screen for one project, or every project."""

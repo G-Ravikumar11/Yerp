@@ -28,6 +28,25 @@ export type HseGo = 'workers' | 'incidents' | 'talks' | 'permits'
 export interface HseCheckItem { key: string; rule: string; label: string; status: 'ok' | 'warn' | 'bad' | 'info'; count: number; detail: string; go: HseGo }
 export const useHseCheck = (job: number) => useQuery({ queryKey: ['safety', 'hse', job], queryFn: () => get<{ items: HseCheckItem[]; ok: number; total: number }>(`/api/safety/hse-check${job ? `?job_id=${job}` : ''}`) })
 
+export interface ManHours {
+  safe_hours: number
+  since: string | null
+  total_hours: number
+  best_run_hours: number
+  contractor_hours: number
+  staff_hours: number
+  days_recorded: number
+  ltis: number
+  recordable: number
+  days_lost: number
+  ltifr: number | null
+  severity_rate: number | null
+  recordable_rate: number | null
+  this_month_hours: number
+  by_month: { month: string; hours: number; contractor_hours: number; staff_hours: number; ltis: number; incidents: number }[]
+}
+/** Safe man-hours and the injury rates, for one site or every site. */
+export const useManHours = (job: number) => useQuery({ queryKey: ['safety', 'man-hours', job], enabled: job >= 0, queryFn: () => get<ManHours>(`/api/safety/man-hours${job ? `?job_id=${job}` : ''}`) })
 export const useSafety = (job: number) => useQuery({ queryKey: ['safety', job], enabled: job >= 0, queryFn: () => get<SafetyData>(`/api/safety${job ? `?job_id=${job}` : ''}`) })
 
 // Unused: nothing sends an incident in this shape.

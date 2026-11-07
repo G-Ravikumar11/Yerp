@@ -7,7 +7,7 @@ import { FilesModal } from '@/components/data/FilesModal'
 import { PromptModal } from '@/components/data/PromptModal'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { Badge, Button, Stat, StatGrid, Tabs } from '@/components/ui'
-import { closeIncident, closePermit, recordTalk, safetyKeys, useSafety, type Incident, type Permit, type Talk } from '@/api/safety'
+import { closeIncident, closePermit, recordTalk, safetyKeys, useManHours, useSafety, type Incident, type Permit, type Talk } from '@/api/safety'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
@@ -35,6 +35,7 @@ export default function SafetyPage() {
   const [job, setJob] = useState(0)
   const [tab, setTab] = useState<Tab>('incidents')
   const q = useSafety(job)
+  const hours = useManHours(job)
   const d = q.data
   const s = d?.summary
   const [reporting, setReporting] = useState(false)
@@ -121,18 +122,18 @@ export default function SafetyPage() {
         <>
       <div className="mb-6"><ProjectPicker value={job} onChange={setJob} id="sf-job" allowAll /></div>
       <StatGrid className="lg:grid-cols-3 xl:grid-cols-6">
-        <Stat label="Days without a lost-time injury" value={s ? (s.days_without_lti === null ? 'none yet' : s.days_without_lti) : 0} loading={q.isPending} />
+        <Stat label="Safe man-hours" value={hours.data ? hours.data.safe_hours.toLocaleString('en-IN') : 0} sub={s ? `${s.days_without_lti === null ? 'No' : s.days_without_lti} days without a lost-time injury` : undefined} loading={hours.isPending} />
         <Stat label="Incidents so far" value={d?.incidents.length ?? 0} sub="all time, every kind" loading={q.isPending} />
         <Stat label="Incidents this month" value={s?.incidents_this_month ?? 0} loading={q.isPending} />
         <Stat label="Near misses reported" value={s?.near_misses ?? 0} loading={q.isPending} />
         <Stat label="Toolbox talks this week" value={s?.talks_this_week ?? 0} loading={q.isPending} />
         <Stat label="Permits live" value={s?.active_permits ?? 0} sub={s?.expired_open ? `${s.expired_open} run out` : undefined} tone={s?.expired_open ? 'danger' : undefined} loading={q.isPending} />
       </StatGrid>
-      <div className="mb-4"><Tabs label="Safety" value={tab} onChange={setTab} items={[{ value: 'incidents', label: 'Incidents', info: 'Accidents, injuries and near misses. Log what happened; an incident closes only with its root cause and what stops it happening again.' }, { value: 'talks', label: 'Toolbox talks', info: 'The short safety talk before work: the topic and who stood through it.' }, { value: 'permits', label: 'Permits to work', info: 'Written permission for risky work - at height, hot work, excavation and the like - issued only once the precautions are in place, for one shift at most, and closed when the work stops.' }, { value: 'safe', label: 'Safe days', info: 'How many days the site has gone without a lost-time injury, and what ended each run.' }, { value: 'checks', label: 'Equipment checks', info: 'Inspection checklists for grinders, breaking machines, hammer drills, fire extinguishers and electrical boards. Answer every item, add photos, get it signed; a fault is flagged and the next inspection date is tracked.' }]} /></div>
+      <div className="mb-4"><Tabs label="Safety" value={tab} onChange={setTab} items={[{ value: 'incidents', label: 'Incidents', info: 'Accidents, injuries and near misses. Log what happened; an incident closes only with its root cause and what stops it happening again.' }, { value: 'talks', label: 'Toolbox talks', info: 'The short safety talk before work: the topic and who stood through it.' }, { value: 'permits', label: 'Permits to work', info: 'Written permission for risky work - at height, hot work, excavation and the like - issued only once the precautions are in place, for one shift at most, and closed when the work stops.' }, { value: 'safe', label: 'Safe man-hours', info: 'Hours worked since the last lost-time injury, the injury rates per million man-hours, and what ended each safe run.' }, { value: 'checks', label: 'Equipment checks', info: 'Inspection checklists for grinders, breaking machines, hammer drills, fire extinguishers and electrical boards. Answer every item, add photos, get it signed; a fault is flagged and the next inspection date is tracked.' }]} /></div>
       {tab === 'incidents' && <DataTable label="Incidents" rows={d?.incidents ?? []} columns={incidents} rowKey={(i) => i.id} loading={q.isPending} empty="Nothing reported. A near miss written down is the cheapest lesson there is." />}
       {tab === 'talks' && <DataTable label="Toolbox talks" rows={d?.talks ?? []} columns={talks} rowKey={(t) => t.id} loading={q.isPending} empty="No talks recorded." />}
       {tab === 'permits' && <DataTable label="Permits" rows={d?.permits ?? []} columns={permits} rowKey={(p) => p.id} loading={q.isPending} empty="No permits issued." />}
-      {tab === 'safe' && <SafeDays incidents={d?.incidents ?? []} loading={q.isPending} />}
+      {tab === 'safe' && <SafeDays job={job} incidents={d?.incidents ?? []} loading={q.isPending} />}
       {tab === 'checks' && <ChecksTab job={job} />}
         </>
       )}
