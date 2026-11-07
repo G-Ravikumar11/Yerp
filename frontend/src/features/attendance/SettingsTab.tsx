@@ -32,8 +32,8 @@ function Form({ initial }: { initial: AttSettings }) {
         <Field label="Longest overtime (hours)" htmlFor="as-ot"><NumField id="as-ot" value={s.max_overtime_hours} onValue={(n) => set('max_overtime_hours', n)} /></Field>
         <Field label="Weakest GPS accepted (metres)" htmlFor="as-gps" hint="A position less sure than this is refused."><NumField id="as-gps" value={s.max_gps_accuracy ?? 150} onValue={(n) => set('max_gps_accuracy', n)} /></Field>
         <div className="flex flex-col justify-end gap-2 text-sm">
-          <label className="flex items-center gap-2"><input type="checkbox" checked={s.job_lock !== false} onChange={(e) => set('job_lock', e.target.checked)} /> Job Lock: clock in only at the office or an assigned site</label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={s.allow_remote} disabled={s.job_lock !== false} onChange={(e) => set('allow_remote', e.target.checked)} /> Allow remote clock-in{s.job_lock !== false ? ' (Job Lock is on)' : ''}</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={s.job_lock !== false} onChange={(e) => set('job_lock', e.target.checked)} /> Site Lock: clock in only at the office or an assigned site</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={s.allow_remote} disabled={s.job_lock !== false} onChange={(e) => set('allow_remote', e.target.checked)} /> Allow remote clock-in{s.job_lock !== false ? ' (Site Lock is on)' : ''}</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={s.require_location} onChange={(e) => set('require_location', e.target.checked)} /> Require location</label>
         </div>
       </div>

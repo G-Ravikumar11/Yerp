@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Lock, LockOpen } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
-import { Button, Skeleton, Stat, StatGrid } from '@/components/ui'
-import { JOB_STATUS, useProject, type ProjectDoc } from '@/api/projects'
+import { Button, ConfirmDialog, Skeleton, Stat, StatGrid } from '@/components/ui'
+import { JOB_STATUS, lockProject, unlockProject, useProject, type ProjectDoc } from '@/api/projects'
+import { useAction } from '@/lib/mutate'
+import { useSession } from '@/lib/session'
+import { formatDate as fmt } from '@/lib/format'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { ProjectFormModal } from './ProjectFormModal'
@@ -28,6 +31,9 @@ export default function ProjectPage() {
   const nav = useNavigate()
   const q = useProject(id)
   const [editing, setEditing] = useState(false)
+  const [locking, setLocking] = useState<'lock' | 'unlock' | null>(null)
+  const { isOwner } = useSession()
+  const lockIt = useAction((reason: string) => (locking === 'unlock' ? unlockProject(id) : lockProject(id, reason)), { invalidate: [['projects'], ['jobs']], success: (r) => r.message, onSuccess: () => setLocking(null) })
   const p = q.data
   const c = p?.costing
   const cls = c ? (c.over_budget ? 'text-danger' : 'text-success') : ''
@@ -39,7 +45,13 @@ export default function ProjectPage() {
         <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">This project no longer exists. It may have been deleted. <Link to="/projects" className="font-medium text-primary underline underline-offset-4">Back to all projects</Link></p>
       ) : q.isPending || !p || !c ? <Skeleton className="h-64 w-full" /> : (
         <>
-          <PageHeader title={`${p.number} - ${p.name}`} description={[p.customer_name, p.site_address, JOB_STATUS[p.status] ?? p.status].filter(Boolean).join(' - ')} actions={<><Button variant="outline" onClick={() => setEditing(true)}>Edit</Button><MasterDelete kind="project" id={p.id} label={`${p.number} ${p.name}`} noun="project" onDeleted={() => nav('/projects')} /></>} />
+          <PageHeader title={`${p.number} - ${p.name}`} description={[p.customer_name, p.site_address, JOB_STATUS[p.status] ?? p.status].filter(Boolean).join(' - ')} actions={<>{isOwner && (p.locked ? <Button variant="outline" onClick={() => setLocking('unlock')}><LockOpen /> Unlock</Button> : <Button variant="outline" onClick={() => setLocking('lock')}><Lock /> Lock</Button>)}<Button variant="outline" disabled={!!p.locked} onClick={() => setEditing(true)}>Edit</Button><MasterDelete kind="project" id={p.id} label={`${p.number} ${p.name}`} noun="project" onDeleted={() => nav('/projects')} /></>} />
+          {p.locked && (
+            <p role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-danger/30 bg-danger-soft p-3 text-sm text-danger">
+              <Lock className="mt-0.5 size-4 shrink-0" />
+              <span><strong>Locked by {p.locked_by_name || 'the Master'}{p.locked_at ? ` on ${fmt(p.locked_at)}` : ''}.</strong> {p.lock_reason} Nothing on this project can be changed by anybody until the Master unlocks it.</span>
+            </p>
+          )}
           {c.over_budget && <p role="alert" className="mb-4 rounded-lg border border-danger/30 bg-danger-soft p-3 text-sm font-semibold text-danger">Costs and open orders have passed the {formatINR(c.budget)} budget.</p>}
           <StatGrid className="lg:grid-cols-4 xl:grid-cols-4">
             <Stat label="Quoted" value={formatINR(c.quoted)} />
@@ -55,6 +67,14 @@ export default function ProjectPage() {
           <Docs title="Bills" rows={p.bills} party={(d) => d.vendor_name ?? ''} />
           <Docs title="Quotes" rows={p.quotes} party={() => ''} />
           <ProjectFormModal project={p} open={editing} onClose={() => setEditing(false)} />
+          <ConfirmDialog
+            open={!!locking} onOpenChange={(o) => !o && setLocking(null)}
+            title={locking === 'unlock' ? `Unlock ${p.number}?` : `Lock ${p.number}?`}
+            description={locking === 'unlock' ? 'Everybody can work on it again as before.' : 'Nobody - staff, your team or you - can change anything on this project: its BOQ, orders, bills, store, diary, drawings, quality and safety records. It can still be read. Only you can unlock it.'}
+            confirmLabel={locking === 'unlock' ? 'Unlock' : 'Lock the project'} tone={locking === 'unlock' ? undefined : 'danger'}
+            reason={locking === 'unlock' ? undefined : { label: 'Why is it being locked? Everybody who tries to change it is told.', required: true }}
+            loading={lockIt.isPending} onConfirm={(reason) => lockIt.mutate(reason ?? '')}
+          />
         </>
       )}
     </>

@@ -450,7 +450,7 @@ def job_lock_exempt(employee_id: int, request: Request, body: dict = None, db: S
     emp.job_lock_exempt = bool((body or {}).get("exempt"))
     log_audit(db, client.id, "job_lock_exempt", "employee", emp.id, emp.first_name or "", str(emp.job_lock_exempt), request)
     db.commit()
-    return {"ok": True, "message": "%s can clock in anywhere." % emp.first_name if emp.job_lock_exempt else "%s is back under Job Lock." % emp.first_name}
+    return {"ok": True, "message": "%s can clock in anywhere." % emp.first_name if emp.job_lock_exempt else "%s is back under Site Lock." % emp.first_name}
 
 
 @router.get("/api/attendance/by-site")

@@ -14,7 +14,7 @@ const TABS = [
   { value: 'history', label: 'History' },
   { value: 'analytics', label: 'Analytics' },
   { value: 'overtime', label: 'Overtime' },
-  { value: 'joblock', label: 'Job Lock' },
+  { value: 'joblock', label: 'Site Lock' },
   { value: 'settings', label: 'Settings' },
 ] as const
 

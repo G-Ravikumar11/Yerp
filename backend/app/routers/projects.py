@@ -13,6 +13,7 @@ from app.db import get_db, get_read_db
 from app.constants.common import DRAWING_STATUSES
 from app.constants.crm import OPEN_INVOICE_STATUSES
 from app.constants.projects import DRAWING_DISCIPLINES, JOB_CLOSED_STATUSES, JOB_FINISHED, WEATHER
+from app.core import job_lock
 from app.core.audit import log_audit
 from app.core import checks
 from app.core.auth import (get_client_user, owned_or_404, refuse_ho_coordinator, require_erp_read, require_items_access, require_owner,
@@ -399,6 +400,37 @@ def delete_job(job_id: int, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(409, "Could not delete it: %s" % str(getattr(exc, "orig", exc)).splitlines()[0][:240])
     took = ", ".join("%d %s" % (n, k) for k, n in sorted(purge.human(counts).items()))
     return {"ok": True, "message": "%s deleted%s." % (name, (", with " + took) if took else "")}
+
+
+@router.post("/api/jobs/{job_id}/lock")
+def lock_job(job_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Job Lock, the Master's alone: from now nothing on the project can be changed by anybody until it is unlocked."""
+    from app.services.approvals import owner_label
+    require_owner(request, db)
+    client = get_client_user(request, db)
+    job = job_or_404(db, client.id, job_id)
+    reason = ((body or {}).get("reason") or "").strip()[:300]
+    if not reason:
+        raise HTTPException(400, "Why is it being locked? Everybody who tries to change it is told.")
+    job.is_locked, job.lock_reason = True, reason
+    job.locked_by_name, job.locked_at = owner_label(db, client.id), datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_audit(db, client.id, "job_locked", "job", job.id, job.number or "", reason, request)
+    db.commit()
+    job_lock.forget()
+    return {"ok": True, "message": "%s is locked. Nothing on it can be changed until you unlock it." % (job.number or job.name)}
+
+
+@router.post("/api/jobs/{job_id}/unlock")
+def unlock_job(job_id: int, request: Request, db: Session = Depends(get_db)):
+    require_owner(request, db)
+    client = get_client_user(request, db)
+    job = job_or_404(db, client.id, job_id)
+    was = job.lock_reason or ""
+    job.is_locked, job.lock_reason, job.locked_by_name, job.locked_at = False, "", "", ""
+    log_audit(db, client.id, "job_unlocked", "job", job.id, job.number or "", was, request)
+    db.commit()
+    job_lock.forget()
+    return {"ok": True, "message": "%s is unlocked." % (job.number or job.name)}
 
 
 @router.get("/api/jobs-summary")

@@ -11,6 +11,7 @@ from app.db import SessionLocal, engine, ensure_columns, migrate_sqlite
 from app.db.migrations import create_missing_tables
 
 from app.core import site_scope  # noqa: F401  (registers the rule that keeps staff to their sites)
+from app.core import job_lock  # noqa: F401  (registers the rule that a locked project takes no change)
 from app.core.auth import ensure_admin_user, ensure_super_admin
 from app.core.config import logger
 from app.core.lifecycle import (

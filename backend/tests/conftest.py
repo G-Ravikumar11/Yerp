@@ -91,6 +91,8 @@ def _reset_rate_limiter():
     of weakening the limit itself."""
     main.rate_limiter._hits.clear()
     main._READ_CACHE.clear()
+    from app.core import job_lock
+    job_lock.forget()                  # the locked projects of the last test's database are not this one's
     from app.core.login_guard import failures
     failures.reset()
     yield

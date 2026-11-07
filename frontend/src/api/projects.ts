@@ -3,6 +3,11 @@ import { del, get, post, put } from '@/lib/api'
 import { useSession } from '@/lib/session'
 
 export interface Project {
+  /** Job Lock: frozen by the Master, nothing on it can be changed until the Master unlocks it. */
+  locked?: boolean
+  lock_reason?: string
+  locked_by_name?: string
+  locked_at?: string
   id: number
   number: string
   name: string
@@ -69,3 +74,7 @@ export const useGstStates = () => useQuery({ queryKey: ['projects', 'states'], s
 export const saveProject = (id: number | null, b: ProjectInput) => (id ? put<{ id?: number }>(`/api/jobs/${id}`, b) : post<{ id: number }>('/api/jobs', b))
 export const setSiteLocation = (id: number, position: string, radius_m: number) => put<unknown>(`/api/jobs/${id}/site-location`, { position, radius_m })
 export const clearSiteLocation = (id: number) => del<unknown>(`/api/jobs/${id}/site-location`)
+
+/** Job Lock, the Master's alone: lock needs a reason, which everybody who tries to change the project is told. */
+export const lockProject = (id: number, reason: string) => post<{ message: string }>(`/api/jobs/${id}/lock`, { reason })
+export const unlockProject = (id: number) => post<{ message: string }>(`/api/jobs/${id}/unlock`, {})

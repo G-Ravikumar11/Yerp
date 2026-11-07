@@ -43,9 +43,9 @@ export function JobLockTab() {
   ]
   return (
     <div className="grid gap-6">
-      {!d.on && <p role="alert" className="rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm">Job Lock is off, so staff can clock in from anywhere. Switch it on in Settings.</p>}
+      {!d.on && <p role="alert" className="rounded-lg border border-warning/40 bg-warning-soft p-3 text-sm">Site Lock is off, so staff can clock in from anywhere. Switch it on in Settings.</p>}
       <StatGrid className="xl:grid-cols-3">
-        <Stat label="Job Lock" value={d.on ? 'On' : 'Off'} tone={d.on ? 'success' : 'warning'} />
+        <Stat label="Site Lock" value={d.on ? 'On' : 'Off'} tone={d.on ? 'success' : 'warning'} />
         <Stat label="Sites with no location" value={d.sites_without_location.length} tone={d.sites_without_location.length ? 'warning' : undefined} sub="Staff on these cannot be checked yet" />
         <Stat label="Refused clock-ins" value={d.refused.length} sub="The latest 100" />
       </StatGrid>
@@ -69,7 +69,7 @@ export function JobLockTab() {
       <section>
         <h2 className="mb-2 text-base font-semibold">Who may clock in where</h2>
         <p className="mb-2 text-[13px] text-muted-foreground">Sites come from each person&rsquo;s assignment (Employees, Access). Tick Anywhere only for field staff with no fixed site.</p>
-        <DataTable label="Staff under Job Lock" rows={d.staff} columns={staff} rowKey={(r) => r.id} empty="No staff yet." />
+        <DataTable label="Staff under Site Lock" rows={d.staff} columns={staff} rowKey={(r) => r.id} empty="No staff yet." />
       </section>
     </div>
   )

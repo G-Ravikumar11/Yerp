@@ -43,6 +43,11 @@ class DBJob(Base):
 
     # quoting | won | in_progress | on_hold | complete | cancelled
     status = Column(String, default="quoting", index=True)
+    # Job Lock: locked by the Master, nothing on the project can be changed by anybody until the Master unlocks it.
+    is_locked = Column(Boolean, default=False)
+    locked_at = Column(String, default="")
+    locked_by_name = Column(String, default="")
+    lock_reason = Column(String, default="")
     start_date = Column(String, default="")
     target_end_date = Column(String, default="")
     completed_at = Column(String, default="")

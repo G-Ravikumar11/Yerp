@@ -24,7 +24,7 @@ export default function ProjectsPage() {
   const columns: TableColumn<BoardProject>[] = [
     { id: 'no', header: 'Project', sort: (j) => j.number, cell: (j) => <div><span className="font-semibold">{j.number}</span><div className="text-xs text-muted-foreground">{j.name}</div></div> },
     { id: 'cust', header: 'Customer', hideBelow: 'md', cell: (j) => j.customer_name || '-' },
-    { id: 'status', header: 'Status', cell: (j) => <div className="flex items-center gap-1.5"><Badge tone={tone(j.status)} dot>{JOB_STATUS[j.status] ?? j.status}</Badge>{j.costing.over_budget && <span className="text-xs font-bold text-danger">over budget</span>}</div> },
+    { id: 'status', header: 'Status', cell: (j) => <div className="flex items-center gap-1.5"><Badge tone={tone(j.status)} dot>{JOB_STATUS[j.status] ?? j.status}</Badge>{j.locked && <Badge tone="danger" title={j.lock_reason}>Locked</Badge>}{j.costing.over_budget && <span className="text-xs font-bold text-danger">over budget</span>}</div> },
 
     { id: 'budget', header: 'Budget', hideBelow: 'lg', align: 'right', sort: (j) => j.costing.budget, cell: (j) => (j.costing.budget ? formatINR(j.costing.budget) : '-') },
     { id: 'used', header: 'Used budget', hideBelow: 'md', align: 'right', sort: (j) => j.costing.used, cell: (j) => formatINR(j.costing.used) },
