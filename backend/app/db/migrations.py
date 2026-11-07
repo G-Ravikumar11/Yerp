@@ -138,6 +138,8 @@ HR_PAYROLL_COLUMNS = (
     ("attendance_settings", "late_threshold", "INTEGER DEFAULT 3"),
     ("attendance_settings", "late_penalty_lop", "FLOAT DEFAULT 0.5"),
     ("attendance_settings", "auto_email_on_approval", "BOOLEAN DEFAULT FALSE"),
+    # Steel past the BBS allowance, approved.
+    ("store_issue", "steel_override_by", "VARCHAR DEFAULT ''"), ("store_issue", "steel_override_note", "VARCHAR DEFAULT ''"),
     # Job Lock: a project frozen by the Master.
     ("jobs", "is_locked", "BOOLEAN DEFAULT FALSE"), ("jobs", "locked_at", "VARCHAR DEFAULT ''"),
     ("jobs", "locked_by_name", "VARCHAR DEFAULT ''"), ("jobs", "lock_reason", "VARCHAR DEFAULT ''"),

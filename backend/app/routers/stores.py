@@ -256,6 +256,14 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
         if not issue.job_id and recover_order.job_id:
             issue.job_id = recover_order.job_id
 
+    from app.services import steel_allowance as steel
+    codes = {i.item_code: i for i in db.query(models.DBItem).filter(models.DBItem.client_id == client.id,
+                                                                  models.DBItem.item_code.in_([l.item_code for l in lines] or [""])).all()}
+    over = steel.breaches(db, client.id, issue.job_id, [(codes[l.item_code], l.quantity or 0, l.uom or codes[l.item_code].units_of_measure)
+                                                        for l in lines if l.item_code in codes])
+    if over and actor_id is not None and steel.APPROVE_RIGHT not in permissions_for_actor(db, actor_id):
+        raise HTTPException(409, "This takes steel past the BBS + %g%% allowance (%s). Issue it from the Store Hub and send it for approval by the Master or the engineer who signs off the BBS." % (
+            steel.allowance_pct(db, client.id), "; ".join(over)))
     for l in lines:
         stock_movement(db, client.id, l.item_code, "ISSUE", -l.quantity, l.rate,
                        item_name=l.item_name, uom=l.uom, store=issue.store,
@@ -622,3 +630,8 @@ def run_cutover(body: CutoverIn, request: Request, db: Session = Depends(get_db)
     return {"ok": True, "done": store_cutover.cutover_dict(store_cutover.cutover_of(db, actor.client.id)),
             "message": "The old store has moved into the Store Hub: %s carried as opening stock into %d store%s." % (
                 inr(value), len(carried), "" if len(carried) == 1 else "s")}
+
+def permissions_for_actor(db, employee_id):
+    from app.core.permissions import permissions_for
+    emp = db.get(models.DBEmployee, employee_id)
+    return permissions_for(emp) if emp is not None else set()

@@ -218,6 +218,17 @@ def calculate(body: EntryIn, request: Request, db: Session = Depends(get_read_db
     return worked_out(db, client.id, body)
 
 
+@router.get("/api/bbs/steel")
+def steel_reconciliation(request: Request, job_id: int, db: Session = Depends(get_read_db)):
+    """The project's steel, diameter by diameter: the approved BBS, what it may draw with the allowance, what the store has
+    issued (net of returns), and the wastage."""
+    from app.services.steel_allowance import reconciliation
+    client = require_erp_read(request, db)
+    if not db.query(models.DBJob.id).filter(models.DBJob.id == job_id, models.DBJob.client_id == client.id).first():
+        raise HTTPException(404, "Project not found")
+    return reconciliation(db, client.id, job_id)
+
+
 @router.get("/api/bbs/rules")
 def get_rules(request: Request, job_id: int = 0, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)

@@ -643,6 +643,8 @@ def advance(db, actor, kind, doc, action, reason="", direct=False):
             raise HTTPException(400, str(exc)) from exc
     if action == "approve" and not direct:
         check_not_own(db, actor, doc, DBStoreOutwardLog, kind.ref, kind.label)
+    if kind.key == "issue" and action in ("approve", "post"):
+        _steel_allowance(db, actor, doc, action, direct)
     if action == "post":
         kind.post(db, actor, doc)
         doc.posted_at = datetime.now()
@@ -652,6 +654,28 @@ def advance(db, actor, kind, doc, action, reason="", direct=False):
         refresh_indent(db, db.get(DBStoreIndent, doc.indent_id))
     log(db, actor, kind.ref, doc.id, action, now, doc.status)
     return doc
+
+
+def _steel_allowance(db, actor, issue, action, direct):
+    """Steel past the bar bending schedule plus its allowance goes out only once the Master or an engineer who signs off the
+    schedule has approved it - never on the storekeeper's word, never as a direct issue by anybody else."""
+    from app.services import steel_allowance as steel
+    over = steel.issue_breaches(db, actor.client.id, issue, issue_lines(db, issue))
+    if not over:
+        return
+    pct = steel.allowance_pct(db, actor.client.id)
+    said = "; ".join(over)
+    if action == "approve":
+        if not steel.may_approve(actor):
+            if direct:
+                raise HTTPException(409, "This takes steel past the BBS + %g%% allowance (%s). It cannot go out directly: save it and send it for approval by the Master or the engineer who signs off the BBS." % (pct, said))
+            raise HTTPException(403, "This takes steel past the BBS + %g%% allowance (%s). Only the Master or an engineer who signs off the BBS can approve it." % (pct, said))
+        issue.steel_override_by, issue.steel_override_note = actor.name, said[:300]
+        log(db, actor, ISSUE, issue.id, "steel_over_allowance", issue.status, issue.status, said[:200])
+        return
+    if not issue.steel_override_by:
+        # More steel went out since it was approved, and this now takes it over.
+        raise HTTPException(409, "Since it was approved, steel has gone past the BBS + %g%% allowance (%s). Send it back and have it approved by the Master or the engineer who signs off the BBS." % (pct, said))
 
 
 # --- what other slices ask for ---------------------------------------------------------------------------------------------------

@@ -40,6 +40,9 @@ class DBStoreIssue(DocHeader, Base):
     received_by_type = Column(String, default="")                      # PERSON | GANG | FOREMAN: who took the material away
     received_by_employee_id = Column(Integer, nullable=True)
     received_by_name = Column(String, default="")
+    # Steel past the bar bending schedule's allowance: who approved it going out, and what it was.
+    steel_override_by = Column(String, default="")
+    steel_override_note = Column(String, default="")
 
 
 class DBStoreIssueLine(Base):

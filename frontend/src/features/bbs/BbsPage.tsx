@@ -17,6 +17,8 @@ interface Shape { value: string; label: string; dims: string[] }
 interface Group { block: string; floor: string; element: string; bars: number; total_length_m: number; total_weight_kg: number }
 interface Data { entries: Entry[]; elements: string[]; grades: string[]; shapes: Shape[]; summary: { entries: number; total_length_m: number; total_weight_kg: number; by_diameter: { diameter_mm: number; bars: number; total_length_m: number; total_weight_kg: number }[]; by_group: Group[] } }
 interface Figures { cutting_length_mm: number; total_length_m: number; unit_weight_kg_m: number; total_weight_kg: number }
+interface SteelRow { diameter_mm: number; bbs_kg: number; allowed_kg: number; issued_kg: number; wastage_kg: number; wastage_pct: number | null; status: 'OK' | 'OVER' | 'NOT_IN_BBS' }
+interface Steel { allowance_pct: number; checked: boolean; rows: SteelRow[]; unweighed: string[]; summary: { bbs_kg: number; issued_kg: number; wastage_kg: number; over: number[] } }
 interface Revision { revision: number; reason: string; by: string; at: string; entry: Entry }
 
 const KEY = ['bbs'] as const
@@ -88,6 +90,7 @@ export default function BbsPage() {
           <Summary title="By diameter" head={['Dia (mm)', 'Bars', 'Length (m)', 'Weight (kg)']} rows={d!.summary.by_diameter.map((g) => [String(g.diameter_mm), String(g.bars), fix(g.total_length_m), fix(g.total_weight_kg)])} />
         </div>
       )}
+      {job > 0 && <SteelCheck job={job} />}
       {editing && d && <EntryModal entry={editing === 'new' ? null : editing} job={job} data={d} onClose={() => setEditing(null)} />}
       {history && <HistoryModal entry={history} onClose={() => setHistory(null)} />}
       {rules && <RulesModal job={job} onClose={() => setRules(false)} />}
@@ -175,5 +178,44 @@ function RulesModal({ job, onClose }: { job: number; onClose: () => void }) {
       <div className="grid gap-4 sm:grid-cols-2">{field('bend_45', '45 degree bend deduction')}{field('bend_90', '90 degree bend deduction')}{field('bend_135', '135 degree bend deduction')}{field('hook', 'Hook allowance')}</div>
       {save.error && <p role="alert" className="mt-3 text-[13px] text-danger">{save.error.message}</p>}
     </Modal>
+  )
+}
+
+
+/** The project's steel against its approved schedule: what it may draw with the allowance, what the store has issued, and the
+ * wastage, diameter by diameter. Past the allowance, a store issue waits for the Master or an engineer who signs off the BBS. */
+function SteelCheck({ job }: { job: number }) {
+  const q = useQuery({ queryKey: [...KEY, 'steel', job], queryFn: () => get<Steel>(`/api/bbs/steel?job_id=${job}`) })
+  const s = q.data
+  if (!s) return null
+  const tone = (r: SteelRow) => (r.status === 'OVER' ? 'danger' : r.status === 'NOT_IN_BBS' ? 'warning' : 'success')
+  const label = (r: SteelRow) => (r.status === 'OVER' ? 'Over the allowance' : r.status === 'NOT_IN_BBS' ? 'Not in the BBS' : 'Within')
+  return (
+    <Card className="mt-5 p-4">
+      <h2 className="text-sm font-semibold">Steel used against the BBS</h2>
+      <p className="mb-3 text-[13px] text-muted-foreground">
+        {s.checked
+          ? `Up to ${s.allowance_pct}% over the approved schedule may be issued. Past that, a store issue waits for the Master or an engineer who signs off the BBS.`
+          : 'No approved bar marks yet, so steel issues are not checked. Approve the schedule to set what may be drawn.'}
+      </p>
+      {s.rows.length === 0 ? <p className="text-sm text-muted-foreground">No steel issued and nothing approved yet.</p> : (
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-border"><th className={th}>Dia (mm)</th><th className={th}>BBS (kg)</th><th className={th}>Allowed (kg)</th><th className={th}>Issued (kg)</th><th className={th}>Wastage</th><th className={th}></th></tr></thead>
+          <tbody>
+            {s.rows.map((r) => (
+              <tr key={r.diameter_mm} className="border-b border-border last:border-0">
+                <td className="px-3 py-2 font-medium">{r.diameter_mm}</td>
+                <td className="px-3 py-2 tabular-nums">{fix(r.bbs_kg, 1)}</td>
+                <td className="px-3 py-2 tabular-nums">{fix(r.allowed_kg, 1)}</td>
+                <td className="px-3 py-2 tabular-nums">{fix(r.issued_kg, 1)}</td>
+                <td className="px-3 py-2 tabular-nums">{r.wastage_kg > 0 ? `${fix(r.wastage_kg, 1)} kg${r.wastage_pct !== null ? ` (${r.wastage_pct}%)` : ''}` : <span className="text-muted-foreground">{fix(-r.wastage_kg, 1)} kg still to issue</span>}</td>
+                <td className="px-3 py-2"><Badge tone={tone(r)}>{label(r)}</Badge></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {s.unweighed.length > 0 && <p className="mt-2 text-xs text-warning">Counted in numbers, so not weighed: {s.unweighed.join(', ')}. Keep steel in kg or MT in the item master.</p>}
+    </Card>
   )
 }
