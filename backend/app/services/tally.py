@@ -78,6 +78,7 @@ LEDGERS = {
     "salary_deductions": ("Other Salary Deductions", "Current Liabilities", False),
     "unassigned_bank": ("Bank (account not recorded)", "Bank Accounts", False),
     "cash": ("Cash", "Cash-in-Hand", False),
+    "inter_site_material": ("Material Transferred Between Sites", "Direct Expenses", True),
 }
 LABELS = {
     "sales": "Work billed to clients (RA bills)", "output_cgst": "Output CGST", "output_sgst": "Output SGST",
@@ -93,6 +94,7 @@ LABELS = {
     "salaries": "Salaries (gross)", "employer_contribution": "Employer's PF and ESI", "salaries_payable": "Net salaries owed",
     "salary_tds": "TDS on salaries", "pf_payable": "PF owed", "esi_payable": "ESI owed", "pt_payable": "Professional tax owed",
     "salary_deductions": "Other deductions from salaries",
+    "inter_site_material": "Material moved from one site to another",
 }
 # GST ledgers carry their duty head in Tally, so its GST reports pick them up.
 GST_HEADS = {"output_cgst": "Central Tax", "output_sgst": "State Tax", "output_igst": "Integrated Tax",
@@ -156,6 +158,9 @@ class Books:
         self._fixed_assets()
         self._retention_releases()
         self._payroll()
+        self._journals()
+        self._debit_notes()
+        self._cross_charges()
         self.vouchers.sort(key=lambda v: (v["date"], v["type"], v["number"]))
 
     # --- naming ---
@@ -201,7 +206,8 @@ class Books:
         return name
 
     def add(self, vtype, number, on, narration, lines, remote, job_id=None):
-        """lines: [(ledger, amount, bill_ref, ref_type)], amount positive for a debit, negative for a credit."""
+        """lines: [(ledger, amount, bill_ref, ref_type, cost centre)], amount positive for a debit, negative for a credit; a
+        line's own cost centre (a journal moving cost between sites) over the voucher's project."""
         lines = [(l, money(a), *rest) for l, a, *rest in lines if abs(money(a)) >= 0.005]
         total = money(sum(a for _, a, *_ in lines))
         if abs(total) >= 0.01:            # cannot happen by construction; refused rather than written wrong
@@ -421,6 +427,73 @@ class Books:
                 self.add("Debit Note", n.number, on, "Debit note %s on the contractor's bill%s" % (n.number, why), lines,
                          remote, n.job_id)
 
+    def _journals(self):
+        """Journal vouchers the Master has approved, line by line, each line under its own project."""
+        from app.constants.money import INCOME_HEADS
+        from app.services.journals import DBJournal, lines_of
+        js = [j for j in self.db.query(DBJournal).filter(DBJournal.client_id == self.client.id, DBJournal.status == "APPROVED").all()
+              if self.date_from <= (j.voucher_date or "")[:10] <= self.date_to]
+        lines = lines_of(self.db, [j.id for j in js])
+        for j in js:
+            out = []
+            for l in lines.get(j.id, []):
+                if l.kind == "party":
+                    ledger = self.party(l.party_name, l.party_type)
+                elif l.kind == "head":
+                    ledger = self.head(l.head, income=l.head in INCOME_HEADS)
+                elif l.kind == "account":
+                    ledger = self.account(l.account_id, "")
+                else:
+                    ledger = self.std(l.ledger_key)
+                out.append((ledger, money((l.debit or 0) - (l.credit or 0)), "", "", self.centre(l.job_id)))
+            self.add("Journal", j.number, j.voucher_date, j.narration, out, "yerp-%d-journal-%d" % (self.client.id, j.id))
+
+    def _debit_notes(self):
+        """Debit notes to suppliers: what we owe them comes down, and so do the purchases and the input GST."""
+        from app.services.journals import DBSupplierDebitNote
+        bills = {b.id: b for b in self.db.query(models.DBBill).filter(models.DBBill.client_id == self.client.id).all()}
+        suppliers = {}
+        for sup in self.db.query(models.DBSupplier).filter(models.DBSupplier.client_id == self.client.id).all():
+            suppliers.setdefault((sup.name or "").strip().lower(), sup)
+        for n in self.db.query(DBSupplierDebitNote).filter(DBSupplierDebitNote.client_id == self.client.id,
+                                                           DBSupplierDebitNote.status == "ISSUED").all():
+            if not (self.date_from <= (n.note_date or "")[:10] <= self.date_to):
+                continue
+            sup = suppliers.get((n.supplier_name or "").strip().lower())
+            gstin = (sup.gstin or "") if sup else ""
+            theirs = ((sup.state_code or "").strip() if sup else "") or state_from_gstin(gstin)
+            party = self.party(n.supplier_name, "supplier", gstin, theirs)
+            tax, total = money(n.tax), money(n.total)
+            if theirs and self.our_state and tax:
+                if theirs == self.our_state:
+                    half = money(tax / 2.0)
+                    gst = [(self.std("input_cgst"), -half), (self.std("input_sgst"), -money(tax - half))]
+                else:
+                    gst = [(self.std("input_igst"), -tax)]
+            else:
+                gst = [(self.std("input_gst"), -tax)]
+            bill = bills.get(n.bill_id)
+            ref = [(party, total, bill.number or "", "Agst Ref")] if bill and bill.number else [(party, total)]
+            self.add("Debit Note", n.number, n.note_date, "Debit note %s to %s - %s" % (n.number, n.supplier_name, n.reason),
+                     ref + [(self.std("purchases"), -money(n.taxable))] + gst, "yerp-%d-debitnote-%d" % (self.client.id, n.id), n.job_id)
+
+    def _cross_charges(self):
+        """Material one site's store sent another's, once accounts have adjusted it: the cost moves from the sending
+        project's cost centre to the receiving one's."""
+        from app.models.store_control import DBStoreTransfer
+        from app.models.store_extras import DBStoreCrossCharge
+        for c, t in (self.db.query(DBStoreCrossCharge, DBStoreTransfer).join(DBStoreTransfer, DBStoreTransfer.id == DBStoreCrossCharge.transfer_id)
+                     .filter(DBStoreCrossCharge.client_id == self.client.id, DBStoreCrossCharge.status == "ADJUSTED").all()):
+            on = c.adjusted_on.isoformat() if c.adjusted_on else ""
+            if not on or not (self.date_from <= on <= self.date_to):
+                continue
+            amt, ledger = money(float(c.amount or 0)), self.std("inter_site_material")
+            frm, to = self.jobs.get(c.from_project_id), self.jobs.get(c.to_project_id)
+            self.add("Journal", "XC-%s" % t.number, on, "Material sent by transfer %s from %s to %s" % (
+                t.number, frm.name if frm else "the central store", to.name if to else "the central store"),
+                [(ledger, amt, "", "", self.centre(c.to_project_id)), (ledger, -amt, "", "", self.centre(c.from_project_id))],
+                "yerp-%d-crosscharge-%d" % (self.client.id, c.id))
+
     def _fixed_assets(self):
         """Each owned asset's depreciation for every financial year that has ended (booked on 31 March), and its sale.
         The year still running is booked when it closes."""
@@ -544,6 +617,15 @@ class Books:
         note("Site cash spends", [x.amount or 0 for x in self.db.query(models.DBSiteCashExpense).filter(
             models.DBSiteCashExpense.client_id == c, models.DBSiteCashExpense.status == "SUBMITTED").all() if inside(x.spent_on)],
             "Waiting for accounts to check them against the bill.", "/money/expenses?tab=cash")
+        from app.services.journals import DBJournal, lines_of
+        pending = [j for j in self.db.query(DBJournal).filter(DBJournal.client_id == c, DBJournal.status == "PENDING").all() if inside(j.voucher_date)]
+        pl = lines_of(self.db, [j.id for j in pending])
+        note("Journal vouchers", [sum(l.debit or 0 for l in pl.get(j.id, [])) for j in pending],
+             "Waiting for the Master to approve them.", "/money/adjustments")
+        from app.models.store_extras import DBStoreCrossCharge
+        note("Material moved between sites", [float(x.amount or 0) for x in self.db.query(DBStoreCrossCharge).filter(
+            DBStoreCrossCharge.client_id == c, DBStoreCrossCharge.status == "PENDING").all()],
+            "Accounts have not marked the cross-charge adjusted in the store yet.", "/store/hub/reports/accounts")
         note("Payment requests", [r.amount or 0 for r in self.db.query(models.DBPaymentRequest).filter(
             models.DBPaymentRequest.client_id == c, models.DBPaymentRequest.status.in_(("PENDING", "AWAITING_MD", "APPROVED"))).all()
             if inside(r.requested_at)], "Not paid yet. A payment goes across when it is made.", "/money/approvals")
@@ -634,10 +716,11 @@ def vouchers_xml(books, company=""):
                 alloc = ("<BILLALLOCATIONS.LIST><NAME>%s</NAME><BILLTYPE>%s</BILLTYPE><AMOUNT>%s</AMOUNT></BILLALLOCATIONS.LIST>"
                          % (_x(bill), kind, tally_amt))
             centre = ""
-            if v["centre"] and books.ledgers.get(ledger, ("", False))[1]:
+            where = (line[4] if len(line) > 4 else "") or v["centre"]
+            if where and books.ledgers.get(ledger, ("", False))[1]:
                 centre = ("<CATEGORYALLOCATIONS.LIST><CATEGORY>%s</CATEGORY><ISDEEMEDPOSITIVE>%s</ISDEEMEDPOSITIVE>"
                           "<COSTCENTREALLOCATIONS.LIST><NAME>%s</NAME><AMOUNT>%s</AMOUNT></COSTCENTREALLOCATIONS.LIST>"
-                          "</CATEGORYALLOCATIONS.LIST>" % (COST_CATEGORY, "Yes" if amt > 0 else "No", _x(v["centre"]), tally_amt))
+                          "</CATEGORYALLOCATIONS.LIST>" % (COST_CATEGORY, "Yes" if amt > 0 else "No", _x(where), tally_amt))
             rows.append("<ALLLEDGERENTRIES.LIST><LEDGERNAME>%s</LEDGERNAME><ISDEEMEDPOSITIVE>%s</ISDEEMEDPOSITIVE>"
                         "<AMOUNT>%s</AMOUNT>%s%s</ALLLEDGERENTRIES.LIST>"
                         % (_x(ledger), "Yes" if amt > 0 else "No", tally_amt, alloc, centre))

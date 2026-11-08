@@ -142,7 +142,16 @@ def site_expenses_by_job(db, client_id, job_ids=None):
         if not job_ids:
             return {}
         q = q.filter(models.DBMoneyEntry.job_id.in_(list(job_ids)))
-    return {j: float(v or 0) for j, v in q.group_by(models.DBMoneyEntry.job_id).all()}
+    out = {j: float(v or 0) for j, v in q.group_by(models.DBMoneyEntry.job_id).all()}
+    # An approved journal that moves a cost onto (or off) a project's expense heads, and a debit note that takes back
+    # part of a supplier's bill charged to the project, change what the site cost.
+    from app.services.journals import debit_notes_by_job, journal_costs_by_job
+    wanted = set(job_ids) if job_ids is not None else None
+    for j, v in journal_costs_by_job(db, client_id, wanted).items():
+        out[j] = out.get(j, 0.0) + v
+    for j, v in debit_notes_by_job(db, client_id, wanted).items():
+        out[j] = out.get(j, 0.0) - v
+    return out
 
 
 def job_costing(db, client_id, job):

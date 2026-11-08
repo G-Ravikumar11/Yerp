@@ -714,6 +714,10 @@ def update_bill(bill_id: int, request: Request, body: dict = None, db: Session =
         new_status = None
 
     paid = money(already_settled(db, client.id, "supplier_bill", bill, money(bill.total or bill.amount or 0)))
+    from app.services.journals import bill_debited
+    if changed and bill_debited(db, bill) > 0:
+        raise HTTPException(409, "A debit note has been raised on %s, so it stays as it is. Cancel the debit note first."
+                                 % (bill.number or "this bill"))
     if changed:
         if (bill.approval_status or "") == "approved" or paid > 0:
             raise HTTPException(409, "%s has been %s, so its supplier, number, date, amounts, order and project stay as "
@@ -800,6 +804,9 @@ def delete_bill(bill_id: int, request: Request, db: Session = Depends(get_db)):
     # the bill left those payments pointing at nothing, and voiding one then
     # failed because its bill could not be found.
     paid = money(already_settled(db, client.id, "supplier_bill", bill, money(bill.total or bill.amount or 0)))
+    from app.services.journals import bill_debited
+    if bill_debited(db, bill) > 0:
+        raise HTTPException(409, "A debit note has been raised on %s. Cancel it first, or keep the bill." % (bill.number or "this bill"))
     if paid > 0:
         raise HTTPException(409, "%s has %s paid against it. Void those payments under "
                                  "Ledgers & Bank first, or keep the bill."

@@ -374,6 +374,8 @@ def payables_payload(db, client):
         models.DBJob.client_id == client.id).all()}
 
     rows, buckets = [], _empty_buckets()
+    from app.services.journals import debited_by_bill
+    debited = debited_by_bill(db, client.id)
     for b in db.query(models.DBBill).filter(
             models.DBBill.client_id == client.id).all():
         # A draft is a bill nobody here has accepted yet - one a supplier sent
@@ -383,7 +385,7 @@ def payables_payload(db, client):
             continue
         if (b.approval_status or "none") == "rejected":
             continue
-        outstanding = money((b.total or 0) - (b.amount_paid or 0))
+        outstanding = money((b.total or 0) - (b.amount_paid or 0) - debited.get(b.id, 0.0))
         if outstanding <= 0:
             continue
         bucket, days = ageing_bucket(b.due_date, today)

@@ -895,6 +895,20 @@ def approval_inbox(db, client, emp):
                     "" if (lv.days or 0) == 1 else "s", (": " + lv.reason) if lv.reason else ""),
                 view="leave-view"))
 
+    # Journal vouchers: the Master's alone to approve.
+    if emp is None:
+        from app.services.journals import DBJournal, lines_of
+        pending = db.query(DBJournal).filter(DBJournal.client_id == client.id, DBJournal.status == "PENDING").order_by(DBJournal.id).all()
+        lines = lines_of(db, [j.id for j in pending])
+        for j in pending:
+            ls = lines.get(j.id, [])
+            parties = sorted({l.party_name for l in ls if l.kind == "party" and l.party_name})
+            items.append(_row(
+                "journal", "Journal voucher", j.id, j.number, sum(l.debit or 0 for l in ls),
+                party=", ".join(parties)[:120], project=job_label_for(db, next((l.job_id for l in ls if l.job_id), None)),
+                raised_by=j.raised_by_name or "", since=j.raised_at or "", what=(j.narration or "")[:200],
+                view="journal", pdf="/api/journals/%d/voucher.pdf" % j.id, waiting_on="the Master"))
+
     items.sort(key=lambda r: (not r["mine"], r["since"] or ""))
     return items
 

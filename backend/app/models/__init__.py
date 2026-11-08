@@ -257,6 +257,7 @@ from app.models.subcontracts import (
     DBSubBillLine,
     DBMaterialRecovery,
 )
+from app.models.journals import DBJournal, DBJournalLine, DBSupplierDebitNote  # noqa: F401
 from app.models.wallet import (
     DBWallet,
     DBWalletTransaction,

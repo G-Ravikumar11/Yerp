@@ -286,6 +286,9 @@ for _module in (
 ):
     app.include_router(_module.router)
 
+from app.routers import journals as _journals  # noqa: E402
+app.include_router(_journals.router)
+
 # Everything that calls an AI model lives in backend/app/ai, one file per function.
 from app.ai import routers as ai_routers
 for _router in ai_routers:

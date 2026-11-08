@@ -481,6 +481,9 @@ def _ledger_rows(db, client_id):
 
     rows.extend(release_ledger_rows(db, client_id))
     rows.extend(credit_ledger_rows(db, client_id))
+    from app.services.journals import debit_note_ledger_rows, journal_ledger_rows
+    rows.extend(journal_ledger_rows(db, client_id))
+    rows.extend(debit_note_ledger_rows(db, client_id))
 
     for e in db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.client_id == client_id,

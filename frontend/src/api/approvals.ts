@@ -65,6 +65,8 @@ export function hrefFor(i: ApprovalItem): { to: string; external: boolean } {
       return { to: `/projects/boq/${i.doc_id ?? ''}?tab=variations`, external: false }
     case 'ra_bill':
       return { to: `/clients/measurement?bill=${i.id}`, external: false }
+    case 'journal':
+      return { to: '/money/adjustments', external: false }
     default:
       return { to: '/approvals', external: false }
   }

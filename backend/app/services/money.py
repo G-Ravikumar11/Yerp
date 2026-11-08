@@ -382,7 +382,8 @@ def _doc_for(db, client_id, doc_type, doc_id):
         sup = next((s for s in db.query(models.DBSupplier).filter(
             models.DBSupplier.client_id == client_id).all()
             if norm_name(s.name) == norm_name(b.vendor_name)), None)
-        return (b, money(b.total or b.amount or 0), "OUT", "supplier", b.vendor_name or "",
+        from app.services.journals import bill_debited
+        return (b, money((b.total or b.amount or 0) - bill_debited(db, b)), "OUT", "supplier", b.vendor_name or "",
                 (sup.id if sup else None), b.job_id)
     if doc_type == "retention_release":
         r = release_or_404(db, client_id, doc_id)
@@ -492,7 +493,8 @@ def _doc_for_any(db, client_id, doc_type, doc_id):
                                        models.DBBill.client_id == client_id).first()
     if not b:
         raise HTTPException(404, "Bill not found")
-    return b, money(b.total or b.amount or 0)
+    from app.services.journals import bill_debited
+    return b, money((b.total or b.amount or 0) - bill_debited(db, b))
 
 
 def material_recovered_by_job(db, client_id, job_id=None):

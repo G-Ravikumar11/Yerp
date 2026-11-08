@@ -1319,3 +1319,57 @@ from app.services.subcontract_billing import (
     sub_bill_step_name,
 )
 from app.services.subcontract_orders import registration_form_data, wo_dict
+
+
+def journal_voucher_spec(db, client, d):
+    """A journal voucher as accounts file it: each line's account and project, debit and credit, the narration, and who
+    raised it and who - the Master - approved it."""
+    company = letterhead(db, client)
+    fi = form_pdf.inr
+    facts = [("Voucher No", d["number"]), ("Date", form_pdf.date_text(d["voucher_date"])), ("Status", d["status"].title())]
+    rows = [[str(i), l["label"] + ((" - " + l["note"]) if l["note"] else ""), fi(l["debit"]) if l["debit"] else "",
+             fi(l["credit"]) if l["credit"] else ""] for i, l in enumerate(d["lines"], 1)]
+    blocks = [{"type": "header", "company": company, "title": "JOURNAL VOUCHER", "facts": facts},
+              {"type": "table", "columns": [("#", 8, "C"), ("Account", 106, "L"), ("Debit", 34, "R"), ("Credit", 34, "R")],
+               "rows": rows, "totals": [("TOTAL", fi(d["total"]), True)]},
+              {"type": "words", "label": "Rupees", "text": _words(d["total"])},
+              {"type": "pairs", "rows": [("Narration", d["narration"])], "label_width": 34}]
+    if d["status"] in ("REJECTED", "CANCELLED"):
+        blocks.append({"type": "text", "style": "bold", "text": "%s - %s" % (d["status"], d["decision_note"] or "")})
+    approved = d["status"] == "APPROVED"
+    boxes, seal = sign_boxes(db, client.id, [("Prepared By", d["raised_by_name"] or ""),
+                                             ("Approved By (Master)", d["decided_by_name"] if approved else "")],
+                             "approved" if approved else "submitted")
+    blocks.append({"type": "signatures", "boxes": boxes, "seal": seal})
+    return {"title": "Journal Voucher %s" % d["number"], "author": company["name"], "blocks": blocks,
+            "watermark": "" if approved else d["status"],
+            "footer": "%s  |  Journal Voucher  |  %s" % (d["number"], company["name"])}
+
+
+def supplier_debit_note_spec(db, client, d):
+    """A debit note to a supplier: what is taken back, against which bill, why, and the GST on it."""
+    company = letterhead(db, client)
+    fi = form_pdf.inr
+    facts = [("Debit Note No", d["number"]), ("Date", form_pdf.date_text(d["note_date"]))]
+    if d["bill_number"]:
+        facts.append(("Against bill", d["bill_number"]))
+    card = party_card(db, client.id, d["supplier_name"])
+    blocks = [{"type": "header", "company": company, "title": "DEBIT NOTE", "facts": facts},
+              {"type": "party", "label": "To (Supplier)", "name": d["supplier_name"], "address": card.get("address") or "",
+               "facts": [f for f in party_facts(card.get("gstin"), card.get("pan"), card.get("state")) if f[1]]}]
+    if d["project"]:
+        blocks.append({"type": "pairs", "rows": [("Project", d["project"])], "label_width": 34})
+    blocks += [{"type": "table", "columns": [("#", 8, "C"), ("Particulars", 136, "L"), ("Amount", 38, "R")],
+                "rows": [["1", d["reason"], fi(d["taxable"])], ["", "GST", fi(d["tax"])]],
+                "totals": [("TOTAL", fi(d["total"]), True)]},
+               {"type": "words", "label": "Rupees", "text": _words(d["total"])}]
+    if d["status"] == "CANCELLED":
+        blocks.append({"type": "text", "style": "bold", "text": "CANCELLED - %s" % (d["cancel_reason"] or "")})
+    sig = doc_signatories(db, client.id)
+    boxes, seal = sign_boxes(db, client.id, [("Prepared By", d["raised_by_name"] or ""),
+                                             ("Authorized Signatory", _sig_line(sig["authorised"]) or company["name"])],
+                             "" if d["status"] == "CANCELLED" else "approved")
+    blocks.append({"type": "signatures", "boxes": boxes, "seal": seal})
+    return {"title": "Debit Note %s" % d["number"], "author": company["name"], "blocks": blocks,
+            "watermark": "CANCELLED" if d["status"] == "CANCELLED" else "",
+            "footer": "%s  |  Debit Note  |  %s" % (d["number"], company["name"])}

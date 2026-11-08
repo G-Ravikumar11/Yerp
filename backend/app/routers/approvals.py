@@ -403,6 +403,9 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
     if kind == "payment_request":
         from app.routers.money import _colleague, _decide_payment
         return _decide_payment(db, client, emp, body.id, decision, note, request, member=_colleague(request, db))
+    if kind == "journal":
+        from app.routers.journals import decide_journal
+        return decide_journal(body.id, decision == "approve", note, request, db)
     if kind == "leave":
         leave = db.query(models.DBLeaveRequest).filter(
             models.DBLeaveRequest.id == body.id,

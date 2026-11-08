@@ -149,6 +149,7 @@ const NAV: NavEntry[] = [
       { label: 'Payment Approvals', path: '/money/approvals', perm: 'bills.view_all' },
       { label: 'Daily Expenses', path: '/money/expenses', perm: 'bills.view_all' },
       { label: 'Advances', path: '/money/advances', perm: 'bills.view_all' },
+      { label: 'Journals & Debit Notes', path: '/money/adjustments', perm: 'bills.view_all' },
       { label: 'Ledgers & Bank', path: '/money/ledgers', perm: 'bills.view_all' },
       { label: 'GST', path: '/money/gst', perm: 'bills.view_all' },
       { label: 'TDS & Guarantees', path: '/money/registers', perm: 'bills.view_all' },
