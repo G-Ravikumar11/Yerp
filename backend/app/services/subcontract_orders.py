@@ -547,6 +547,7 @@ def contractor_dict(c):
             "registration_status": c.registration_status or "APPROVED",
             "registered_by_name": c.registered_by_name or "", "approved_by_name": c.approved_by_name or "",
             "approved_at": c.approved_at or "", "rejection_reason": c.rejection_reason or "",
+            "msme_type": c.msme_type or "", "udyam_no": c.udyam_no or "",
             "created_at": c.created_at or "", "is_active": c.is_active is not False}
 
 

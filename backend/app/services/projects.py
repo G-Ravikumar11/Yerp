@@ -151,6 +151,9 @@ def site_expenses_by_job(db, client_id, job_ids=None):
         out[j] = out.get(j, 0.0) + v
     for j, v in debit_notes_by_job(db, client_id, wanted).items():
         out[j] = out.get(j, 0.0) - v
+    from app.services.payouts import claims_by_job          # staff's own money spent for the site, once approved
+    for j, v in claims_by_job(db, client_id, wanted).items():
+        out[j] = out.get(j, 0.0) + v
     return out
 
 

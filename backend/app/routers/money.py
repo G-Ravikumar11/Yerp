@@ -375,7 +375,9 @@ def payables_payload(db, client):
 
     rows, buckets = [], _empty_buckets()
     from app.services.journals import debited_by_bill
+    from app.services.payouts import msme_flag, msme_parties
     debited = debited_by_bill(db, client.id)
+    msme = msme_parties(db, client.id)
     for b in db.query(models.DBBill).filter(
             models.DBBill.client_id == client.id).all():
         # A draft is a bill nobody here has accepted yet - one a supplier sent
@@ -398,6 +400,7 @@ def payables_payload(db, client):
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
             "status": b.status or "",
             "approved": (b.approval_status or "none") == "approved",
+            "msme": msme_flag(msme, "supplier", b.vendor_name, b.issue_date or b.created_at, today),
         })
 
     # A subcontractor's certified bill is money we owe the contractor. Aged from
@@ -440,6 +443,7 @@ def payables_payload(db, client):
             "due_date": due or (r.certified_at or "")[:10], "outstanding": outstanding,
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
             "status": r.status or "", "approved": True,
+            "msme": msme_flag(msme, "contractor", con.company_name if con else "", r.certified_at, today),
         })
 
     # A contractor's retention, once released, is owed on their order's terms.
@@ -465,6 +469,20 @@ def payables_payload(db, client):
             "status": rel.status or "", "approved": True,
         })
 
+    # Staff expense claims, approved and not yet reimbursed or set against an advance.
+    from app.services.payouts import DBExpenseClaim
+    for c in db.query(DBExpenseClaim).filter(DBExpenseClaim.client_id == client.id, DBExpenseClaim.status == "APPROVED").all():
+        outstanding = money((c.amount or 0) - (c.against_advance or 0) - settled.get(("expense_claim", c.id), 0.0))
+        if outstanding <= 0:
+            continue
+        bucket, days = ageing_bucket(c.decided_at[:10] if c.decided_at else c.spent_on, today)
+        buckets[bucket] = money(buckets[bucket] + outstanding)
+        job = jobs.get(c.job_id)
+        rows.append({"kind": "Expense claim", "doc_type": "expense_claim", "id": c.id, "number": c.number,
+                     "party": c.employee_name, "project": job.name if job else "", "due_date": (c.decided_at or c.spent_on or "")[:10],
+                     "outstanding": outstanding, "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
+                     "status": c.status, "approved": True, "msme": None})
+
     rows.sort(key=lambda r: -(r["days_overdue"] or 0))
     parties = _party_positions(rows, credits, _on_account_by_party(db, client.id, ("contractor", "supplier"), False),
                                lambda r: r["party"])
@@ -486,6 +504,9 @@ def payables_payload(db, client):
             "awaiting_approval": money(sum(r["outstanding"] for r in rows
                                            if not r["approved"])),
             "over_90": buckets["90+"],
+            # MSME bills past their 45 days (43B(h)): the expense is disallowed while they stay unpaid.
+            "msme_overdue": money(sum(r["outstanding"] for r in rows if r.get("msme") and r["msme"]["days_left"] < 0)),
+            "msme_due_soon": money(sum(r["outstanding"] for r in rows if r.get("msme") and 0 <= r["msme"]["days_left"] <= 7)),
         },
     }
 

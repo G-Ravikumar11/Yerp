@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { Button, Field, Input, Modal, NumField } from '@/components/ui'
+import { Button, Field, Input, Modal, NumField, Select } from '@/components/ui'
 import { ledgerKeys, saveSupplier, type Supplier, type SupplierInput } from '@/api/ledger'
 import { useAction } from '@/lib/mutate'
 
-const blank = (): SupplierInput => ({ name: '', contact_person: '', phone: '', email: '', gstin: '', pan: '', address: '', bank_name: '', bank_account: '', bank_ifsc: '', payment_days: 30, supplies: '' })
+const blank = (): SupplierInput => ({ name: '', contact_person: '', phone: '', email: '', gstin: '', pan: '', address: '', bank_name: '', bank_account: '', bank_ifsc: '', payment_days: 30, supplies: '', msme_type: '', udyam_no: '' })
 
 /** A supplier in the master: who they are, what they supply, how they are paid, and the GSTIN input credit depends on. */
 export function SupplierModal({ open, supplier, onClose, presetName }: { open: boolean; supplier: Supplier | null; onClose: () => void; presetName?: string }) {
@@ -34,6 +34,11 @@ function Form({ supplier, presetName, onClose }: { supplier: Supplier | null; pr
         <Field label="Account no." htmlFor="sp-acc"><Input id="sp-acc" value={f.bank_account} onChange={set('bank_account')} /></Field>
         <Field label="IFSC" htmlFor="sp-ifsc"><Input id="sp-ifsc" className="font-mono uppercase" value={f.bank_ifsc} onChange={up('bank_ifsc')} /></Field>
         <Field label="Pays in (days)" htmlFor="sp-days"><NumField id="sp-days" value={f.payment_days} onValue={(n) => setF((s) => ({ ...s, payment_days: n }))} /></Field>
+        <Field label="MSME (Udyam)" htmlFor="sp-msme" hint={f.msme_type === 'micro' || f.msme_type === 'small' ? 'Paid within 45 days of the bill, whatever is agreed.' : undefined}>
+          <Select id="sp-msme" value={f.msme_type} onChange={(e) => setF((s) => ({ ...s, msme_type: e.target.value as SupplierInput['msme_type'] }))}
+            options={[{ value: '', label: 'Not registered' }, { value: 'micro', label: 'Micro' }, { value: 'small', label: 'Small' }, { value: 'medium', label: 'Medium' }]} />
+        </Field>
+        {f.msme_type && <Field label="Udyam number" htmlFor="sp-udyam"><Input id="sp-udyam" className="font-mono uppercase" value={f.udyam_no} onChange={up('udyam_no')} placeholder="UDYAM-TS-02-0012345" /></Field>}
       </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}

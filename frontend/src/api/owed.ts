@@ -25,6 +25,8 @@ export interface Receivable extends Aged {
 export interface Payable extends Aged {
   party: string
   approved?: boolean
+  /** A micro or small enterprise (Udyam): paid within 45 days of the bill at most. */
+  msme?: { kind: string; udyam: string; due: string; days_left: number } | null
 }
 
 /** A bill a credit note took past what was owed on it: the balance is now in the party's favour. */

@@ -123,6 +123,9 @@ export interface Supplier {
   bank_ifsc: string
   payment_days: number
   supplies: string
+  /** Udyam registration: micro and small enterprises are paid within 45 days (43B(h)). */
+  msme_type: '' | 'micro' | 'small' | 'medium'
+  udyam_no: string
   is_active: boolean
 }
 

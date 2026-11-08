@@ -52,6 +52,9 @@ class SupplierIn(BaseModel):
     payment_days: Optional[int] = 30
     supplies: Optional[str] = ""
     is_active: Optional[bool] = True
+    # None leaves what is on file (a quick add sends neither).
+    msme_type: Optional[str] = None
+    udyam_no: Optional[str] = None
 
 
 # PURCHASE: ENQUIRY, QUOTES, THE COMPARATIVE STATEMENT, THE AWARD

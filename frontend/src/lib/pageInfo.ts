@@ -12,6 +12,8 @@ export const PAGE_INFO: Record<string, string> = {
 
   '/me/timesheet': 'Record the hours you worked on each project and day, and send the week for approval.',
   '/me/costs': 'Claim what you spent on site - fuel, materials, travel - with the bill attached, and follow it to payment.',
+  '/me/claims': 'Money you spent yourself for the company, claimed back with a photo of the bill. Once accounts approve it, it is paid to you or set against an advance you hold.',
+  '/money/bank-payments': 'Pay many bills at once with a file in your bank upload layout (HDFC, ICICI, SBI, Axis or plain), then mark it paid to enter every payment in the bank book. Post-dated cheques given and held, and cheque books leaf by leaf.',
   '/me/site-cash': 'The cash box you hold for the site: enter each payment as you make it with a photo of the bill, see what should be in hand, and print the cash book.',
   '/me/orders': 'The work orders and purchase orders you raised or are responsible for, and where each one stands.',
   '/me/leave': 'Your leave balance, your requests and their status. Apply for leave here; holidays and days off are not counted against you.',

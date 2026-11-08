@@ -1,3 +1,4 @@
+import { ClaimsPanel } from '@/features/money/ClaimsPanel'
 import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
@@ -43,7 +44,7 @@ interface Row {
  * is booked or still waiting to be checked. The Site cash tab is the boxes themselves. */
 export default function ExpensesPage() {
   const [params] = useSearchParams()
-  const [tab, setTab] = useState(params.get('tab') === 'cash' ? 'cash' : 'all')
+  const [tab, setTab] = useState(params.get('tab') === 'cash' ? 'cash' : params.get('tab') === 'claims' ? 'claims' : 'all')
   const { can } = useSession()
   const entries = useEntries()
   const requests = usePaymentRequests()
@@ -114,7 +115,7 @@ export default function ExpensesPage() {
     <>
       <PageHeader
         eyebrow="Accounts" title="Daily Expenses" description="Every day's spend - diesel, transport, sundries, rentals - whether the site paid it from its cash box or accounts paid it."
-        actions={tab === 'cash' ? undefined : (
+        actions={tab !== 'all' ? undefined : (
           <>
             <Button variant="outline" disabled={!filters.filtered.length} onClick={() => downloadCsv('expenses', ['Entry ID', 'Paid to', 'Project', 'Amount', 'Date', 'Category', 'Status'], filters.filtered.map((r) => [r.number, r.party, r.project, r.amount, r.date, r.head, r.status]))}>
               <Download /> Export
@@ -123,8 +124,8 @@ export default function ExpensesPage() {
           </>
         )}
       />
-      <div className="mb-5"><Tabs label="View" value={tab} onChange={setTab} items={[{ value: 'all', label: 'All expenses' }, { value: 'cash', label: 'Site cash boxes' }]} /></div>
-      {tab === 'cash' ? <SiteCashPage embedded /> : <>
+      <div className="mb-5"><Tabs label="View" value={tab} onChange={setTab} items={[{ value: 'all', label: 'All expenses' }, { value: 'cash', label: 'Site cash boxes' }, { value: 'claims', label: 'Staff expense claims' }]} /></div>
+      {tab === 'claims' ? <ClaimsPanel /> : tab === 'cash' ? <SiteCashPage embedded /> : <>
 
       <Card className="mb-5">
         <CardHeader>

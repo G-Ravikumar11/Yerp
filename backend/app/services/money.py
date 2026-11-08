@@ -385,6 +385,12 @@ def _doc_for(db, client_id, doc_type, doc_id):
         from app.services.journals import bill_debited
         return (b, money((b.total or b.amount or 0) - bill_debited(db, b)), "OUT", "supplier", b.vendor_name or "",
                 (sup.id if sup else None), b.job_id)
+    if doc_type == "expense_claim":
+        from app.services.payouts import claim_or_404
+        c = claim_or_404(db, client_id, doc_id)
+        if c.status not in ("APPROVED", "SETTLED"):
+            raise HTTPException(409, "%s is %s. A claim is paid once it is approved." % (c.number, (c.status or "").lower()))
+        return (c, money((c.amount or 0) - (c.against_advance or 0)), "OUT", "staff", c.employee_name, c.employee_id, c.job_id)
     if doc_type == "retention_release":
         r = release_or_404(db, client_id, doc_id)
         if r.status not in ("CERTIFIED", "PAID"):
@@ -436,6 +442,11 @@ def _settle_doc(db, client_id, doc_type, doc, worth, on):
             doc.status, doc.paid_at = "PAID", on
         elif not full and doc.status == "PAID":
             doc.status, doc.paid_at = "CERTIFIED", ""
+    elif doc_type == "expense_claim":
+        if full and doc.status == "APPROVED":
+            doc.status = "SETTLED"
+        elif not full and doc.status == "SETTLED":
+            doc.status = "APPROVED"
     elif doc_type == "supplier_bill":
         doc.amount_paid = got
         doc.status = "Paid" if full else ("Partially Paid" if got > 0 else
@@ -486,6 +497,10 @@ def _doc_for_any(db, client_id, doc_type, doc_id):
     if doc_type == "retention_release":
         r = release_or_404(db, client_id, doc_id)
         return r, money(r.net_amount)
+    if doc_type == "expense_claim":
+        from app.services.payouts import claim_or_404
+        c = claim_or_404(db, client_id, doc_id)
+        return c, money((c.amount or 0) - (c.against_advance or 0))
     if doc_type != "supplier_bill":
         # Anything else used to be looked up as a supplier bill and fell over on the missing row.
         raise HTTPException(400, "Unknown document type: %s" % doc_type)
@@ -624,7 +639,8 @@ def profit_and_loss(db, client, date_from="", date_to=""):
         return books.setdefault(cur, {"revenue": {}, "expenses": {},
                                       "revenue_by_source": {"client_bills": 0.0, "invoices": 0.0, "other_income": 0.0},
                                       "expenses_by_source": {"supplier_bills": 0.0, "subcontractor_bills": 0.0,
-                                                             "expense_vouchers": 0.0}})
+                                                             "expense_vouchers": 0.0, "staff_claims": 0.0,
+                                                             "adjustments": 0.0}})
 
     def add(cur, side, source, on, amount):
         if not amount or not inside(on):
@@ -660,6 +676,20 @@ def profit_and_loss(db, client, date_from="", date_to=""):
             add(base, "expenses", "expense_vouchers", (e.paid_on or "")[:10], money(e.amount))
         else:
             add(base, "revenue", "other_income", (e.paid_on or "")[:10], money(e.amount))
+    # Staff claims once approved; approved journals' expense and income heads; debit notes taking back purchases.
+    from app.constants.money import EXPENSE_HEADS as _EXP, INCOME_HEADS as _INC
+    from app.models.journals import DBSupplierDebitNote
+    from app.services.journals import live_lines
+    from app.services.payouts import DBExpenseClaim, LIVE_CLAIMS
+    for c in db.query(DBExpenseClaim).filter(DBExpenseClaim.client_id == client.id, DBExpenseClaim.status.in_(LIVE_CLAIMS)).all():
+        add(base, "expenses", "staff_claims", (c.spent_on or "")[:10], money(c.amount))
+    for j, l in live_lines(db, client.id):
+        if l.kind == "head" and l.head in _EXP:
+            add(base, "expenses", "adjustments", (j.voucher_date or "")[:10], money((l.debit or 0) - (l.credit or 0)))
+        elif l.kind == "head" and l.head in _INC:
+            add(base, "revenue", "other_income", (j.voucher_date or "")[:10], money((l.credit or 0) - (l.debit or 0)))
+    for n in db.query(DBSupplierDebitNote).filter(DBSupplierDebitNote.client_id == client.id, DBSupplierDebitNote.status == "ISSUED").all():
+        add(base, "expenses", "supplier_bills", (n.note_date or "")[:10], -money(n.taxable))
 
     def figures(b):
         rev, exp = b["revenue"], b["expenses"]

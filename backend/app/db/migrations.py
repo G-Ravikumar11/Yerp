@@ -147,6 +147,9 @@ HR_PAYROLL_COLUMNS = (
     ("attendance_settings", "job_lock", "BOOLEAN DEFAULT TRUE"), ("attendance_settings", "max_gps_accuracy", "FLOAT DEFAULT 150"),
     ("attendance", "location_accuracy", "FLOAT DEFAULT 0"), ("attendance", "device_id", "VARCHAR DEFAULT ''"),
     ("attendance", "location_flag", "VARCHAR DEFAULT ''"), ("employees", "job_lock_exempt", "BOOLEAN DEFAULT FALSE"),
+    # MSME (Udyam) suppliers and contractors.
+    ("suppliers", "msme_type", "VARCHAR DEFAULT ''"), ("suppliers", "udyam_no", "VARCHAR DEFAULT ''"),
+    ("contractors", "msme_type", "VARCHAR DEFAULT ''"), ("contractors", "udyam_no", "VARCHAR DEFAULT ''"),
 )
 
 # One overtime entry per person per day. Run after any duplicates are removed, or the index cannot be built.

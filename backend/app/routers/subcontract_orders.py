@@ -1538,6 +1538,10 @@ def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
     con.bank_account = re.sub(r"\s", "", body.bank_account or "")
     con.bank_ifsc = ifsc
     con.address = (body.address or "").strip()
+    if body.msme_type is not None or body.udyam_no is not None:
+        from app.services.payouts import clean_msme
+        con.msme_type, con.udyam_no = clean_msme(body.msme_type if body.msme_type is not None else con.msme_type,
+                                                 body.udyam_no if body.udyam_no is not None else con.udyam_no)
     code = (body.vendor_code or "").strip().upper()
     if code and code != (con.vendor_code or "").upper():
         if not session_can(request, db, "vendors.create"):

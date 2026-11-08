@@ -161,6 +161,7 @@ class Books:
         self._journals()
         self._debit_notes()
         self._cross_charges()
+        self._claims()
         self.vouchers.sort(key=lambda v: (v["date"], v["type"], v["number"]))
 
     # --- naming ---
@@ -494,6 +495,17 @@ class Books:
                 [(ledger, amt, "", "", self.centre(c.to_project_id)), (ledger, -amt, "", "", self.centre(c.from_project_id))],
                 "yerp-%d-crosscharge-%d" % (self.client.id, c.id))
 
+    def _claims(self):
+        """Staff expense claims, once approved: the expense on its project, owed to the member of staff."""
+        from app.services.payouts import DBExpenseClaim, LIVE_CLAIMS
+        for c in self.db.query(DBExpenseClaim).filter(DBExpenseClaim.client_id == self.client.id, DBExpenseClaim.status.in_(LIVE_CLAIMS)).all():
+            if not (self.date_from <= (c.spent_on or "")[:10] <= self.date_to):
+                continue
+            amt = money(c.amount)
+            self.add("Journal", c.number, c.spent_on, "Expense claim %s - %s: %s" % (c.number, c.employee_name, (c.description or "")[:200]),
+                     [(self.head(c.head), amt), (self.party(c.employee_name, "staff"), -amt, c.number, "New Ref")],
+                     "yerp-%d-claim-%d" % (self.client.id, c.id), c.job_id)
+
     def _fixed_assets(self):
         """Each owned asset's depreciation for every financial year that has ended (booked on 31 March), and its sale.
         The year still running is booked when it closes."""
@@ -622,6 +634,10 @@ class Books:
         pl = lines_of(self.db, [j.id for j in pending])
         note("Journal vouchers", [sum(l.debit or 0 for l in pl.get(j.id, [])) for j in pending],
              "Waiting for the Master to approve them.", "/money/adjustments")
+        from app.services.payouts import DBExpenseClaim
+        note("Staff expense claims", [x.amount or 0 for x in self.db.query(DBExpenseClaim).filter(
+            DBExpenseClaim.client_id == c, DBExpenseClaim.status == "SUBMITTED").all() if inside(x.spent_on)],
+            "Not approved yet.", "/money/expenses?tab=claims")
         from app.models.store_extras import DBStoreCrossCharge
         note("Material moved between sites", [float(x.amount or 0) for x in self.db.query(DBStoreCrossCharge).filter(
             DBStoreCrossCharge.client_id == c, DBStoreCrossCharge.status == "PENDING").all()],

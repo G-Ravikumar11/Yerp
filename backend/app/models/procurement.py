@@ -191,6 +191,9 @@ class DBSupplier(Base):
     bank_ifsc = Column(String, default="")
     payment_days = Column(Integer, default=30)
     supplies = Column(String, default="")          # "Cement, steel" - what they are used for
+    # Registered under MSMED (Udyam): micro | small | medium, "" when not. Micro and small are paid within 45 days.
+    msme_type = Column(String, default="")
+    udyam_no = Column(String, default="")
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 

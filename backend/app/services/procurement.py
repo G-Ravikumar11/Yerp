@@ -480,6 +480,10 @@ def _apply_supplier(db, client_id, s, body):
     s.payment_days = max(0, int(body.payment_days or 0))
     s.supplies = (body.supplies or "").strip()
     s.is_active = bool(body.is_active) if body.is_active is not None else True
+    if body.msme_type is not None or body.udyam_no is not None:
+        from app.services.payouts import clean_msme
+        s.msme_type, s.udyam_no = clean_msme(body.msme_type if body.msme_type is not None else s.msme_type,
+                                             body.udyam_no if body.udyam_no is not None else s.udyam_no)
 
 
 def next_supplier_code(db, client_id):

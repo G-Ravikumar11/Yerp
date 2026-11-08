@@ -87,6 +87,9 @@ class DBContractor(Base):
     bank_ifsc = Column(String, default="")
     address = Column(Text, default="")
     is_active = Column(Boolean, default=True, index=True)
+    # Registered under MSMED (Udyam): micro | small | medium, "" when not. Micro and small are paid within 45 days.
+    msme_type = Column(String, default="")
+    udyam_no = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     # The rest of the Sub Contractor Registration Form, box for box: the

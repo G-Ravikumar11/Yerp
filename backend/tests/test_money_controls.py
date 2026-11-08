@@ -204,7 +204,7 @@ def test_the_profit_and_loss_is_on_the_accrual_basis(tenant):
     assert pl["basis"] == "accrual"
     assert pl["revenue_by_source"]["client_bills"] == ra["this_bill"] and pl["revenue_by_source"]["other_income"] == 800
     assert pl["expenses_by_source"] == {"supplier_bills": 10000, "subcontractor_bills": sub["this_bill"],
-                                        "expense_vouchers": 4500}
+                                        "expense_vouchers": 4500, "staff_claims": 0, "adjustments": 0}
     assert pl["net_profit"] == round(pl["total_revenue"] - pl["total_expenses"], 2)
     assert tenant.get("/api/reports/profit-loss?date_to=2000-01-01").json()["total_revenue"] == 0
     assert tenant.get("/api/reports/profit-loss?date_from=bad").status_code == 400

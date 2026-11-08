@@ -80,7 +80,22 @@ export default function OwedPage() {
   const payCols: TableColumn<Payable>[] = [
     { id: 'no', header: 'Bill', cell: (r) => <div><span className="font-mono text-[13px] font-semibold">{r.number}</span><div className="text-xs text-muted-foreground">{r.kind}</div></div> },
     { id: 'party', header: 'Party', cell: (r) => <div className="max-w-xs"><div className="truncate">{r.party || '-'}</div>{r.project && <div className="truncate text-xs text-muted-foreground">{r.project}</div>}</div> },
-    { id: 'due', header: 'Due', hideBelow: 'md', cell: (r) => formatDate(r.due_date) || '-' },
+    {
+      id: 'due', header: 'Due', hideBelow: 'md',
+      cell: (r) => (
+        <div>
+          {formatDate(r.due_date) || '-'}
+          {r.msme && (
+            <div className="mt-0.5">
+              <Badge tone={r.msme.days_left < 0 ? 'danger' : r.msme.days_left <= 7 ? 'warning' : 'info'}
+                title={`${r.msme.kind === 'micro' ? 'Micro' : 'Small'} enterprise ${r.msme.udyam}: pay by ${formatDate(r.msme.due)} (45 days at most). Unpaid past it, the expense is disallowed for tax (43B(h)) and interest is owed.`}>
+                MSME {r.msme.days_left < 0 ? `${-r.msme.days_left} days past 45` : `pay by ${formatDate(r.msme.due)}`}
+              </Badge>
+            </div>
+          )}
+        </div>
+      ),
+    },
     { id: 'out', header: 'Outstanding', align: 'right', sort: (r) => r.outstanding, cell: (r) => <span className={`${money} font-bold`}>{formatINR(r.outstanding)}</span> },
     { id: 'ap', header: 'Approval', hideBelow: 'md', cell: (r) => <Badge tone={r.approved ? 'success' : 'warning'}>{r.approved ? 'approved' : 'not approved'}</Badge> },
     { id: 'age', header: 'Age', cell: (r) => <div className="flex items-center gap-2"><Age r={r} />{r.doc_type && r.approved !== false && canPay && <Button size="sm" variant="outline" onClick={() => setSettle({ type: r.doc_type!, id: r.id, title: r.number, verb: 'Pay' })}>Pay</Button>}</div> },
@@ -177,6 +192,13 @@ export default function OwedPage() {
             <Stat label="Waiting on approval" value={compactINR(ps.awaiting_approval)} loading={pay.isPending} />
             <Stat label="Over 90 days" value={compactINR(ps.over_90)} loading={pay.isPending} />
           </StatGrid>
+          {(ps.msme_overdue > 0 || ps.msme_due_soon > 0) && (
+            <p role="alert" className="mb-4 rounded-lg border border-danger/30 bg-danger-soft/40 px-3 py-2 text-sm">
+              <span className="font-semibold">MSME suppliers: </span>
+              {ps.msme_overdue > 0 && `${formatINR(ps.msme_overdue)} is past the 45 days - unpaid, it is disallowed as an expense this year (43B(h)) and interest is owed. `}
+              {ps.msme_due_soon > 0 && `${formatINR(ps.msme_due_soon)} falls due within a week.`}
+            </p>
+          )}
           <AgeingStrip buckets={pay.data?.buckets} total={ps.owed ?? 0} />
           <DataTable label="We owe" rows={payRows} columns={payCols} rowKey={(r) => `${r.doc_type ?? 'b'}-${r.id}`} loading={pay.isPending} empty="Nothing outstanding." />
           <InTheirFavour parties={pay.data?.parties ?? []} credits={pay.data?.credits ?? []} who="Party" favour="ours" />

@@ -873,6 +873,17 @@ def approval_inbox(db, client, emp):
                 what="%s, spent %s%s" % (x.head, x.spent_on, (". " + x.note) if x.note else ""),
                 view="sitecash-view", approve_label="Accept", note_to_approve=False))
 
+    # 5e. Staff expense claims, waiting on accounts.
+    if manages_cash(emp):
+        from app.services.payouts import DBExpenseClaim
+        for c in db.query(DBExpenseClaim).filter(DBExpenseClaim.client_id == client.id, DBExpenseClaim.status == "SUBMITTED").order_by(DBExpenseClaim.id).all():
+            if emp is not None and c.employee_id == emp.id:
+                continue
+            items.append(_row(
+                "expense_claim", "Expense claim", c.id, c.number, c.amount, party=c.employee_name, project=job_label_for(db, c.job_id),
+                raised_by=c.employee_name, since=c.submitted_at or "", what="%s, spent %s: %s" % (c.head, c.spent_on, (c.description or "")[:150]),
+                view="claims-view", note_to_approve=False))
+
     # 6. Leave.
     if can("leave.approve"):
         q = db.query(models.DBLeaveRequest).filter(

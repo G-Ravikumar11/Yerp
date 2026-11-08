@@ -40,6 +40,8 @@ class ContractorIn(BaseModel):
     documents: Optional[List[str]] = None
     document_files: Optional[Dict[str, Optional[Dict[str, str]]]] = None
     declaration_signed: Optional[bool] = None
+    msme_type: Optional[str] = None
+    udyam_no: Optional[str] = None
 
 
 class WorkTypeIn(BaseModel):

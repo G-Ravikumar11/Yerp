@@ -369,6 +369,7 @@ def supplier_dict(s):
             "address": s.address or "", "bank_name": s.bank_name or "",
             "bank_account": s.bank_account or "", "bank_ifsc": s.bank_ifsc or "",
             "payment_days": s.payment_days or 0, "supplies": s.supplies or "",
+            "msme_type": s.msme_type or "", "udyam_no": s.udyam_no or "",
             "is_active": bool(s.is_active)}
 
 
@@ -483,6 +484,8 @@ def _ledger_rows(db, client_id):
     rows.extend(credit_ledger_rows(db, client_id))
     from app.services.journals import debit_note_ledger_rows, journal_ledger_rows
     rows.extend(journal_ledger_rows(db, client_id))
+    from app.services.payouts import claim_ledger_rows
+    rows.extend(claim_ledger_rows(db, client_id))
     rows.extend(debit_note_ledger_rows(db, client_id))
 
     for e in db.query(models.DBMoneyEntry).filter(
