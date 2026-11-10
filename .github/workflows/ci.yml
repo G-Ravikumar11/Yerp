@@ -17,9 +17,15 @@ jobs:
             exit 1
           fi
 
+  # The suite is split into shares that run side by side, and each share uses every core of its machine (each worker
+  # has its own throwaway database), so the whole run takes minutes, not hours.
   backend:
-    name: Backend tests
+    name: Backend tests (${{ matrix.shard }} of 6)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     defaults:
       run:
         working-directory: backend
@@ -31,8 +37,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - run: pip install -r requirements-dev.txt
-      - run: python -m pytest -q
+      - run: python -m pytest -q -n auto --dist loadfile
         env:
+          TEST_SHARD: ${{ matrix.shard }}/6
           COOKIE_SECURE: 'false'
           SECRET_KEY: ci-only-secret-key
 

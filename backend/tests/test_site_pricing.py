@@ -156,7 +156,7 @@ def test_a_line_is_mapped_by_code_and_the_stable_id_is_kept(tenant):
     got = rows(tenant, site)[0]
     assert got["mapped"] and got["item_id"] == item["id"] and got["item_name"] == "PCC M15 in foundation"
     with main.SessionLocal() as db:
-        assert db.query(models.DBBoqLine).filter_by(item_code="PCC-M15").first().item_id == item["id"]
+        assert db.query(models.DBBoqLine).filter_by(item_code="PCC-M15").order_by(models.DBBoqLine.id.desc()).first().item_id == item["id"]
 
 
 def test_an_unmapped_line_can_be_mapped_or_made_into_a_new_item(tenant):

@@ -62,6 +62,12 @@ import main  # noqa: E402
 from app import models  # noqa: E402
 from app.models.store_core import DBStoreBatch  # noqa: E402
 
+# SQLite hands a deleted row's id to the next row made. The live database (Postgres) never does, and a test that removes
+# a row would leave whatever still points at its id attached to a stranger. So here too an id is used once.
+if database.engine.dialect.name == "sqlite":
+    for _t in models.Base.metadata.tables.values():
+        _t.dialect_options["sqlite"]["autoincrement"] = True
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _create_schema():
@@ -94,6 +100,30 @@ def _reset_rate_limiter():
     from app.core.login_guard import failures
     failures.reset()
     yield
+
+
+def pytest_collection_modifyitems(config, items):
+    """TEST_SHARD=2/6 runs the second of six shares of the test files, so the suite can be spread over several machines.
+    Whole files stay together. The biggest file goes first, each to the share with the fewest tests so far, so the
+    shares come out even and every file lands in exactly one."""
+    shard = os.environ.get("TEST_SHARD", "")
+    if not shard:
+        return
+    index, total = (int(n) for n in shard.split("/"))
+    count = {}
+    for item in items:
+        name = item.nodeid.split("::")[0]
+        count[name] = count.get(name, 0) + 1
+    load, mine = [0] * total, set()
+    for name in sorted(count, key=lambda f: (-count[f], f)):
+        least = load.index(min(load))
+        load[least] += count[name]
+        if least == index - 1:
+            mine.add(name)
+    skipped = [item for item in items if item.nodeid.split("::")[0] not in mine]
+    if skipped:
+        config.hook.pytest_deselected(items=skipped)
+        items[:] = [item for item in items if item.nodeid.split("::")[0] in mine]
 
 
 @pytest.fixture
