@@ -140,3 +140,25 @@ def test_steel_items_are_known_by_name_and_weighed_by_unit():
     assert diameter_of(I("TMT Fe500D 12 mm")) == 12 and diameter_of(I("Reinforcement steel 16mm")) == 16
     assert diameter_of(I("Cement OPC 53")) == 0 and diameter_of(I("Binding wire 18 gauge")) == 0
     assert kg_per("MT") == 1000 and kg_per("Kg") == 1 and kg_per("Nos") == 0
+
+
+def test_steel_within_the_allowance_is_cost_and_not_a_loss(account):
+    tenant = account["client"]
+    w = with_steel(account)
+    assert tenant.post(API + "/issue/direct", json=steel_body(w, 1080)).status_code == 200        # 1,088 kg allowed
+    got = tenant.get("/api/jobs/%d/wastage-loss" % w.project).json()
+    assert got == {"total": 0.0, "rows": []}
+    assert str(w.project) not in tenant.get("/api/projects/wastage-loss").json()["by_job"]
+
+
+def test_only_the_steel_past_the_allowance_is_shown_as_a_loss(account):
+    tenant = account["client"]
+    w = with_steel(account)
+    # The Master issues past the limit (it is theirs to allow): 1,200 kg against 1,088 kg allowed.
+    assert tenant.post(API + "/issue/direct", json=steel_body(w, 1200)).status_code == 200
+    got = tenant.get("/api/jobs/%d/wastage-loss" % w.project).json()
+    [row] = got["rows"]
+    over = round(1200 - round(BBS_KG * 1.02, 1), 1)
+    assert row["item"] == "Steel 12 mm" and row["basis"] == "BBS + 2%" and row["over"] == over and row["rate"] == 62
+    assert got["total"] == round(over * 62, 2)
+    assert tenant.get("/api/projects/wastage-loss").json()["by_job"][str(w.project)] == got["total"]

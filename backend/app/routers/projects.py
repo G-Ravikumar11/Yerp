@@ -914,6 +914,25 @@ def portfolio_pnl_payload(db, client):
     }
 
 
+@router.get("/api/projects/wastage-loss")
+def projects_wastage_loss(request: Request, db: Session = Depends(get_read_db)):
+    """{job_id: rupees} drawn past the limits - BBS + allowance for steel, the store norms for the rest - for every project."""
+    client = require_items_access(request, db, "reports.view")
+    from app.services.wastage_loss import wastage_by_job
+    return cached_read(("wastage-loss", client.id, scope_key(db)), lambda: {"by_job": {str(k): v for k, v in wastage_by_job(db, client.id).items()}}, ttl=60)
+
+
+@router.get("/api/jobs/{job_id}/wastage-loss")
+def job_wastage_loss(job_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """One project's wastage past its limits, item by item. Material inside the limits is the project's cost, not a loss."""
+    client = require_items_access(request, db, "reports.view")
+    job = db.query(models.DBJob).filter(models.DBJob.id == job_id, models.DBJob.client_id == client.id).first()
+    if not job:
+        raise HTTPException(404, "Project not found")
+    from app.services.wastage_loss import wastage_loss
+    return wastage_loss(db, client.id, job.id)
+
+
 @router.get("/api/jobs/{job_id}/pnl.xlsx")
 def job_pnl_export(job_id: int, request: Request, db: Session = Depends(get_db)):
     client = require_items_access(request, db, "reports.view")

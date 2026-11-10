@@ -44,3 +44,11 @@ export interface Pnl { summary: { projects: number; order_value: number; revenue
 export const useCosts = (enabled = true) => useQuery({ queryKey: ['costs', 'list'], enabled, queryFn: () => get<{ projects: CostRow[]; summary: CostSummary }>('/api/costs/by-project') })
 export const useProjectCosts = (id: number) => useQuery({ queryKey: ['costs', 'one', id], enabled: id > 0, queryFn: () => get<ProjectCosts>(`/api/costs/by-project/${id}`) })
 export const usePnl = () => useQuery({ queryKey: ['costs', 'pnl'], queryFn: () => get<Pnl>('/api/jobs-pnl') })
+
+/** Material drawn past its limit: steel past BBS + allowance, the rest past the store norm and its wastage %. Already inside the
+ * project's material cost - this is how much of it was lost. Material within the limit is cost, not loss. */
+export interface WastageRow { item: string; boq_item?: string; basis: string; uom: string; limit: number; used: number; over: number; rate: number; value: number }
+export const useWastageByJob = () =>
+  useQuery({ queryKey: ['costs', 'wastage'], queryFn: async () => (await get<{ by_job: Record<string, number> }>('/api/projects/wastage-loss')).by_job })
+export const useWastage = (jobId: number) =>
+  useQuery({ queryKey: ['costs', 'wastage', jobId], enabled: jobId > 0, queryFn: () => get<{ total: number; rows: WastageRow[] }>(`/api/jobs/${jobId}/wastage-loss`) })

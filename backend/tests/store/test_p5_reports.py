@@ -551,3 +551,17 @@ def test_reorder_does_not_ask_again_for_what_is_already_on_enquiry_or_order(acco
     assert tenant.post("/api/rfqs/%d/cancel" % rfq.json()["rfq"]["id"], json={"reason": "Bought locally"}).status_code == 200
     [row] = get(tenant, "reorder")["rows"]
     assert (row["on_order"], row["suggested_qty"]) == ("0.000", "300.000")
+
+
+def test_material_inside_its_norm_is_cost_and_only_the_excess_is_a_wastage_loss(account):
+    tenant = account["client"]
+    w = world(account)
+    assert norm(tenant, w).status_code == 200                                  # 10 cum x 50 kg x 1.05 = 525 kg allowed
+    inside = tenant.get("/api/jobs/%d/wastage-loss" % w.proj).json()           # 450 kg used: inside the norm
+    assert inside["total"] == 0 and not [r for r in inside["rows"] if "ement" in r["item"]]
+    with database.SessionLocal() as s:
+        put(s, w, MovementType.ISSUE_OUT, w.central, "cement", "200", day=TODAY, doc=("ISSUE", 21), project_id=w.proj, work_order_id=w.wo, boq_item_id=w.boq[0])
+        s.commit()
+    got = tenant.get("/api/jobs/%d/wastage-loss" % w.proj).json()             # 650 kg used: 125 kg past the norm
+    row = next(r for r in got["rows"] if r["over"] == 125)
+    assert row["basis"].startswith("Store norm") and row["limit"] == 525 and row["value"] == round(125 * row["rate"], 2) and row["rate"] > 0
