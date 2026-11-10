@@ -649,11 +649,35 @@ def advance(db, actor, kind, doc, action, reason="", direct=False):
         kind.post(db, actor, doc)
         doc.posted_at = datetime.now()
     doc.status = to.value
+    if kind.key == "issue" and action == "submit":
+        steel_waiting(db, actor, doc)
     if kind.key == "issue" and action == "post" and doc.indent_id:
         db.flush()
         refresh_indent(db, db.get(DBStoreIndent, doc.indent_id))
     log(db, actor, kind.ref, doc.id, action, now, doc.status)
     return doc
+
+
+def steel_over(db, client_id, issue):
+    """What this issue would take past the BBS allowance, in words; [] when nothing."""
+    from app.services import steel_allowance as steel
+    return steel.issue_breaches(db, client_id, issue, issue_lines(db, issue))
+
+
+def steel_waiting(db, actor, issue):
+    """An issue sent for approval with steel past the allowance: the Master and the engineers who sign off the BBS are told
+    at once, so it does not sit in the store's list waiting for somebody to notice it."""
+    from app.core.notifications import tell_approvers
+    from app.services import steel_allowance as steel
+    over = steel_over(db, actor.client.id, issue)
+    if not over:
+        return []
+    job = db.get(models.DBJob, issue.project_id)
+    tell_approvers(db, actor.client.id, "Steel past the BBS + %g%%: %s waits for you" % (steel.allowance_pct(db, actor.client.id), issue.number),
+                   "%s for %s, raised by %s. %s" % (issue.number, (job.name if job else "the project"), actor.name, "; ".join(over)),
+                   rights=(steel.APPROVE_RIGHT,), exclude=[actor.employee.id if actor.employee else None], owner=True)
+    log(db, actor, ISSUE, issue.id, "steel_needs_approval", issue.status, issue.status, "; ".join(over)[:200])
+    return over
 
 
 def _steel_allowance(db, actor, issue, action, direct):

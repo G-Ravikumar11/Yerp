@@ -79,7 +79,7 @@ export default function IssueForm({ doc, base = '/store/hub/outward/issue' }: { 
   })
   const save = useAction(
     () => (direct ? storePost<Doc>('outward', '/issue/direct', body()) : doc ? storePut<Doc>('outward', `/issue/${doc.id}`, body()) : storePost<Doc>('outward', '/issue', body())),
-    { invalidate: [[...outwardKeys.all], ['store', 'enquiry'], ['store', 'lookup']], success: (d) => (direct ? `Issued and posted - ${d.number}` : `Saved as draft - ${d.number}`), onSuccess: (d) => nav(`${base}/${d.id}`) },
+    { invalidate: [[...outwardKeys.all], ['store', 'enquiry'], ['store', 'lookup']], success: (d) => (d.held_for_steel ? (d.message ?? `${d.number} sent for steel approval`) : direct ? `Issued and posted - ${d.number}` : `Saved as draft - ${d.number}`), onSuccess: (d) => nav(`${base}/${d.id}`) },
   )
   const needsIndent = !sub && !f.indent_id && !canDirect
   const costOk = sub || filled.every((r) => r.target)

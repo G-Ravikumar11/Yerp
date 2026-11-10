@@ -245,6 +245,10 @@ def doc_dict(db, kind, doc, detail=False):
                              "fefo_reason": l.fefo_reason or "", "fefo_skipped": l.fefo_skipped or "", "fefo_by": l.fefo_by or "", "fefo_at": l.fefo_at or "",
                              "outstanding": svc.s3(outstanding.get(l.id, ZERO)) if doc.status == DocStatus.POSTED.value else None, "remarks": l.remarks or "", "batch_no": l.batch_no or ""} for l in lines]
             out["warnings"] = svc.norm_warnings(db, doc)
+            # Steel past the BBS allowance: what it is waiting on, or who let it through.
+            out["steel_over"] = svc.steel_over(db, doc.client_id, doc) if doc.status in (DocStatus.DRAFT.value, DocStatus.SUBMITTED.value) else []
+            out["steel_override_by"] = doc.steel_override_by or ""
+            out["steel_override_note"] = doc.steel_override_note or ""
             out["gate_passes"] = [{"id": g.id, "number": g.number, "status": g.status} for g in db.query(DBStoreGatePass).filter(DBStoreGatePass.issue_id == doc.id).order_by(DBStoreGatePass.id).all()]
     else:
         issue = db.get(DBStoreIssue, doc.issue_id)
@@ -1017,11 +1021,20 @@ def direct_issue(body: IssueIn, request: Request, db: Session = Depends(get_db))
     (store.outward.direct_issue), is marked as direct on the document and in the log, and is all-or-nothing like any posting."""
     actor = store_actor(request, db, "store.outward.direct_issue")
     kind = svc.KINDS["issue"]
+    from app.services import steel_allowance as steel
     try:
         with store_errors():
             issue = _new_issue(db, actor, body, request)
             _created(db, actor, kind, issue, request, direct=True)
             svc.advance(db, actor, kind, issue, "submit", direct=True)
+            if not steel.may_approve(actor) and svc.steel_over(db, actor.client.id, issue):
+                # Past the 2%: it cannot go out on the storekeeper's word. It waits, submitted, for the Master or the BBS
+                # engineer - who have been told - and goes out once approved and posted.
+                log_audit(db, actor.client.id, "store_issue_steel_held", "store_doc", issue.id, issue.number, issue.status, request=request, **_who(actor))
+                db.commit()
+                return dict(doc_dict(db, kind, issue, detail=True), held_for_steel=True,
+                            message="%s is past the BBS + %g%% steel allowance, so it has gone to the Master and the BBS engineer for approval. "
+                                    "Issue the steel once it is approved." % (issue.number, steel.allowance_pct(db, actor.client.id)))
             svc.advance(db, actor, kind, issue, "approve", direct=True)
             svc.advance(db, actor, kind, issue, "post", direct=True)
             svc.log(db, actor, ISSUE, issue.id, "direct", DocStatus.DRAFT.value, issue.status, "issued, approved and posted in one step")
@@ -1104,8 +1117,16 @@ def act(kind_key: str, doc_id: int, action: str, request: Request, body: Optiona
     kind = _kind(kind_key)
     if action not in ACTION_RIGHT:
         raise HTTPException(404, "There is no such action.")
-    actor = store_actor(request, db, ACTION_RIGHT[action])
+    from app.services import steel_allowance as steel
+    steel_only = kind.key == "issue" and action in ("approve", "cancel")
+    actor = store_actor(request, db, (ACTION_RIGHT[action], steel.APPROVE_RIGHT) if steel_only else ACTION_RIGHT[action])
     doc = _doc(db, actor, kind, doc_id)
+    if steel_only and actor.employee is not None:
+        from app.core.permissions import permissions_for
+        rights = permissions_for(actor.employee)
+        if ACTION_RIGHT[action] not in rights and "store.admin" not in rights and not svc.steel_over(db, actor.client.id, doc):
+            # The BBS engineer decides an issue for its steel only; anything else is the store's to approve.
+            raise HTTPException(403, "You approve store issues only for steel past the BBS allowance; this one is the store's to approve.")
     try:
         with store_errors():
             svc.advance(db, actor, kind, doc, action, body.reason if body else "")

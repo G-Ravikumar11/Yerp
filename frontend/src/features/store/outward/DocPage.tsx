@@ -83,11 +83,19 @@ export default function DocPage({ kindKey, base }: { kindKey?: OutwardKind; base
           <DocActionsBar
             status={doc.status}
             busy={run.isPending ? (run.variables?.action ?? null) : null}
-            can={{ submit: can(storePerm('outward', 'create')), approve: can(storePerm('outward', 'approve')), post: can(storePerm('outward', 'post')), cancel: can(storePerm('outward', 'cancel')) }}
+            can={{ submit: can(storePerm('outward', 'create')), approve: can(storePerm('outward', 'approve')) || ((doc.steel_over ?? []).length > 0 && can('site.signoff')), post: can(storePerm('outward', 'post')), cancel: can(storePerm('outward', 'cancel')) }}
             onAction={(action, reason) => run.mutateAsync({ action, reason }).then(() => undefined, () => { throw new Error('rejected') })}
           />
         </div>
       </div>
+      {(doc.steel_over ?? []).length > 0 && (
+        <div role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">
+          <p className="font-semibold">Steel past the BBS + 2% allowance{doc.status === 'SUBMITTED' ? ' - waiting for the Master or the BBS engineer to approve' : ' - it will need the Master or the BBS engineer to approve'}</p>
+          <ul className="mt-1 list-disc pl-5">{(doc.steel_over ?? []).map((w) => <li key={w}>{w}</li>)}</ul>
+          {doc.status === 'SUBMITTED' && <p className="mt-1 text-xs">They have been told, and it is in their Approvals list. It can be posted once approved.</p>}
+        </div>
+      )}
+      {doc.steel_override_by && <p role="status" className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Steel past the allowance approved by {doc.steel_override_by}{doc.steel_override_note ? `: ${doc.steel_override_note}` : ''}.</p>}
       {(doc.warnings ?? []).map((w) => <p key={w} role="status" className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Over the norm: {w}</p>)}
       {(doc.gate_passes ?? []).length > 0 && <p className="mb-3 text-sm text-muted-foreground">Gate passes: {(doc.gate_passes ?? []).map((g) => <Link key={g.id} className="mr-3 font-mono text-primary hover:underline" to={`/store/hub/outward/gate-pass/${g.id}`}>{g.number} ({g.status.toLowerCase()})</Link>)}</p>}
       {doc.status === 'CANCELLED' && <p role="status" className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Cancelled{doc.cancel_reason ? `: ${doc.cancel_reason}` : ''}.</p>}

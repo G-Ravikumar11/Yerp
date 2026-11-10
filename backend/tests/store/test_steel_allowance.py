@@ -42,13 +42,55 @@ def test_inside_the_allowance_steel_goes_out_as_usual(account):
     assert res.status_code == 200, res.text
 
 
-def test_past_two_percent_it_cannot_go_out_directly(account, portal):
+def test_past_two_percent_a_direct_issue_goes_for_approval_instead(account, portal):
     tenant = account["client"]
     w = with_steel(account)
     assert tenant.post(API + "/issue/direct", json=steel_body(w, 1000)).status_code == 200
     staff(account, portal, ["store.outward.direct_issue"], [w.central])
     res = portal.post(API + "/issue/direct", json=steel_body(w, 100))
-    assert res.status_code == 409 and "2%" in res.json()["detail"] and "12 mm" in res.json()["detail"] and "approval" in res.json()["detail"]
+    assert res.status_code == 200, res.text
+    got = res.json()
+    assert got["held_for_steel"] is True and got["status"] == "SUBMITTED" and "2%" in got["message"]
+    assert got["steel_over"] and "12 mm" in got["steel_over"][0]
+    # Not issued: the stock is still in the store.
+    issued = tenant.get("/api/bbs/steel?job_id=%d" % w.project).json()
+    assert next(r for r in issued["rows"] if r["diameter_mm"] == 12)["issued_kg"] == 1000
+    # It is on the issue's history as waiting for the steel, and it waits in the approvals inbox.
+    from app.models.store_outward import DBStoreOutwardLog
+    with database.SessionLocal() as s:
+        assert s.query(DBStoreOutwardLog).filter(DBStoreOutwardLog.doc_id == got["id"], DBStoreOutwardLog.action == "steel_needs_approval").count() == 1
+    inbox = tenant.get("/api/approvals/inbox").json()
+    inbox = inbox["items"] if isinstance(inbox, dict) else inbox
+    row = next(i for i in inbox if i["kind"] == "steel_issue" and i["id"] == got["id"])
+    assert "12 mm" in row["what"]
+    done = tenant.post("/api/approvals/decide", json={"kind": "steel_issue", "id": got["id"], "decision": "approve", "note": "Lap lengths revised"})
+    assert done.status_code == 200, done.text
+    assert move(tenant, "issue", got["id"], "post")["status"] == "POSTED"
+    with database.SessionLocal() as s:
+        assert s.get(DBStoreIssue, got["id"]).steel_override_by
+
+
+def test_an_engineer_approves_the_steel_without_the_store_s_right_but_nothing_else(account, portal):
+    tenant = account["client"]
+    w = with_steel(account)
+    over = tenant.post(API + "/issue", json=steel_body(w, 1200)).json()
+    plain = tenant.post(API + "/issue", json=issue_body(w)).json()
+    for d in (over, plain):
+        assert tenant.post("%s/issue/%d/submit" % (API, d["id"])).status_code == 200
+    engineer = staff(account, portal, ["site.signoff"], [w.central])
+    over2 = tenant.post(API + "/issue", json=steel_body(w, 1150)).json()          # sent after the engineer is on the books
+    assert tenant.post("%s/issue/%d/submit" % (API, over2["id"])).status_code == 200
+    with database.SessionLocal() as s:                                            # the engineer was told on their bell
+        told = s.query(models.DBNotification).filter(models.DBNotification.employee_id == engineer["id"]).all()
+        assert any(over2["number"] in (n.title or "") for n in told)
+    assert portal.post("%s/issue/%d/approve" % (API, plain["id"])).status_code == 403
+    inbox = portal.get("/api/approvals/inbox").json()
+    inbox = inbox["items"] if isinstance(inbox, dict) else inbox
+    assert sorted(i["id"] for i in inbox if i["kind"] == "steel_issue") == sorted([over["id"], over2["id"]])
+    refused = portal.post("/api/approvals/decide", json={"kind": "steel_issue", "id": over["id"], "decision": "reject", "note": "Use the 10 mm offcuts"})
+    assert refused.status_code == 200, refused.text
+    d = tenant.get("%s/issue/%d" % (API, over["id"])).json()
+    assert d["status"] == "CANCELLED" and "offcuts" in d["cancel_reason"]
 
 
 def test_the_storekeeper_cannot_approve_it_but_the_master_can(account, portal):

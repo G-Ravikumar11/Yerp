@@ -88,6 +88,12 @@ export interface Doc {
   received_by_employee_id?: number | null
   received_by_name?: string
   warnings?: string[]
+  /** Steel past the BBS + 2% allowance: what it is waiting on (Master or BBS engineer), and who let it through. */
+  steel_over?: string[]
+  steel_override_by?: string
+  steel_override_note?: string
+  held_for_steel?: boolean
+  message?: string
   gate_passes?: { id: number; number: string; status: string }[]
   // return
   issue_id?: number

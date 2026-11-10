@@ -873,6 +873,21 @@ def approval_inbox(db, client, emp):
                 what="%s, spent %s%s" % (x.head, x.spent_on, (". " + x.note) if x.note else ""),
                 view="sitecash-view", approve_label="Accept", note_to_approve=False))
 
+    # 5d2. Store issues taking steel past the BBS allowance: the Master's or the BBS engineer's to decide.
+    if emp is None or can("site.signoff"):
+        from app.models.store_core import DocStatus as _DS
+        from app.models.store_outward import DBStoreIssue
+        from app.services.store_outward import steel_over
+        for iss in db.query(DBStoreIssue).filter(DBStoreIssue.client_id == client.id, DBStoreIssue.status == _DS.SUBMITTED.value).order_by(DBStoreIssue.id).all():
+            over = steel_over(db, client.id, iss)
+            if not over:
+                continue
+            items.append(_row(
+                "steel_issue", "Steel over BBS", iss.id, iss.number, 0, party=iss.holder_name or "", project=job_label_for(db, iss.project_id),
+                raised_by=iss.created_by_name or "", since=iss.created_at.isoformat(timespec="seconds") if iss.created_at else "",
+                what="; ".join(over)[:300], view="store-issue-view", approve_label="Approve the steel", reject_label="Refuse",
+                note_to_approve=True))
+
     # 5e. Staff expense claims, waiting on accounts.
     if manages_cash(emp):
         from app.services.payouts import DBExpenseClaim

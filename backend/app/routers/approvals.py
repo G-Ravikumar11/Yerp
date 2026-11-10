@@ -403,6 +403,13 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
     if kind == "payment_request":
         from app.routers.money import _colleague, _decide_payment
         return _decide_payment(db, client, emp, body.id, decision, note, request, member=_colleague(request, db))
+    if kind == "steel_issue":
+        from app.routers.store_outward import ActionIn, act as store_act
+        if decision == "approve":
+            store_act("issue", body.id, "approve", request, ActionIn(reason=note), db)
+            return {"ok": True, "message": "Approved. The store can post the issue now."}
+        store_act("issue", body.id, "cancel", request, ActionIn(reason=("Steel refused: " + note)[:300]), db)
+        return {"ok": True, "message": "Refused; the issue is cancelled and the store has the reason."}
     if kind == "expense_claim":
         from app.routers.payouts import decide_claim
         return decide_claim(body.id, decision == "approve", note, request, db)
