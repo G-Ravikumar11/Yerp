@@ -561,7 +561,7 @@ def test_one_notice_for_each_project_grouped_with_the_message(tenant, monkeypatc
     for bit in ("Dear Project Team,", "Due Today:", "Due Tomorrow:", "Regards,\nConstruction ERP System"):
         assert bit in sent[0][2]
     with main.SessionLocal() as db:
-        assert db.query(models.DBAlert).filter(models.DBAlert.kind == "cube_tests_due_bell").count() == 2
+        assert db.query(models.DBAlert).filter(models.DBAlert.client_id == company(a), models.DBAlert.kind == "cube_tests_due_bell").count() == 2
 
 
 def test_nothing_goes_before_the_hour_nor_for_a_rejected_set(tenant, failing):
