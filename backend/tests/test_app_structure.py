@@ -20,7 +20,9 @@ def test_the_front_end_is_mounted_after_every_endpoint():
     (a POST to /api/... came back 405 Method Not Allowed)."""
     routes = main.app.routes
     kinds = [type(r).__name__ for r in routes]
-    last_api = max(i for i, k in enumerate(kinds) if k in ("APIRoute", "APIWebSocketRoute"))
+    # Routes other tests add to the running app for themselves (/api/_test..., /api/__test...) are not the application's.
+    last_api = max(i for i, k in enumerate(kinds) if k in ("APIRoute", "APIWebSocketRoute")
+                   and not str(getattr(routes[i], "path", "")).startswith(("/api/_test", "/api/__test")))
     for i, r in enumerate(routes):
         if type(r).__name__ == "Mount" and getattr(r, "path", None) in ("", "/next", "/icons"):
             assert i > last_api, "the %r mount comes before an endpoint" % r.path

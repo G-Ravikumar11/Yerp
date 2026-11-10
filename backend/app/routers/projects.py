@@ -956,6 +956,16 @@ def job_pnl_export(job_id: int, request: Request, db: Session = Depends(get_db))
                           preamble=preamble)
 
 
+def _books_attention(db, client):
+    """What accounts and the store owe the books - shown to those who see the money."""
+    from app.services.accounts_watch import accounts_items
+    try:
+        return accounts_items(db, client)
+    except Exception:
+        logger.exception("The accounts watch failed for %s", client.id)
+        return []
+
+
 @router.get("/api/attention")
 def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
@@ -963,7 +973,7 @@ def whats_worth_a_look(request: Request, db: Session = Depends(get_db)):
     # beside the project list's own.
     from app.services.attention_buying import buying_items, with_buying
     from app.services.doc_control import attention_items as doc_attention
-    return cached_read(("attention", client.id, scope_key(db)), lambda: with_buying(attention_payload(db, client.id), buying_items(db, client.id) + doc_attention(db, client.id)))
+    return cached_read(("attention", client.id, scope_key(db)), lambda: with_buying(attention_payload(db, client.id), buying_items(db, client.id) + doc_attention(db, client.id) + _books_attention(db, client)))
 
 
 @router.get("/api/jobs/{job_id}/equipment")

@@ -431,6 +431,9 @@ def wo_create_contractor(body: ContractorIn, request: Request,
         approved_by_name=(owner_label(db, client.id) if actor_id is None else actor_name) if owner else "",
         approved_at=now if owner else "")
     contractor_form_fields(con, body)
+    if body.msme_type or body.udyam_no:
+        from app.services.payouts import clean_msme
+        con.msme_type, con.udyam_no = clean_msme(body.msme_type, body.udyam_no)
     db.add(con)
     log_audit(db, client.id, "contractor_created", "contractor", None, name, code, request)
     db.flush()

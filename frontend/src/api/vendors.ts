@@ -35,6 +35,9 @@ export interface Vendor {
   entity_type: string
   aadhaar: string
   bank_branch: string
+  /** Udyam registration: micro and small enterprises are paid within 45 days. */
+  msme_type?: string
+  udyam_no?: string
   documents: string[]
   /** Which documents have a file on record, by key - the file's name. Not the file. */
   document_files: Record<string, string>

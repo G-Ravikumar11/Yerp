@@ -11,11 +11,10 @@ from app import models
 from app.core.audit import log_audit
 from app.core.store_auth import store_actor
 from app.db import get_db, get_read_db
-from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreStockBalance
+from app.models.store_core import DBStore, DBStoreItemSettings
 from app.models.store_extras import DBStoreItemLevel
 from app.routers.store_masters import visible_store_ids
-from app.services import store_levels
-from app.services.stock_ledger import assert_store_access, raise_reorder_alert
+from app.services.stock_ledger import assert_store_access
 
 router = APIRouter(prefix="/api/store/levels", tags=["store-levels"])
 ZERO = Decimal("0")
@@ -118,20 +117,9 @@ def scan(request: Request, db: Session = Depends(get_db)):
     were kept, or whose level was raised afterwards. Only the stores this person works in."""
     actor = store_actor(request, db, "store.masters.create")
     seen = visible_store_ids(db, actor)                                 # the stores this person works in (all of them for an administrator)
-    stores = {s.id: s for s in db.query(DBStore).filter(DBStore.client_id == actor.client.id, DBStore.is_active.is_(True)).all() if seen is None or s.id in seen}
-    if not stores:
-        return {"raised": 0}
-    over = store_levels.overrides(db, list(stores))
-    held = db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(list(stores))).all()
-    sets = {s.item_id: s for s in db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id.in_([b.item_id for b in held] or [0])).all()}
-    raised = 0
+    from app.services.accounts_watch import scan_reorder_levels
     try:
-        for bal in held:
-            level = store_levels.effective(sets.get(bal.item_id), over.get((bal.store_id, bal.item_id)))[0]
-            if level > 0 and Decimal(str(bal.qty)) <= level:
-                item = db.get(models.DBItem, bal.item_id)
-                if item is not None and raise_reorder_alert(db, actor.client.id, stores[bal.store_id], item, Decimal(str(bal.qty)), level):
-                    raised += 1
+        raised = scan_reorder_levels(db, actor.client.id, seen)        # the same check runs by itself every morning
         db.commit()
     except Exception:
         db.rollback()

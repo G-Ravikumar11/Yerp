@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowUpRight, Banknote, CreditCard, Landmark, Sparkles, TrendingUp, Wallet } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, Sparkles, TrendingUp } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, Stat, StatGrid } from '@/components/ui'
 import { attentionHref, useAttention, useBalanceSheet, useCashFlow, usePayables, useProfitLoss, useReceivables, type AttentionItem } from '@/api/dashboard'
@@ -31,6 +31,10 @@ function Insight({ item }: { item: AttentionItem }) {
   return link.external ? <a href={link.to}>{body}</a> : <Link to={link.to}>{body}</Link>
 }
 
+/** What the accounts office itself has waiting, out of everything the dashboard lists. */
+const ACCOUNTS_KINDS = new Set(['msme_overdue', 'msme_due_soon', 'pdc_to_deposit', 'pdc_presented', 'payment_files_open', 'journals_pending', 'claims_waiting',
+  'returns_no_debit_note', 'cross_charges', 'grni_old', 'billed_ahead', 'receivables', 'ra_receivable'])
+
 /** The accounts at a glance: what is owed in and out, what has been spent, what cash the business holds, and the
  * trend behind it - the single screen a finance person opens first, instead of totting up every ledger by hand. */
 export default function FinanceDashboardPage() {
@@ -54,6 +58,7 @@ export default function FinanceDashboardPage() {
   const start = Math.max(0, allMonths.length - 12)
   const revExp = allMonths.slice(start).map((m, i) => ({ month: m, label: monthLabel(m), revenue: profitLoss.data?.revenue[start + i] ?? 0, expense: profitLoss.data?.expenses[start + i] ?? 0 }))
   const insights = (attention.data?.items ?? []).filter((i) => i.severity === 'money').slice(0, 4)
+  const todo = (attention.data?.items ?? []).filter((i) => ACCOUNTS_KINDS.has(i.kind))
   const fig = (n: number | undefined, loading: boolean) => (loading ? undefined : <Figure value={n ?? 0} format={compactINR} />)
 
   return (
@@ -137,14 +142,25 @@ export default function FinanceDashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="size-4 text-warning" /> At a glance
+              <AlertTriangle className="size-4 text-warning" /> To do today
             </CardTitle>
+            <CardDescription>What is waiting on accounts, found from the books each time this opens.</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 text-sm">
-            <p className="flex items-center gap-2 text-muted-foreground"><Landmark className="size-4 shrink-0" /> Receivables are what clients owe us; payables are what we owe suppliers and subcontractors.</p>
-            <p className="flex items-center gap-2 text-muted-foreground"><CreditCard className="size-4 shrink-0" /> Expenses are accrual - booked when billed to us, not when paid.</p>
-            <p className="flex items-center gap-2 text-muted-foreground"><Wallet className="size-4 shrink-0" /> Cash position is every bank account and cash box, as of today.</p>
-            <p className="flex items-center gap-2 text-muted-foreground"><Banknote className="size-4 shrink-0" /> Overdue amount is past-due receivables and payables added together.</p>
+          <CardContent className="grid gap-2 text-sm">
+            {attention.isPending ? <Skeleton className="h-24 w-full" /> : todo.length === 0 ? (
+              <p className="text-muted-foreground">Nothing is waiting on accounts.</p>
+            ) : todo.map((i) => {
+              const link = attentionHref(i.view)
+              return (
+                <Link key={i.kind} to={link.to} className="rounded-lg border border-border p-2.5 transition-colors hover:bg-accent">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{i.title}</span>
+                    {i.count > 0 && <Badge tone={i.severity === 'wrong' ? 'danger' : i.severity === 'money' ? 'ember' : 'warning'}>{i.count}</Badge>}
+                  </span>
+                  <span className="mt-0.5 block text-[13px] text-muted-foreground">{i.detail}</span>
+                </Link>
+              )
+            })}
           </CardContent>
         </Card>
 

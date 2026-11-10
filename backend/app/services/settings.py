@@ -223,7 +223,8 @@ def job_morning_digest(db, now):
     for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
         try:
             from app.services.attention_buying import buying_items, money_lines
-            items = attention_items(db, client.id) + buying_items(db, client.id)
+            from app.services.accounts_watch import accounts_items
+            items = attention_items(db, client.id) + buying_items(db, client.id) + accounts_items(db, client, now.date())
             position = money_lines(db, client)
         except Exception as exc:
             logger.error("Digest for %s failed: %s", client.id, exc)

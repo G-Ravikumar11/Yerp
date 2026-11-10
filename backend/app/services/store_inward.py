@@ -809,6 +809,11 @@ def advance(db, actor, kind, doc, action, reason=""):
         doc.posted_at = datetime.now()
     doc.status = to.value
     log(db, actor, kind.ref, doc.id, action, now, doc.status)
+    if action == "post" and kind.key == "returns":
+        # The goods have gone back: take them off the supplier's bill, when it can only be one bill.
+        from app.services.accounts_watch import debit_note_on_return
+        db.flush()
+        debit_note_on_return(db, doc)
     return doc
 
 

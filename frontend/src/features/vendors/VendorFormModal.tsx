@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { FileCheck2, Paperclip } from 'lucide-react'
-import { Button, Field, Input, Modal, Textarea } from '@/components/ui'
+import { Button, Field, Input, Modal, Select, Textarea } from '@/components/ui'
 import { createVendor, updateVendor, vendorKeys, VENDOR_DOCS, type Vendor, type VendorInput } from '@/api/vendors'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -29,6 +29,8 @@ const blank = (): Partial<Vendor> => ({
   bank_branch: '',
   bank_account: '',
   bank_ifsc: '',
+  msme_type: '',
+  udyam_no: '',
   documents: [],
   declaration_signed: false,
 })
@@ -101,6 +103,8 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
         bank_branch: f.bank_branch,
         bank_account: f.bank_account,
         bank_ifsc: f.bank_ifsc,
+        msme_type: f.msme_type ?? '',
+        udyam_no: f.udyam_no ?? '',
         documents: f.documents,
         declaration_signed: f.declaration_signed,
         ...(Object.keys(files).length ? { document_files: files } : {}),
@@ -201,6 +205,15 @@ function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void 
       <Field label="IFSC code *" htmlFor="v-ifsc">
         <Input id="v-ifsc" value={f.bank_ifsc ?? ''} onChange={upper('bank_ifsc')} className="font-mono uppercase" />
       </Field>
+      <Field label="MSME (Udyam)" htmlFor="v-msme" hint={f.msme_type === 'micro' || f.msme_type === 'small' ? 'Their certified bills are paid within 45 days.' : undefined}>
+        <Select id="v-msme" value={f.msme_type ?? ''} onChange={(e) => setF((s) => ({ ...s, msme_type: e.target.value }))}
+          options={[{ value: '', label: 'Not registered' }, { value: 'micro', label: 'Micro' }, { value: 'small', label: 'Small' }, { value: 'medium', label: 'Medium' }]} />
+      </Field>
+      {f.msme_type ? (
+        <Field label="Udyam number" htmlFor="v-udyam">
+          <Input id="v-udyam" value={f.udyam_no ?? ''} onChange={upper('udyam_no')} className="font-mono uppercase" placeholder="UDYAM-TS-02-0012345" />
+        </Field>
+      ) : null}
 
       <Section>3. Documents required</Section>
       <div className="grid gap-x-6 gap-y-3 sm:col-span-2 sm:grid-cols-2">

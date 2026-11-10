@@ -50,18 +50,37 @@ def test_goods_sent_back_are_raised_as_a_debit_note_off_the_supplier_s_bill(acco
     central = _hub(t, w, tag)
     grn = _receive(t, central, w, 100)                                   # 100 bags at 350
     _bill(w, 35000)
+    _bill(w, 9000)                                                       # two bills on the order: whose it comes off is a choice
     lines = ok(t.get("/api/store/inward/grn/%d" % grn["id"]))["lines"]
     ret = ok(t.post("/api/store/inward/returns", json={"grn_id": grn["id"], "return_date": TODAY, "reason": "Set hard",
                                                         "lines": [{"grn_line_id": lines[0]["id"], "qty": "10", "uom": "bag"}]}))
     walk(t, "inward", "returns", ret["id"], "submit", "approve", "post")
     got = ok(t.get("/api/supplier-debit-notes"))
     [r] = [x for x in got["returns"] if x["id"] == ret["id"]]
-    assert r["taxable"] == 3500 and len(r["bills"]) == 1
-    n = ok(t.post("/api/supplier-debit-notes", json={"purchase_return_id": r["id"], "bill_id": r["bills"][0]["id"], "reason": "Goods returned",
+    assert r["taxable"] == 3500 and len(r["bills"]) == 2
+    big = next(b for b in r["bills"] if b["total"] == 35000)
+    n = ok(t.post("/api/supplier-debit-notes", json={"purchase_return_id": r["id"], "bill_id": big["id"], "reason": "Goods returned",
                                                      "taxable": r["taxable"], "tax": r["tax"]}))
     assert n["purchase_return_id"] == ret["id"] and n["job_id"] == w["job"]
     assert not [x for x in ok(t.get("/api/supplier-debit-notes"))["returns"] if x["id"] == ret["id"]]
     again = t.post("/api/supplier-debit-notes", json={"purchase_return_id": r["id"], "reason": "Twice", "taxable": 1})
     assert again.status_code == 409
-    bill = next(b for b in ok(t.get("/api/money/payables"))["bills"] if b["id"] == r["bills"][0]["id"])
+    bill = next(b for b in ok(t.get("/api/money/payables"))["bills"] if b["id"] == big["id"])
     assert bill["outstanding"] == 35000 - n["total"]
+
+
+def test_goods_sent_back_come_off_the_order_s_only_bill_by_themselves(account):
+    from store.test_f16_accounts import _bill, _receive
+    t, tag = account["client"], uuid.uuid4().hex[:6]
+    w = _company(account, tag)
+    central = _hub(t, w, tag)
+    grn = _receive(t, central, w, 100)
+    _bill(w, 35000)
+    lines = ok(t.get("/api/store/inward/grn/%d" % grn["id"]))["lines"]
+    ret = ok(t.post("/api/store/inward/returns", json={"grn_id": grn["id"], "return_date": TODAY, "reason": "Damp",
+                                                        "lines": [{"grn_line_id": lines[0]["id"], "qty": "4", "uom": "bag"}]}))
+    walk(t, "inward", "returns", ret["id"], "submit", "approve", "post")
+    got = ok(t.get("/api/supplier-debit-notes"))
+    [n] = [x for x in got["notes"] if x["purchase_return_id"] == ret["id"]]
+    assert n["taxable"] == 1400 and n["status"] == "ISSUED" and n["raised_by_name"] == "Raised with the return"
+    assert not [x for x in got["returns"] if x["id"] == ret["id"]]
