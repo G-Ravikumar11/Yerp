@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button } from '@/components/ui'
-import { payKeys, payrollRegister, payslipTone, setAutoPayroll, useAutoPayroll, usePayslips, type PayslipRow } from '@/api/payroll'
+import { payKeys, payslipTone, setAutoPayroll, useAutoPayroll, usePayslips, type PayslipRow } from '@/api/payroll'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
@@ -13,6 +13,7 @@ import { PayslipFormModal } from './PayslipFormModal'
 import { PayslipModal } from './PayslipModal'
 import { Anomalies } from './Anomalies'
 import { MonthPanel } from './MonthPanel'
+import { PayrollExcelModal } from './PayrollExcelModal'
 import { RunPayrollModal } from './RunPayrollModal'
 import { SalaryStructureModal } from './SalaryStructureModal'
 
@@ -43,6 +44,7 @@ export default function PayrollPage() {
   const [creating, setCreating] = useState(false)
   const [running, setRunning] = useState(false)
   const [structure, setStructure] = useState(false)
+  const [excel, setExcel] = useState(false)
   const rows = q.data ?? []
   const filters = useListFilters(rows, { search: (p) => [p.number, p.employee_name, p.status].join(' '), status: (p) => p.status, date: (p) => p.pay_date || p.period_end })
   const columns: TableColumn<PayslipRow>[] = [
@@ -64,7 +66,7 @@ export default function PayrollPage() {
   ]
   return (
     <>
-      <PageHeader eyebrow="People" title="Payroll" description="Payslips and payment. Run everyone's at once, or write one for a single person." actions={<>{filters.filtered.length > 0 && <Button variant="outline" asChild><a href={payrollRegister(filters.filtered.map((p) => p.id))} title="Every payslip shown below, one row each, all columns"><Download /> Excel ({filters.filtered.length})</a></Button>}<Button variant="outline" onClick={() => setStructure(true)}><ListChecks /> Salary structure</Button><Button variant="outline" onClick={() => setRunning(true)}><Play /> Run payroll</Button><Button onClick={() => setCreating(true)}><Plus /> New payslip</Button></>} />
+      <PageHeader eyebrow="People" title="Payroll" description="Payslips and payment. Run everyone's at once, or write one for a single person." actions={<><Button variant="outline" onClick={() => setExcel(true)} title="Every stored month, or a period of your choice"><Download /> Excel</Button><Button variant="outline" onClick={() => setStructure(true)}><ListChecks /> Salary structure</Button><Button variant="outline" onClick={() => setRunning(true)}><Play /> Run payroll</Button><Button onClick={() => setCreating(true)}><Plus /> New payslip</Button></>} />
       <AutoPayroll />
       <MonthPanel />
       <FilterBar filters={filters} placeholder="Search by number, employee or status..." />
@@ -72,6 +74,7 @@ export default function PayrollPage() {
       <Anomalies />
       <PayslipModal id={open} onClose={() => setOpen(null)} />
       <PayslipFormModal open={creating} onClose={() => setCreating(false)} />
+      <PayrollExcelModal open={excel} onClose={() => setExcel(false)} />
       <RunPayrollModal open={running} onClose={() => setRunning(false)} />
       <SalaryStructureModal open={structure} onClose={() => setStructure(false)} />
     </>

@@ -89,3 +89,45 @@ def test_the_register_takes_only_the_payslips_asked_for_and_only_ours(tenant, se
     assert len([r for r in sheet.iter_rows(values_only=True) if r[0] and str(r[0]).startswith("PS-")]) == 1
     assert second_tenant.get("/api/payslips/register.xlsx", params={"ids": "%d,%d" % (a, b)}).status_code == 404
     assert tenant.get("/api/payslips/register.xlsx", params={"ids": "x"}).status_code == 400
+
+
+def test_the_register_can_be_asked_for_one_month_or_a_stretch_of_months(tenant):
+    import openpyxl
+    emp = make_employee(tenant, salary=1000.0)
+    for start, end in (("2026-08-01", "2026-08-31"), ("2026-09-01", "2026-09-30"), ("2026-10-01", "2026-10-31")):
+        assert tenant.post("/api/payslips", json={"employee_id": emp["id"], "period_start": start, "period_end": end,
+                                                  "pay_date": end}).status_code == 200
+
+    def book(**params):
+        res = tenant.get("/api/payslips/register.xlsx", params=params)
+        assert res.status_code == 200, res.text
+        return res, openpyxl.load_workbook(io.BytesIO(res.content))
+
+    res, one = book(month="2026-09")
+    assert "Payroll_register_2026-09" in res.headers["content-disposition"] and one.sheetnames == ["Payroll register"]
+    res, span = book(from_month="2026-08", to_month="2026-09")
+    assert "2026-08_to_2026-09" in res.headers["content-disposition"] or "2026-08 to 2026-09" in res.headers["content-disposition"]
+    assert "By month" in span.sheetnames
+    months = [r[0] for r in span["By month"].iter_rows(min_row=2, values_only=True)]
+    assert months == ["Aug-26", "Sep-26", "Total"]
+    assert tenant.get("/api/payslips/register.xlsx", params={"month": "2027-01"}).status_code == 404
+    assert tenant.get("/api/payslips/register.xlsx", params={"month": "bad"}).status_code == 400
+
+
+def test_the_register_can_be_asked_for_a_range_of_dates(tenant):
+    import openpyxl
+    emp = make_employee(tenant, salary=1000.0)
+    for start, end, paid in (("2026-08-01", "2026-08-31", "2026-09-02"), ("2026-09-01", "2026-09-30", "2026-10-03")):
+        assert tenant.post("/api/payslips", json={"employee_id": emp["id"], "period_start": start, "period_end": end,
+                                                  "pay_date": paid}).status_code == 200
+
+    def rows(**params):
+        res = tenant.get("/api/payslips/register.xlsx", params=params)
+        assert res.status_code == 200, res.text
+        sheet = openpyxl.load_workbook(io.BytesIO(res.content)).active
+        return [r[1] for r in sheet.iter_rows(values_only=True) if r[0] and str(r[0]).startswith("PS-")]
+
+    assert rows(from_date="2026-09-01", to_date="2026-09-30") == ["Aug-26"]
+    assert rows(from_date="2026-09-03") == ["Sep-26"]
+    assert len(rows(from_date="2026-09-01", to_date="2026-10-31")) == 2
+    assert tenant.get("/api/payslips/register.xlsx", params={"from_date": "31/12"}).status_code == 400

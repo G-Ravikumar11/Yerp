@@ -7,6 +7,13 @@ export const payslipFile = (id: number, kind: 'pdf' | 'xlsx') => `/api/payslips/
 /** Many payslips in one Excel sheet, a row each with every column. */
 export const payrollRegister = (ids: number[]) => `/api/payslips/register.xlsx?ids=${ids.join(',')}`
 
+/** One month's payslips as a register, or (with `last`) every month from `first` to `last` in one file. */
+export const payrollMonthFile = (first: string, last?: string) =>
+  last && last !== first ? `/api/payslips/register.xlsx?from_month=${first}&to_month=${last}` : `/api/payslips/register.xlsx?month=${first}`
+
+/** The payslips paid between two dates (either may be left out), in one file. */
+export const payrollDatesFile = (from: string, to: string) => `/api/payslips/register.xlsx?from_date=${from}&to_date=${to}`
+
 export const payKeys = { all: ['payroll'] as const }
 const k = (...p: unknown[]) => ['payroll', ...p] as const
 
@@ -178,7 +185,19 @@ export const savePayslipLines = (id: number, lines: { id: number; amount: number
 export const reapplyStructure = (id: number) => put<{ message?: string }>(`/api/payslips/${id}`, { reapply_structure: true })
 
 export const createPayslip = (b: PayslipInput, allowOverlap: boolean) => post<{ message?: string }>(`/api/payslips${allowOverlap ? '?allow_overlap=true' : ''}`, b)
-export const runPayroll = (b: { period_start: string; period_end: string; pay_date: string }) => post<RunResult>('/api/payroll/run', { ...b, include_attendance_hours: true, skip_existing: true })
+export type RunPeriod = { period_start: string; period_end: string; pay_date: string }
+/** Figures HR may type over a previewed row; the rest follow from them and the salary structure. */
+export type RunOverride = Partial<Record<'bonus' | 'overtime_hours' | 'hours_worked' | 'tax_amount', number>>
+export interface PreviewRow {
+  employee_id: number; name: string; hours_worked: number; overtime_hours: number; bonus: number; tax_amount: number
+  basic_salary: number; allowances: number; gross_pay: number; total_deductions: number; net_pay: number
+  working_days: number | null; paid_days: number | null; lop_days: number | null
+}
+export interface PayrollPreview { rows: PreviewRow[]; skipped: { name: string; reason: string }[]; warnings: { name: string; reason: string }[]; total_gross: number; total_net: number }
+const runBody = (b: RunPeriod, employeeIds?: number[], overrides?: Record<number, RunOverride>) => ({ ...b, include_attendance_hours: true, skip_existing: true, employee_ids: employeeIds, overrides })
+/** What the run would pay each person, worked out and thrown away. Master or HR only, on the server. */
+export const previewPayroll = (b: RunPeriod, employeeIds?: number[], overrides?: Record<number, RunOverride>) => post<PayrollPreview>('/api/payroll/preview', runBody(b, employeeIds, overrides))
+export const runPayroll = (b: RunPeriod, employeeIds?: number[], overrides?: Record<number, RunOverride>) => post<RunResult>('/api/payroll/run', runBody(b, employeeIds, overrides))
 export const markPaid = (id: number) => post<{ message?: string }>(`/api/payslips/${id}/mark-paid`)
 export const reopenPayslip = (id: number) => post<{ message?: string }>(`/api/payslips/${id}/unmark-paid`)
 export const deletePayslip = (id: number, force: boolean) => del<{ message?: string }>(`/api/payslips/${id}${force ? '?force=true' : ''}`)
