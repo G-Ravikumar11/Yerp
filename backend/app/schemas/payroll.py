@@ -1,5 +1,5 @@
 """What the payroll endpoints are sent."""
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -32,3 +32,5 @@ class PayrollRunRequest(BaseModel):
     employee_ids: Optional[List[int]] = None
     include_attendance_hours: Optional[bool] = True
     skip_existing: Optional[bool] = True
+    # employee id -> figures HR typed over the previewed ones (bonus, overtime_hours, hours_worked, tax_amount)
+    overrides: Optional[Dict[int, Dict[str, Optional[float]]]] = None
