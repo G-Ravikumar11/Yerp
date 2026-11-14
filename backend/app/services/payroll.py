@@ -20,6 +20,10 @@ from app.services.holidays import custom_holidays
 from app.services.wallet_ai import require_credit
 
 
+# What HR may type over a worked-out figure in the payroll preview. Everything else follows from these and the salary structure.
+PAYROLL_RUN_OVERRIDES = ("bonus", "overtime_hours", "hours_worked", "tax_amount")
+
+
 def default_overtime_rate(emp):
     """The overtime rate for somebody with none of their own: the hourly rate they have, or twice the ordinary rate their salary makes."""
     if emp.hourly_rate:
@@ -150,12 +154,15 @@ def pay_period_days(db, client_id, emp, payslip):
 
 
 def generate_payroll(db, client_id, period_start, period_end, pay_date, employee_ids=None,
-                     include_attendance_hours=True, skip_existing=True):
+                     include_attendance_hours=True, skip_existing=True, overrides=None, dry_run=False):
     """Draft a payslip for everyone on the books for one pay period.
 
     The one place payroll is run, so the Run payroll button and the monthly
     automatic run can never disagree. Adds the payslips and charges the wallet
     but does not commit: the caller records its own audit entry and commits.
+
+    `overrides` maps an employee id to figures HR typed after previewing (PAYROLL_RUN_OVERRIDES); they replace the
+    worked-out ones. `dry_run` works every figure out and returns it with `rows`, adding nothing and charging nothing.
     """
     from app.services import payroll_month
     payroll_month.assert_open(db, client_id, payroll_month.month_of(period_end), payroll_month.month_of(period_start))
@@ -172,7 +179,8 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
     if not employees:
         raise HTTPException(status_code=400, detail="No payable employees match this payroll run")
 
-    created, skipped, warnings, total_net, total_gross = [], [], [], 0.0, 0.0
+    created, skipped, warnings, total_net, total_gross, rows = [], [], [], 0.0, 0.0, []
+    overrides = {int(k): v for k, v in (overrides or {}).items()}
     next_number = next_sequence_number(db, models.DBPayslip, client_id, "PS-")
     seq = int(next_number.split("-")[1])
 
@@ -216,6 +224,15 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
 
         emp = employee_on(db, emp, period_end, known)
         data = {"hours_worked": hours, "overtime_hours": ot_hours, "bonus": emp.bonus or 0, "allowances": emp.allowances or 0}
+        for key, val in (overrides.get(emp.id) or {}).items():
+            if key in PAYROLL_RUN_OVERRIDES and val is not None and val != "":
+                try:
+                    val = float(val)
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail="%s for %s %s must be a number." % (key, emp.first_name, emp.last_name))
+                if val < 0:
+                    raise HTTPException(status_code=400, detail="%s for %s %s cannot be negative." % (key, emp.first_name, emp.last_name))
+                data[key] = val
         days, lines = pay_basis(db, client_id, emp, period_start, period_end, data, settings=settings, holidays=holidays)
         if days and days["working_days"] > 0 and days["active_days"] <= 0:
             skipped.append({"employee_id": emp.id, "name": f"{emp.first_name} {emp.last_name}",
@@ -224,6 +241,21 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
         if days and lines is None:
             data["allowances"] = lop.prorated(data["allowances"], days["factor"])
         figures = compute_payslip_figures(emp, data, lines, tds_function(db, client_id, emp, period_end))
+        if dry_run:
+            rows.append({
+                "employee_id": emp.id, "name": f"{emp.first_name} {emp.last_name}",
+                "hours_worked": figures["hours_worked"], "overtime_hours": figures["overtime_hours"], "bonus": figures["bonus"],
+                "tax_amount": figures["tax_amount"], "basic_salary": figures["basic_salary"], "allowances": figures["allowances"],
+                "gross_pay": figures["gross_pay"], "total_deductions": figures["total_deductions"], "net_pay": figures["net_pay"],
+                "working_days": days["working_days"] if days else None, "paid_days": days["paid_days"] if days else None,
+                "lop_days": days["lop_days"] if days else None,
+            })
+            total_net += figures["net_pay"]
+            total_gross += figures["gross_pay"]
+            if figures["gross_pay"] <= 0:
+                warnings.append({"employee_id": emp.id, "name": f"{emp.first_name} {emp.last_name}",
+                                 "reason": "no salary and no hours recorded for this period - payslip is zero"})
+            continue
         ps = models.DBPayslip(
             client_id=client_id, employee_id=emp.id, number=f"PS-{seq:04d}",
             period_start=period_start, period_end=period_end, pay_date=pay_date,
@@ -250,12 +282,12 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
                 "reason": "no salary and no hours recorded for this period - payslip is zero",
             })
 
-    if created:
+    if created and not dry_run:
         # Priced per payslip; charged once for the batch so a part-run cannot
         # be billed twice.
         require_credit(db, client_id, "payroll_run", len(created),
                        f"{period_start}..{period_end}")
-    return {"created": created, "skipped": skipped, "warnings": warnings,
+    return {"created": created, "skipped": skipped, "warnings": warnings, "rows": rows,
             "total_gross": money(total_gross), "total_net": money(total_net)}
 
 

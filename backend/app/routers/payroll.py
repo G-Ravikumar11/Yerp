@@ -6,6 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
@@ -32,7 +33,7 @@ from app.schemas.payroll import PayrollRunRequest, PayslipCreate
 from app.services.email import TRACKING_PIXEL
 from app.services.salary_structure import (BASES, COUNTS_AS, KINDS, attach_lines, components, default_counts_as, ensure_structure,
                                            structure_lines)
-from app.services.payroll import pay_basis, record_days, compute_payslip_figures, find_overlapping_payslip, auto_payroll_enabled, generate_payroll, pay_period_days, set_auto_payroll
+from app.services.payroll import pay_basis, record_days, compute_payslip_figures, find_overlapping_payslip, auto_payroll_enabled, generate_payroll, pay_period_days, set_auto_payroll, PAYROLL_RUN_OVERRIDES
 from app.services.wallet_ai import require_credit
 from app.validators.common import validate_email_address
 
@@ -118,6 +119,30 @@ def create_payslip(request: Request, body: PayslipCreate, allow_overlap: bool = 
     return {"id": ps.id, "number": ps.number, "gross_pay": ps.gross_pay, "net_pay": ps.net_pay, "message": "Payslip created"}
 
 
+@router.post("/api/payroll/preview")
+def preview_payroll(request: Request, body: PayrollRunRequest, db: Session = Depends(get_db)):
+    """What a payroll run would pay each person, worked out and thrown away: nothing is saved or charged.
+
+    The Master or HR only (payroll.manage). HR changes figures in the answer and sends them back to /api/payroll/run as `overrides`."""
+    client = require_payroll_editor(request, db)
+    if not body.period_start or not body.period_end or not body.pay_date:
+        raise HTTPException(status_code=400, detail="Period start, period end and pay date are all required")
+    p_start, p_end = _parse_date(body.period_start), _parse_date(body.period_end)
+    if not p_start or not p_end:
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format")
+    if p_end < p_start:
+        raise HTTPException(status_code=400, detail="Period end cannot be before period start")
+    payroll_month.assert_open(db, client.id, payroll_month.month_of(body.period_end), payroll_month.month_of(body.period_start))
+    try:
+        result = generate_payroll(db, client.id, body.period_start, body.period_end, body.pay_date,
+                                  employee_ids=body.employee_ids, include_attendance_hours=body.include_attendance_hours,
+                                  skip_existing=body.skip_existing, overrides=body.overrides, dry_run=True)
+    finally:
+        db.rollback()
+    return {"rows": result["rows"], "skipped": result["skipped"], "warnings": result["warnings"],
+            "total_gross": result["total_gross"], "total_net": result["total_net"], "editable": list(PAYROLL_RUN_OVERRIDES)}
+
+
 @router.post("/api/payroll/run")
 def run_payroll(request: Request, body: PayrollRunRequest, db: Session = Depends(get_db)):
     """Generate payslips for a whole pay period in one transaction.
@@ -137,7 +162,7 @@ def run_payroll(request: Request, body: PayrollRunRequest, db: Session = Depends
     payroll_month.assert_open(db, client.id, payroll_month.month_of(body.period_end), payroll_month.month_of(body.period_start))
     result = generate_payroll(db, client.id, body.period_start, body.period_end, body.pay_date,
                               employee_ids=body.employee_ids, include_attendance_hours=body.include_attendance_hours,
-                              skip_existing=body.skip_existing)
+                              skip_existing=body.skip_existing, overrides=body.overrides)
     created, skipped, warnings = result["created"], result["skipped"], result["warnings"]
     total_net, total_gross = result["total_net"], result["total_gross"]
     log_audit(db, client.id, "payroll_run", "payslip", None, f"{body.period_start}..{body.period_end}",
@@ -458,11 +483,35 @@ def delete_salary_component(component_id: int, request: Request, db: Session = D
 
 
 @router.get("/api/payslips/register.xlsx")
-def download_payroll_register(request: Request, ids: str = "", db: Session = Depends(get_read_db)):
+def download_payroll_register(request: Request, ids: str = "", month: str = "", from_month: str = "", to_month: str = "",
+                              from_date: str = "", to_date: str = "", db: Session = Depends(get_read_db)):
     """Many payslips in one Excel sheet, a row each, with every column. `ids` is the payslips to include, comma
-    separated; none given means every payslip. Declared ahead of the payslip routes so it is not read as an id."""
+    separated. `month` (YYYY-MM) is one month's, `from_month` and `to_month` a stretch of months, void payslips left out;
+    none given means every payslip. Declared ahead of the payslip routes so it is not read as an id."""
     client = require_payroll_editor(request, db)
     query = db.query(models.DBPayslip).filter(models.DBPayslip.client_id == client.id)
+    if month.strip():
+        from_month = to_month = month
+    if from_month.strip() or to_month.strip():
+        first = payroll_month.clean_month(from_month or to_month)
+        last = payroll_month.clean_month(to_month or from_month)
+        if last < first:
+            first, last = last, first
+        query = query.filter(models.DBPayslip.status != "Void", models.DBPayslip.period_end >= first + "-01",
+                             models.DBPayslip.period_end <= last + "-31")
+    if from_date.strip() or to_date.strip():
+        # By the day each payslip is paid (its period's end when none is set), the same date the Payroll list filters on.
+        lo, hi = from_date.strip(), to_date.strip()
+        if (lo and not _parse_date(lo)) or (hi and not _parse_date(hi)):
+            raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format")
+        if lo and hi and hi < lo:
+            lo, hi = hi, lo
+        paid_on = func.coalesce(func.nullif(models.DBPayslip.pay_date, ""), models.DBPayslip.period_end)
+        query = query.filter(models.DBPayslip.status != "Void")
+        if lo:
+            query = query.filter(paid_on >= lo)
+        if hi:
+            query = query.filter(paid_on <= hi)
     if ids.strip():
         try:
             wanted = [int(x) for x in ids.split(",") if x.strip()]
@@ -479,6 +528,10 @@ def download_payroll_register(request: Request, ids: str = "", db: Session = Dep
         models.DBDepartment, models.DBDepartment.id == models.DBEmployee.department_id).filter(
         models.DBEmployee.id.in_({p.employee_id for p in slips})).all()
     by_emp = {emp.id: (emp, name or "") for emp, name in rows}
+    # By month, then by name, so each month is one block of people in the same order every time.
+    slips.sort(key=lambda p: (payroll_month.month_of(p.period_end, p.period_start, p.pay_date),
+                              ("%s %s" % (by_emp[p.employee_id][0].first_name, by_emp[p.employee_id][0].last_name)).lower()
+                              if p.employee_id in by_emp else "", p.number or ""))
     payloads = [payslip_payload(db, client, p, light=True, row=by_emp.get(p.employee_id)) for p in slips]
     months = sorted({(p.period_end or p.period_start or "")[:7] for p in slips} - {""})
     span = months[0] if len(months) == 1 else ("%s to %s" % (months[0], months[-1]) if months else "")

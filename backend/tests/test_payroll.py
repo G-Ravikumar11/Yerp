@@ -209,3 +209,21 @@ def test_payslips_are_tenant_scoped(client, tenant):
     })
     assert client.get(f"/api/payslips/{ps['id']}").status_code == 404
     assert client.delete(f"/api/payslips/{ps['id']}").status_code == 404
+
+
+def test_payroll_preview_saves_nothing_and_run_takes_the_typed_figures(tenant):
+    emp = make_employee(tenant, salary=1000.0, tax_rate=0.0)
+    period = {"period_start": "2026-07-01", "period_end": "2026-07-31", "pay_date": "2026-08-01", "employee_ids": [emp["id"]]}
+    before = len(tenant.get("/api/payslips").json())
+    seen = tenant.post("/api/payroll/preview", json=period)
+    assert seen.status_code == 200, seen.text
+    row = seen.json()["rows"][0]
+    assert row["employee_id"] == emp["id"] and row["bonus"] == 0
+    assert len(tenant.get("/api/payslips").json()) == before          # nothing was made
+    bumped = tenant.post("/api/payroll/preview", json={**period, "overrides": {str(emp["id"]): {"bonus": 500}}}).json()["rows"][0]
+    assert bumped["gross_pay"] == row["gross_pay"] + 500
+    refused = tenant.post("/api/payroll/preview", json={**period, "overrides": {str(emp["id"]): {"bonus": -1}}})
+    assert refused.status_code in (400, 409)
+    made = tenant.post("/api/payroll/run", json={**period, "overrides": {str(emp["id"]): {"bonus": 500}}})
+    assert made.status_code == 200, made.text
+    assert made.json()["created"][0]["gross_pay"] == bumped["gross_pay"]

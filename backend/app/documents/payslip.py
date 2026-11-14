@@ -331,10 +331,18 @@ def register_row(p, columns=None):
     for column in columns:
         value = cells.get(column)
         if column not in NOT_MONEY:
-            out.append(None if value in (None, "") else round(float(value), 2))
+            out.append(0.0 if value in (None, "") else round(float(value), 2))      # a 0 is shown as "-", never an empty cell
         else:
             out.append("" if value is None else value)
     return out
+
+
+def payslips_month_key(label):
+    """'Nov-26' as something that sorts by time."""
+    try:
+        return (int(label[-2:]), MONTHS.index(label[:3]))
+    except (ValueError, IndexError):
+        return (0, 0)
 
 
 def register_workbook(payloads, company="", span=""):
@@ -352,6 +360,7 @@ def register_workbook(payloads, company="", span=""):
         sheet.append([company])
     sheet.append(["Payroll register" + (" - %s" % span if span else "")])
     sheet.cell(row=1, column=1).font = Font(bold=True, size=13)
+    sheet.cell(row=sheet.max_row, column=1).font = Font(bold=True, size=13 if not company else 11)
     sheet.append([])
     header_row = sheet.max_row + 1
     sheet.append(columns)
@@ -368,16 +377,48 @@ def register_workbook(payloads, company="", span=""):
         if column not in NOT_MONEY and column != "Salary Per Month.":
             totals[i] = round(sum(r[i] or 0 for r in rows), 2)
     sheet.append(totals)
-    for cell in sheet[sheet.max_row]:
+    totals_row = sheet.max_row
+    for cell in sheet[totals_row]:
         cell.font = Font(bold=True)
+        cell.fill = grey
     for i, column in enumerate(columns, start=1):
         sheet.column_dimensions[get_column_letter(i)].width = max(12, min(30, len(column) + 4))
         if column not in NOT_MONEY:
             for r in range(header_row + 1, sheet.max_row + 1):
-                sheet.cell(row=r, column=i).number_format = "#,##0.##"
+                sheet.cell(row=r, column=i).number_format = '#,##0.00;[Red]-#,##0.00;"-"'
+                sheet.cell(row=r, column=i).alignment = Alignment(horizontal="right")
     sheet.column_dimensions[get_column_letter(columns.index("Name.") + 1)].width = 24
     # The payslip number, month, pay date and employee number stay in view while the rest scrolls.
     sheet.freeze_panes = sheet.cell(row=header_row + 1, column=5)
+    sheet.row_dimensions[header_row].height = 32
+    if rows:
+        sheet.auto_filter.ref = "A%d:%s%d" % (header_row, get_column_letter(len(columns)), header_row + len(rows))
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    sheet.print_title_rows = "%d:%d" % (header_row, header_row)
+    months = sorted({r[1] for r in rows if r[1]}, key=payslips_month_key)
+    if len(months) > 1:
+        # One line a month, so a long stretch can be read at a glance and checked against the register.
+        summary = book.create_sheet("By month")
+        summary.append(["Month", "Payslips", "Total Earnings", "Total Deductions", "Net Pay"])
+        for cell in summary[1]:
+            cell.font, cell.fill = Font(bold=True), grey
+        e, d, n = (columns.index(c) for c in ("Total Earnings", "Total Deductions", "Net Pay"))
+        for m in months:
+            mine = [r for r in rows if r[1] == m]
+            summary.append([m, len(mine), round(sum(r[e] or 0 for r in mine), 2), round(sum(r[d] or 0 for r in mine), 2),
+                            round(sum(r[n] or 0 for r in mine), 2)])
+        summary.append(["Total", len(rows), round(sum(r[e] or 0 for r in rows), 2), round(sum(r[d] or 0 for r in rows), 2),
+                        round(sum(r[n] or 0 for r in rows), 2)])
+        for cell in summary[summary.max_row]:
+            cell.font = Font(bold=True)
+        for col in "ABCDE":
+            summary.column_dimensions[col].width = 18
+        for row in summary.iter_rows(min_row=2, min_col=3, max_col=5):
+            for cell in row:
+                cell.number_format = '#,##0.00;[Red]-#,##0.00;"-"'
     out = io.BytesIO()
     book.save(out)
     return out.getvalue()

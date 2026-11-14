@@ -94,7 +94,7 @@ def test_the_automatic_run_leaves_a_locked_month_alone(tenant, locked):
     from app.services.payroll import generate_payroll
     s = database.SessionLocal()
     try:
-        client_id = s.query(models.DBPayrollMonth).first().client_id
+        client_id = s.query(models.DBPayrollMonth).order_by(models.DBPayrollMonth.id.desc()).first().client_id   # this test's company, the newest
         with pytest.raises(Exception) as caught:
             generate_payroll(s, client_id, SLIP["period_start"], SLIP["period_end"], SLIP["pay_date"])
         assert getattr(caught.value, "status_code", None) == 409
