@@ -30,7 +30,9 @@ export async function initMobile() {
     // 1. Android physical & gesture back button handling
     await App.addListener('backButton', ({ canGoBack }) => {
       // If there's an open dialog/drawer or history to pop, go back; otherwise minimize/exit
-      if (canGoBack && window.location.pathname !== '/' && window.location.pathname !== '') {
+      // A site story open over Home is in the address (?story=): back closes it rather than leaving the app.
+      const story = new URLSearchParams(window.location.search).has('story')
+      if (canGoBack && (story || (window.location.pathname !== '/' && window.location.pathname !== ''))) {
         window.history.back()
       } else {
         void App.exitApp()

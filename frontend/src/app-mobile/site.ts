@@ -7,6 +7,12 @@ export const useSite = create<{ id: number; set: (id: number) => void }>()(
   persist((set) => ({ id: 0, set: (id) => set({ id }) }), { name: 'yerp.site' }),
 )
 
+/** A site's two letters for its circle: the first letters of its first two words, or the first two of a single word. */
+export const letters = (name: string) => {
+  const w = name.trim().split(/\s+/).filter(Boolean)
+  return ((w.length > 1 ? w[0][0] + w[1][0] : (w[0] ?? '?').slice(0, 2)) || '?').toUpperCase()
+}
+
 /** The site in use: the one chosen, or - until one is chosen, or if it has finished - the first live one. */
 export function useCurrentSite() {
   const projects = useProjects()

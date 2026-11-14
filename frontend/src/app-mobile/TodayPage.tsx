@@ -8,7 +8,8 @@ import { today } from '@/lib/format'
 import { initials, useSession } from '@/lib/session'
 import { cn, compactINR } from '@/lib/utils'
 import { ClockPanel } from './ClockPanel'
-import { useCurrentSite, useSite } from './site'
+import { letters, useCurrentSite, useSite } from './site'
+import { StoriesRow } from './Stories'
 import { Label, Pill, roundBtn, Sheet } from './ui'
 
 const greeting = () => {
@@ -16,11 +17,6 @@ const greeting = () => {
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
 }
 
-/** A site's two letters for its circle: the first letters of its first two words, or the first two of a single word. */
-const letters = (name: string) => {
-  const w = name.trim().split(/\s+/).filter(Boolean)
-  return ((w.length > 1 ? w[0][0] + w[1][0] : (w[0] ?? '?').slice(0, 2)) || '?').toUpperCase()
-}
 const COLOURS = ['#2563eb', '#7c3aed', '#0891b2', '#059669', '#d97706', '#db2777']
 
 function Ring({ percent }: { percent: number }) {
@@ -87,6 +83,9 @@ export default function TodayPage() {
           {waiting > 0 && <span className="absolute right-2.5 top-2.5 size-2.5 rounded-full bg-danger ring-2 ring-card" />}
         </Link>
       </div>
+
+      {/* The sites' photos from their diaries, as stories. */}
+      <StoriesRow />
 
       {/* Today at a glance. */}
       <div className="relative overflow-hidden rounded-[26px] bg-[image:var(--app-grad)] p-4 text-white">

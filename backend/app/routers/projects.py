@@ -728,6 +728,11 @@ def delete_diary(diary_id: int, request: Request, db: Session = Depends(get_db))
     diary = diary_or_404(db, client.id, diary_id)
     if (diary.status or "DRAFT") != "DRAFT":
         raise HTTPException(409, "A signed off day cannot be deleted.")
+    # Its photos are site stories: the day stays until the Master or an admin has opened them (services/stories.py).
+    from app.services import stories
+    stories.keep_until_opened(request, db, client.id, [i for (i,) in db.query(models.DBFile.id).filter(
+        models.DBFile.client_id == client.id, models.DBFile.attached_type == "diary", models.DBFile.attached_id == diary.id).all()],
+        what="This day")
     db.query(models.DBDiaryLabour).filter(
         models.DBDiaryLabour.site_diary_id == diary.id).delete()
     db.query(models.DBDiaryPlant).filter(

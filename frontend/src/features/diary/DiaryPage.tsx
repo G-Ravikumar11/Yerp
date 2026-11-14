@@ -14,11 +14,12 @@ import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 /** The daily site record: who turned up, what the weather did, what got built and what stopped it. */
 export default function DiaryPage() {
-  // The phone's + sheet sends the site it is on (?job=) and asks for today's form (&today=1); the website just opens the page.
+  // The phone's + sheet sends the site it is on (?job=) and asks for today's form (&today=1); a site story asks for the day
+  // its photo is on (&day=); the website just opens the page.
   const [params, setParams] = useSearchParams()
   const [job, setJob] = useState(Number(params.get('job')) || 0)
   const wantsToday = useRef(params.get('today') === '1')
-  const [open, setOpen] = useState<number | 'new' | null>(null)
+  const [open, setOpen] = useState<number | 'new' | null>(Number(params.get('day')) || null)
   const [photos, setPhotos] = useState<DiaryRow | null>(null)
   const q = useDiaries(job)
   // Today's diary for that site: the day already started if there is one, else a new day.

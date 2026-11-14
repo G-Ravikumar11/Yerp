@@ -61,6 +61,10 @@ _SITE_EDIT = re.compile(r"^/api/store/inward/grn/\d+$")
 # Approving: the approvals inbox and any step that is a decision.
 _APPROVE = re.compile(r"^/api/approvals(/|$)|/(approve|reject|certify|decide|sign-off|signoff)$")
 
+# Opening a site story (services/stories.py): looking at a photo, which anybody who may see it may do. Noting it is the
+# only write under /api/stories that is open.
+_STORY_SEEN = re.compile(r"^/api/stories/\d+/seen$")
+
 # Asking for a link to a stored file (how the app hands a PDF to the phone's browser): a download, not an edit.
 _FILE_LINK = re.compile(r"^/api/files/\d+/link$")
 
@@ -99,7 +103,7 @@ def refusal(method, path, held):
         if low.endswith(_DOWNLOAD_EXCEL) and APP_EXCEL not in held:
             return _refuse(APP_EXCEL)
         return None
-    if _OWN.match(path):
+    if _OWN.match(path) or (method == "POST" and _STORY_SEEN.match(path)):
         return None
     if _FILE_LINK.match(path):
         return None if APP_PDF in held else _refuse(APP_PDF)

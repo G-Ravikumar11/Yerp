@@ -43,6 +43,7 @@ from app.core.tenant_settings import put_setting
 from app.documents.forms import _pre
 from app.documents.letterhead import DOC_SIGNATORIES, doc_seal, doc_signatories
 from app.services.crm import advance_paid, norm_name
+from app.services import stories
 from app.services.files import _check_sheet_rows, _sheet_kind, fy_quarter, sheet_overview
 
 
@@ -475,6 +476,8 @@ def delete_file(fid: int, request: Request, db: Session = Depends(get_db)):
         if locked:
             raise HTTPException(409, "That photo is on a signed-off diary day. It is part of the "
                                      "record now and stays.")
+    # A site story stays until the Master or an admin has opened it (services/stories.py).
+    stories.keep_until_opened(request, db, client.id, [f.id])
     if db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.file_id == f.id).first():
         raise HTTPException(409, "That file is a drawing revision on the register; it stays as issued.")
     log_audit(db, client.id, "file_removed", f.attached_type, f.attached_id or 0, f.name, "", request)
