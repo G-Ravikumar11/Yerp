@@ -1,3 +1,4 @@
+import { roundTo } from '@/lib/utils'
 import { Input, Select } from '@/components/ui'
 import { useItemUoms, type UomOption } from '@/api/store'
 
@@ -23,7 +24,7 @@ export function baseQty(qty: string, uom: string, uoms: UomOption[]): string | n
   const n = Number(qty)
   const factor = uoms.find((u) => u.code.toLowerCase() === uom.toLowerCase())?.to_base_factor
   if (!qty.trim() || !Number.isFinite(n) || !factor) return null
-  return (n * factor).toFixed(3)
+  return roundTo(n * factor, 3).toFixed(3)
 }
 
 /** A quantity and the unit it is counted in, with the item's own units to pick from. */

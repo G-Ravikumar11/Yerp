@@ -1,3 +1,4 @@
+import { roundTo } from '@/lib/utils'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -33,7 +34,7 @@ let seq = 1
 const blank = (): Row => ({ key: seq++, po_line_id: null, item: null, label: '', hint: '', qty: { qty: '', uom: '' }, rate: '', rejected: '', reason: '', batch: '', made: '', expiry: '', autoExpiry: false })
 /** Shelf life is asked for consumables and batch-tracked items - cement, admixtures, epoxies. */
 const hasShelfLife = (r: Row) => r.item?.category === 'CONSUMABLE' || !!r.item?.batch_tracked
-const asNumber = (n: number) => (Number.isFinite(n) ? String(Math.round(n * 10000) / 10000) : '')
+const asNumber = (n: number) => (Number.isFinite(n) ? String(roundTo(n, 4)) : '')
 
 /** A goods receipt: against a purchase order (its lines are offered, with what is still to come) or, for a cash purchase, free lines. */
 /** `base`: the list it returns to - the Store Hub's receipts unless opened from Store > Receive. */

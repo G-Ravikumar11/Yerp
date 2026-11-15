@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 
 from app import models
-from app.core.currency import money, unit_rate
+from app.core.currency import money, qty3, unit_rate
 from app.models.store_core import DBStore, DocStatus, InvalidMovementError
 from app.models.store_inward import OPENING, DBStoreOpening
 
@@ -156,7 +156,7 @@ def run(db, actor, cutover_date, mapping):
             got[0], got[1] = got[0] + r["on_hand"], got[1] + r["value"]
     carried = []
     for sid, items in into.items():
-        rows = [SimpleNamespace(item_id=iid, uom=uom, qty=Decimal(str(money(qty))),
+        rows = [SimpleNamespace(item_id=iid, uom=uom, qty=Decimal(str(qty3(qty))),
                                 rate=Decimal(str(unit_rate(value / qty))) if qty else Decimal("0"))
                 for iid, (qty, value, uom) in items.items() if qty > 0]
         if not rows:

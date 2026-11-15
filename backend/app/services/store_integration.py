@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from sqlalchemy import case, func
 
+from app.core.currency import money, qty3, unit_rate
 from app import models
 from app.models.store_core import DBStore, DBStoreStockLedger, MovementType
 from app.schemas.store_contracts import MaterialCostLine, PoLineReceipt
@@ -218,8 +219,8 @@ def current_stock(db, client_id, codes=None):
     out = {}
     for code, name, uom, qty, value in q.group_by(models.DBItem.item_code, models.DBItem.item_name, models.DBItem.units_of_measure).all():
         on_hand, worth = float(qty or 0), float(value or 0)
-        out[code] = {"item_code": code, "item_name": name or "", "uom": uom or "", "on_hand": round(on_hand, 3),
-                     "value": round(worth, 2), "rate": round(worth / on_hand, 4) if on_hand else 0.0}
+        out[code] = {"item_code": code, "item_name": name or "", "uom": uom or "", "on_hand": qty3(on_hand),
+                     "value": money(worth), "rate": unit_rate(worth / on_hand) if on_hand else 0.0}
     return out
 
 
@@ -275,5 +276,5 @@ def hub_debit_notes(db, po_ids):
                   .filter(DBStoreGrn.po_id.in_(ids), DBStorePurchaseReturn.status == DocStatus.POSTED.value).order_by(DBStorePurchaseReturn.id).all()):
         value, tax = float(r.debit_value or 0), float(r.tax_value or 0)
         out.setdefault(po, []).append({"id": r.id, "number": r.number, "date": r.return_date.isoformat() if r.return_date else "",
-                                       "value": round(value, 2), "tax": round(tax, 2), "total": round(value + tax, 2)})
+                                       "value": money(value), "tax": money(tax), "total": money(value + tax)})
     return out

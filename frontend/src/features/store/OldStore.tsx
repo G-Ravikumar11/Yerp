@@ -6,7 +6,7 @@ import { Badge, Button, Card, Field, Input, Modal, Select } from '@/components/u
 import { get, post, ApiError } from '@/lib/api'
 import { formatDate, formatQty, today } from '@/lib/format'
 import { useSession } from '@/lib/session'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 
 interface Cutover { cutover_date: string; done_by_name: string; done_at: string; carried: { store: string; opening: string; lines: number; value: number }[] }
@@ -117,7 +117,7 @@ function MoveForm({ onDone }: { onDone: () => void }) {
                 <tr key={r.item_code} className="border-t border-border">
                   <td className="px-3 py-1.5">{r.item_name || r.item_code}<div className="text-xs text-muted-foreground">{r.item_code}</div>{r.problem && <div className="text-xs text-danger">{r.problem}</div>}</td>
                   <td className="px-3 py-1.5 text-right tabular">{formatQty(r.on_hand)} {r.uom}</td>
-                  <td className="px-3 py-1.5 text-right tabular">{formatINR(r.rate)}</td>
+                  <td className="px-3 py-1.5 text-right tabular">{formatRate(r.rate)}</td>
                   <td className="px-3 py-1.5 text-right tabular">{formatINR(r.value)}</td>
                 </tr>
               ))}</tbody>

@@ -1,3 +1,4 @@
+import { roundTo } from '@/lib/utils'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Trash2 } from 'lucide-react'
@@ -24,7 +25,7 @@ export default function ItemLinesForm({ kind, doc }: { kind: 'client-supply' | '
       ? (doc?.lines ?? []).map((l) => {
           const factor = Number(l.entry_qty) ? Number(l.qty) / Number(l.entry_qty) : 1
           return { key: seq++, item: { id: l.item_id, code: l.item_code, name: l.item_name, base_uom: l.base_uom, uoms: [], category: null }, qty: { qty: String(Number(l.entry_qty)), uom: l.entry_uom },
-            rate: Number(l.rate) ? String(Math.round(Number(l.rate) * factor * 10000) / 10000) : '' }
+            rate: Number(l.rate) ? String(roundTo(Number(l.rate) * factor, 4)) : '' }
         })
       : [blank()],
   )
