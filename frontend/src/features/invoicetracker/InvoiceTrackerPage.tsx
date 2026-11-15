@@ -11,6 +11,7 @@ import {
 import { countStock, stockKeys } from '@/api/stock'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
+import { BillFromReceipt } from './BillFromReceipt'
 import { formatINR } from '@/lib/utils'
 
 type Tab = 'summary' | 'invoices' | 'materials' | 'rmc' | 'stock'
@@ -90,6 +91,7 @@ export default function InvoiceTrackerPage() {
     { id: 'p', header: 'Invoice amount', align: 'right', cell: (i) => (edit ? <EditCell label={`Amount on the supplier's bill ${i.invoice_number || i.grn}`} type="number" value={i.invoice_amount ?? ''} align="right" width="w-32" onSave={(v) => invoice.mutate(v === '' ? { grnId: i.grn_id, clear_amount: true } : { grnId: i.grn_id, invoice_amount: Number(v) })} /> : i.invoice_amount == null ? '-' : formatINR(i.invoice_amount)) },
     { id: 'rm', header: 'Remarks', hideBelow: 'xl', cell: (i) => (edit ? <EditCell label={`Remark on invoice ${i.invoice_number || i.grn}`} value={i.remark} width="w-48" onSave={(v) => invoice.mutate({ grnId: i.grn_id, remark: v })} /> : i.remark) },
     { id: 'x', header: 'Difference', align: 'right', cell: (i) => (i.difference == null ? <span className="text-xs text-muted-foreground">not checked</span> : Math.abs(i.difference) < 1 ? <Badge tone="success" dot>matches</Badge> : <Badge tone="danger" dot>{formatINR(i.difference)}</Badge>) },
+    { id: 'bill', header: 'Bill', align: 'right', cell: (i) => <BillFromReceipt grnId={i.grn_id} bills={i.bills ?? []} billable={i.billable} /> },
   ]
 
   const stockCols: TableColumn<StockItem>[] = [

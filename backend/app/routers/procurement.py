@@ -14,9 +14,8 @@ from app.constants.common import GRN_EDITABLE, PURCHASE_ORDER_STATUSES
 from app.core.audit import log_audit
 from app.core.queries import by_id
 from app.core.auth import require_erp_read, require_items_access, session_employee, wo_actor
-from app.core.currency import amount_in_words, inr, money, tax_percent_of, unit_rate
-from app.core.dates import days_after
-from app.core.serials import allocate_grn_number, allocate_po_number, next_sequence_number
+from app.core.currency import amount_in_words, inr, money, unit_rate
+from app.core.serials import allocate_grn_number, allocate_po_number
 from app.core.sheets import sheet_response
 from app.documents import form_pdf
 from app.documents.forms import _pre, form_pdf_response, po_form_spec, rfq_comparison_form_spec
@@ -49,11 +48,10 @@ from app.services.procurement import (
     rfq_line_rows,
     rfq_list_rows,
     rfq_or_404,
-    supplier_payment_days,
 )
 from app.core.units import canonical_unit
 from app.services.projects import job_or_404, resolve_job_id
-from app.services import late_delivery, rate_contracts, supplier_scorecard  # noqa: F401  (register their scheduled jobs)
+from app.services import late_delivery, rate_contracts, receipt_bills, supplier_scorecard  # noqa: F401  (register their scheduled jobs)
 from app.services.store_cutover import refuse_if_moved
 from app.services.stores import boq_material_required, material_required
 from app.services.subcontract_orders import work_order_or_404
@@ -598,91 +596,9 @@ def bill_from_receipt(grn_id: int, request: Request, body: dict = None,
     match then reports a difference nobody caused.
     """
     client, actor_id, actor_name = grn_actor(request, db)
-    grn = grn_or_404(db, client.id, grn_id)
-    if (grn.status or "") != "POSTED":
-        raise HTTPException(
-            409, "Post the receipt first. A bill drawn from a draft is a bill "
-                 "for material nobody has confirmed arrived.")
-
-    existing = db.query(models.DBBill).filter(
-        models.DBBill.client_id == client.id,
-        models.DBBill.reference == (grn.number or "")).first()
-    if existing and (grn.number or ""):
-        raise HTTPException(
-            409, "%s already has a bill (%s). Two bills against one delivery "
-                 "is how a supplier gets paid twice."
-                 % (grn.number, existing.number or "unnumbered"))
-
-    lines = [l for l in db.query(models.DBGoodsReceiptLine).filter(
-        models.DBGoodsReceiptLine.goods_receipt_id == grn.id).all()
-        if (l.accepted_qty or 0) > 0]
-    if not lines:
-        raise HTTPException(
-            400, "Nothing on this receipt was accepted, so there is nothing "
-                 "to pay for.")
-
-    amount = money(sum((l.accepted_qty or 0) * unit_rate(l.rate) for l in lines))
-    # GST at the rate each line was ordered at. The bill used to carry none,
-    # so a supplier's invoice for 2.37 lakh was booked at the 1.85 lakh of
-    # goods alone: the payable, the ledger and the input credit all short.
-    po_lines = db.query(models.DBPurchaseOrderLineItem).filter(
-        models.DBPurchaseOrderLineItem.order_id == grn.purchase_order_id).all()
-    po_rates = {pl.id: (pl.tax_rate or "0%") for pl in po_lines}
-    po = db.query(models.DBPurchaseOrder).filter(
-        models.DBPurchaseOrder.id == grn.purchase_order_id).first()
-    # The lines' own rates, where they account for the tax the order was
-    # actually agreed at. Orders saved before a rate was asked for carry a
-    # label that does not; for those the order's own rate is the one used.
-    by_lines = money(sum((pl.qty or 0) * (pl.price or 0) * tax_percent_of(pl.tax_rate) / 100.0
-                         for pl in po_lines))
-    agreed_tax = money(po.tax_amount or 0) if po else 0.0
-    if po and abs(by_lines - agreed_tax) > 1.0:
-        flat = round(agreed_tax / po.amount * 100.0, 2) if po.amount else 0.0
-        po_rates = {k: "%g%%" % flat for k in po_rates}
-    rate_of = {l.id: po_rates.get(l.po_line_id, "0%") for l in lines}
-    tax = money(sum((l.accepted_qty or 0) * unit_rate(l.rate) * tax_percent_of(rate_of[l.id]) / 100.0
-                    for l in lines))
-    body = body or {}
-    bill = models.DBBill(
-        client_id=client.id, job_id=grn.job_id,
-        number=next_sequence_number(db, models.DBBill, client.id, "BILL-"),
-        vendor_name=grn.supplier_name or "",
-        issue_date=datetime.now().strftime("%Y-%m-%d"),
-        # Undated, a bill is filed as the oldest debt there is; the supplier's
-        # own terms say when it is really due.
-        due_date=(body.get("due_date") or days_after(
-            datetime.now().strftime("%Y-%m-%d"),
-            supplier_payment_days(db, client.id, grn.supplier_name))),
-        amount=amount, tax_amount=tax, total=money(amount + tax),
-        status="Draft", category="material",
-        reference=grn.number or "",
-        notes="Raised from %s%s" % (grn.number or "a receipt",
-                                    " - challan %s" % grn.challan_number
-                                    if grn.challan_number else ""),
-        purchase_order_id=grn.purchase_order_id)
-    db.add(bill)
-    db.flush()
-    for l in lines:
-        db.add(models.DBBillLineItem(
-            bill_id=bill.id, po_line_id=l.po_line_id,
-            description=l.description or l.item_code or "",
-            qty=money(l.accepted_qty), price=unit_rate(l.rate),
-            tax_rate=rate_of[l.id] or "0%"))
-    log_audit(db, client.id, "bill_from_receipt", "bill", bill.id,
-              bill.number or "", "%s %s" % (grn.number, inr(amount)), request)
-    db.commit()
-    db.refresh(bill)
-    return {"ok": True, "bill": {"id": bill.id, "number": bill.number or "",
-                                 "vendor_name": bill.vendor_name or "",
-                                 "total": money(bill.total),
-                                 "status": bill.status or "",
-                                 "reference": bill.reference or "",
-                                 "purchase_order_id": bill.purchase_order_id},
-            "message": "%s drawn up for %s from what actually arrived - %s "
-                       "across %d line%s%s." % (bill.number, bill.vendor_name,
-                                                inr(amount), len(lines),
-                                                "" if len(lines) == 1 else "s",
-                                                (", %s with GST" % inr(amount + tax)) if tax else "")}
+    if grn_id <= 0:
+        raise HTTPException(404, "Goods receipt not found")
+    return receipt_bills.bill_from_receipt(db, client.id, grn_id, body, request)
 
 
 @router.get("/api/suppliers")

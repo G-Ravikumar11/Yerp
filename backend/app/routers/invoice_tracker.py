@@ -15,12 +15,15 @@ from app.documents.tracker_xlsx import build_workbook
 from app.db import get_db
 from app.models.store_inward import DBStoreGrn, DBStoreGrnLine
 from app.services.invoice_tracker import DEFAULT_GST, DEFAULT_MARKUP, build_tracker
+from app.services.receipt_bills import bill_from_receipt, receipt_bill_state
 
 router = APIRouter()
 
 # Looking is for anyone who works with purchases or the store; keying in what a supplier's bill says is for the store.
 SEE = ("stores.receive", "stores.manage", "purchase.manage", "bills.view_all")
 KEEP = ("stores.receive", "stores.manage", "purchase.manage")
+# Drawing a draft bill from a receipt is for the store, purchase or accounts; accounts then check and accept it.
+BILL = KEEP + ("accounts.manage", "bills.pay", "store.inward.post", "store.admin")
 
 
 class InvoiceIn(BaseModel):
@@ -108,6 +111,20 @@ def save_invoice(grn_id: int, body: InvoiceIn, request: Request, db: Session = D
         note.remark = body.remark.strip()[:1000]
     db.commit()
     return {"ok": True}
+
+
+@router.get("/api/invoice-tracker/invoices/{grn_id}/bill")
+def receipt_bill(grn_id: int, request: Request, db: Session = Depends(get_db)):
+    """The bills drawn from one receipt and whether any of it is left to bill. A negative id is a Store Hub receipt."""
+    client = require_items_access(request, db, SEE + BILL)
+    return receipt_bill_state(db, client.id, grn_id)
+
+
+@router.post("/api/invoice-tracker/invoices/{grn_id}/bill")
+def create_bill_from_receipt(grn_id: int, request: Request, body: Optional[dict] = None, db: Session = Depends(get_db)):
+    """A draft supplier bill from a posted receipt, for accounts to check and accept. A negative id is a Store Hub receipt."""
+    client = require_items_access(request, db, BILL)
+    return bill_from_receipt(db, client.id, grn_id, body, request)
 
 
 @router.put("/api/invoice-tracker/blocks/{line_id}")

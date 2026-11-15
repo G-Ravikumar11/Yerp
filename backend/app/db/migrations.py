@@ -255,6 +255,8 @@ ACCOUNTS_COLUMNS = (
     # A site expense entered by the Master or a colleague of theirs, who may not then approve it.
     ("site_cash_expenses", "submitted_by_master", "BOOLEAN DEFAULT FALSE"),
     ("site_cash_expenses", "submitted_by_member", "INTEGER"),
+    # A supplier bill drawn from a goods receipt, and the receipt line each of its lines bills (signed: minus for the Hub).
+    ("bills", "grn_id", "INTEGER"), ("bill_line_items", "grn_line_id", "INTEGER"),
 )
 
 QUALITY_COLUMNS = (

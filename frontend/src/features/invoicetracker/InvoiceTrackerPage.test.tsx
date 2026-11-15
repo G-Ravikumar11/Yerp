@@ -9,7 +9,7 @@ const calls: { url: string; method: string; body?: unknown }[] = []
 const tracker: Tracker = {
   job_id: 0, gst_percent: 18, markup_percent: 20,
   summary: { rows: [{ category: 'Plumbing', purchase_amount: 11800, wo_amount: 9000, wo_suggested: 9000, wo_source: 'work orders', difference: -2800, remarks: '' }], purchase_amount: 11800, wo_amount: 9000, difference: -2800 },
-  invoices: [{ grn_id: 7, grn: 'GRN-0001', supplier: 'Sudhakar PVC', invoice_number: 'SSMA-2718', invoice_date: '', received_on: '2026-01-02', po_number: 'PO-1', vehicle: '', amount: 10000, gst: 1800, freight: 0, insurance: 0, hamali: 0, total: 11800, trades: ['Plumbing'], remark: 'SOME COILS NOT RECEIVED', invoice_amount: 11000, difference: -800 }],
+  invoices: [{ grn_id: 7, grn: 'GRN-0001', supplier: 'Sudhakar PVC', invoice_number: 'SSMA-2718', invoice_date: '', received_on: '2026-01-02', po_number: 'PO-1', vehicle: '', amount: 10000, gst: 1800, freight: 0, insurance: 0, hamali: 0, total: 11800, trades: ['Plumbing'], remark: 'SOME COILS NOT RECEIVED', invoice_amount: 11000, difference: -800, bills: [], billable: true }],
   categories: [{ name: 'Plumbing', invoice_ids: [7], total: 10000, gst: 1800, with_gst: 11800, markup: 2000, with_markup: 12000, working_total: 7000, note: 'Balance to come', footer: [{ grn_id: 7, amount: 10000, gst: 1800, total: 11800, freight: 0, insurance: 0, hamali: 0, invoice_amount: 11000, difference: -800, whole: true, remark: 'SOME COILS NOT RECEIVED' }], materials: [
     { key: 'PL-1', sl: 1, item_code: 'PL-1', description: '75MM PVC pipe', uom: 'Nos', total_qty: 100, total_amount: 10000, total_rate: 100, avg_rate: 100, working_rate: 70, working_amount: 7000, on_hand: 40, counted: true, cells: [{ grn_id: 7, qty: 100, rate: 100, amount: 10000 }] },
     { key: 'PL-9', sl: 2, item_code: 'PL-9', description: 'Gully trap', uom: 'Nos', total_qty: 0, total_amount: 0, total_rate: 0, avg_rate: 0, working_rate: null, working_amount: null, on_hand: 0, counted: false, cells: [] },
@@ -66,6 +66,13 @@ describe('Invoice Tracker', () => {
     await userEvent.clear(amount)
     await userEvent.tab()
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ clear_amount: true }))
+  })
+
+  it('draws a draft bill from a receipt that has none yet', async () => {
+    mount()
+    await userEvent.click(await screen.findByRole('tab', { name: /^Invoices/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /Create bill/ }))
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.url).toBe('/api/invoice-tracker/invoices/7/bill'))
   })
 
   it('lays each material out against its supplier invoices', async () => {

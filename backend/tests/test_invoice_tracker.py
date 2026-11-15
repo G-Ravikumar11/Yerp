@@ -318,3 +318,37 @@ def test_ready_mix_is_not_given_a_materials_sheet(tenant):
     delivered(tenant, "LM-8", "RMC M15 concrete", "RMC", 7, 3500)
     names = workbook_of(tenant).sheetnames
     assert "RMC" not in names and "Ready-mix" in names
+
+
+def test_a_receipt_on_the_tracker_becomes_a_draft_bill_with_its_charges(tenant):
+    grn = delivered(tenant, "PL-9", "PVC tee", "Plumbing", 20, 50, invoice_number="SP-11")             # 1,000
+    tenant.put("/api/invoice-tracker/invoices/%d" % grn["id"], json={"invoice_date": "2026-11-02", "freight": 120, "hamali": 30})
+    inv = tenant.get("/api/invoice-tracker").json()["invoices"][0]
+    assert inv["billable"] is True and inv["bills"] == []
+
+    res = tenant.post("/api/invoice-tracker/invoices/%d/bill" % grn["id"])
+    assert res.status_code == 200, res.text
+    bill = res.json()["bill"]
+    full = tenant.get("/api/bills/%d" % bill["id"]).json()
+    assert full["status"] == "Draft" and full["issue_date"] == "2026-11-02" and full["purchase_order_id"] == grn["purchase_order_id"]
+    assert full["amount"] == 1150, "the goods and the bill's freight and hamali, as the tracker adds them"
+
+    inv = tenant.get("/api/invoice-tracker").json()["invoices"][0]
+    assert inv["billable"] is False and [b["number"] for b in inv["bills"]] == [bill["number"]]
+    again = tenant.post("/api/invoice-tracker/invoices/%d/bill" % grn["id"])
+    assert again.status_code == 409 and "already has a bill" in again.json()["detail"]
+    # The store's own button on the receipt is refused too.
+    assert tenant.post("/api/grn/%d/bill" % grn["id"], json={}).status_code == 409
+
+
+def test_a_receipt_billed_before_bills_named_their_receipt_is_not_offered_again(tenant):
+    grn = delivered(tenant, "PL-10", "PVC cap", "Plumbing", 5, 10)
+    bill = tenant.post("/api/grn/%d/bill" % grn["id"], json={}).json()["bill"]
+    from app import db as database, models
+    with database.SessionLocal() as s:                       # as a bill drawn before this change was saved
+        s.get(models.DBBill, bill["id"]).grn_id = None
+        s.query(models.DBBillLineItem).filter(models.DBBillLineItem.bill_id == bill["id"]).update({"grn_line_id": None})
+        s.commit()
+    inv = tenant.get("/api/invoice-tracker").json()["invoices"][0]
+    assert inv["billable"] is False and inv["bills"][0]["id"] == bill["id"]
+    assert tenant.post("/api/invoice-tracker/invoices/%d/bill" % grn["id"]).status_code == 409

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { get, put } from '@/lib/api'
+import { get, post, put } from '@/lib/api'
 
 export const trackerKeys = { all: ['invoice-tracker'] as const }
 
@@ -7,7 +7,10 @@ export interface TrackerInvoice {
   grn_id: number; grn: string; supplier: string; invoice_number: string; invoice_date: string; received_on: string
   po_number: string; vehicle: string; amount: number; gst: number; freight: number; insurance: number; hamali: number; total: number; trades: string[]; remark: string
   invoice_amount: number | null; difference: number | null
+  /** Draft bills drawn from this receipt, and whether any accepted quantity is not on one yet. */
+  bills: ReceiptBill[]; billable: boolean
 }
+export interface ReceiptBill { id: number; number: string; status: string; total: number }
 export interface SummaryRow { category: string; purchase_amount: number; wo_amount: number; wo_suggested: number; wo_source: '' | 'typed' | 'work orders'; difference: number; remarks: string }
 export interface MaterialCell { grn_id: number; qty: number; rate: number; amount: number }
 export interface Material {
@@ -43,3 +46,8 @@ export const saveInvoice = ({ grnId, ...body }: InvoiceEdit & { grnId: number })
 export const saveBlock = ({ lineId, block }: { lineId: number; block: string }) => put<{ ok: boolean }>(`/api/invoice-tracker/blocks/${lineId}`, { block })
 export const saveWorkingRate = (b: { job_id: number; item_key: string; rate: number | null }) => put<{ ok: boolean }>('/api/invoice-tracker/working-rates', b)
 export const saveCategory = (b: { job_id: number; category: string; wo_amount?: number; remarks?: string }) => put<{ ok: boolean }>('/api/invoice-tracker/categories', b)
+
+/** A receipt's id as the tracker keys it: an old store receipt's own id, or minus a Store Hub receipt's. */
+export const useReceiptBill = (grnId: number, enabled = true) =>
+  useQuery({ queryKey: [...trackerKeys.all, 'bill', grnId], enabled, queryFn: () => get<{ grn_id: number; posted: boolean; bills: ReceiptBill[]; billable: boolean }>(`/api/invoice-tracker/invoices/${grnId}/bill`) })
+export const billFromReceipt = (grnId: number) => post<{ ok: boolean; message: string; bill: ReceiptBill }>(`/api/invoice-tracker/invoices/${grnId}/bill`)

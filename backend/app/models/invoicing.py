@@ -200,6 +200,9 @@ class DBBill(Base):
     # The order this bill is settling, when there was one. Matching the two is
     # what turns "approved after the fact" into "we agreed this beforehand".
     purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=True, index=True)
+    # The goods receipt it was drawn from (services/receipt_bills.py), signed as the invoice tracker keys receipts: an old
+    # store receipt's id, or minus a Store Hub receipt's. Not a foreign key, since it may point at either table.
+    grn_id = Column(Integer, nullable=True, index=True)
 
     # The tax split as the supplier charged it, set when the bill is saved (from their GSTIN's state against ours, or
     # as typed). NULL on a bill saved before the split was kept: the input register then works it out as it used to.
@@ -225,6 +228,8 @@ class DBBillLineItem(Base):
     bill_id = Column(Integer, ForeignKey("bills.id"), index=True)
     po_line_id = Column(Integer, ForeignKey("purchase_order_line_items.id"),
                         nullable=True, index=True)
+    # The receipt line this line bills, signed like DBBill.grn_id. What stops one delivery being billed twice.
+    grn_line_id = Column(Integer, nullable=True, index=True)
     description = Column(String, default="")
     qty = Column(Float, default=1.0)
     price = Column(Float, default=0.0)

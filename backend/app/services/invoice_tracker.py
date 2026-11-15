@@ -13,6 +13,7 @@ from app import models
 from app.constants.subcontract_orders import WO_COMMITTED_STATUSES
 from app.core.currency import money, unit_rate
 from app.core.queries import by_id, prime
+from app.services.receipt_bills import QTY_SLACK, billed_qty, bills_by_receipt, older_bills
 from app.services.store_integration import current_stock
 
 DEFAULT_GST = 18.0
@@ -162,6 +163,11 @@ def build_tracker(db, client_id, job_id=0, gst_percent=DEFAULT_GST, markup_perce
     working = {w.item_key: w.rate for w in db.query(M.DBTrackerWorkingRate).filter(
         M.DBTrackerWorkingRate.client_id == client_id, M.DBTrackerWorkingRate.job_id == (job_id or 0)).all()}
     awarded = work_order_values(db, client_id, job_id)
+    drawn = bills_by_receipt(db, client_id, grn_ids)
+    older = older_bills(db, client_id, grns)
+    for gid, b in older.items():
+        drawn.setdefault(gid, []).insert(0, {"id": b.id, "number": b.number or "", "status": b.status or "", "total": money(b.total)})
+    billed = billed_qty(db, client_id, [l.id for l in lines])
 
     gst = float(gst_percent or 0) / 100.0
     by_grn = {}
@@ -193,6 +199,9 @@ def build_tracker(db, client_id, job_id=0, gst_percent=DEFAULT_GST, markup_perce
             "vehicle": g.vehicle_number or "", "amount": basic, "gst": tax, "freight": freight,
             "insurance": insurance, "hamali": hamali, "total": total, "trades": trades,
             "remark": remarks.get(g.id) or "",
+            # The draft bills drawn from this receipt, and whether any accepted quantity is not on one yet.
+            "bills": drawn.get(g.id, []),
+            "billable": g.id not in older and any((l.accepted_qty or 0) - billed.get(l.id, 0.0) > QTY_SLACK for l in gl),
             "invoice_amount": None if printed is None else money(printed),
             "difference": None if printed is None else money(printed - total),
         })

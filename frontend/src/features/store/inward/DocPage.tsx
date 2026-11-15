@@ -7,6 +7,8 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useSession } from '@/lib/session'
 import { useAction } from '@/lib/mutate'
 import { storeDelete, storePerm, storePost } from '@/api/store'
+import { useReceiptBill } from '@/api/invoiceTracker'
+import { BILL_FROM_RECEIPT, BillFromReceipt } from '@/features/invoicetracker/BillFromReceipt'
 import { ATTACH_TYPE, AttachButton, DocActionsBar, DocStatusBadge, type DocAction } from '../shared'
 import { dmy, inwardKeys, kindOf, money, num, useDoc, usePoOptions, type Doc, type DocLine, type InwardKind } from './api'
 
@@ -26,6 +28,8 @@ export default function DocPage({ kindKey, base }: { kindKey?: InwardKind; base?
   const [discarding, setDiscarding] = useState(false)
   const [linking, setLinking] = useState(false)
   const doc = q.data
+  // A posted receipt can become the supplier's draft bill. The tracker keys a Store Hub receipt by minus its id.
+  const billState = useReceiptBill(-Number(id), (kindKey ?? key) === 'grn' && doc?.status === 'POSTED' && can(`${BILL_FROM_RECEIPT}|bills.view_all`))
   const run = useAction(({ action, reason }: { action: DocAction; reason?: string }) => storePost<Doc>('inward', `/${kind?.key}/${id}/${action}`, { reason: reason ?? '' }), {
     invalidate: [[...inwardKeys.all], ['store', 'enquiry'], ['store', 'lookup']],
     success: (d, v) => ({ submit: 'Submitted', approve: 'Approved', post: 'Posted to stock', cancel: 'Cancelled' })[v.action] + (d.number ? ` - ${d.number}` : ''),
@@ -100,6 +104,7 @@ export default function DocPage({ kindKey, base }: { kindKey?: InwardKind; base?
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isGrn && doc.gate_delivery && !doc.po_id && doc.status === 'POSTED' && can(storePerm('inward', 'create')) && <Button onClick={() => setLinking(true)}><Link2 /> Link to purchase order</Button>}
+          {isGrn && billState.data && <BillFromReceipt grnId={-doc.id} bills={billState.data.bills} billable={billState.data.billable} size="md" />}
           <AttachButton type={(ATTACH_TYPE.inward as Record<string, string>)[kind.key]} id={doc.id} title={doc.number} />
           <Button variant="outline" asChild><a href={`/api/store/inward/${kind.key}/${doc.id}/print`} target="_blank" rel="noreferrer"><Printer /> {kind.key === 'returns' ? 'Print debit note' : 'Print'}</a></Button>
           {doc.status === 'DRAFT' && can(storePerm('inward', 'create')) && (
