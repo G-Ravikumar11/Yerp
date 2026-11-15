@@ -4,7 +4,7 @@ import { Paperclip } from 'lucide-react'
 import { Modal } from '@/components/ui'
 import { keepQuoteDocument, QUOTE_FILES, rfqKeys, type RfqSupplier, type Statement } from '@/api/rfq'
 import { api, ApiError } from '@/lib/api'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 
 /** One supplier however the name was typed: case, spacing and full stops aside, as the server's norm_name has it. */
@@ -62,7 +62,7 @@ export function QuoteCheckModal({ statement, supplier, onClose }: { statement: S
                   return (
                     <tr key={l.rfq_line_id} className="border-t border-border">
                       <td className="px-3 py-2">{l.description}<div className="text-xs text-muted-foreground">{l.qty} {l.uom}</div></td>
-                      <td className="px-3 py-2 text-right tabular">{o ? <>{formatINR(o.rate)}<div className="text-xs text-muted-foreground">GST {o.tax_percent}%</div></> : <span className="text-muted-foreground">-</span>}</td>
+                      <td className="px-3 py-2 text-right tabular">{o ? <>{formatRate(o.rate)}<div className="text-xs text-muted-foreground">GST {o.tax_percent}%</div></> : <span className="text-muted-foreground">-</span>}</td>
                     </tr>
                   )
                 })}

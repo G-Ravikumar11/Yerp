@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { Copy, ExternalLink, Pencil, Power } from 'lucide-react'
 import { Badge, Button, Modal, Skeleton } from '@/components/ui'
 import { useItemSites, useWhereUsed, type MasterItem, type UsageGroup } from '@/api/itemMaster'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 import { purchaseRateOf, stockLabel } from './itemLogic'
 import { PriceHistorySection } from './PriceHistory'
 
@@ -107,7 +107,7 @@ export function ItemDetailModal({ item, manage, onClose, onEdit, onCopy, onToggl
                 {sites.data.sites.map((s) => (
                   <li key={s.site_id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                     <Link className="text-primary hover:underline" to={`/projects/boq/rates?site=${s.site_id}`}>{s.site_code} {s.site_name}</Link>
-                    <span className="text-muted-foreground">quantity {s.quantity} · {s.site_rate === null ? 'rate not set yet' : `${formatINR(s.site_rate)} (${s.status})`}</span>
+                    <span className="text-muted-foreground">quantity {s.quantity} · {s.site_rate === null ? 'rate not set yet' : `${formatRate(s.site_rate)} (${s.status})`}</span>
                   </li>
                 ))}
               </ul>

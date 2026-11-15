@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from app import models
 
 from app.core.config import logger
-from app.core.currency import money, unit_rate
+from app.core.currency import money, qty3, unit_rate
 from app.services.store_integration import current_stock, hub_received_on_orders, hub_received_po_lines
 
 
@@ -23,8 +23,8 @@ def stock_movement(db, client_id, item_code, kind, quantity, rate, **kw):
         item_name=kw.get("item_name") or (item.item_name if item else ""),
         uom=kw.get("uom") or (item.units_of_measure if item else ""),
         store=kw.get("store") or "Main store",
-        kind=kind, quantity=money(quantity), rate=unit_rate(rate),
-        value=money(money(quantity) * unit_rate(rate)),
+        kind=kind, quantity=qty3(quantity), rate=unit_rate(rate),
+        value=money(qty3(quantity) * unit_rate(rate)),
         moved_on=kw.get("moved_on") or datetime.now().strftime("%Y-%m-%d"),
         source_type=kw.get("source_type") or "manual",
         source_id=kw.get("source_id"), source_ref=kw.get("source_ref") or "",
@@ -59,14 +59,14 @@ def apply_to_balance(db, client_id, m):
     bal.movements = (bal.movements or 0) + 1
     if qty > 0:
         if not moved:
-            bal.received = money((bal.received or 0) + qty)
+            bal.received = qty3((bal.received or 0) + qty)
         bal.value = money((bal.value or 0) + (m.value or 0))
-        bal.on_hand = money((bal.on_hand or 0) + qty)
+        bal.on_hand = qty3((bal.on_hand or 0) + qty)
         bal.rate = unit_rate(bal.value / bal.on_hand) if bal.on_hand else 0.0
     else:
         if not moved:
-            bal.issued = money((bal.issued or 0) - qty)
-        bal.on_hand = money((bal.on_hand or 0) + qty)
+            bal.issued = qty3((bal.issued or 0) - qty)
+        bal.on_hand = qty3((bal.on_hand or 0) + qty)
         bal.value = money(bal.on_hand * (bal.rate or 0))
     bal.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return bal
@@ -86,7 +86,7 @@ def rebuild_stock_balances(db, client_id):
         db.add(models.DBStockBalance(
             client_id=client_id, item_code=code, item_name=a["item_name"],
             uom=a["uom"], on_hand=money(a["on_hand"]), rate=unit_rate(a["rate"]),
-            value=money(a["value"]), received=money(a["received"]),
+            value=money(a["value"]), received=qty3(a["received"]),
             issued=money(a["issued"]), movements=a["movements"], updated_at=now))
     db.flush()
     return len(replayed)
@@ -121,7 +121,7 @@ def stock_balances(db, client_id, item_code=None, store=None, item_codes=None):
             rows = q.all()
     return {b.item_code: {
         "item_code": b.item_code, "item_name": b.item_name or "", "uom": b.uom or "",
-        "received": money(b.received), "issued": money(b.issued),
+        "received": qty3(b.received), "issued": money(b.issued),
         "on_hand": money(b.on_hand), "value": money(b.value),
         "rate": unit_rate(b.rate), "movements": b.movements or 0,
     } for b in rows}
@@ -165,13 +165,13 @@ def replay_stock_ledger(db, client_id, item_code=None, store=None, item_codes=No
                 a["received"] += qty
             # Incoming stock re-averages the heap.
             a["value"] = money(a["value"] + (m.value or 0.0))
-            a["on_hand"] = money(a["on_hand"] + qty)
+            a["on_hand"] = qty3(a["on_hand"] + qty)
             a["rate"] = unit_rate(a["value"] / a["on_hand"]) if a["on_hand"] else 0.0
         else:
             if not moved:
                 a["issued"] += -qty
             # Going out at the average, so the heap's rate does not move.
-            a["on_hand"] = money(a["on_hand"] + qty)
+            a["on_hand"] = qty3(a["on_hand"] + qty)
             a["value"] = money(a["on_hand"] * a["rate"])
     return acc
 
@@ -260,7 +260,7 @@ def issue_dict(db, issue, detail=False, wo_names=None):
                                   item_codes={l.item_code for l in lines}) if lines else {}
         row["lines"] = [{
             "id": l.id, "item_code": l.item_code or "", "item_name": l.item_name or "",
-            "uom": l.uom or "", "quantity": money(l.quantity),
+            "uom": l.uom or "", "quantity": qty3(l.quantity),
             "rate": unit_rate(l.rate), "amount": money(l.amount),
             "on_hand": money(balances.get(l.item_code, {}).get("on_hand", 0)),
         } for l in lines]
@@ -281,7 +281,7 @@ def _replace_issue_lines(db, client_id, issue, lines):
         raw_qty = l.get("quantity")
         if raw_qty is None:
             raw_qty = l.get("qty")
-        qty = money(raw_qty or 0)
+        qty = qty3(raw_qty or 0)
         if not code:
             refused.append("line %d has no item code" % (i + 1))
             continue
@@ -382,7 +382,7 @@ def material_required(db, client_id, wo):
         row = needed.setdefault(b.rm_code, {
             "item_code": b.rm_code, "item_name": b.rm_name or "",
             "uom": b.uom or "", "needed": 0.0, "rate": unit_rate(b.rate)})
-        row["needed"] = money(row["needed"] + (b.qty or 0))
+        row["needed"] = qty3(row["needed"] + (b.qty or 0))
         if b.rate:
             row["rate"] = unit_rate(b.rate)
     return shortfall(db, client_id, needed)
@@ -411,7 +411,7 @@ def boq_material_budget(db, client_id, job_id):
         key = code or "%s|%s" % ((i.description or "").strip().lower(), (i.uom or "").strip().lower())
         row = needed.setdefault(key, {"item_code": code, "item_name": i.description or "",
                                       "uom": i.uom or "", "needed": 0.0, "rate": unit_rate(i.rate), "value": 0.0})
-        row["needed"] = money(row["needed"] + qty[i.boq_key] * (i.coefficient or 0))
+        row["needed"] = qty3(row["needed"] + qty[i.boq_key] * (i.coefficient or 0))
         row["value"] = money(row["value"] + qty[i.boq_key] * (i.coefficient or 0) * (i.rate or 0))
     return needed
 
@@ -447,10 +447,10 @@ def shortfall(db, client_id, needed):
                 models.DBPurchaseOrderLineItem.order_id.in_(ids)).all():
             code = (l.item_code or "").strip()
             if code:
-                on_order[code] = money(on_order.get(code, 0.0) + (l.qty or 0))
+                on_order[code] = qty3(on_order.get(code, 0.0) + (l.qty or 0))
                 got = hub.get(l.order_id, {}).get(l.id)
                 if got:
-                    received[code] = money(received.get(code, 0.0) + got)
+                    received[code] = qty3(received.get(code, 0.0) + got)
         for code, got in received.items():
             if code in on_order:
                 on_order[code] = money(max(0.0, on_order[code] - got))

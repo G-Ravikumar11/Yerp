@@ -5,7 +5,7 @@ import { Button, Tabs } from '@/components/ui'
 import type { RfqLine, RfqSupplier, Statement } from '@/api/rfq'
 import { compare, type Comparison } from '@/lib/rfqCompare'
 import { formatDate, formatQty } from '@/lib/format'
-import { cn, formatINR } from '@/lib/utils'
+import { cn, formatINR, formatRate } from '@/lib/utils'
 import { PriceTrend } from '@/features/items/PriceHistory'
 import type { AwardPreset } from './AwardModal'
 import { QuoteCheckModal } from './QuoteCheck'
@@ -215,8 +215,8 @@ function LastPaid({ h }: { h: RfqLine['price_history'] }) {
   if (!h || !last) return null
   return (
     <div className="mt-1 text-xs text-muted-foreground">
-      Last paid <strong className="text-foreground">{formatINR(last.rate)}</strong> ({last.supplier}, {last.po})
-      {h.last_by_supplier.length > 1 && ` · lowest last ${formatINR(h.last_by_supplier[0].rate)} from ${h.last_by_supplier[0].supplier}`}
+      Last paid <strong className="text-foreground">{formatRate(last.rate)}</strong> ({last.supplier}, {last.po})
+      {h.last_by_supplier.length > 1 && ` · lowest last ${formatRate(h.last_by_supplier[0].rate)} from ${h.last_by_supplier[0].supplier}`}
       {h.points.length > 1 && <div className="mt-1"><PriceTrend points={h.points} height={28} /></div>}
     </div>
   )

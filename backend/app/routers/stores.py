@@ -13,7 +13,7 @@ from app.db import get_db, get_read_db
 from app.core.audit import log_audit
 from app.core.auth import require_erp_read, wo_actor
 from app.core.store_auth import store_actor, store_errors
-from app.core.currency import inr, money, unit_rate
+from app.core.currency import inr, money, qty3, unit_rate
 from app.core.sheets import sheet_response
 from app.documents.forms import _field_doc, form_pdf_response
 from app.schemas.stores import AdjustmentIn, StockIssueIn, TransferIn
@@ -53,7 +53,7 @@ def stock_on_hand(request: Request, store: str = "", low_only: bool = False,
     for code, a in balances.items():
         level = levels.get(code, 0.0)
         a = dict(a)
-        a["received"] = money(a["received"])
+        a["received"] = qty3(a["received"])
         a["issued"] = money(a["issued"])
         a["reorder_level"] = money(level)
         # A level of zero means nobody set one, which is not the same as
@@ -113,10 +113,10 @@ def stock_ledger(item_code: str, request: Request, db: Session = Depends(get_db)
             models.DBStockMovement.id).all()
     running, out = 0.0, []
     for m in rows:
-        running = money(running + (m.quantity or 0))
+        running = qty3(running + (m.quantity or 0))
         out.append({
             "id": m.id, "kind": m.kind, "moved_on": m.moved_on or "",
-            "quantity": money(m.quantity), "rate": unit_rate(m.rate),
+            "quantity": qty3(m.quantity), "rate": unit_rate(m.rate),
             "value": money(m.value), "balance": running,
             "store": m.store or "", "source_type": m.source_type or "",
             "source_id": m.source_id, "source_ref": m.source_ref or "",
@@ -233,7 +233,7 @@ def post_stock_issue(issue_id: int, request: Request, body: dict = None,
             l.item_code, {}).get("on_hand", 0))
         if l.quantity > on_hand:
             short.append("%s: %s in store, %s asked for"
-                         % (l.item_code, on_hand, money(l.quantity)))
+                         % (l.item_code, on_hand, qty3(l.quantity)))
     if short and not allow_negative:
         # Refused rather than silently going negative: material that is not
         # there has either not been booked in or has already gone, and both
@@ -363,7 +363,7 @@ def boq_material_consumption(boq_id: int, request: Request, db: Session = Depend
             models.DBStockMovement.job_id == boq.job_id,
             models.DBStockMovement.kind.in_(("ISSUE", "RETURN"))).all():
         a = actual.setdefault(m.item_code, {"qty": 0.0, "value": 0.0, "item_name": m.item_name or ""})
-        a["qty"] = money(a["qty"] - (m.quantity or 0))
+        a["qty"] = qty3(a["qty"] - (m.quantity or 0))
         a["value"] = money(a["value"] - (m.value or 0))
     hub = material_cost_rows(db, client.id, project_id=boq.job_id)
     items = {i.id: i for i in db.query(models.DBItem).filter(
@@ -373,7 +373,7 @@ def boq_material_consumption(boq_id: int, request: Request, db: Session = Depend
         if it is None:
             continue
         a = actual.setdefault(it.item_code, {"qty": 0.0, "value": 0.0, "item_name": it.item_name or ""})
-        a["qty"] = money(a["qty"] + float(qty))
+        a["qty"] = qty3(a["qty"] + float(qty))
         a["value"] = money(a["value"] + float(value))
     # What was issued is matched to the budget by item code; a budget material with no code stands on its own.
     for code in actual:
@@ -383,7 +383,7 @@ def boq_material_consumption(boq_id: int, request: Request, db: Session = Depend
     rows = []
     for key, p in sorted(planned.items()):
         a = actual.get(p["item_code"], {"qty": 0.0, "value": 0.0}) if p["item_code"] else {"qty": 0.0, "value": 0.0}
-        over = money(a["qty"] - p["planned_qty"])
+        over = qty3(a["qty"] - p["planned_qty"])
         rows.append({
             "item_code": p["item_code"] or p["item_name"], "item_name": p["item_name"], "uom": p["uom"],
             "planned_qty": p["planned_qty"], "planned_value": p["planned_value"],
@@ -425,7 +425,7 @@ def material_consumption(work_order_id: int, request: Request,
         p = planned.setdefault(b.rm_code, {
             "item_code": b.rm_code, "item_name": b.rm_name or "",
             "uom": b.uom or "", "planned_qty": 0.0, "planned_value": 0.0})
-        p["planned_qty"] = money(p["planned_qty"] + (b.qty or 0))
+        p["planned_qty"] = qty3(p["planned_qty"] + (b.qty or 0))
         p["planned_value"] = money(p["planned_value"] + (b.amount or 0))
 
     actual = {}
@@ -435,7 +435,7 @@ def material_consumption(work_order_id: int, request: Request,
         a = actual.setdefault(m.item_code, {"qty": 0.0, "value": 0.0})
         # An issue is negative and a return positive, so consumption is the
         # negated sum and a cancelled issue costs the job nothing.
-        a["qty"] = money(a["qty"] - (m.quantity or 0))
+        a["qty"] = qty3(a["qty"] - (m.quantity or 0))
         a["value"] = money(a["value"] - (m.value or 0))
 
     rows = []
@@ -443,7 +443,7 @@ def material_consumption(work_order_id: int, request: Request,
         p = planned.get(code, {"item_code": code, "item_name": "", "uom": "",
                                "planned_qty": 0.0, "planned_value": 0.0})
         a = actual.get(code, {"qty": 0.0, "value": 0.0})
-        over = money(a["qty"] - p["planned_qty"])
+        over = qty3(a["qty"] - p["planned_qty"])
         rows.append({
             "item_code": code, "item_name": p["item_name"], "uom": p["uom"],
             "planned_qty": p["planned_qty"], "planned_value": p["planned_value"],
@@ -478,7 +478,7 @@ def stock_export(request: Request, db: Session = Depends(get_db)):
     levels = {i.item_code: (i.reorder_level or 0.0)
               for i in db.query(models.DBItem).filter(
                   models.DBItem.client_id == client.id).all()}
-    rows = [(a["item_code"], a["item_name"], a["uom"], money(a["received"]),
+    rows = [(a["item_code"], a["item_name"], a["uom"], qty3(a["received"]),
              money(a["issued"]), a["on_hand"], unit_rate(a["rate"]), a["value"],
              money(levels.get(code, 0.0)),
              "yes" if levels.get(code, 0.0) and a["on_hand"] < levels[code] else "")
@@ -533,7 +533,7 @@ def transfer_stock(body: TransferIn, request: Request, db: Session = Depends(get
     for l in lines:
         have = money(held.get(l.item_code, {}).get("on_hand", 0))
         if l.qty > have + 0.0001:
-            short.append("%s: %s in %s, %s asked for" % (l.item_code, have, src, money(l.qty)))
+            short.append("%s: %s in %s, %s asked for" % (l.item_code, have, src, qty3(l.qty)))
     if short:
         raise HTTPException(409, "Not enough to send - " + "; ".join(short[:4]) + ".")
     number = next_transfer_number(db, client.id)
@@ -568,7 +568,7 @@ def list_transfers(request: Request, db: Session = Depends(get_read_db)):
                                           "lines": [], "value": 0.0,
                                           "by": m.recorded_by_name or ""})
         t["lines"].append({"item_code": m.item_code, "item_name": m.item_name,
-                           "uom": m.uom, "qty": money(-m.quantity), "rate": unit_rate(m.rate)})
+                           "uom": m.uom, "qty": qty3(-m.quantity), "rate": unit_rate(m.rate)})
         t["value"] = money(t["value"] - (m.value or 0))
         remarks = m.remarks or ""
         if " -> " in remarks:

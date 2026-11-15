@@ -14,7 +14,7 @@ from app.constants.common import GRN_EDITABLE, PURCHASE_ORDER_STATUSES
 from app.core.audit import log_audit
 from app.core.queries import by_id
 from app.core.auth import require_erp_read, require_items_access, session_employee, wo_actor
-from app.core.currency import amount_in_words, inr, money, unit_rate
+from app.core.currency import amount_in_words, inr, money, qty3, unit_rate
 from app.core.serials import allocate_grn_number, allocate_po_number
 from app.core.sheets import sheet_response
 from app.documents import form_pdf
@@ -201,7 +201,7 @@ def purchase_order_xlsx(po_id: int, request: Request, db: Session = Depends(get_
 
     return sheet_response(
         ["Description", "Qty", "Price", "Tax", "Amount"],
-        [[l.description or "", money(l.qty), money(l.price), l.tax_rate or "",
+        [[l.description or "", qty3(l.qty), money(l.price), l.tax_rate or "",
           money((l.qty or 0) * (l.price or 0))] for l in lines],
         "purchase_order_%s.xlsx" % re.sub(r"[^A-Za-z0-9]+", "_", po.number or ""),
         preamble=[["Purchase Order", "", "", "", client.company_name or ""],
@@ -314,14 +314,14 @@ def create_goods_receipt(body: GRNIn, request: Request, db: Session = Depends(ge
             models.DBPurchaseOrderLineItem.order_id == po.id).order_by(
                 models.DBPurchaseOrderLineItem.id).all():
         had = money(got.get(l.id, 0.0))
-        balance = money(max(0.0, (l.qty or 0) - had))
+        balance = qty3(max(0.0, (l.qty or 0) - had))
         order += 1
         db.add(models.DBGoodsReceiptLine(
             goods_receipt_id=grn.id, po_line_id=l.id,
             item_code=getattr(l, "item_code", "") or "",
             description=(l.description or "")[:500],
             uom=getattr(l, "uom", "") or "",
-            ordered_qty=money(l.qty), previously_received=had,
+            ordered_qty=qty3(l.qty), previously_received=had,
             received_qty=balance, accepted_qty=balance, rejected_qty=0.0,
             rate=unit_rate(l.price), amount=money(balance * (l.price or 0)),
             display_order=order))
@@ -357,18 +357,18 @@ def update_goods_receipt(grn_id: int, body: GRNUpdateIn, request: Request,
             row = rows.get(inp.id)
             if not row:
                 continue
-            received = money(max(0.0, inp.received_qty or 0.0))
-            rejected = money(max(0.0, inp.rejected_qty or 0.0))
+            received = qty3(max(0.0, inp.received_qty or 0.0))
+            rejected = qty3(max(0.0, inp.rejected_qty or 0.0))
             # Accepted is derived when it is not given, because the two numbers
             # have to add up to what arrived. A store that can record eight
             # accepted and three rejected out of ten is a store whose figures
             # nobody can use.
-            accepted = (money(inp.accepted_qty) if inp.accepted_qty is not None
-                        else money(received - rejected))
+            accepted = (qty3(inp.accepted_qty) if inp.accepted_qty is not None
+                        else qty3(received - rejected))
             if accepted < 0:
                 raise HTTPException(400, "More rejected than arrived on %s"
                                     % (row.description or row.item_code or "a line"))
-            if money(accepted + rejected) > received:
+            if qty3(accepted + rejected) > received:
                 raise HTTPException(
                     400, "Accepted and rejected come to more than arrived on %s"
                          % (row.description or row.item_code or "a line"))
@@ -397,10 +397,10 @@ def post_goods_receipt(grn_id: int, request: Request, db: Session = Depends(get_
     # real event, and the buyer needs to know before the bill turns up.
     over = []
     for l in lines:
-        total = money((l.previously_received or 0) + (l.accepted_qty or 0))
-        if total > money(l.ordered_qty or 0):
+        total = qty3((l.previously_received or 0) + (l.accepted_qty or 0))
+        if total > qty3(l.ordered_qty or 0):
             over.append("%s by %s" % (l.item_code or l.description or "line",
-                                      money(total - money(l.ordered_qty))))
+                                      money(total - qty3(l.ordered_qty))))
     msg = "%s posted. %s accepted into the store." % (grn.number, inr(grn.accepted_value))
     if over:
         msg += " Over the order: %s." % "; ".join(over[:4])
@@ -557,11 +557,11 @@ def three_way_match_detail(po_id: int, request: Request, db: Session = Depends(g
                 models.DBPurchaseOrderLineItem.id).all():
         rec = money(got.get(l.id, 0.0))
         bil = money(billed["per_line"].get(l.id, 0.0))
-        verdict, note = match_verdict(money(l.qty), rec, bil)
+        verdict, note = match_verdict(qty3(l.qty), rec, bil)
         lines.append({
             "po_line_id": l.id, "item_code": getattr(l, "item_code", "") or "",
             "description": l.description or "", "uom": getattr(l, "uom", "") or "",
-            "ordered_qty": money(l.qty), "received_qty": rec, "billed_qty": bil,
+            "ordered_qty": qty3(l.qty), "received_qty": rec, "billed_qty": bil,
             "rate": unit_rate(l.price),
             "ordered_value": money((l.qty or 0) * (l.price or 0)),
             "received_value": money(rec * (l.price or 0)),
@@ -781,7 +781,7 @@ def edit_rfq(rfq_id: int, body: RfqIn, request: Request, db: Session = Depends(g
         # Both sides read alike: spacing and case aside, the unit as the master spells it, in any order. A line saved
         # before units were tidied, or the screen sending them in another order, is not a change to what was priced.
         flat = lambda t: " ".join((t or "").split()).lower()
-        return flat(code), flat(description), flat(canonical_unit(uom) or uom), money(qty)
+        return flat(code), flat(description), flat(canonical_unit(uom) or uom), qty3(qty)
     same = sorted(key(l.item_code, l.description, l.uom, l.qty) for l in old) == sorted(
         key(l.get("item_code"), l["description"], l.get("uom"), l["qty"]) for l in lines)
     if not same:

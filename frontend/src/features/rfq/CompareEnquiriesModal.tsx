@@ -5,7 +5,7 @@ import { get } from '@/lib/api'
 import { Badge, Modal } from '@/components/ui'
 import type { RfqRow, Statement } from '@/api/rfq'
 import { pooledComparison, type PooledItem } from '@/lib/rfqCompare'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
 /**
@@ -80,7 +80,7 @@ function ItemRow({ it }: { it: PooledItem }) {
         {it.best ? (
           <>
             <div className="font-semibold text-success">{it.best.supplier_name}</div>
-            <div className="tabular">{formatINR(it.best.rate)} / {it.uom || 'unit'}</div>
+            <div className="tabular">{formatRate(it.best.rate)} / {it.uom || 'unit'}</div>
             {saving > 0 && <div className="text-xs text-muted-foreground">{formatINR(saving)} less than {it.next!.supplier_name}</div>}
           </>
         ) : <span className="text-muted-foreground">Not quoted yet</span>}
@@ -91,7 +91,7 @@ function ItemRow({ it }: { it: PooledItem }) {
             <li key={o.supplier_name} className={cn('flex flex-wrap items-baseline gap-x-2', i === 0 ? 'text-foreground' : 'text-muted-foreground')}>
               {i === 0 && <Badge tone="success">L1</Badge>}
               <span>{o.supplier_name}</span>
-              <span className="tabular">{formatINR(o.rate)}</span>
+              <span className="tabular">{formatRate(o.rate)}</span>
               <span className="text-xs">GST {o.tax_percent}%{o.delivery_days ? ` · ${o.delivery_days} days` : ''} · <Link className="underline-offset-2 hover:underline" to={`/store/enquiries/${o.rfq_id}?view=compare`}>{o.rfq_number}</Link></span>
             </li>
           ))}

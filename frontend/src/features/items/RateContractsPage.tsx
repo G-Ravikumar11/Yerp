@@ -7,7 +7,7 @@ import { useSuppliers } from '@/api/ledger'
 import { makeContract, priceKeys, removeRateContract, useContracts, type Contract } from '@/api/poControls'
 import { useAction } from '@/lib/mutate'
 import { formatDate, today } from '@/lib/format'
-import { formatINR } from '@/lib/utils'
+import { formatRate } from '@/lib/utils'
 
 const tone = (c: Contract) => (c.status === 'expired' ? 'neutral' : c.days_left != null && c.days_left <= 30 ? 'warning' : c.status === 'in force' ? 'success' : 'info') as 'neutral' | 'warning' | 'success' | 'info'
 
@@ -37,7 +37,7 @@ export default function RateContractsPage() {
                 {c.items.map((i) => (
                   <li key={i.id} className="flex items-center gap-2 py-1.5">
                     <span className="font-mono text-xs text-muted-foreground">{i.item_code}</span><span className="min-w-0 flex-1 truncate">{i.item_name}</span>
-                    <strong className="tabular">{formatINR(i.rate)}</strong>
+                    <strong className="tabular">{formatRate(i.rate)}</strong>
                     <button type="button" aria-label={`Take ${i.item_code} off ${c.contract_no}`} className="text-muted-foreground hover:text-danger" onClick={() => drop.mutate(i.id)}><Trash2 className="size-4" /></button>
                   </li>
                 ))}

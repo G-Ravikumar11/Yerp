@@ -4,7 +4,7 @@ import { Button, Field, Input } from '@/components/ui'
 import { addRateContract, priceKeys, removeRateContract, setRateAlert, usePriceHistory, usePurchaseControls, type PricePoint } from '@/api/poControls'
 import { useAction } from '@/lib/mutate'
 import { formatDate } from '@/lib/format'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 
 /** The prices an item was bought at, as a line over time: rising, falling or flat at a glance. */
 export function PriceTrend({ points, height = 56 }: { points: PricePoint[]; height?: number }) {
@@ -20,7 +20,7 @@ export function PriceTrend({ points, height = 56 }: { points: PricePoint[]; heig
     <figure className="m-0 flex items-center gap-3" aria-label={`Price trend: ${formatINR(first)} to ${formatINR(last)}`}>
       <svg width={w} height={height} viewBox={`0 0 ${w} ${height}`} role="img" aria-hidden="true" className="shrink-0 overflow-visible">
         <polyline fill="none" stroke="var(--primary)" strokeWidth="2" points={points.map((p, i) => `${x(i)},${y(p.rate)}`).join(' ')} />
-        {points.map((p, i) => <circle key={i} cx={x(i)} cy={y(p.rate)} r="2.5" fill="var(--card)" stroke="var(--primary)" strokeWidth="1.5"><title>{`${formatDate(p.on)} ${formatINR(p.rate)} - ${p.supplier}, ${p.po}`}</title></circle>)}
+        {points.map((p, i) => <circle key={i} cx={x(i)} cy={y(p.rate)} r="2.5" fill="var(--card)" stroke="var(--primary)" strokeWidth="1.5"><title>{`${formatDate(p.on)} ${formatRate(p.rate)} - ${p.supplier}, ${p.po}`}</title></circle>)}
       </svg>
       <figcaption className="text-xs text-muted-foreground">
         {formatINR(first)} → <strong className="text-foreground">{formatINR(last)}</strong>
@@ -52,7 +52,7 @@ export function PriceHistorySection({ itemCode, manage }: { itemCode: string; ma
           <PriceTrend points={d.points} />
           <div>
             <p className="mb-1 text-xs font-medium text-muted-foreground">Last price, by supplier</p>
-            <ul className="grid gap-0.5">{d.last_by_supplier.map((p) => <li key={p.supplier}><strong>{formatINR(p.rate)}</strong> {p.supplier} <span className="text-xs text-muted-foreground">({p.po}, {formatDate(p.on)})</span></li>)}</ul>
+            <ul className="grid gap-0.5">{d.last_by_supplier.map((p) => <li key={p.supplier}><strong>{formatRate(p.rate)}</strong> {p.supplier} <span className="text-xs text-muted-foreground">({p.po}, {formatDate(p.on)})</span></li>)}</ul>
           </div>
         </div>
       )}
@@ -60,7 +60,7 @@ export function PriceHistorySection({ itemCode, manage }: { itemCode: string; ma
         <p className="text-xs font-medium text-muted-foreground">Rate contracts</p>
         {(d?.contracts ?? []).length === 0 && <p className="text-muted-foreground">None.</p>}
         <ul className="grid gap-0.5">{(d?.contracts ?? []).map((k) => (
-          <li key={k.id} className="flex items-center gap-2"><strong>{formatINR(k.rate)}</strong> {k.supplier_name}
+          <li key={k.id} className="flex items-center gap-2"><strong>{formatRate(k.rate)}</strong> {k.supplier_name}
             <span className="text-xs text-muted-foreground">{formatDate(k.valid_from)}{k.valid_to ? ` to ${formatDate(k.valid_to)}` : ' onwards'}{k.reference ? ` · ${k.reference}` : ''}</span>
             {manage && <button type="button" aria-label={`Remove the rate contract with ${k.supplier_name}`} className="ml-auto text-muted-foreground hover:text-danger" onClick={() => drop.mutate(k.id)}><Trash2 className="size-4" /></button>}
           </li>))}</ul>

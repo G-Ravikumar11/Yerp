@@ -10,7 +10,7 @@ import { AiPanel } from './AiPanel'
 import { SheetImportModal } from '@/features/sheetimport/SheetImportModal'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate, roundTo } from '@/lib/utils'
 import { checkOrder, useBudgetHeads, useContractRates, type OrderCheck } from '@/api/poControls'
 import { useDebounced } from '@/lib/hooks'
 
@@ -26,7 +26,8 @@ interface Row {
 
 const blank = (): Row => ({ item_code: '', description: '', qty: null, uom: '', price: null, tax: '18', boq_key: '' })
 const rateOf = (t: string) => Number(String(t).replace(/[^0-9.]/g, '')) || 0
-const lineAmount = (r: Row) => (r.qty ?? 0) * (r.price ?? 0)
+// Each line to the paisa, so the total is the sum of the lines as shown.
+const lineAmount = (r: Row) => roundTo((r.qty ?? 0) * (r.price ?? 0))
 
 export function OrderFormModal({ open, order, staff, onClose }: { open: boolean; order: PurchaseOrder | null; staff: boolean; onClose: () => void }) {
   const about = staff ? 'This goes to your manager for approval before you commit to it.' : 'What is being bought, line by line. Each line can be received against when the lorry arrives.'
@@ -94,7 +95,7 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
   const [draft, setDraft] = useState<Row[] | null>(null)
   const live = draft ?? rows
   const lines = live.filter((r) => (r.qty ?? 0) > 0 && (r.item_code || r.description.trim()))
-  const amount = lines.reduce((t, r) => t + lineAmount(r), 0)
+  const amount = roundTo(lines.reduce((t, r) => t + lineAmount(r), 0))
   const tax = lines.reduce((t, r) => t + (lineAmount(r) * rateOf(r.tax)) / 100, 0)
   // Why Save is greyed out, in words: the first box still to fill, so nobody is left guessing.
   const missing = (() => {
@@ -111,7 +112,7 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
   })()
   const save = useAction(
     () => {
-      const body: PoInput = { supplier_name: supplier.trim(), amount, tax_amount: Math.round(tax * 100) / 100, total: Math.round((amount + tax) * 100) / 100, issue_date: issue, needed_by: needed, notes: notes.trim(), job_id: job ? Number(job) : null, budget_reason: reason.trim(), line_items: lines.map((r) => ({ item_code: r.item_code, description: r.description || r.item_code, uom: r.uom, qty: r.qty ?? 0, price: r.price ?? 0, tax_rate: `${rateOf(r.tax)}%`, boq_key: r.boq_key })) }
+      const body: PoInput = { supplier_name: supplier.trim(), amount, tax_amount: roundTo(tax), total: roundTo(amount + tax), issue_date: issue, needed_by: needed, notes: notes.trim(), job_id: job ? Number(job) : null, budget_reason: reason.trim(), line_items: lines.map((r) => ({ item_code: r.item_code, description: r.description || r.item_code, uom: r.uom, qty: r.qty ?? 0, price: r.price ?? 0, tax_rate: `${rateOf(r.tax)}%`, boq_key: r.boq_key })) }
       return savePo(order?.id ?? null, body, staff)
     },
     { invalidate: [poKeys.all, ['approvals']], onSuccess: onClose },
@@ -158,7 +159,7 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
               <Textarea id="po-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Raft thickened by the structural consultant (variation to follow)" />
             </Field>
           )}
-          {check.rates.map((r) => <p key={r.item_code}><strong>Rate alert - {r.description || r.item_code}:</strong> {formatINR(r.rate)} is {r.why}.</p>)}
+          {check.rates.map((r) => <p key={r.item_code}><strong>Rate alert - {r.description || r.item_code}:</strong> {formatRate(r.rate)} is {r.why}.</p>)}
         </div>
       )}
       {check && !check.over_budget && check.budget.some((b) => b.budget != null) && (

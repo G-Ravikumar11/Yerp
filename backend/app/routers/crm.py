@@ -29,6 +29,7 @@ from app.core.currency import (
     esc,
     inr,
     line_net_amount,
+    qty3,
     money,
     totals_by_currency,
     unit_rate,
@@ -902,7 +903,7 @@ def add_estimate_item(est_id: int, body: EstimateItemIn, request: Request,
         estimate_id=est.id, item_no=(body.item_no or str(n + 1)).strip(),
         fg_code=(body.fg_code or "").strip().upper(),
         description=body.description.strip(), uom=standard_unit(body.uom),
-        quantity=money(body.quantity), cost_rate=unit_rate(body.cost_rate or 0),
+        quantity=qty3(body.quantity), cost_rate=unit_rate(body.cost_rate or 0),
         overhead_percent=body.overhead_percent, profit_percent=body.profit_percent,
         display_order=n)
     db.add(item)
@@ -928,7 +929,7 @@ def update_estimate_item(est_id: int, item_id: int, body: EstimateItemIn,
     item.fg_code = (body.fg_code or "").strip().upper()
     item.description = (body.description or item.description).strip()
     item.uom = standard_unit(body.uom)
-    item.quantity = money(body.quantity)
+    item.quantity = qty3(body.quantity)
     # A typed cost rate only sticks if there is no analysis - the analysis
     # is the truth when it exists.
     has_analysis = db.query(models.DBRateAnalysis).filter(

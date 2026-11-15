@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 from app import models
 from app.constants.subcontract_orders import WO_COMMITTED_STATUSES
-from app.core.currency import money, unit_rate
+from app.core.currency import money, qty3, unit_rate
 from app.core.queries import by_id, prime
 from app.services.receipt_bills import QTY_SLACK, billed_qty, bills_by_receipt, older_bills
 from app.services.store_integration import current_stock
@@ -230,7 +230,7 @@ def build_tracker(db, client_id, job_id=0, gst_percent=DEFAULT_GST, markup_perce
                 "key": key, "item_code": l.item_code or "", "description": l.description or (it.item_name if it else ""),
                 "uom": l.uom or "", "cells": OrderedDict(), "total_qty": 0.0, "total_amount": 0.0})
             cell = mat["cells"].setdefault(g.id, {"grn_id": g.id, "qty": 0.0, "amount": 0.0, "rate": 0.0})
-            cell["qty"] = money(cell["qty"] + (l.accepted_qty or 0))
+            cell["qty"] = qty3(cell["qty"] + (l.accepted_qty or 0))
             cell["amount"] = money(cell["amount"] + _worth(l))
             cell["rate"] = unit_rate(cell["amount"] / cell["qty"]) if cell["qty"] else unit_rate(l.rate)
             mat["total_qty"] = money(mat["total_qty"] + (l.accepted_qty or 0))
@@ -307,7 +307,7 @@ def build_tracker(db, client_id, job_id=0, gst_percent=DEFAULT_GST, markup_perce
                 continue
             inv = inv_by_id[g.id]
             block = _text(blocks.get(l.id))
-            qty, amt = money(l.accepted_qty or 0), _worth(l)
+            qty, amt = qty3(l.accepted_qty or 0), _worth(l)
             rmc_rows.append({"line_id": l.id, "n": len(rmc_rows) + 1, "grn_id": g.id,
                              "invoice_date": inv["invoice_date"] or inv["received_on"],
                              "supplier": inv["supplier"], "po_number": inv["po_number"], "vehicle": inv["vehicle"],
@@ -316,10 +316,10 @@ def build_tracker(db, client_id, job_id=0, gst_percent=DEFAULT_GST, markup_perce
             label = block or "(no block yet)"
             b = block_totals.setdefault(label, {"block": label, "loads": 0, "qty": 0.0, "amount": 0.0})
             b["loads"] += 1
-            b["qty"] = money(b["qty"] + qty)
+            b["qty"] = qty3(b["qty"] + qty)
             b["amount"] = money(b["amount"] + amt)
     r_amt = money(sum(r["amount"] for r in rmc_rows))
-    rmc = {"rows": rmc_rows, "blocks": list(block_totals.values()), "qty": money(sum(r["qty"] for r in rmc_rows)),
+    rmc = {"rows": rmc_rows, "blocks": list(block_totals.values()), "qty": qty3(sum(r["qty"] for r in rmc_rows)),
            "amount": r_amt, "gst": money(r_amt * gst), "total": money(r_amt * (1 + gst))}
 
     return {"job_id": job_id or 0, "gst_percent": float(gst_percent), "markup_percent": float(markup_percent),

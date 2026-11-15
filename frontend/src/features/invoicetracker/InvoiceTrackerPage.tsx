@@ -12,7 +12,7 @@ import { countStock, stockKeys } from '@/api/stock'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { BillFromReceipt } from './BillFromReceipt'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 
 type Tab = 'summary' | 'invoices' | 'materials' | 'rmc' | 'stock'
 
@@ -111,7 +111,7 @@ export default function InvoiceTrackerPage() {
     { id: 'i', header: 'Invoice no', cell: (r) => r.invoice_number || '-' },
     { id: 'g', header: 'Grade', cell: (r) => r.grade || '-' },
     { id: 'q', header: 'Qty (cum)', align: 'right', cell: (r) => r.qty },
-    { id: 'r', header: 'Unit price', align: 'right', hideBelow: 'md', cell: (r) => formatINR(r.rate) },
+    { id: 'r', header: 'Unit price', align: 'right', hideBelow: 'md', cell: (r) => formatRate(r.rate) },
     { id: 'a', header: 'Amount', align: 'right', cell: (r) => formatINR(r.amount) },
     { id: 'b', header: 'Block', cell: (r) => (edit ? <EditCell label={`Block for ${r.invoice_number || `load ${r.n}`}`} value={r.block} width="w-32" onSave={(v) => block.mutate({ lineId: r.line_id, block: v })} /> : r.block || '-') },
   ]

@@ -23,7 +23,7 @@ from app.constants.invoicing import (
     VEHICLE_NO,
 )
 from app.core.config import logger
-from app.core.currency import DEFAULT_CURRENCY, compute_invoice_totals, currency_symbol, esc, money
+from app.core.currency import DEFAULT_CURRENCY, compute_invoice_totals, currency_symbol, esc, money, qty3
 from app.core.dates import _parse_date, ack_datetime, advance_date
 from app.core.gst import GST_STATES, WORKS_CONTRACT_SAC, our_state, state_from_gstin, state_from_pin
 from app.core.scheduler import scheduled_job
@@ -697,13 +697,13 @@ def transfer_lines_for(db, client_id, number):
         # A transfer made in the Store Hub, by its number.
         from app.services.store_integration import hub_transfer_lines
         hub = hub_transfer_lines(db, client_id, number)
-        return hub, [EwayLineIn(item_code=l["item_code"], product_name=l["item_name"], hsn=l["hsn"], qty=money(l["qty"]),
+        return hub, [EwayLineIn(item_code=l["item_code"], product_name=l["item_name"], hsn=l["hsn"], qty=qty3(l["qty"]),
                                 unit=l["uom"], taxable=money(l["value"]), tax_rate=0) for l in hub]
     out = []
     for m in rows:
         item = db.query(models.DBItem).filter(models.DBItem.item_code == m.item_code).first()
         out.append(EwayLineIn(item_code=m.item_code, product_name=m.item_name or (item.item_name if item else ""),
-                              hsn=(item.hsn_code if item else ""), qty=money(-m.quantity), unit=m.uom or "",
+                              hsn=(item.hsn_code if item else ""), qty=qty3(-m.quantity), unit=m.uom or "",
                               taxable=money(-(m.value or 0)), tax_rate=0))
     return rows, out
 

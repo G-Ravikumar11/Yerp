@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Badge, Button, Field, Input, Stat, StatGrid } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { formatDate, today } from '@/lib/format'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 import { portalAcceptBill, portalSendInvoice, usePortal, type BillLineMatch, type PortalBill, type PortalOrder, type PortalOrderDetail, type PortalPayment, type PortalStatement, type PortalSummary } from '@/api/portal'
 
 const th = 'px-2 py-2 text-left text-xs font-semibold uppercase text-muted-foreground'
@@ -82,13 +82,13 @@ export function Orders() {
                   <td className={td + ' text-right'}>{Number(l.pending) > 0 ? <span className="font-medium text-warning">{l.pending}</span> : 0}</td>
                   <td className={td + ' text-right'}>{l.billed}</td>
                   <td className={td + ' text-right font-semibold'}>{l.to_bill}</td>
-                  <td className={td + ' text-right'}>{formatINR(l.rate)}</td>
+                  <td className={td + ' text-right'}>{formatRate(l.rate)}</td>
                 </tr>
               ))}
             </Table>
           ) : (
             <Table label="Order items" head={['Item', 'Qty', 'Rate', 'Amount']} empty="No items." right={[1, 2, 3]}>
-              {detail.data.lines.map((l, i) => <tr key={i}><td className={td}>{l.code && <span className="font-mono">{l.code} </span>}{l.description}</td><td className={td + ' text-right'}>{l.qty} {l.uom}</td><td className={td + ' text-right'}>{formatINR(l.rate)}</td><td className={td + ' text-right'}>{formatINR(l.amount)}</td></tr>)}
+              {detail.data.lines.map((l, i) => <tr key={i}><td className={td}>{l.code && <span className="font-mono">{l.code} </span>}{l.description}</td><td className={td + ' text-right'}>{l.qty} {l.uom}</td><td className={td + ' text-right'}>{formatRate(l.rate)}</td><td className={td + ' text-right'}>{formatINR(l.amount)}</td></tr>)}
             </Table>
           )}
         </div>
@@ -149,7 +149,7 @@ function LineMatch({ lines }: { lines: BillLineMatch[] }) {
       {lines.map((l, i) => (
         <li key={i} className="flex flex-wrap items-center gap-1.5">
           <Badge tone={VERDICT[l.verdict][1]}>{VERDICT[l.verdict][0]}</Badge>
-          <span>{l.description}: {l.qty} {l.uom} at {formatINR(l.rate)}{l.received != null && ` (received ${l.received}, billed in all ${l.billed})`}</span>
+          <span>{l.description}: {l.qty} {l.uom} at {formatRate(l.rate)}{l.received != null && ` (received ${l.received}, billed in all ${l.billed})`}</span>
         </li>
       ))}
     </ul>
@@ -250,7 +250,7 @@ export function SendInvoice() {
           <p className="text-xs text-muted-foreground">At the order's rates and GST. More than was received and not yet billed is flagged to the office and held from payment.</p>
           {lines.map((l) => (
             <label key={l.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm">
-              <span className="min-w-0 flex-1">{l.description}<span className="block text-xs text-muted-foreground">received {l.received}, billed {l.billed} - can bill {l.to_bill} {l.uom} at {formatINR(l.rate)}</span></span>
+              <span className="min-w-0 flex-1">{l.description}<span className="block text-xs text-muted-foreground">received {l.received}, billed {l.billed} - can bill {l.to_bill} {l.uom} at {formatRate(l.rate)}</span></span>
               <Input aria-label={`Quantity of ${l.description}`} type="number" step="any" min="0" className="h-9 w-28 text-right" value={qtyOf(l)} onChange={(e) => setQty((q) => ({ ...q, [l.id!]: e.target.value }))} /> {l.uom}
               {Number(qtyOf(l) || 0) > (l.to_bill ?? 0) + 0.0005 && <span className="basis-full text-xs font-medium text-danger">More than was received and not yet billed: it will be flagged.</span>}
             </label>

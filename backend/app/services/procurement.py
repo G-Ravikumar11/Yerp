@@ -9,7 +9,7 @@ from app import models
 from app.constants.common import GRN_EDITABLE, GRN_TRANSITIONS
 from app.core.audit import log_audit
 from app.core.auth import wo_actor
-from app.core.currency import lines_money, money, unit_rate
+from app.core.currency import lines_money, money, qty3, unit_rate
 from app.core.gst import gstin_valid, state_from_gstin
 from app.core.units import canonical_unit
 from app.services.store_cutover import old_store_closed
@@ -304,11 +304,11 @@ def grn_dict(db, grn, detail=False):
         row["lines"] = [{
             "id": l.id, "po_line_id": l.po_line_id,
             "item_code": l.item_code or "", "description": l.description or "",
-            "uom": l.uom or "", "ordered_qty": money(l.ordered_qty),
-            "previously_received": money(l.previously_received),
-            "received_qty": money(l.received_qty),
-            "accepted_qty": money(l.accepted_qty),
-            "rejected_qty": money(l.rejected_qty),
+            "uom": l.uom or "", "ordered_qty": qty3(l.ordered_qty),
+            "previously_received": qty3(l.previously_received),
+            "received_qty": qty3(l.received_qty),
+            "accepted_qty": qty3(l.accepted_qty),
+            "rejected_qty": qty3(l.rejected_qty),
             "rejection_reason": l.rejection_reason or "",
             "rate": unit_rate(l.rate), "amount": money(l.amount),
         } for l in db.query(models.DBGoodsReceiptLine).filter(
@@ -574,7 +574,7 @@ def comparative_statement(db, rfq):
         high = max(offers, key=lambda o: o["rate"]) if offers else None
         rows.append({
             "rfq_line_id": l.id, "item_code": l.item_code or "", "description": l.description,
-            "uom": l.uom or "", "qty": money(l.qty), "offers": offers,
+            "uom": l.uom or "", "qty": qty3(l.qty), "offers": offers,
             "lowest": low["supplier_name"] if low else "", "lowest_rate": low["rate"] if low else 0,
             "spread_percent": (round((high["rate"] - low["rate"]) / low["rate"] * 100, 1)
                                if low and low["rate"] else 0.0),
@@ -714,7 +714,7 @@ def add_rfq_lines(db, rfq_id, lines):
         db.add(models.DBRfqLine(rfq_id=rfq_id, item_code=(l.get("item_code") or "").strip(),
                                 description=l["description"].strip(),
                                 uom=canonical_unit(l.get("uom")) or (l.get("uom") or ""),
-                                qty=money(l["qty"]), display_order=i, indent_line_id=l.get("indent_line_id") or None))
+                                qty=qty3(l["qty"]), display_order=i, indent_line_id=l.get("indent_line_id") or None))
 
 
 def _make_rfq(db, client, actor_name, title, job_id, needed_by, notes, lines, work_order_id=None):
