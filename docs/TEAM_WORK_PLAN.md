@@ -69,6 +69,54 @@ staff expense claims, the "To do today" card. Code: `backend/app/services/journa
 
 ---
 
+## Hemanth – TOP PRIORITY (added 16 Nov): rebuild the company front page for Yalavarti Infra Projects
+
+**The company is Yalavarti Infra Projects: a civil engineering and infrastructure builder - houses, townships and
+everything under civil works.** The front page at `/` still presents an electrical, fire and plumbing contractor
+("Yalavarti Projects Pvt. Ltd. - electrical works up to 33 kV"). Every visitor, client and tender evaluator sees the
+wrong business. Do this before the other Hemanth items below.
+
+You already connected the site to the ERP on 15 Nov (projects ticked "show on website", live totals, enquiries into the
+Tender Pipeline). Keep all of that. This task replaces the *content and the electrical-only sections*.
+
+### What to change
+
+| # | Where | Now | Change to |
+|---|---|---|---|
+| 1 | `backend/app/core/static.py` - `HOME_TITLE`, `HOME_DESCRIPTION`, `HOME_HEAD` | "Yalavarti Projects \| Electrical, Fire & PHE Contractors, Hyderabad", "electrical works up to 33 kV..." | "Yalavarti Infra Projects \| Homes, Townships & Civil Infrastructure" and a civil description. This is what Google and WhatsApp link previews show. |
+| 2 | `frontend/src/features/site/data/content.ts` (`SITE`) | Hero "Powering India's landmarks", electrical capabilities, electrical numbers | Hero for a builder (for example "Building homes, townships and the infrastructure around them"). Capabilities: residential houses and villas, apartments, gated townships and layouts, roads and drainage, water supply and sewerage, commercial and industrial buildings, civil structures. |
+| 3 | `Systems.tsx`, `scenes/building.ts`, `scenes/kit.ts` | 3D "Every system behind the walls" - wiring, fire and plumbing traced through a building | Remove, or replace with a simple "How we build" strip: land and approvals, design, foundation, structure, finishing, handover. Do not ship a 3D scene about wiring. |
+| 4 | `Sections.tsx`, `Atlas.tsx`, `data/projects.ts` | Electrical projects and client list; "LT Panels & Cable Trays", "Smart Building Tech" links | Projects come from the ERP (your `siteApi.ts` / `Live.tsx`). Remove the hard-coded electrical projects and the electrical links. Keep the city map only if the ERP projects carry a city. |
+| 5 | `data/credentials.ts` | Electrical licences | Civil credentials: contractor registration class, ISO, GST, RERA numbers for township projects, safety record, plant owned. **Leave a clearly marked placeholder for any figure Uday has not supplied - do not invent one.** |
+| 6 | `Nav.tsx` and footer in `Sections.tsx` | "YERP Login" button in the main menu | Take it out of the menu. One small "Staff login" link in the footer only. |
+| 7 | `Planner.tsx` (quote planner) | Asks electrical questions | Enquiry for a civil job: type of work (house, apartment, township, road, other), location, plot or built-up area, expected start. It must still post to the Tender Pipeline. |
+| 8 | Images in `frontend/public/site/img/` | Electrical banners and gallery | Site photos of houses, townships and civil work. Use real photos from Uday; until then, neutral construction photos we have the right to use. |
+| 9 | `Timeline.tsx` | "Since 1998", electrical milestones | Yalavarti Infra's own story - from Uday. Placeholder until supplied. |
+| 10 | Sister company | The whole page | One short "The Yalavarti Group" block linking to Yalavarti Projects for electrical, fire and plumbing (MEP). |
+
+### Pages and sections the new front page needs
+Home (one clear line + 3-4 numbers + featured projects + enquiry button), About, What we build, Projects (from the
+ERP, filter by type and city), Credentials, Quality & Safety (safe man-hours can come live from the ERP), Careers
+(existing recruitment page), Contact (address, phone, `info@yalavartiinfra.com`, map, enquiry form).
+
+### Rules
+- **No ERP wording on the public page.** It is a company website; the ERP is only reached from "Staff login".
+- **No invented facts.** Company numbers, project names, certificates, directors and years come from Uday. Mark every
+  missing one `TODO(Uday)` in `content.ts` so they are easy to find, and list them in the pull request.
+- Keep the page fast on a phone: no heavy 3D on first load.
+- Keep `robots.txt` and `sitemap.xml` as you built them; update names and descriptions.
+- Update or replace `Live.test.tsx` and add a test that the page shows no "Electrical", "33 kV" or "YERP" text.
+- The phone app and the ERP screens are not part of this.
+
+### Uday must send Hemanth
+Exact legal name and spelling (the domain is `yalavartiinfra.com`), year founded, 5-10 projects with photos, staff
+strength, registrations and certificates, directors, office address and phone, and whether to keep the dark look.
+
+### Done when
+The page at `/` reads as a civil infrastructure and housing company on desktop and phone, link previews show the new
+name, an enquiry lands in Clients > Tender Pipeline, staff can still sign in from the footer, and `npm run lint`,
+`npm test` and the backend tests pass.
+
 ## Hemanth – Purchase, Drawings, Documents, Quality, Safety, look and feel (heavy)
 
 | P | Gap | How to fix |
