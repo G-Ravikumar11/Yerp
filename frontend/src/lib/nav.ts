@@ -156,6 +156,7 @@ const NAV: NavEntry[] = [
       { label: 'GST', path: '/money/gst', perm: 'bills.view_all' },
       { label: 'TDS & Guarantees', path: '/money/registers', perm: 'bills.view_all' },
       { label: 'Fixed Assets', path: '/money/assets', perm: 'bills.view_all' },
+      { label: 'Trial Balance & Day Book', path: '/money/books', perm: 'bills.view_all' },
       { label: 'Tally Export', path: '/money/tally', perm: 'bills.view_all' },
     ],
   },
