@@ -69,6 +69,42 @@ if database.engine.dialect.name == "sqlite":
         _t.dialect_options["sqlite"]["autoincrement"] = True
 
 
+# START-UP ONCE
+# Opening a TestClient runs the application's whole start-up: every migration step and three back-fills that read whole
+# tables. That is right for a server, which starts once; the suite opens a client for nearly every one of its ~4,800
+# tests, so it was paying for start-up thousands of times over (and paying more as the test database filled). Here it
+# runs the first time and is skipped after. A test that is about start-up itself asks for the real thing with
+# @pytest.mark.full_startup.
+from contextlib import asynccontextmanager  # noqa: E402
+
+_real_lifespan = main.app.router.lifespan_context
+_startup = {"done": False, "force": False}
+
+
+@asynccontextmanager
+async def _startup_once(app):
+    if _startup["done"] and not _startup["force"]:
+        yield
+        return
+    async with _real_lifespan(app):
+        _startup["done"] = True
+        yield
+
+
+main.app.router.lifespan_context = _startup_once
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "full_startup: run the application's real start-up for this test")
+
+
+@pytest.fixture(autouse=True)
+def _startup_mode(request):
+    _startup["force"] = request.node.get_closest_marker("full_startup") is not None
+    yield
+    _startup["force"] = False
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _create_schema():
     models.Base.metadata.create_all(bind=database.engine)

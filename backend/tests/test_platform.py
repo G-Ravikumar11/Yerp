@@ -101,7 +101,11 @@ def test_logout_clears_the_session(client, account):
 
 # --- health ----------------------------------------------------------------
 
-def test_health_reports_database_state(client):
+def test_health_reports_database_state(client, monkeypatch):
+    # Start-up records a migration step that failed. In the suite the database is shared, and rows another test left
+    # behind can make a step fail when a later test starts the app: that is not what this test is about.
+    from app.db import migrations
+    monkeypatch.setattr(migrations, "MIGRATION_ERRORS", [])
     res = client.get("/api/health")
     assert res.status_code == 200
     assert res.json() == {"status": "ok", "database": "ok"}
