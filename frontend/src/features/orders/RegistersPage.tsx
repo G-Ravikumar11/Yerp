@@ -8,7 +8,7 @@ import { decideWorkType, orderKeys, requestWorkType, useWorkTypes, type WorkType
 import { get } from '@/lib/api'
 import { useAction } from '@/lib/mutate'
 import { formatDate } from '@/lib/format'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 
 type Tab = 'recoveries' | 'types'
 
@@ -66,7 +66,7 @@ function Recoveries() {
   const columns: TableColumn<Recovery>[] = [
     { id: 'i', header: 'Issue', cell: (r) => <div><span className="font-mono text-[13px]">{r.issue_number}</span><div className="text-xs text-muted-foreground">{formatDate(r.issued_on)}</div></div> },
     { id: 'o', header: 'Order', cell: (r) => <div><Link to={`/subcontractors/work-orders/${r.order_id}`} className="font-mono text-[13px] hover:underline">{r.order}</Link><div className="text-xs text-muted-foreground">{r.contractor}</div></div> },
-    { id: 'm', header: 'Material', cell: (r) => <div>{r.item_name || r.item_code}<div className="text-xs text-muted-foreground">{r.quantity} {r.uom} at {formatINR(r.rate)}</div></div> },
+    { id: 'm', header: 'Material', cell: (r) => <div>{r.item_name || r.item_code}<div className="text-xs text-muted-foreground">{r.quantity} {r.uom} at {formatRate(r.rate)}</div></div> },
     { id: 'a', header: 'Amount', align: 'right', sort: (r) => r.amount, cell: (r) => <span className="tabular font-medium">{formatINR(r.amount)}</span> },
     {
       id: 's',

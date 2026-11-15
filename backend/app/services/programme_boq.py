@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from app import models
 from app.constants.boq import BOQ_PRICED
-from app.core.currency import money
+from app.core.currency import money, qty3
 from app.core.naming import short_name
 from app.services.programme import _date_text, _place, _row_or_404, job_rows
 from app.services.projects import boq_order_lines
@@ -146,7 +146,7 @@ def programme_boq(db, client, job):
     items = boq_tree(lines)
     for n in items:
         d = drawn.get(n["key"], {"rows": 0, "quantity": 0.0})
-        n["drawn_rows"], n["drawn_quantity"] = d["rows"], money(d["quantity"])
+        n["drawn_rows"], n["drawn_quantity"] = d["rows"], qty3(d["quantity"])
     return {"boq": {"id": boq.id, "number": boq.number or "", "revision": (rev.label if rev else "") or ""},
             "items": items, "numbered": any(n["item_no"] for n in items)}
 
@@ -195,7 +195,7 @@ def draw_from_boq(db, client, job, picks, anchor_id=None, position="end", start=
     line_of = {l.key: l for l in lines}
 
     def new_row(n, parent_id, before, name, qty=None, label=""):
-        quantity = n["quantity"] if qty is None else money(qty)
+        quantity = n["quantity"] if qty is None else qty3(qty)
         a = models.DBScheduleActivity(
             client_id=client.id, job_id=job.id, name=(name + (" - %s" % label if label else ""))[:200],
             description=n["description"], boq_ref=n["ref"][:40], boq_key=n["key"], uom=n["uom"][:20],

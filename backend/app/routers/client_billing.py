@@ -15,7 +15,7 @@ from app.db import get_db, get_read_db
 from app.constants.client_billing import RA_EDITABLE, VO_TRANSITIONS
 from app.core.audit import log_audit
 from app.core.auth import refuse_ho_coordinator, require_erp_read, require_items_access, wo_actor
-from app.core.currency import inr, money, unit_rate
+from app.core.currency import inr, money, qty3, unit_rate
 from app.core.notifications import notify
 from app.core.sheets import sheet_response
 from app.documents.forms import form_pdf_response, ra_form_spec
@@ -98,7 +98,7 @@ def raise_ra_bill(body: RABillIn, request: Request, db: Session = Depends(get_db
         period_to=(body.period_to or datetime.now().strftime("%Y-%m-%d")),
         status="DRAFT",
         previously_billed=money(sum(
-            money(billed.get(l.id, 0.0)) * unit_rate(l.rate) for l in lines)),
+            qty3(billed.get(l.id, 0.0)) * unit_rate(l.rate) for l in lines)),
         retention_percent=body.retention_percent if body.retention_percent is not None else rates["retention_percent"],
         advance_recovery=money(body.advance_recovery or 0),
         other_deductions=money(body.other_deductions or 0),
@@ -394,7 +394,7 @@ def create_variation(body: VariationIn, request: Request,
     db.flush()
 
     for i, r in enumerate(rows):
-        extra = money(r.get("extra_qty") or 0)
+        extra = qty3(r.get("extra_qty") or 0)
         rate = unit_rate(r.get("rate") or 0)
         if not extra:
             continue
@@ -403,8 +403,8 @@ def create_variation(body: VariationIn, request: Request,
             fg_code=(r.get("fg_code") or "")[:120],
             description=(r.get("description") or "")[:500],
             uom=(r.get("uom") or "")[:40],
-            ordered_qty=money(r.get("ordered_qty") or 0),
-            measured_qty=money(r.get("measured_qty") or 0),
+            ordered_qty=qty3(r.get("ordered_qty") or 0),
+            measured_qty=qty3(r.get("measured_qty") or 0),
             extra_qty=extra, rate=rate, amount=money(extra * rate),
             display_order=i))
     db.flush()

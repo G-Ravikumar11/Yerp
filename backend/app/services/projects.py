@@ -14,7 +14,7 @@ from app.constants.projects import JOB_FINISHED
 from app.constants.quality import SERIOUS_KINDS
 from app.core import checks
 from app.core.config import logger
-from app.core.currency import inr, money, unit_rate
+from app.core.currency import inr, money, qty3, unit_rate
 from app.core.dates import _days_until, ageing_bucket
 from app.core.permissions import employee_can
 from app.core.queries import by_id, on_job
@@ -897,7 +897,7 @@ def attention_items(db, client_id):
             done = money(measured.get(l.id, 0.0))
             acc = per_order.setdefault(l.work_order_id, [0.0, 0.0])
             acc[0] += money(done - money(billed.get(l.id, 0.0))) * rate
-            if done > money(l.qty):
+            if done > qty3(l.qty):
                 acc[1] += money(done - money(l.qty)) * rate
         for unbilled, over in per_order.values():
             if unbilled > 0:

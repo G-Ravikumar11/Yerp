@@ -81,7 +81,7 @@ def test_the_book_gives_the_dimensions_back(tenant):
     assert e["dimensions"][0]["quantity"] == 1.242
     assert e["dimensions"][1]["deduct"] is True
     assert e["dimensions"][1]["quantity"] < 0
-    assert e["quantity"] == round(1.242 - 0.071, 2)
+    assert e["quantity"] == 1.171            # three decimals, as the book is kept - not cut to 1.17
 
 
 # --- What is refused -------------------------------------------------------------

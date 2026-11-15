@@ -49,10 +49,20 @@ def money(val) -> float:
     return float(d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def qty3(val) -> float:
+    """A quantity, to three decimals with a half rounded up - the precision a measurement book is kept to. Quantities
+    used to be rounded like money, to two: 12.346 cum went into the books as 12.35, and every bill built on it."""
+    try:
+        d = Decimal(str(val or 0))
+    except (InvalidOperation, ValueError, TypeError):
+        return 0.0
+    return float(d.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP))
+
+
 def qty_text(value) -> str:
     """A quantity as it is written in a sentence: 100, 117.6, 0.125 - not the
     float repr, which put "100.0 ordered" in front of the site engineer."""
-    return ("%.3f" % float(value or 0)).rstrip("0").rstrip(".") or "0"
+    return ("%.3f" % qty3(value)).rstrip("0").rstrip(".") or "0"
 
 
 def inr(value) -> str:

@@ -39,7 +39,7 @@ from app.core.auth import (
     wo_actor,
 )
 from app.core.config import logger
-from app.core.currency import format_money_plain, inr, money, sheet_number, unit_rate
+from app.core.currency import format_money_plain, inr, money, qty3, sheet_number, unit_rate
 from app.core.dates import financial_year_label
 from app.core.files import file_counts, file_headers, image_data_url, served_type
 from app.core.gst import state_from_gstin
@@ -963,7 +963,7 @@ async def wo_import_boq(order_id: int, request: Request, file: UploadFile = File
     lines, skipped = [], 0
     for index, row in enumerate(rows_from(header, body, mapping), start=1):
         description = (row.get("item_description") or "").strip()
-        quantity = money(sheet_number(row.get("quantity")))
+        quantity = qty3(sheet_number(row.get("quantity")))
         rate = unit_rate(sheet_number(row.get("unit_rate")))
         # A sheet off a real desk ends in its own grand total: a number with
         # no description against it. Counted and reported rather than read as
@@ -1051,7 +1051,7 @@ def wo_set_boq(order_id: int, body: BoqIn, request: Request,
             continue
         header = bool(line.is_header)
         # A heading is a heading: it prices nothing and is never measured.
-        qty = 0.0 if header else money(line.quantity or 0)
+        qty = 0.0 if header else qty3(line.quantity or 0)
         rate = 0.0 if header else unit_rate(line.unit_rate or 0)
         if qty < 0 or rate < 0:
             raise HTTPException(400, "Line %d: quantity and rate cannot be negative"
@@ -1814,7 +1814,7 @@ def wo_checked_parts(raw, quantity, project_boq):
     parts, gone = [], 0
     for p in raw or []:
         key = str((p or {}).get("key") or "")
-        qty = money((p or {}).get("qty") or 0)
+        qty = qty3((p or {}).get("qty") or 0)
         if not key:
             continue
         if key not in project_boq or project_boq[key].kind not in BOQ_PRICED:
@@ -1828,7 +1828,7 @@ def wo_checked_parts(raw, quantity, project_boq):
     total = sum(p["qty"] for p in parts)
     if parts and total > 0 and quantity > 0 and abs(total - quantity) > 0.0001:
         scale = quantity / total
-        parts = [dict(p, qty=money(p["qty"] * scale)) for p in parts]
+        parts = [dict(p, qty=qty3(p["qty"] * scale)) for p in parts]
     return parts, gone
 
 
@@ -1857,7 +1857,7 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
     def check(l, qty):
         total = (given.get(l.key) or {"qty": 0.0})["qty"] + qty
         if total > (l.quantity or 0) + 0.0001:
-            warn.append("%s: %s would be given in all against %s in the BOQ" % (l.description[:30], money(total), money(l.quantity)))
+            warn.append("%s: %s would be given in all against %s in the BOQ" % (l.description[:30], qty3(total), qty3(l.quantity)))
 
     # A heading taken as one line. Lines of different units are never added together, so a heading in two units comes
     # back as two lines; the grade is the one they share, or none when they do not.
@@ -1867,11 +1867,11 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
         by_unit = {}
         for p in g.get("parts") or []:
             l = found.get(str(p.get("key") or ""))
-            qty = money(p.get("quantity") or 0)
+            qty = qty3(p.get("quantity") or 0)
             if l and qty > 0:
                 by_unit.setdefault((l.uom or "").strip(), []).append((l, qty))
         for uom, members in by_unit.items():
-            qty = money(sum(q for _, q in members))
+            qty = qty3(sum(q for _, q in members))
             if g.get("rate") is not None and str(g.get("rate")).strip() != "":
                 rate, source = unit_rate(g.get("rate") or 0), ""
             else:
@@ -1891,7 +1891,7 @@ def wo_add_boq_lines(order_id: int, body: dict, request: Request, db: Session = 
         l = found.get(str(w.get("key") or ""))
         if not l:
             continue
-        qty = money(w.get("quantity") if w.get("quantity") is not None else l.quantity)
+        qty = qty3(w.get("quantity") if w.get("quantity") is not None else l.quantity)
         if w.get("rate") is not None and str(w.get("rate")).strip() != "":
             rate, source = unit_rate(w.get("rate") or 0), ""
         else:

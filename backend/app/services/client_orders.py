@@ -3,7 +3,7 @@ from datetime import datetime
 
 from app import models
 
-from app.core.currency import money, unit_rate
+from app.core.currency import money, qty3, unit_rate
 
 
 def preload_work_orders(db, client_id, orders):
@@ -65,8 +65,8 @@ def budget_report(db, client, wo):
         materials = [{
             "rm_code": b.rm_code, "rm_name": b.rm_name,
             "description": "%s  -  %s" % (b.rm_code, b.rm_name),
-            "qty": money(b.qty), "uom": b.uom or "",
-            "rate": unit_rate(b.rate), "wo_qty": money(line.qty),
+            "qty": qty3(b.qty), "uom": b.uom or "",
+            "rate": unit_rate(b.rate), "wo_qty": qty3(line.qty),
             "amount": money(b.amount),
         } for b in by_fg.get(code, [])]
         cost = money(sum(m["amount"] for m in materials))
@@ -74,7 +74,7 @@ def budget_report(db, client, wo):
         groups.append({
             "fg_code": line.fg_code, "item_name": line.item_name,
             "description": line.description or "",
-            "qty": money(line.qty), "uom": line.uom or "",
+            "qty": qty3(line.qty), "uom": line.uom or "",
             "rate": unit_rate(line.rate), "value": value,
             "cost": cost, "margin": money(value - cost),
             "budgeted": bool(materials), "lines": materials,

@@ -5,7 +5,7 @@ import { Button, Field, Input, Modal, Select } from '@/components/ui'
 import { useItems, type Item } from '@/api/items'
 import { buildClientOrder, clientOrderKeys, useJobOptions, type ClientOrder } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
-import { formatINR } from '@/lib/utils'
+import { formatINR, roundTo } from '@/lib/utils'
 
 interface Row {
   code: string
@@ -15,7 +15,7 @@ interface Row {
 }
 
 const blank = (): Row => ({ code: '', description: '', qty: null, rate: null })
-const amount = (r: Row) => (r.qty && r.rate ? Math.round(r.qty * r.rate * 100) / 100 : null)
+const amount = (r: Row) => (r.qty && r.rate ? roundTo(r.qty * r.rate) : null)
 
 export function NewClientOrderModal({ open, onOpenChange, staff, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; staff: boolean; onCreated: (o: ClientOrder) => void }) {
   return (

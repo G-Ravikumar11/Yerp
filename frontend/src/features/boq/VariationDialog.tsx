@@ -18,7 +18,7 @@ import {
 } from '@/api/boq'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
-import { cn, formatINR } from '@/lib/utils'
+import { cn, formatINR, roundTo } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 
 interface Row {
@@ -85,7 +85,7 @@ export function VariationDialog({ boqId, id, lines, open, onOpenChange }: { boqI
         readOnly: true,
         get: (r) => {
           const rate = r.rate ?? (r.kind === 'quantity' ? (byKey.get(r.boq_key)?.rate ?? 0) : 0)
-          return r.change_qty && rate ? Math.round(r.change_qty * rate * 100) / 100 : null
+          return r.change_qty && rate ? roundTo(r.change_qty * rate) : null
         },
         format: (x) => (typeof x === 'number' ? formatINR(x) : ''),
         summary: 'sum',

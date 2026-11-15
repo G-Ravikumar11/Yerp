@@ -7,14 +7,14 @@ the period it is issued, and the quantities become claimable again if the work i
 
 Side "client" is against our RA bill (we credit the client); side "contractor" is against a contractor's bill (the contractor
 credits us). The arithmetic is the bill's own: the same rates, the same CGST/SGST-or-IGST decision, the same
-rounding (paise on our bills, whole rupees on the contractors').
+rounding (to the paisa).
 """
 from datetime import date
 
 from fastapi import HTTPException
 
 from app import models
-from app.core.currency import inr, money, rupees
+from app.core.currency import inr, money, qty3, rupees
 from app.core.dates import financial_year_label
 from app.core.serials import allocate_series_number
 
@@ -22,7 +22,7 @@ CLIENT, CONTRACTOR = "client", "contractor"
 
 
 def _round(side):
-    return money if side == CLIENT else rupees
+    return money            # both to the paisa; contractor credit notes used to be in whole rupees, as their bills were
 
 
 def credit_notes_query(db, client_id, side=None):
@@ -143,7 +143,7 @@ def credit_note_dict(db, n, detail=False):
         row["lines"] = [{
             "id": l.id, "bill_line_id": l.bill_line_id, "item_id": l.item_id,
             "description": (l.description or "").split("\n")[0], "uom": l.uom or "",
-            "qty": money(l.qty), "rate": l.rate or 0, "amount": money(l.amount),
+            "qty": qty3(l.qty), "rate": l.rate or 0, "amount": money(l.amount),
         } for l in db.query(models.DBCreditNoteLine).filter(
             models.DBCreditNoteLine.credit_note_id == n.id).order_by(models.DBCreditNoteLine.id).all()]
     return row
@@ -206,13 +206,13 @@ def raise_credit_note(db, side, client_id, bill, lines, reason, note_date="", ac
     asked = {}
     for ln in lines or []:
         try:
-            line_id, qty = int(ln.get("bill_line_id")), money(ln.get("qty") or 0)
+            line_id, qty = int(ln.get("bill_line_id")), qty3(ln.get("qty") or 0)
         except (TypeError, ValueError, AttributeError):
             raise HTTPException(400, "Each line needs a bill line and a quantity.")
         if qty < 0:
             raise HTTPException(400, "A quantity taken back cannot be negative.")
         if qty > 0:
-            asked[line_id] = money(asked.get(line_id, 0.0) + qty)
+            asked[line_id] = qty3(asked.get(line_id, 0.0) + qty)
     if not asked:
         raise HTTPException(400, "Enter the quantity to take back on at least one line.")
 
@@ -224,7 +224,7 @@ def raise_credit_note(db, side, client_id, bill, lines, reason, note_date="", ac
         l = bill_lines.get(line_id)
         if not l:
             raise HTTPException(400, "That line is not on %s." % bill.number)
-        room = money((l.this_bill_qty or 0) - done.get(line_id, 0.0))
+        room = qty3((l.this_bill_qty or 0) - done.get(line_id, 0.0))
         if qty > room + 0.0001:
             raise HTTPException(
                 400, "Only %s of '%s' can still be taken back off %s; %s is more than that." % (

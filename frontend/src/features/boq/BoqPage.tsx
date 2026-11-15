@@ -27,7 +27,7 @@ import {
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatQty } from '@/lib/format'
-import { cn, compactINR, formatINR } from '@/lib/utils'
+import { cn, compactINR, formatINR, formatRate, roundTo } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 import { VariationDialog } from './VariationDialog'
 
@@ -57,7 +57,7 @@ const fromLines = (lines: BoqLine[]): Row[] => lines.map((l) => ({ key: l.key, k
 const kindOf = (r: Row): BoqKind => (r.kind === 'note' ? 'note' : r.quantity || r.rate || r.rate_only ? (r.kind === 'sub' ? 'sub' : 'item') : 'section')
 const priced = (r: Row) => kindOf(r) === 'item' || kindOf(r) === 'sub'
 const locked = (r: Row) => r.kind === 'note'
-const amountOf = (r: Row) => (priced(r) && !r.rate_only && r.quantity && r.rate ? Math.round(r.quantity * r.rate * 100) / 100 : null)
+const amountOf = (r: Row) => (priced(r) && !r.rate_only && r.quantity && r.rate ? roundTo(r.quantity * r.rate) : null)
 
 /**
  * What the server is sent. A row with words but no quantity and no rate is a heading, not an item at nought -
@@ -473,10 +473,10 @@ function TrackerView({ rows, flags, totals, loading, denied }: { rows: TrackerRo
     { id: 'code', header: 'Item code', width: '7rem', cell: (r) => <span className="whitespace-nowrap font-mono text-xs">{r.item_code ?? ''}</span> },
     { id: 'd', header: 'Description', cell: (r) => (r.kind === 'section' ? <span className="font-semibold">{r.description}</span> : <div className="max-w-sm truncate" title={r.description}>{r.description}</div>) },
     { id: 'qty', header: 'BOQ qty', align: 'right', cell: (r) => (r.kind === 'section' ? '' : `${formatQty(r.quantity ?? 0)} ${r.uom ?? ''}`) },
-    { id: 'rate', header: 'Our rate', align: 'right', hideBelow: 'md', cell: (r) => (r.kind === 'section' ? '' : formatINR(r.rate ?? 0)) },
+    { id: 'rate', header: 'Our rate', align: 'right', hideBelow: 'md', cell: (r) => (r.kind === 'section' ? '' : formatRate(r.rate ?? 0)) },
     { id: 'given', header: 'Given to contractors', align: 'right', cell: (r) => (r.kind === 'section' ? '' : <span title={(r.orders ?? []).join(', ')}>{formatQty(r.given ?? 0)}</span>) },
     { id: 'left', header: 'Left to give', align: 'right', cell: (r) => (r.kind === 'section' ? '' : <span className={r.left_to_give ? 'font-medium' : 'text-muted-foreground'}>{formatQty(r.left_to_give ?? 0)}</span>) },
-    { id: 'grate', header: 'Contractor rate', align: 'right', hideBelow: 'lg', cell: (r) => (r.kind === 'section' || !r.given ? '' : formatINR(r.contractor_rate ?? 0)) },
+    { id: 'grate', header: 'Contractor rate', align: 'right', hideBelow: 'lg', cell: (r) => (r.kind === 'section' || !r.given ? '' : formatRate(r.contractor_rate ?? 0)) },
     { id: 'margin', header: 'Margin', align: 'right', hideBelow: 'lg', cell: (r) => (r.margin_percent == null ? '' : <span className={r.margin_percent < 0 ? 'font-medium text-danger' : ''}>{r.margin_percent}%</span>) },
     { id: 'done', header: 'Executed', align: 'right', hideBelow: 'md', cell: (r) => (r.kind === 'section' ? '' : `${formatQty(Math.max(r.executed ?? 0, r.client_executed ?? 0))} (${r.percent_done ?? 0}%)`) },
     { id: 'bal', header: 'Balance to do', hideBelow: 'md', align: 'right', cell: (r) => (r.kind === 'section' ? '' : formatQty(r.left_to_execute ?? 0)) },

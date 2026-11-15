@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from sqlalchemy import func
 
 from app import models
-from app.core.currency import format_money_plain, inr, money, unit_rate
+from app.core.currency import format_money_plain, inr, money, qty3, unit_rate
 from app.core.dates import _parse_date
 from app.core.tenant_settings import tenant_setting
 
@@ -269,9 +269,9 @@ def boq_breaches(db, order):
     for key, qty in mine.items():
         line = boq[key]
         total = money(given.get(key, 0.0) + qty)
-        if (line.quantity or 0) > 0 and total > money(line.quantity) + 0.0001:
+        if (line.quantity or 0) > 0 and total > qty3(line.quantity) + 0.0001:
             out.append("%s: %s would be given to contractors against %s in the BOQ" % (
-                boq_line_label(line), total, money(line.quantity)))
+                boq_line_label(line), total, qty3(line.quantity)))
         if (line.rate or 0) > 0 and rates.get(key, 0.0) > unit_rate(line.rate) + 0.0001:
             out.append("%s: the contractor's rate %s is above the client's %s - a loss on every unit" % (
                 boq_line_label(line), rates[key], unit_rate(line.rate)))
@@ -307,9 +307,9 @@ def bill_boq_overbilling(db, bill):
     out = []
     for key in sorted(keys):
         line = boq[key]
-        if (line.quantity or 0) > 0 and money(totals.get(key, 0.0)) > money(line.quantity) + 0.0001:
+        if (line.quantity or 0) > 0 and qty3(totals.get(key, 0.0)) > qty3(line.quantity) + 0.0001:
             out.append("%s: %s billed by contractors against %s in the BOQ" % (
-                boq_line_label(line), money(totals[key]), money(line.quantity)))
+                boq_line_label(line), qty3(totals[key]), qty3(line.quantity)))
     return out
 
 

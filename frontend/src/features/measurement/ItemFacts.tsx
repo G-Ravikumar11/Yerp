@@ -1,6 +1,6 @@
 import type { MbLine } from '@/api/mb'
 import { formatQty } from '@/lib/format'
-import { cn, formatINR } from '@/lib/utils'
+import { cn, formatRate } from '@/lib/utils'
 
 /** What the work order says about one item - the unit, the rate, how much is ordered and how much is left. */
 export function ItemFacts({ line, className }: { line: MbLine; className?: string }) {
@@ -10,7 +10,7 @@ export function ItemFacts({ line, className }: { line: MbLine; className?: strin
     ['Ordered', formatQty(line.ordered_qty)],
     ['Measured', formatQty(line.measured_to_date), !!line.over_measured],
     ['Still to do', formatQty(left)],
-    ['Rate', formatINR(line.rate ?? 0)],
+    ['Rate', formatRate(line.rate ?? 0)],
     // A client order has no ceiling: past it the work becomes a variation.
     ...(line.max_quantity != null ? ([['Allowed up to', formatQty(line.max_quantity)]] as [string, string][]) : []),
   ]

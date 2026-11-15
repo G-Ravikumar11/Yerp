@@ -13,7 +13,7 @@ from app.constants.common import SUB_TRANSITIONS
 from app.constants.projects import JOB_FINISHED
 from app.core.audit import log_audit
 from app.core.auth import STAFF_VIEWER, current_role
-from app.core.currency import amount_in_words, format_money_plain, inr, money, rupees, unit_rate
+from app.core.currency import amount_in_words, format_money_plain, inr, money, qty3, rupees, unit_rate
 from app.core.dates import months_after
 from app.core.gst import GST_STATES, WORKS_CONTRACT_SAC, our_state, split_gst, supply_state_for_job
 from app.core.permissions import employee_can
@@ -47,7 +47,7 @@ def dimension_quantity(d):
     qty = float(d.nos) if d.nos is not None else 1.0
     for v in given:
         qty *= float(v)
-    return round(qty, 3)
+    return qty3(qty)
 
 
 def dimension_total(dims):
@@ -75,7 +75,7 @@ def dimension_total(dims):
         if not qty:
             raise HTTPException(400, "Dimension line %d comes to nothing." % (index + 1))
         total += -qty if d.deduct else qty
-    return round(total, 3)
+    return qty3(total)
 
 
 def write_dimensions(db, client_id, dims, measurement_id=None, sub_measurement_id=None):
@@ -173,8 +173,10 @@ def recost_sub_bill(db, bill):
     work; what we hold back is not a discount on it. Then the deductions: the advance and
     the material or other recoveries (5.01, 5.02), retention (5.03) and TDS
     (5.04), both on the value of the work, and the labour cess where the
-    order carries one. Every figure after the work itself is in whole
-    rupees, as the certificate rounds them.
+    order carries one. Every figure is kept to the paisa: rounding each
+    one to a whole rupee made the certificate differ from the contractor's own
+    invoice by a rupee here and there. (Bills certified before this keep the
+    whole-rupee figures they were certified at - see bill_gross.)
     """
     lines = db.query(models.DBSubBillLine).filter(
         models.DBSubBillLine.sub_bill_id == bill.id).all()
@@ -188,24 +190,33 @@ def recost_sub_bill(db, bill):
             - credited_taxable_by_order(db, "contractor", bill.order_id))
     bill.gross_to_date = money((bill.previously_billed or 0) + this_bill)
     bill.debit_notes = money(getattr(bill, "debit_notes", 0) or 0)
-    gross = rupees(this_bill - bill.debit_notes)
+    gross = money(this_bill - bill.debit_notes)
     supply = supply_state_for_job(db, bill.job_id)
     # It is the contractor's supply, so it is their registration against the site
     # that decides the split - ours only when they have none on file.
     origin = contractor_state(db, bill.contractor_id) or our_state(db, bill.client_id)
-    gst = split_gst(rupees(this_bill), bill.gst_percent or 0, origin, supply)
+    gst = split_gst(this_bill, bill.gst_percent or 0, origin, supply)
     bill.cgst_amount, bill.sgst_amount, bill.igst_amount = (
-        rupees(gst["cgst"]), rupees(gst["sgst"]), rupees(gst["igst"]))
+        money(gst["cgst"]), money(gst["sgst"]), money(gst["igst"]))
     bill.gst_amount = money(bill.cgst_amount + bill.sgst_amount + bill.igst_amount)
     bill.place_of_supply = supply
-    bill.retention_amount = rupees(this_bill * (bill.retention_percent or 0) / 100.0)
-    bill.tds_amount = rupees(this_bill * (bill.tds_percent or 0) / 100.0)
-    bill.labour_cess_amount = rupees(this_bill * (bill.labour_cess_percent or 0) / 100.0)
+    bill.retention_amount = money(this_bill * (bill.retention_percent or 0) / 100.0)
+    bill.tds_amount = money(this_bill * (bill.tds_percent or 0) / 100.0)
+    bill.labour_cess_amount = money(this_bill * (bill.labour_cess_percent or 0) / 100.0)
     deductions = ((bill.advance_recovery or 0) + (bill.other_deductions or 0) + (bill.back_charges or 0) + bill.retention_amount
                   + bill.tds_amount + bill.labour_cess_amount + (bill.ld_amount or 0))
-    bill.net_payable = rupees(gross + bill.gst_amount - deductions)
+    bill.net_payable = money(gross + bill.gst_amount - deductions)
     bill.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return bill
+
+
+def bill_gross(bill):
+    """The work less debit notes, as this bill carries it: to the paisa, or - for a bill certified while every figure was
+    rounded to a whole rupee - the whole rupee it was certified at, so an old certificate still adds up."""
+    raw = (bill.this_bill or 0) - (getattr(bill, "debit_notes", 0) or 0)
+    old_style = (bill.status or "") in ("CERTIFIED", "PAID") and all(
+        float(v or 0) == int(float(v or 0)) for v in (bill.net_payable, bill.gst_amount, bill.retention_amount, bill.tds_amount))
+    return rupees(raw) if old_style else money(raw)
 
 
 def sub_bill_room(bill):
@@ -213,7 +224,7 @@ def sub_bill_room(bill):
     already deducted. The GST on top is left alone - it is the contractor's to pay
     over to the government, and recovering an advance out of it leaves them
     owing tax on money they never received."""
-    return money(rupees((bill.this_bill or 0) - (bill.debit_notes or 0))
+    return money(bill_gross(bill)
                  - (bill.advance_recovery or 0) - (bill.other_deductions or 0) - (bill.back_charges or 0)
                  - (bill.retention_amount or 0) - (bill.tds_amount or 0)
                  - (bill.labour_cess_amount or 0) - (bill.ld_amount or 0))
@@ -272,7 +283,7 @@ def sub_bill_dict(db, bill, detail=False, credits=None):
         "work_name": getattr(bill, "work_name", "") or "",
         "hsn_sac": getattr(bill, "hsn_sac", "") or "",
         "debit_notes": money(getattr(bill, "debit_notes", 0)),
-        "gross_value": rupees((bill.this_bill or 0) - (getattr(bill, "debit_notes", 0) or 0)),
+        "gross_value": bill_gross(bill),
         "submitted_by_name": getattr(bill, "submitted_by_name", "") or "",
         "submitted_at": getattr(bill, "submitted_at", "") or "",
         "approved_by_name": getattr(bill, "approved_by_name", "") or "",
@@ -322,17 +333,17 @@ def sub_bill_dict(db, bill, detail=False, credits=None):
         row["lines"] = [{
             "id": l.id, "item_id": l.item_id, "activity_no": l.activity_no or "",
             "description": (l.description or "").split("\n")[0], "uom": l.uom or "",
-            "ordered_qty": money(l.ordered_qty), "measured_to_date": money(l.measured_to_date),
-            "previously_billed_qty": money(l.previously_billed_qty),
-            "this_bill_qty": money(l.this_bill_qty), "rate": unit_rate(l.rate),
+            "ordered_qty": qty3(l.ordered_qty), "measured_to_date": qty3(l.measured_to_date),
+            "previously_billed_qty": qty3(l.previously_billed_qty),
+            "this_bill_qty": qty3(l.this_bill_qty), "rate": unit_rate(l.rate),
             "amount": money(l.amount),
-            "upto_date_amount": money(money(l.measured_to_date) * unit_rate(l.rate)),
-            "credited_qty": money(credit["credited_qty"].get(l.id, 0.0)),
-            "creditable_qty": money((l.this_bill_qty or 0) - credit["credited_qty"].get(l.id, 0.0)),
+            "upto_date_amount": money(qty3(l.measured_to_date) * unit_rate(l.rate)),
+            "credited_qty": qty3(credit["credited_qty"].get(l.id, 0.0)),
+            "creditable_qty": qty3((l.this_bill_qty or 0) - credit["credited_qty"].get(l.id, 0.0)),
         } for l in db.query(models.DBSubBillLine).filter(
             models.DBSubBillLine.sub_bill_id == bill.id).order_by(
                 models.DBSubBillLine.display_order, models.DBSubBillLine.id).all()]
-        row["entries"] = [{"id": m.id, "code": m.code or "", "kind": m.kind or "", "quantity": money(m.quantity),
+        row["entries"] = [{"id": m.id, "code": m.code or "", "kind": m.kind or "", "quantity": qty3(m.quantity),
                            "activity_no": m.activity_no or "", "location": m.location or "", "measured_on": m.measured_on or ""}
                           for m in db.query(models.DBSubMeasurement).filter(
                               models.DBSubMeasurement.sub_bill_id == bill.id).order_by(
@@ -376,10 +387,10 @@ def add_sub_measurement(db, client, order, item, body, actor_id, actor_name):
         raise HTTPException(400, "%s is a heading, not a measurable item."
                                  % (item.activity_no or "That line"))
     multiplier = sub_measure_multiplier(getattr(body, "multiplier", 1))
-    quantity = money(body.quantity or 0)
+    quantity = qty3(body.quantity or 0)
     if body.dimensions:
-        quantity = money(dimension_total(body.dimensions))
-    quantity = money(quantity * multiplier)
+        quantity = qty3(dimension_total(body.dimensions))
+    quantity = qty3(quantity * multiplier)
     if not quantity:
         raise HTTPException(400, "A measurement of nothing is not a measurement")
     # The order plus its tolerance is the ceiling. Past it the order is amended
@@ -389,12 +400,12 @@ def add_sub_measurement(db, client, order, item, body, actor_id, actor_name):
     if quantity > 0:
         done = money(sub_gross_measured(db, order.id).get(item.id, 0.0))
         ceiling = item_ceiling(item)
-        if money(done + quantity) > ceiling + 0.0001:
+        if qty3(done + quantity) > ceiling + 0.0001:
             raise HTTPException(
                 409, "%s: %s already measured; %s more would make %s against %s "
                      "ordered%s. Amend the order to measure beyond it."
                      % (item.activity_no or "Item", done, quantity,
-                        money(done + quantity), money(item.quantity),
+                        qty3(done + quantity), qty3(item.quantity),
                         " (+%g%% tolerance = %s)" % (item.tolerance_percent, ceiling)
                         if item.tolerance_percent else ""))
     entry = models.DBSubMeasurement(
@@ -491,7 +502,7 @@ def sub_gross_measured(db, order_id):
 def sub_hold_remaining(db, hold):
     got = sum((m.quantity or 0.0) for m in db.query(models.DBSubMeasurement).filter(
         models.DBSubMeasurement.kind == "release", models.DBSubMeasurement.hold_of == hold.id).all())
-    return money(max(0.0, -(hold.quantity or 0.0) - got))
+    return qty3(max(0.0, -(hold.quantity or 0.0) - got))
 
 
 def sub_claimable_lines(db, order, exclude_bill_id=None):
@@ -503,9 +514,9 @@ def sub_claimable_lines(db, order, exclude_bill_id=None):
                 models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all():
         if it.is_header:
             continue
-        done = money(measured.get(it.id, 0.0))
-        prior = money(billed.get(it.id, 0.0))
-        this = money(done - prior)
+        done = qty3(measured.get(it.id, 0.0))
+        prior = qty3(billed.get(it.id, 0.0))
+        this = qty3(done - prior)
         if this <= 0:
             continue
         out.append((it, done, prior, this))
@@ -544,23 +555,23 @@ def chosen_claims(db, order, entries, exclude_bill_id=None):
     billed = sub_billed_to_date(db, order.id, exclude_bill_id)
     claim = {}
     for e in entries:
-        claim[e.item_id] = money(claim.get(e.item_id, 0.0) + (e.quantity or 0.0))
+        claim[e.item_id] = qty3(claim.get(e.item_id, 0.0) + (e.quantity or 0.0))
     out = []
     for it in db.query(models.DBSubcontractItem).filter(
             models.DBSubcontractItem.order_id == order.id,
             models.DBSubcontractItem.id.in_(list(claim) or [0])).order_by(
                 models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all():
         this = claim[it.id]
-        done = money(measured.get(it.id, 0.0))
-        prior = money(billed.get(it.id, 0.0))
+        done = qty3(measured.get(it.id, 0.0))
+        prior = qty3(billed.get(it.id, 0.0))
         label = it.activity_no or "Item"
         if this <= 0:
             raise HTTPException(409, "%s: the entries chosen come to nothing to bill. Choose the work itself, "
                                      "not only a hold on it." % label)
-        if this > money(done - prior) + 0.0001:
+        if this > qty3(done - prior) + 0.0001:
             raise HTTPException(409, "%s: those entries come to %s but only %s is left to bill - some of it is held "
                                      "back or already billed. Release the hold, or include it in the choice."
-                                % (label, this, money(done - prior)))
+                                % (label, this, qty3(done - prior)))
         out.append((it, done, prior, this))
     return out
 
@@ -586,7 +597,7 @@ def draw_sub_bill_lines(db, bill, order, entry_ids=None):
         db.add(models.DBSubBillLine(
             sub_bill_id=bill.id, item_id=it.id, activity_no=it.activity_no or "",
             description=with_grade(it.item_description, it.material), uom=it.uom or "",
-            ordered_qty=money(it.quantity), measured_to_date=done,
+            ordered_qty=qty3(it.quantity), measured_to_date=done,
             previously_billed_qty=prior, this_bill_qty=this, rate=rate,
             amount=money(this * rate), display_order=i))
     if (bill.entry_mode or "") != "chosen":
@@ -780,7 +791,7 @@ def sub_order_or_404(db, client_id, order_id):
 def material_recovery_dict(r):
     return {"id": r.id, "order_id": r.order_id, "issue_number": r.issue_number,
             "item_code": r.item_code, "item_name": r.item_name, "uom": r.uom,
-            "quantity": money(r.quantity), "rate": unit_rate(r.rate), "amount": money(r.amount),
+            "quantity": qty3(r.quantity), "rate": unit_rate(r.rate), "amount": money(r.amount),
             "issued_on": r.issued_on, "sub_bill_id": r.sub_bill_id,
             "state": "recovered" if r.sub_bill_id else "waiting"}
 
@@ -807,9 +818,9 @@ def apply_material_recovery(db, client_id, order, bill):
                 client_id=r.client_id, order_id=r.order_id, job_id=r.job_id,
                 stock_issue_id=r.stock_issue_id, issue_number=r.issue_number,
                 item_code=r.item_code, item_name=r.item_name, uom=r.uom,
-                quantity=money(r.quantity * (1 - share)), rate=r.rate,
+                quantity=qty3(r.quantity * (1 - share)), rate=r.rate,
                 amount=money(r.amount - room), issued_on=r.issued_on))
-            r.quantity = money(r.quantity * share)
+            r.quantity = qty3(r.quantity * share)
             r.amount = money(room)
         r.sub_bill_id = bill.id
         taken = money(taken + r.amount)

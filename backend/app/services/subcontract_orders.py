@@ -31,7 +31,7 @@ from app.constants.subcontract_orders import (
 from app.core.audit import log_audit
 from app.core.auth import STAFF_VIEWER, get_client_user, require_items_access, require_owner
 from app.core.config import logger
-from app.core.currency import format_money_plain, inr, money, qty_text, unit_rate
+from app.core.currency import format_money_plain, inr, money, qty3, qty_text, unit_rate
 from app.core.gst import our_state, split_gst, state_from_gstin, supply_state_for_job
 from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
@@ -253,7 +253,7 @@ def wo_item_dict(i):
     return {"id": i.id, "activity_no": i.activity_no or "", "item_code": i.item_code or "",
             "item_description": i.item_description or "",
             "technical_spec": i.technical_spec or "", "uom": i.uom or "",
-            "quantity": money(i.quantity), "unit_rate": unit_rate(i.unit_rate),
+            "quantity": qty3(i.quantity), "unit_rate": unit_rate(i.unit_rate),
             "total_amount": money(i.total_amount), "budget_id": i.budget_id,
             "cost_centre": i.cost_centre or "",
             "display_order": i.display_order or 0,
@@ -268,7 +268,7 @@ def wo_item_dict(i):
 def item_ceiling(item):
     """The most that may be measured against a line: the ordered quantity
     plus its tolerance. Past this the order is amended, not the book."""
-    return money((item.quantity or 0) * (1.0 + (item.tolerance_percent or 0) / 100.0))
+    return qty3((item.quantity or 0) * (1.0 + (item.tolerance_percent or 0) / 100.0))
 
 
 def contractor_state(db, contractor_id):
@@ -1056,7 +1056,7 @@ def wo_revision_blockers(db, order):
                        (i.activity_no or (i.item_description or "")[:40]) for i in missing)))
     measured = sub_gross_measured(db, old.id)
     for o, n in [(i, mapping[i.id]) for i in old_items if i.id in mapping]:
-        if money(measured.get(o.id, 0.0)) > item_ceiling(n) + 0.0001:
+        if qty3(measured.get(o.id, 0.0)) > item_ceiling(n) + 0.0001:
             out.append("%s is measured to %s but the revision orders %s." % (
                 o.activity_no or "A line", qty_text(measured.get(o.id, 0.0)), qty_text(n.quantity)))
     return out
@@ -1108,7 +1108,7 @@ def wo_take_over_history(db, client, revision):
                                                              for i in missing)))
     measured = sub_gross_measured(db, old.id)
     short = [(i, mapping[i.id]) for i in old_items
-             if i.id in mapping and money(measured.get(i.id, 0.0)) > item_ceiling(mapping[i.id]) + 0.0001]
+             if i.id in mapping and qty3(measured.get(i.id, 0.0)) > item_ceiling(mapping[i.id]) + 0.0001]
     if short:
         raise HTTPException(409, "The revision orders less than is already measured: %s."
                                  % "; ".join("%s %s measured, %s on the revision" % (
@@ -1581,13 +1581,13 @@ def work_order_statement(db, client, wo):
     rows, measured_value, unbilled_value, over_run = [], 0.0, 0.0, 0.0
     for l in lines:
         rate = unit_rate(l.rate)
-        done = money(measured.get(l.id, 0.0))
-        claimed = money(billed_qty.get(l.id, 0.0))
-        ordered = money(l.qty)
-        measured_value += done * rate
-        unbilled_value += money(done - claimed) * rate
+        done = qty3(measured.get(l.id, 0.0))
+        claimed = qty3(billed_qty.get(l.id, 0.0))
+        ordered = qty3(l.qty)
+        measured_value += money(done * rate)
+        unbilled_value += money(qty3(done - claimed) * rate)
         if done > ordered:
-            over_run += money(done - ordered) * rate
+            over_run += money(qty3(done - ordered) * rate)
         rows.append({
             "fg_code": l.fg_code or "",
             "description": (l.description or l.item_name or "").split("\n")[0],
@@ -1595,8 +1595,8 @@ def work_order_statement(db, client, wo):
             "ordered_value": money(ordered * rate),
             "measured_qty": done, "measured_value": money(done * rate),
             "billed_qty": claimed, "billed_value": money(claimed * rate),
-            "unbilled_qty": money(done - claimed),
-            "unbilled_value": money(money(done - claimed) * rate),
+            "unbilled_qty": qty3(done - claimed),
+            "unbilled_value": money(qty3(done - claimed) * rate),
             "percent_measured": round(done / ordered * 100, 1) if ordered else 0.0,
         })
 
@@ -1696,7 +1696,7 @@ def work_order_from_estimate(db, client, est, request):
         db.add(models.DBWorkOrderLine(
             work_order_id=wo.id, fg_code=existing.item_code,
             item_name=existing.item_name, description=it.description or "",
-            qty=money(it.quantity), uom=standard_unit(it.uom) or existing.units_of_measure or "",
+            qty=qty3(it.quantity), uom=standard_unit(it.uom) or existing.units_of_measure or "",
             rate=unit_rate(it.quoted_rate), amount=amount))
         existing.last_rate = unit_rate(it.quoted_rate)
     wo.total_value = money(total)

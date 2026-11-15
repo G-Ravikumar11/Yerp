@@ -8,7 +8,7 @@ import { Badge, Button, Card, Field, NumField, Stat, StatGrid, Tabs, Textarea } 
 import { budgetFileUrl, budgetKey, pct, saveBudgetSettings, useBudget, type Budget, type BudgetRow } from '@/api/budgeting'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
-import { cn, compactINR, formatINR } from '@/lib/utils'
+import { cn, compactINR, formatINR, formatRate } from '@/lib/utils'
 import { plural } from '@/lib/format'
 import { BudgetLineModal } from './BudgetLineModal'
 import { EarnedValueView } from './EarnedValue'
@@ -68,7 +68,7 @@ export default function BudgetingPage() {
         </button>
       )
       : <div className="min-w-[10rem] max-w-[22rem]"><p>{r.description}{r.grade && <Badge tone="neutral" className="ml-1.5 align-middle">{r.grade}</Badge>}</p><p className="text-xs text-muted-foreground">{r.group_code}{r.group_code && ' · '}{r.quantity} {r.uom}</p></div>), sort: (r) => r.description },
-    { id: 'rate', header: 'BOQ rate', align: 'right', cell: (r) => (r.heading ? none : formatINR(r.rate)), hideBelow: 'lg', sort: (r) => r.rate },
+    { id: 'rate', header: 'BOQ rate', align: 'right', cell: (r) => (r.heading ? none : formatRate(r.rate)), hideBelow: 'lg', sort: (r) => r.rate },
     { id: 'rev', header: 'BOQ amount', align: 'right', cell: (r) => (r.heading ? none : r.rate_only ? 'Rate only' : formatINR(r.revenue)), sort: (r) => r.revenue },
     { id: 'cost', header: 'Our cost', align: 'right', cell: (r) => (r.heading ? none : r.budgeted ? <div><p>{formatINR(r.cost)}</p><p className="ml-auto max-w-[10rem] text-xs text-muted-foreground">Mat {compactINR(r.material)} · Lab {compactINR(r.labour)} · Other {compactINR(r.other)}</p></div> : <Badge tone="warning">Not budgeted</Badge>), sort: (r) => r.cost },
     { id: 'profit', header: 'Profit', align: 'right', cell: (r) => (r.heading ? none : r.profit === null ? '-' : <span className={r.profit < 0 ? 'text-danger' : 'text-success'}>{formatINR(r.profit)}</span>), sort: (r) => r.profit ?? -Infinity },

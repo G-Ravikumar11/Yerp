@@ -1,3 +1,4 @@
+import { roundTo } from '@/lib/utils'
 import { useState } from 'react'
 import { Button, Field, Input, Modal, NumField, Tabs, Textarea } from '@/components/ui'
 import { holdWork, mbKeys, releaseHold, type MbEntry, type MbLine } from '@/api/mb'
@@ -24,7 +25,7 @@ function HoldForm({ orderId, line, onClose }: { orderId: number; line: MbLine; o
   const [qty, setQty] = useState(0)
   const [reason, setReason] = useState('')
   const available = Math.max(0, line.unbilled ?? 0)
-  const quantity = by === 'percent' ? Math.round(((available * percent) / 100) * 1000) / 1000 : qty
+  const quantity = by === 'percent' ? roundTo((available * percent) / 100, 3) : qty
   const bad = quantity <= 0 || quantity > available + 0.0001 || !reason.trim()
   const save = useAction(() => holdWork(orderId, { item_id: line.item_id, reason, ...(by === 'percent' ? { percent } : { quantity: qty }) }), { invalidate: [mbKeys.all, ['subbills']], onSuccess: onClose })
   return (

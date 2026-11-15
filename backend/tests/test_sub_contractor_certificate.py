@@ -345,14 +345,14 @@ def measured_painting_bill(tenant):
 
 
 def test_the_certificate_adds_up_as_the_top_sheet_does(tenant):
-    """Arti Malik's first bill, figure for figure: 1,83,184.92 of work, 5%
-    retention and 2% TDS on it, whole rupees, 1,70,362 to pay."""
+    """Arti Malik's first bill, 1,83,184.92 of work, 5%
+    retention and 2% TDS on it, each kept to the paisa (it used to be whole rupees: 1,70,362), 1,70,361.97 to pay."""
     order, bill = measured_painting_bill(tenant)
     assert bill["this_bill"] == 183184.92
-    assert bill["gross_value"] == 183185
-    assert bill["retention_amount"] == 9159
-    assert bill["tds_amount"] == 3664
-    assert bill["net_payable"] == 170362
+    assert bill["gross_value"] == 183184.92
+    assert bill["retention_amount"] == 9159.25
+    assert bill["tds_amount"] == 3663.70
+    assert bill["net_payable"] == 170361.97
     assert bill["work_type"] == "Putty and Painting works"
     assert bill["bill_date"] == "2026-02-17"
 
@@ -387,7 +387,7 @@ def test_the_bill_downloads_as_its_three_sheets(tenant):
     wb = openpyxl.load_workbook(io.BytesIO(res.content))
     assert wb.sheetnames == ["Top Sheet", "AB-1", "MB-1"]
     top = {c.value for row in wb["Top Sheet"].iter_rows() for c in row if c.value is not None}
-    assert {"CERTIFICATE OF PAYMENT", "Gross Total Value ", "Net Amount for Payment ", 170362, 9159} <= top
+    assert {"CERTIFICATE OF PAYMENT", "Gross Total Value ", "Net Amount for Payment ", 170361.97, 9159.25} <= top
     ab = {c.value for row in wb["AB-1"].iter_rows() for c in row if c.value is not None}
     assert {"ABSTRACT SHEET", "Painting Works", 35786.52, 147398.4, 183184.92} <= ab
     for url in ("/api/sub-bills/%d/document.pdf", "/api/sub-bills/%d/export.pdf"):

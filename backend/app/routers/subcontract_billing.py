@@ -29,7 +29,7 @@ from app.core.auth import (
     require_owner,
     wo_actor,
 )
-from app.core.currency import format_money_plain, inr, money, qty_text, sheet_number, unit_rate
+from app.core.currency import format_money_plain, inr, money, qty3, qty_text, sheet_number, unit_rate
 from app.core.dates import _parse_date
 from app.core.serials import allocate_series_number
 from app.core.files import _file_or_404, drop_files_of, file_bytes, file_headers, served_type, store_file
@@ -180,18 +180,18 @@ def measurement_book(work_order_id: int, request: Request,
     lines = []
     for l in db.query(models.DBWorkOrderLine).filter(
             models.DBWorkOrderLine.work_order_id == wo.id).all():
-        done = money(measured.get(l.id, 0.0))
-        claimed = money(billed.get(l.id, 0.0))
+        done = qty3(measured.get(l.id, 0.0))
+        claimed = qty3(billed.get(l.id, 0.0))
         lines.append({
             "line_id": l.id, "fg_code": l.fg_code or "",
             "description": (l.description or l.item_name or "").split("\n")[0],
-            "uom": l.uom or "", "ordered_qty": money(l.qty),
+            "uom": l.uom or "", "ordered_qty": qty3(l.qty),
             "rate": unit_rate(l.rate),
             "measured_to_date": done, "billed_to_date": claimed,
-            "unbilled": money(done - claimed),
-            "balance_to_measure": money(money(l.qty) - done),
+            "unbilled": qty3(done - claimed),
+            "balance_to_measure": qty3(qty3(l.qty) - done),
             "percent_measured": round(done / l.qty * 100, 1) if l.qty else 0.0,
-            "over_measured": money(done - money(l.qty)) if done > money(l.qty) else 0.0,
+            "over_measured": qty3(done - qty3(l.qty)) if done > qty3(l.qty) else 0.0,
         })
 
     rows = db.query(models.DBMeasurement).filter(
@@ -201,7 +201,7 @@ def measurement_book(work_order_id: int, request: Request,
                           models.DBMeasurementDimension.measurement_id)
     entries = [{
         "id": m.id, "line_id": m.line_id, "fg_code": m.fg_code or "",
-        "measured_on": m.measured_on or "", "quantity": money(m.quantity),
+        "measured_on": m.measured_on or "", "quantity": qty3(m.quantity),
         "mb_ref": m.mb_ref or "", "location": getattr(m, "location", "") or "", "remarks": m.remarks or "",
         "recorded_by_name": m.recorded_by_name or "",
         "witnessed_by": m.witnessed_by or "",
@@ -214,8 +214,8 @@ def measurement_book(work_order_id: int, request: Request,
         "lines": lines, "entries": entries,
         "summary": {
             "ordered_value": money(wo.total_value),
-            "measured_value": money(sum(l["measured_to_date"] * l["rate"] for l in lines)),
-            "unbilled_value": money(sum(l["unbilled"] * l["rate"] for l in lines)),
+            "measured_value": money(sum(money(l["measured_to_date"] * l["rate"]) for l in lines)),
+            "unbilled_value": money(sum(money(l["unbilled"] * l["rate"]) for l in lines)),
             "lines_over_measured": len([l for l in lines if l["over_measured"] > 0]),
         },
     }
@@ -239,9 +239,9 @@ def record_measurement(work_order_id: int, body: MeasurementIn, request: Request
         raise HTTPException(404, "That line is not on this order")
     # Dimensions, where given, are the measurement; the total is their sum.
     # A bare total is still accepted - a count of manholes has no dimensions.
-    quantity = money(body.quantity or 0)
+    quantity = qty3(body.quantity or 0)
     if body.dimensions:
-        quantity = money(dimension_total(body.dimensions))
+        quantity = qty3(dimension_total(body.dimensions))
     if not quantity:
         raise HTTPException(400, "A measurement of nothing is not a measurement")
 
@@ -260,15 +260,15 @@ def record_measurement(work_order_id: int, body: MeasurementIn, request: Request
               "%s %s %s" % (line.fg_code, quantity, line.uom or ""), request)
     db.commit()
 
-    measured = money(measured_to_date(db, wo.id).get(line.id, 0.0))
-    ordered = money(line.qty)
+    measured = qty3(measured_to_date(db, wo.id).get(line.id, 0.0))
+    ordered = qty3(line.qty)
     return {
         "ok": True, "measured_to_date": measured,
-        "balance_to_measure": money(ordered - measured),
+        "balance_to_measure": qty3(ordered - measured),
         # Not refused: site conditions genuinely differ from the schedule, and
         # a variation is agreed afterwards. Said plainly so nobody bills past
         # the order without knowing they have.
-        "over_measured": money(measured - ordered) if measured > ordered else 0.0,
+        "over_measured": qty3(measured - ordered) if measured > ordered else 0.0,
         "message": ("Recorded. %s measured against %s of %s ordered."
                     % (qty_text(measured), line.fg_code, qty_text(ordered))),
     }
@@ -322,10 +322,10 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
                           "description": (it.item_description or "").split("\n")[0],
                           "is_header": True})
             continue
-        done = money(measured.get(it.id, 0.0))
-        claimed = money(billed.get(it.id, 0.0))
+        done = qty3(measured.get(it.id, 0.0))
+        claimed = qty3(billed.get(it.id, 0.0))
         held = money(held_now.get(it.id, 0.0))
-        ordered = money(it.quantity)
+        ordered = qty3(it.quantity)
         lines.append({
             "item_id": it.id, "activity_no": it.activity_no or "",
             "item_code": it.item_code or "",
@@ -334,10 +334,10 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
             "tolerance_percent": it.tolerance_percent or 0,
             "max_quantity": item_ceiling(it),
             "measured_to_date": done, "billed_to_date": claimed, "held": held,
-            "unbilled": money(done - held - claimed),
-            "balance_to_measure": money(ordered - done),
+            "unbilled": qty3(done - held - claimed),
+            "balance_to_measure": qty3(ordered - done),
             "percent_measured": round(done / ordered * 100, 1) if ordered else 0.0,
-            "over_measured": money(done - ordered) if done > ordered else 0.0,
+            "over_measured": qty3(done - ordered) if done > ordered else 0.0,
         })
     # The newest entries first. A book imported from Excel runs to hundreds, so the cap is high, and the page
     # is told when there are more than it was sent rather than quietly showing part of the book.
@@ -349,7 +349,7 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
                               models.DBMeasurementDimension.sub_measurement_id)
     entries = [{
         "id": m.id, "code": m.code or "", "item_id": m.item_id, "activity_no": m.activity_no or "",
-        "measured_on": m.measured_on or "", "quantity": money(m.quantity),
+        "measured_on": m.measured_on or "", "quantity": qty3(m.quantity),
         "multiplier": getattr(m, "multiplier", None) or 1,
         "mb_ref": m.mb_ref or "", "location": getattr(m, "location", "") or "", "remarks": m.remarks or "",
         "recorded_by_name": m.recorded_by_name or "", "billed": bool(m.sub_bill_id),
@@ -363,11 +363,11 @@ def sub_measurement_book(order_id: int, request: Request, db: Session = Depends(
         "order": wo_dict(db, order), "lines": lines, "entries": entries, "entries_total": entries_total,
         "summary": {
             "ordered_value": money(order.gross_amount),
-            "measured_value": money(sum(l["measured_to_date"] * l["rate"]
+            "measured_value": money(sum(money(l["measured_to_date"] * l["rate"])
                                         for l in lines if not l.get("is_header"))),
-            "unbilled_value": money(sum(l["unbilled"] * l["rate"]
+            "unbilled_value": money(sum(money(l["unbilled"] * l["rate"])
                                         for l in lines if not l.get("is_header"))),
-            "held_value": money(sum(l["held"] * l["rate"] for l in lines if not l.get("is_header"))),
+            "held_value": money(sum(money(l["held"] * l["rate"]) for l in lines if not l.get("is_header"))),
             "lines_over_measured": len([l for l in lines
                                         if not l.get("is_header") and l["over_measured"] > 0]),
         },
@@ -393,11 +393,11 @@ def record_sub_measurement(order_id: int, body: SubMeasurementIn, request: Reque
               order.wo_number or "", "%s %s %s" % (item.activity_no, quantity,
                                                    item.uom or ""), request)
     db.commit()
-    measured = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
-    ordered = money(item.quantity)
+    measured = qty3(sub_measured_to_date(db, order.id).get(item.id, 0.0))
+    ordered = qty3(item.quantity)
     return {"ok": True, "measured_to_date": measured,
-            "balance_to_measure": money(ordered - measured),
-            "over_measured": money(measured - ordered) if measured > ordered else 0.0,
+            "balance_to_measure": qty3(ordered - measured),
+            "over_measured": qty3(measured - ordered) if measured > ordered else 0.0,
             "message": "Recorded. %s measured against %s of %s ordered."
                        % (qty_text(measured), ("activity " + item.activity_no) if item.activity_no
                           else "the item", qty_text(ordered))}
@@ -499,7 +499,7 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
                                       "held_back": e.get("held_back", 0.0), "payable": e.get("payable", e["quantity"]),
                                       "full_quantity": e["quantity"],
                                       "already_in_book": bool(plain_place(e["location"]) and book_of(item.id if item else None, plain_place(e["location"])) is not None),
-                                      "already_quantity": money(book_of(item.id if item else None, plain_place(e["location"]))) if plain_place(e["location"]) and book_of(item.id if item else None, plain_place(e["location"])) is not None else None,
+                                      "already_quantity": qty3(book_of(item.id if item else None, plain_place(e["location"]))) if plain_place(e["location"]) and book_of(item.id if item else None, plain_place(e["location"])) is not None else None,
                                       **({"dims": e["dims"]} if want_dims else {})}
                                      for e in sec["entries"]]})
     # Different works in the sheet put onto one item of the order are named, and not recorded until the person
@@ -571,7 +571,7 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
     # measurement itself stays as the sheet wrote it - and the owner releases it onto a later bill.
     reasons = {h["group"]: h["reason"] for h in book.get("holds", [])}
     for (si, g), h in held_for.items():
-        qty = money(h["held"])
+        qty = qty3(h["held"])
         if qty <= 0:
             continue
         db.add(models.DBSubMeasurement(
@@ -598,7 +598,7 @@ def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depend
     if not entry:
         raise HTTPException(404, "Entry not found")
     wo_or_404(db, client.id, entry.order_id)        # an order they cannot see is an entry they cannot see
-    if (entry.kind or "") == "hold" and sub_hold_remaining(db, entry) < money(-(entry.quantity or 0.0)):
+    if (entry.kind or "") == "hold" and sub_hold_remaining(db, entry) < qty3(-(entry.quantity or 0.0)):
         raise HTTPException(409, "Part of this hold has been released. Delete the release first.")
     if not (entry.kind or ""):
         held = sub_held_to_date(db, entry.order_id).get(entry.item_id, 0.0)
@@ -650,18 +650,18 @@ def update_sub_measurement(entry_id: int, body: SubMeasurementIn, request: Reque
     if (order.status or "") not in ("APPROVED", "EXECUTED"):
         raise HTTPException(409, "Nothing is measured against an order that has not been approved.")
     multiplier = sub_measure_multiplier(getattr(body, "multiplier", 1))
-    quantity = money(body.quantity or 0)
+    quantity = qty3(body.quantity or 0)
     if body.dimensions:
-        quantity = money(dimension_total(body.dimensions))
-    quantity = money(quantity * multiplier)
+        quantity = qty3(dimension_total(body.dimensions))
+    quantity = qty3(quantity * multiplier)
     if not quantity:
         raise HTTPException(400, "A measurement of nothing is not a measurement")
     if quantity > 0 and item is not None:
         done = money(sub_gross_measured(db, order.id).get(item.id, 0.0) - (entry.quantity or 0.0))
         ceiling = item_ceiling(item)
-        if money(done + quantity) > ceiling + 0.0001:
+        if qty3(done + quantity) > ceiling + 0.0001:
             raise HTTPException(409, "%s: %s already measured elsewhere; %s would make %s against %s ordered%s. Amend the order to measure beyond it." % (
-                item.activity_no or "Item", done, quantity, money(done + quantity), money(item.quantity),
+                item.activity_no or "Item", done, quantity, qty3(done + quantity), qty3(item.quantity),
                 " (+%g%% tolerance = %s)" % (item.tolerance_percent, ceiling) if item.tolerance_percent else ""))
     held_now = sub_held_to_date(db, order.id).get(item.id, 0.0) if item is not None else 0.0
     if held_now > 0:
@@ -721,13 +721,13 @@ def record_sub_measurements_batch(order_id: int, body: SubMeasureBatchIn, reques
         written += 1
     held_total = 0.0
     for h in body.holds or []:
-        qty = money(h.quantity or 0)
+        qty = qty3(h.quantity or 0)
         if qty <= 0:
             continue
         if not (h.reason or "").strip():
             db.rollback()
             raise HTTPException(400, "Say why it is held.")
-        held_total = money(held_total + qty)
+        held_total = qty3(held_total + qty)
         db.add(models.DBSubMeasurement(
             client_id=client.id, order_id=order.id, item_id=item.id, activity_no=item.activity_no or "",
             measured_on=(body.measured_on or datetime.now().strftime("%Y-%m-%d"))[:10], quantity=-qty, kind="hold",
@@ -735,8 +735,8 @@ def record_sub_measurements_batch(order_id: int, body: SubMeasureBatchIn, reques
             recorded_by=actor_id, recorded_by_name=actor_name, group_ref=ref(h.group)))
     if held_total:
         db.flush()
-        net = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
-        billed = money(sub_billed_to_date(db, order.id).get(item.id, 0.0))
+        net = qty3(sub_measured_to_date(db, order.id).get(item.id, 0.0))
+        billed = qty3(sub_billed_to_date(db, order.id).get(item.id, 0.0))
         if net - billed < -0.0001:
             db.rollback()
             raise HTTPException(409, "More is held back than is measured and not yet billed. Nothing was recorded.")
@@ -774,9 +774,9 @@ def hold_sub_measurement(order_id: int, body: dict, request: Request, db: Sessio
     reason = (body.get("reason") or "").strip()
     if not reason:
         raise HTTPException(400, "Say why it is held - it is read back when it is released.")
-    net = money(sub_measured_to_date(db, order.id).get(item.id, 0.0))
-    billed = money(sub_billed_to_date(db, order.id).get(item.id, 0.0))
-    available = money(net - billed)
+    net = qty3(sub_measured_to_date(db, order.id).get(item.id, 0.0))
+    billed = qty3(sub_billed_to_date(db, order.id).get(item.id, 0.0))
+    available = qty3(net - billed)
     entry = None
     if body.get("entry_id"):
         entry = db.query(models.DBSubMeasurement).filter(
@@ -793,8 +793,8 @@ def hold_sub_measurement(order_id: int, body: dict, request: Request, db: Sessio
         if not 0 < percent <= 100:
             raise HTTPException(400, "A percent to hold is between 0 and 100.")
         base = (entry.quantity if entry else available) or 0.0
-        quantity = money(base * percent / 100.0)
-    quantity = money(quantity)
+        quantity = qty3(base * percent / 100.0)
+    quantity = qty3(quantity)
     if quantity <= 0:
         raise HTTPException(400, "Give a quantity or a percent to hold.")
     if quantity > available + 0.0001:
@@ -828,7 +828,7 @@ def release_sub_hold(hold_id: int, request: Request, body: dict = None, db: Sess
     if remaining <= 0:
         raise HTTPException(409, "That hold has already been released.")
     try:
-        quantity = money(float((body or {}).get("quantity") or remaining))
+        quantity = qty3(float((body or {}).get("quantity") or remaining))
     except (TypeError, ValueError):
         raise HTTPException(400, "The quantity has to be a number.")
     if quantity <= 0 or quantity > remaining + 0.0001:

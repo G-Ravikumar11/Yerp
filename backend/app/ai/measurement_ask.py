@@ -11,7 +11,7 @@ from app.ai import guard
 from app.ai.llm_client import ask
 from app import models
 from app.core.auth import require_erp_read
-from app.core.currency import money
+from app.core.currency import money, qty3
 from app.db import get_db
 from app.services.subcontract_billing import sub_order_or_404
 
@@ -40,7 +40,7 @@ def build_facts(order, items, entries) -> str:
     lines.append("Entries (%d, newest first%s):" % (len(entries), ", first %d shown" % MAX_ENTRIES if len(entries) > MAX_ENTRIES else ""))
     for e in entries[:MAX_ENTRIES]:
         tag = " | HOLD" if e.kind == "hold" else " | RELEASE" if e.kind == "release" else ""
-        lines.append("- %s | %s | %s | %s%s%s" % (e.measured_on or "undated", label.get(e.item_id, "?"), money(e.quantity or 0), e.location or "-", tag,
+        lines.append("- %s | %s | %s | %s%s%s" % (e.measured_on or "undated", label.get(e.item_id, "?"), qty3(e.quantity or 0), e.location or "-", tag,
                                                  (" | " + e.remarks) if e.remarks else ""))
     return "\n".join(lines)
 

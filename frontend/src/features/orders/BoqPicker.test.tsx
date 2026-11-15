@@ -61,7 +61,7 @@ describe('Building a work order from the BOQ, as the sheet reads', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Add up under' }), '1')               // down to the sub-headings
     await user.click(screen.getByRole('checkbox', { name: 'Take Basement-02(Grade Slab Lvl) - M60' }))
     // 61 at 1000 and 4 at 2000: weighted by quantity
-    expect((screen.getByRole('textbox', { name: 'Contractor rate of Basement-02(Grade Slab Lvl) - M60' }) as HTMLInputElement).value).toBe(String(Math.round(((61 * 1000 + 4 * 2000) / 65) * 100) / 100))
+    expect((screen.getByRole('textbox', { name: 'Contractor rate of Basement-02(Grade Slab Lvl) - M60' }) as HTMLInputElement).value).toBe('1061.5385')      // kept to four decimals, so 65 x the rate comes back to 69,000.00
     await user.click(screen.getByRole('button', { name: /Add 1 line to the work order/ }))
     const body = post.mock.calls.at(-1)![1] as { groups: { heading_key: string; description: string; parts: { key: string }[] }[]; current: unknown[] }
     expect(body.groups[0].heading_key).toBe('b02')

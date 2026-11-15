@@ -11,6 +11,24 @@ const inr = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 2,
 })
 
+const inrRate = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 4 })
+
+/** A rate as it is kept: two decimals, and the third and fourth when it has them (a rate is held to four). Shown cut
+ * to two, quantity x the rate on screen did not come to the amount beside it. */
+export function formatRate(value: number | null | undefined) {
+  return inrRate.format(value ?? 0)
+}
+
+/** Round to `places` decimals with a half rounded up, as the server does. Math.round(x * 100) / 100 gets 1.005 wrong
+ * (it is 100.49999 in binary); shifting the decimal point as text does not. */
+export function roundTo(value: number, places = 2): number {
+  if (!Number.isFinite(value)) return 0
+  const sign = value < 0 ? -1 : 1
+  const shifted = Number(`${Math.abs(value)}e${places}`)
+  const r = Number.isFinite(shifted) ? Math.round(shifted + 1e-9) : Math.round(Math.abs(value) * 10 ** places)
+  return (sign * r) / 10 ** places
+}
+
 /** Rupees the way the site reads them: lakhs and crores, two decimals. */
 export function formatINR(value: number | null | undefined) {
   return inr.format(value ?? 0)

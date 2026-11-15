@@ -1,3 +1,5 @@
+import { roundTo } from '@/lib/utils'
+
 /**
  * One line of a measurement book: what was measured and how. Carried over
  * unchanged from the current app (mbdims.js), so a quantity worked out here
@@ -42,7 +44,7 @@ export function dimQty(line: DimLine): number | null {
     any = true
   }
   if (!any) return null
-  const rounded = Math.round(qty * 1000) / 1000
+  const rounded = roundTo(qty, 3)
   const signed = line.deduct ? -rounded : rounded
   return signed === 0 ? 0 : signed
 }
@@ -55,7 +57,7 @@ export const toApiDims = (lines: readonly DimLine[]) =>
 
 export function dimTotal(lines: readonly DimLine[]): number {
   const sum = lines.reduce((total, l) => total + (dimQty(l) ?? 0), 0)
-  return Math.round(sum * 1000) / 1000
+  return roundTo(sum, 3)
 }
 
 /**
@@ -128,5 +130,5 @@ export function evalCalc(text: string, total: number): number | null {
   }
   const result = sum()
   if (result === null || i !== tokens.length || !Number.isFinite(result)) return null
-  return Math.round(result * 1000) / 1000
+  return roundTo(result, 3)
 }

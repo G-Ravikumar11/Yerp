@@ -10,7 +10,7 @@ from app import models
 from app.constants.client_billing import RA_EDITABLE, RA_TRANSITIONS, VO_TRANSITIONS
 from app.core.audit import log_audit
 from app.core.auth import wo_actor
-from app.core.currency import amount_in_words, inr, money, unit_rate
+from app.core.currency import amount_in_words, inr, money, qty3, unit_rate
 from app.core.gst import GST_STATES, our_state, split_gst, supply_state_for_job
 from app.core.tenant_settings import tenant_setting
 from app.services.credit_notes import bill_credit_summary, credited_qty_by_item
@@ -61,9 +61,9 @@ def claimable_lines(db, work_order, exclude_bill_id=None):
     out = []
     for index, l in enumerate(db.query(models.DBWorkOrderLine).filter(
             models.DBWorkOrderLine.work_order_id == work_order.id).all()):
-        done = money(measured.get(l.id, 0.0))
-        already = money(billed.get(l.id, 0.0))
-        this = money(done - already)
+        done = qty3(measured.get(l.id, 0.0))
+        already = qty3(billed.get(l.id, 0.0))
+        this = qty3(done - already)
         if this <= 0:                     # nothing new measured on this line
             continue
         out.append((index, l, done, already, this))
@@ -78,7 +78,7 @@ def write_ra_bill_lines(db, bill, claimable):
         db.add(models.DBRABillLine(
             ra_bill_id=bill.id, line_id=l.id, fg_code=l.fg_code or "",
             description=l.description or l.item_name or "", uom=l.uom or "",
-            ordered_qty=money(l.qty), measured_to_date=done,
+            ordered_qty=qty3(l.qty), measured_to_date=done,
             previously_billed_qty=already, this_bill_qty=this,
             rate=unit_rate(l.rate), amount=money(this * unit_rate(l.rate)),
             display_order=index))
@@ -86,7 +86,7 @@ def write_ra_bill_lines(db, bill, claimable):
     prior = billed_qty_to_date(db, bill.work_order_id, exclude_bill_id=bill.id)
     rates = {l.id: unit_rate(l.rate) for l in db.query(models.DBWorkOrderLine).filter(
         models.DBWorkOrderLine.work_order_id == bill.work_order_id).all()}
-    bill.previously_billed = money(sum(money(q) * rates.get(lid, 0.0) for lid, q in prior.items()))
+    bill.previously_billed = money(sum(money(qty3(q) * rates.get(lid, 0.0)) for lid, q in prior.items()))
     return recost_ra_bill(db, bill)
 
 
@@ -190,15 +190,15 @@ def check_deductions(db, bill, advance=True):
 def over_order_lines(db, bill):
     """Lines of this bill that take what has been billed past the quantity ordered. An approved variation raises the
     order line's quantity (apply_variation), so agreed extra work is inside the cap."""
-    ordered = {l.id: money(l.qty) for l in db.query(models.DBWorkOrderLine).filter(
+    ordered = {l.id: qty3(l.qty) for l in db.query(models.DBWorkOrderLine).filter(
         models.DBWorkOrderLine.work_order_id == bill.work_order_id).all()}
     out = []
     for l in db.query(models.DBRABillLine).filter(models.DBRABillLine.ra_bill_id == bill.id).all():
         cap = ordered.get(l.line_id, 0.0)
-        total = money((l.previously_billed_qty or 0) + (l.this_bill_qty or 0))
+        total = qty3((l.previously_billed_qty or 0) + (l.this_bill_qty or 0))
         if total > cap + 0.0001:
             out.append({"line_id": l.line_id, "description": (l.description or "").split("\n")[0][:60],
-                        "ordered": cap, "billed": total, "over": money(total - cap)})
+                        "ordered": cap, "billed": total, "over": qty3(total - cap)})
     return out
 
 
@@ -293,15 +293,15 @@ def ra_bill_dict(db, bill, detail=False, credits=None):
         row["lines"] = [{
             "id": l.id, "line_id": l.line_id, "fg_code": l.fg_code or "",
             "description": (l.description or "").split("\n")[0],
-            "uom": l.uom or "", "ordered_qty": money(l.ordered_qty),
-            "measured_to_date": money(l.measured_to_date),
-            "previously_billed_qty": money(l.previously_billed_qty),
-            "this_bill_qty": money(l.this_bill_qty),
+            "uom": l.uom or "", "ordered_qty": qty3(l.ordered_qty),
+            "measured_to_date": qty3(l.measured_to_date),
+            "previously_billed_qty": qty3(l.previously_billed_qty),
+            "this_bill_qty": qty3(l.this_bill_qty),
             "rate": unit_rate(l.rate), "amount": money(l.amount),
-            "upto_date_amount": money(money(l.measured_to_date) * unit_rate(l.rate)),
-            "credited_qty": money(credit["credited_qty"].get(l.id, 0.0)),
-            "creditable_qty": money((l.this_bill_qty or 0) - credit["credited_qty"].get(l.id, 0.0)),
-            "over_order": money(money(l.previously_billed_qty) + money(l.this_bill_qty)) > money(l.ordered_qty) + 0.0001,
+            "upto_date_amount": money(qty3(l.measured_to_date) * unit_rate(l.rate)),
+            "credited_qty": qty3(credit["credited_qty"].get(l.id, 0.0)),
+            "creditable_qty": qty3((l.this_bill_qty or 0) - credit["credited_qty"].get(l.id, 0.0)),
+            "over_order": qty3(qty3(l.previously_billed_qty) + qty3(l.this_bill_qty)) > qty3(l.ordered_qty) + 0.0001,
         } for l in db.query(models.DBRABillLine).filter(
             models.DBRABillLine.ra_bill_id == bill.id).order_by(
                 models.DBRABillLine.display_order, models.DBRABillLine.id).all()]
@@ -504,9 +504,9 @@ def over_measured_lines(db, work_order):
     for l in db.query(models.DBWorkOrderLine).filter(
             models.DBWorkOrderLine.work_order_id == work_order.id).order_by(
                 models.DBWorkOrderLine.id).all():
-        done, ordered = money(measured.get(l.id, 0.0)), money(l.qty)
+        done, ordered = qty3(measured.get(l.id, 0.0)), qty3(l.qty)
         if done > ordered:
-            extra = money(done - ordered)
+            extra = qty3(done - ordered)
             out.append({
                 "line_id": l.id, "fg_code": l.fg_code or "",
                 "description": (l.description or l.item_name or "").split("\n")[0],
@@ -551,8 +551,8 @@ def vo_dict(db, vo, detail=False):
         row["lines"] = [{
             "id": l.id, "line_id": l.line_id, "fg_code": l.fg_code or "",
             "description": l.description or "", "uom": l.uom or "",
-            "ordered_qty": money(l.ordered_qty), "measured_qty": money(l.measured_qty),
-            "extra_qty": money(l.extra_qty), "rate": unit_rate(l.rate),
+            "ordered_qty": qty3(l.ordered_qty), "measured_qty": qty3(l.measured_qty),
+            "extra_qty": qty3(l.extra_qty), "rate": unit_rate(l.rate),
             "amount": money(l.amount),
             "is_new_item": l.line_id is None,
         } for l in db.query(models.DBVariationLine).filter(
@@ -579,7 +579,7 @@ def apply_variation(db, vo):
                 models.DBWorkOrderLine.work_order_id == wo.id).first()
             if not line:
                 continue
-            line.qty = money((line.qty or 0) + l.extra_qty)
+            line.qty = qty3((line.qty or 0) + l.extra_qty)
             line.amount = money(line.qty * (line.rate or 0))
         else:
             db.add(models.DBWorkOrderLine(

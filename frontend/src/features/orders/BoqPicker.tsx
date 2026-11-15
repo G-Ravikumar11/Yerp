@@ -4,7 +4,7 @@ import { Badge, Button, Input, Modal, Select, Skeleton, Tabs } from '@/component
 import { pullBoqLines, useAvailable, useBoqs, type AvailableLine, type ScheduleRow } from '@/api/boq'
 import { useAction } from '@/lib/mutate'
 import { formatQty } from '@/lib/format'
-import { formatINR, cn } from '@/lib/utils'
+import { formatINR, cn, formatRate, roundTo } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 
 interface Pick {
@@ -54,7 +54,7 @@ function blend(lines: AvailableLine[]) {
   const qty = priced.reduce((n, l) => n + (l.left ?? 0), 0)
   if (!qty) return { rate: 0, from: '' }
   const from = new Set(priced.map((l) => l.rate_from ?? ''))
-  return { rate: Math.round((priced.reduce((n, l) => n + (l.left ?? 0) * (l.suggested_rate ?? 0), 0) / qty) * 100) / 100, from: from.size === 1 ? [...from][0] : 'mixed' }
+  return { rate: roundTo(priced.reduce((n, l) => n + (l.left ?? 0) * (l.suggested_rate ?? 0), 0) / qty, 4), from: from.size === 1 ? [...from][0] : 'mixed' }
 }
 
 /**
@@ -485,7 +485,7 @@ export function BoqPicker({
                           <td className="tabular px-2 py-1.5 text-right">
                             {formatQty(l.quantity ?? 0)} {l.uom}
                           </td>
-                          <td className="tabular px-2 py-1.5 text-right text-muted-foreground">{l.rate ? formatINR(l.rate) : '-'}</td>
+                          <td className="tabular px-2 py-1.5 text-right text-muted-foreground">{l.rate ? formatRate(l.rate) : '-'}</td>
                           <td className="px-2 py-1.5 text-right">
                             {st === 'none' ? <span className="text-muted-foreground">-</span> : <Badge tone={st === 'full' ? 'success' : 'warning'}>{formatQty(l.given ?? 0)}</Badge>}
                           </td>

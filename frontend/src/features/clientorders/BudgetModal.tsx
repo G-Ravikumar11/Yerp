@@ -5,7 +5,7 @@ import { Button, Modal } from '@/components/ui'
 import { useItems } from '@/api/items'
 import { clientOrderKeys, saveBudget, useClientOrder, type ClientOrder } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
-import { cn, formatINR } from '@/lib/utils'
+import { cn, formatINR, roundTo } from '@/lib/utils'
 
 interface Row {
   fg_code: string
@@ -15,7 +15,7 @@ interface Row {
 }
 
 const blank = (): Row => ({ fg_code: '', rm_code: '', qty: null, rate: null })
-const amount = (r: Row) => (r.qty && r.rate ? Math.round(r.qty * r.rate * 100) / 100 : null)
+const amount = (r: Row) => (r.qty && r.rate ? roundTo(r.qty * r.rate) : null)
 
 /** The budget: which raw materials the work sold will consume. It is what turns an order's value into a margin. */
 export function BudgetModal({ order, onClose }: { order: ClientOrder | null; onClose: () => void }) {

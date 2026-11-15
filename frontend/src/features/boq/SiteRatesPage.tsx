@@ -22,7 +22,7 @@ import {
 import { masterKeys, useCategories, type MasterItem } from '@/api/itemMaster'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 
 const TONE: Record<PriceStatus, 'neutral' | 'warning' | 'success' | 'info'> = { Pending: 'neutral', Draft: 'warning', Finalized: 'success', Changed: 'info' }
 const LABEL: Record<PriceStatus, string> = { Pending: 'Pending', Draft: 'Draft', Finalized: 'Finalised', Changed: 'Changed' }
@@ -182,7 +182,7 @@ function SitePricing({ siteId }: { siteId: number }) {
                         <td className="px-3 py-2">{r.specification || '-'}</td>
                         <td className="px-3 py-2">{r.uom}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{r.quantity}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{r.default_rate ? formatINR(r.default_rate) : '-'}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{r.default_rate ? formatRate(r.default_rate) : '-'}</td>
                         <td className="w-40 px-3 py-2">
                           {r.mapped ? (
                             <NumField aria-label={`Site rate for ${r.item_code}`} value={draftOf(r)} placeholder="Pending"
@@ -193,7 +193,7 @@ function SitePricing({ siteId }: { siteId: number }) {
                         <td className="px-3 py-2 text-right font-medium tabular-nums">{r.rate_only || r.site_rate === null ? '-' : formatINR(r.amount)}</td>
                         <td className="px-3 py-2">
                           {r.mapped && <Badge tone={TONE[r.status]}>{LABEL[r.status]}</Badge>}
-                          {r.status === 'Changed' && <div className="mt-1 text-xs text-muted-foreground">Default is now {r.default_rate ? formatINR(r.default_rate) : 'blank'}</div>}
+                          {r.status === 'Changed' && <div className="mt-1 text-xs text-muted-foreground">Default is now {r.default_rate ? formatRate(r.default_rate) : 'blank'}</div>}
                           {locked && r.finalized_by && <div className="mt-1 text-xs text-muted-foreground">{r.finalized_by}</div>}
                         </td>
                         <td className="px-3 py-2">
@@ -217,7 +217,7 @@ function SitePricing({ siteId }: { siteId: number }) {
         confirmLabel="Save changes" reason={{ label: 'Reason', placeholder: 'e.g. Supplier revised quote', required: true }} loading={saveAll.isPending}
         onConfirm={(why) => { saveAll.mutate(why) }} />
       <ConfirmDialog open={!!finalizing} onOpenChange={(o) => !o && setFinalizing(null)} title={`Finalise ${finalizing?.item_code ?? ''}?`}
-        description={finalizing ? `${formatINR(finalizing.site_rate)} per ${finalizing.uom} becomes this site's agreed rate. It cannot be changed afterwards unless it is reopened with a reason.` : ''}
+        description={finalizing ? `${formatRate(finalizing.site_rate)} per ${finalizing.uom} becomes this site's agreed rate. It cannot be changed afterwards unless it is reopened with a reason.` : ''}
         confirmLabel="Finalise rate" loading={finalize.isPending}
         onConfirm={() => { if (finalizing) finalize.mutate(finalizing) }} />
       <ConfirmDialog open={!!reopening} onOpenChange={(o) => !o && setReopening(null)} title={`Reopen ${reopening?.item_code ?? ''}?`}
@@ -286,7 +286,7 @@ function HistoryDialog({ siteId, onClose }: { siteId: number; onClose: () => voi
         <ul className="max-h-96 divide-y overflow-y-auto text-sm">
           {audit.data!.map((a) => (
             <li key={a.id} className="py-2">
-              <div><span className="font-mono font-semibold">{a.item_code}</span> {a.action}: {a.previous_rate === null ? '-' : formatINR(a.previous_rate)} → {a.new_rate === null ? '-' : formatINR(a.new_rate)} ({a.new_status})</div>
+              <div><span className="font-mono font-semibold">{a.item_code}</span> {a.action}: {a.previous_rate === null ? '-' : formatRate(a.previous_rate)} → {a.new_rate === null ? '-' : formatRate(a.new_rate)} ({a.new_status})</div>
               <div className="text-xs text-muted-foreground">{a.changed_by} · {a.changed_at}{a.reason ? ` · ${a.reason}` : ''}</div>
             </li>
           ))}

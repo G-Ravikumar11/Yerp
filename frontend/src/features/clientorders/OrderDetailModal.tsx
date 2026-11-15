@@ -1,7 +1,7 @@
 import { Badge, Modal } from '@/components/ui'
 import { useClientOrder, type ClientOrder } from '@/api/clientOrders'
 import { formatQty } from '@/lib/format'
-import { formatINR } from '@/lib/utils'
+import { formatINR, formatRate } from '@/lib/utils'
 
 const cell = 'px-3 py-2'
 const head = 'px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground'
@@ -42,7 +42,7 @@ function Detail({ id }: { id: number }) {
                     {l.description && l.description !== l.item_name && <div className="text-xs text-muted-foreground">{l.description}</div>}
                   </td>
                   <td className={`${cell} tabular text-right`}>{formatQty(l.qty)} {l.uom}</td>
-                  <td className={`${cell} tabular text-right`}>{formatINR(l.rate)}</td>
+                  <td className={`${cell} tabular text-right`}>{formatRate(l.rate)}</td>
                   <td className={`${cell} tabular text-right`}>{formatINR(l.amount)}</td>
                 </tr>
               ))}
@@ -70,7 +70,7 @@ function Detail({ id }: { id: number }) {
                       <div className="text-xs text-muted-foreground">for {b.fg_code}</div>
                     </td>
                     <td className={`${cell} tabular text-right`}>{formatQty(b.qty)} {b.uom}</td>
-                    <td className={`${cell} tabular text-right`}>{formatINR(b.rate)}</td>
+                    <td className={`${cell} tabular text-right`}>{formatRate(b.rate)}</td>
                     <td className={`${cell} tabular text-right`}>{formatINR(b.amount ?? b.qty * b.rate)}</td>
                   </tr>
                 ))}

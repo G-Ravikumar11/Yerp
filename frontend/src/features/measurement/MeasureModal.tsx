@@ -1,3 +1,4 @@
+import { roundTo } from '@/lib/utils'
 import { useMemo, useState } from 'react'
 import { DataGrid } from '@/components/grid'
 import { Button, Field, Input, Modal, NumField, Tabs } from '@/components/ui'
@@ -57,7 +58,7 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
   const lined = entry?.dimensions.some((d) => !d.is_heading) ?? true
   const [mode, setMode] = useState<Mode>(lined ? 'dims' : 'total')
   const [dims, setDims] = useState<DimLine[]>(() => (entry && lined ? entry.dimensions.map((d) => toDimLine({ ...d, is_heading: !!d.is_heading })) : []))
-  const [total, setTotal] = useState(entry && !lined ? Math.round((entry.quantity / (entry.multiplier || 1)) * 1000) / 1000 : 0)
+  const [total, setTotal] = useState(entry && !lined ? roundTo(entry.quantity / (entry.multiplier || 1), 3) : 0)
   const [blocks, setBlocks] = useState(entry?.multiplier || 1)
   const [on, setOn] = useState(entry?.measured_on || today())
   const [ref, setRef] = useState(entry?.mb_ref ?? '')
@@ -78,10 +79,10 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
   const [holdWhy, setHoldWhy] = useState('Held back for finishes and handing over')
 
   const one = mode === 'dims' ? dimTotal(dims) : total
-  const quantity = Math.round(one * blocks * 1000) / 1000
+  const quantity = roundTo(one * blocks, 3)
   const after = (line.measured_to_date ?? 0) - (entry?.quantity ?? 0) + quantity
   const over = quantity > 0 && after > (line.max_quantity ?? Infinity) + 0.0001
-  const held = canHold && holding ? Math.round((holdBy === 'percent' ? (quantity * holdPct) / 100 : holdQty) * 1000) / 1000 : 0
+  const held = canHold && holding ? roundTo(holdBy === 'percent' ? (quantity * holdPct) / 100 : holdQty, 3) : 0
   const holdBad = held < 0 || (held > 0 && held > quantity + 0.0001) || (held > 0 && !holdWhy.trim())
 
   const save = useAction(
@@ -263,7 +264,7 @@ function MeasureForm({ orderId, order, jobCode, line, entry, onClose, target }: 
           {over && <p className="mt-0.5 text-xs text-danger">That takes the item to {formatQty(after)}, past the {formatQty(line.max_quantity)} the order allows.</p>}
           {held > 0 && (
             <p aria-label="Held from this entry" className="mt-0.5 text-[13px] tabular">
-              Held <strong>{formatQty(held)}</strong> · to be paid <strong>{formatQty(Math.round((quantity - held) * 1000) / 1000)}</strong>
+              Held <strong>{formatQty(held)}</strong> · to be paid <strong>{formatQty(roundTo(quantity - held, 3))}</strong>
             </p>
           )}
           {holdBad && <p className="mt-0.5 text-xs text-danger">{held > quantity ? 'More is held than is measured.' : 'Say why it is held.'}</p>}

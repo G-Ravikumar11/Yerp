@@ -1,3 +1,4 @@
+import { roundTo } from '@/lib/utils'
 import { useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 import { DataGrid } from '@/components/grid'
@@ -38,7 +39,7 @@ export interface Loaded {
   source: string
 }
 
-const round3 = (n: number) => Math.round(n * 1000) / 1000
+const round3 = (n: number) => roundTo(n, 3)
 const blockTotal = (b: LoadedBlock) => round3(dimTotal(b.dims) * (b.multiplier || 1))
 
 /**

@@ -20,7 +20,7 @@ from app.core.auth import (
     session_employee,
     session_person,
 )
-from app.core.currency import inr, money, unit_rate
+from app.core.currency import inr, money, qty3, unit_rate
 from app.core.files import drop_files_of, file_counts
 from app.core.serials import allocate_po_number, next_sequence_number
 from app.core.sheets import (
@@ -91,7 +91,7 @@ def erp_build_work_order(body: WorkOrderIn, request: Request,
         if code in seen:
             raise HTTPException(400, "Line %d: %s is already on this order" % (index, code))
         seen.add(code)
-        qty, rate = money(line.qty), unit_rate(line.rate)
+        qty, rate = qty3(line.qty), unit_rate(line.rate)
         if qty <= 0:
             raise HTTPException(400, "Line %d: quantity must be more than zero" % index)
         if rate < 0:
@@ -154,7 +154,7 @@ async def erp_wo_analyse(request: Request, file: UploadFile = File(...),
     for row in rows_from(header, body, mapping):
         line = row["_line"]
         code = (row.get("fg_code") or "").strip().upper()
-        qty, rate = money(row.get("qty") or 0), unit_rate(row.get("rate") or 0)
+        qty, rate = qty3(row.get("qty") or 0), unit_rate(row.get("rate") or 0)
         problems = []
 
         if not code:

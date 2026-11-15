@@ -15,7 +15,7 @@ from app.ai import guard
 from app.ai.llm_client import ask
 from app import models
 from app.core.auth import require_erp_read
-from app.core.currency import money
+from app.core.currency import money, qty3
 from app.db import get_db
 from app.services.subcontract_billing import sub_order_or_404
 
@@ -76,24 +76,24 @@ def find_findings(items: list, entries: list, start: str, end: str, today) -> di
             for e in es:
                 if m > 0 and (e["quantity"] or 0) > 3 * m:
                     findings.append({"level": "check", "entry": e["id"], "text": "%s: an entry of %s on %s is more than three times the usual %s. Check it was not mistyped." % (
-                        it["label"], money(e["quantity"]), e.get("measured_on") or "an unknown date", money(m))})
+                        it["label"], qty3(e["quantity"]), e.get("measured_on") or "an unknown date", money(m))})
         seen = {}
         for e in es:
             key = (e.get("location") or "", e.get("measured_on") or "", round(e["quantity"] or 0, 4))
             if e.get("location") and key in seen and (e["quantity"] or 0) != 0:
                 findings.append({"level": "check", "entry": e["id"], "text": "%s: %s measured twice on %s at %s. It may have been entered twice." % (
-                    it["label"], money(e["quantity"]), e.get("measured_on") or "the same day", e["location"])})
+                    it["label"], qty3(e["quantity"]), e.get("measured_on") or "the same day", e["location"])})
             seen[key] = True
         for e in es:
             d = _date(e.get("measured_on"))
             if not e.get("measured_on"):
-                findings.append({"level": "note", "entry": e["id"], "text": "%s has an entry of %s with no date." % (it["label"], money(e["quantity"]))})
+                findings.append({"level": "note", "entry": e["id"], "text": "%s has an entry of %s with no date." % (it["label"], qty3(e["quantity"]))})
             elif d and d > today:
                 findings.append({"level": "check", "entry": e["id"], "text": "%s has an entry dated %s, which is in the future." % (it["label"], e["measured_on"])})
             elif d and first and d < first:
                 findings.append({"level": "note", "entry": e["id"], "text": "%s has an entry dated %s, before the order started on %s." % (it["label"], e["measured_on"], start)})
             if (e["quantity"] or 0) < 0 and ordered and abs(e["quantity"]) > ordered * 0.2:
-                findings.append({"level": "check", "entry": e["id"], "text": "%s has a correction of %s, over a fifth of the ordered quantity." % (it["label"], money(e["quantity"]))})
+                findings.append({"level": "check", "entry": e["id"], "text": "%s has a correction of %s, over a fifth of the ordered quantity." % (it["label"], qty3(e["quantity"]))})
 
     work_pct = measured_value * 100.0 / ordered_value if ordered_value else None
     if work_pct is not None and time_pct is not None:

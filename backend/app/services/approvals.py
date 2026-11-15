@@ -26,7 +26,7 @@ from app.constants.approvals import (
     WO_REJECTED,
 )
 from app.core.audit import log_audit
-from app.core.currency import formatted_money, inr, money
+from app.core.currency import formatted_money, inr, money, qty3
 from app.core.permissions import employee_can, raising_rank, role_rank
 from app.core.queries import by_id, prime, prime_chains
 from app.core.tenant_settings import tenant_setting
@@ -729,7 +729,7 @@ def approval_inbox(db, client, emp):
             job = _job_of(db, b.job_id)
             past = [l.fg_code or "a line" for l in db.query(models.DBRABillLine).filter(
                 models.DBRABillLine.ra_bill_id == b.id).all()
-                    if money(l.measured_to_date) > money(l.ordered_qty) + 0.0001]
+                    if qty3(l.measured_to_date) > qty3(l.ordered_qty) + 0.0001]
             items.append(_row(
                 "ra_bill", "RA bill", b.id, b.number, b.this_bill,
                 warnings=(["Claims past the ordered quantity on %s - no variation agreed for it yet"

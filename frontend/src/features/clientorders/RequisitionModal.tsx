@@ -3,7 +3,7 @@ import { Button, Field, Input, Modal } from '@/components/ui'
 import { raisePurchaseOrder, useRequisition, type ClientOrder } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
 import { formatQty } from '@/lib/format'
-import { cn, formatINR } from '@/lib/utils'
+import { cn, formatINR, formatRate } from '@/lib/utils'
 
 /** What the budget says still has to be bought: the shortfall after the store and what is already on order. */
 export function RequisitionModal({ order, onClose }: { order: ClientOrder | null; onClose: () => void }) {
@@ -76,7 +76,7 @@ function Shortfall({ id, onClose }: { id: number; onClose: () => void }) {
                 <td className="tabular px-3 py-2 text-right">{formatQty(l.on_order)}</td>
                 <td className="tabular px-3 py-2 text-right font-medium">{l.covered ? <span className="text-success">covered</span> : formatQty(l.to_buy)}</td>
                 <td className="tabular px-3 py-2 text-right">
-                  {formatINR(l.rate)}
+                  {formatRate(l.rate)}
                   {l.budget_rate != null && l.rate !== l.budget_rate && <div className="text-xs text-muted-foreground">budget {formatINR(l.budget_rate)}</div>}
                 </td>
                 <td className="tabular px-3 py-2 text-right">{formatINR(l.amount)}</td>

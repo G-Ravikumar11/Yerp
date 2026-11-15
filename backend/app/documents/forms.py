@@ -10,7 +10,7 @@ from app.documents import form_pdf
 from app import models
 from app.db import SessionLocal
 
-from app.core.currency import amount_in_words, money, rupees, unit_rate
+from app.core.currency import amount_in_words, money, qty3, rupees, unit_rate
 from app.core.dates import financial_year_label
 from app.core.gst import WORKS_CONTRACT_SAC
 
@@ -534,7 +534,8 @@ def _bill_figures(bill):
     """One bill's figures as the certificate's rows name them."""
     work = money(bill.this_bill)
     debit = money(getattr(bill, "debit_notes", 0) or 0)
-    gross = rupees(work - debit)
+    from app.services.subcontract_billing import bill_gross
+    gross = bill_gross(bill)
     gst = money(bill.gst_amount)
     # Back-charges printed with the other recoveries: the certificate has one row for them.
     adv, other = money(bill.advance_recovery), money(money(bill.other_deductions) + money(bill.back_charges))
@@ -690,7 +691,7 @@ def sub_bill_certificate(db, client, bill):
             continue
         pq = money(prev_qty.get(it.id, 0.0))
         line = lines.get(it.id)
-        tq = money(line["this_bill_qty"]) if line else 0.0
+        tq = qty3(line["this_bill_qty"]) if line else 0.0
         if not pq and not tq:
             continue
         if pending_header:
@@ -768,7 +769,7 @@ def sub_bill_certificate(db, client, bill):
             lines_ = dims.get(m.id) or []
             if not lines_:
                 mb_rows.append({"kind": "dim", "description": m.remarks or "As measured", "uom": uom,
-                                "quantity": money(money(m.quantity) / mult)})
+                                "quantity": qty3(qty3(m.quantity) / mult)})
             for dl in lines_:
                 if dl.get("is_heading"):
                     mb_rows.append({"kind": "heading", "description": dl["particulars"]})
@@ -778,15 +779,15 @@ def sub_bill_certificate(db, client, bill):
                                 "nos": (-nos if (dl["deduct"] and nos is not None) else nos),
                                 "nom": dl.get("nom"), "length": dl.get("length"), "width": dl.get("breadth"),
                                 "height": dl.get("depth"), "quantity": round(dl["quantity"], 3)})
-            one = round(sum(x["quantity"] for x in lines_ if not x.get("is_heading")), 3) if lines_                 else money(money(m.quantity) / mult)
+            one = round(sum(x["quantity"] for x in lines_ if not x.get("is_heading")), 3) if lines_                 else qty3(qty3(m.quantity) / mult)
             if mult != 1:
                 mb_rows.append({"kind": "subtotal", "description": "Total Quantity for one Block",
                                 "label": "Total Quantity", "quantity": one, "uom": uom})
                 mb_rows.append({"kind": "total", "description": "Total Quantity for Block No. - %s" % place,
-                                "label": "Total Quantity for %g Blocks" % mult, "quantity": money(m.quantity), "uom": uom})
+                                "label": "Total Quantity for %g Blocks" % mult, "quantity": qty3(m.quantity), "uom": uom})
             else:
                 mb_rows.append({"kind": "total", "description": "Total Quantity for %s" % place,
-                                "label": "Total Quantity", "quantity": money(m.quantity), "uom": uom})
+                                "label": "Total Quantity", "quantity": qty3(m.quantity), "uom": uom})
             item_total += m.quantity or 0
             sec_total += m.quantity or 0
             sec_count += 1
@@ -803,7 +804,7 @@ def sub_bill_certificate(db, client, bill):
                                         "label": "Total Quantity", "quantity": measured_here, "uom": uom})
                         mb_rows.append({"kind": "subtotal", "description": ((h.remarks or "Held back for finishes and handing over")[:150]
                                                                            + ((" [%s]" % short_entry_code(h)) if short_entry_code(h) else "")),
-                                        "label": "Held back", "quantity": money(h.quantity), "uom": uom})
+                                        "label": "Held back", "quantity": qty3(h.quantity), "uom": uom})
                         measured_here = money(measured_here + (h.quantity or 0))
                         item_total += h.quantity or 0
                         sec_total += h.quantity or 0

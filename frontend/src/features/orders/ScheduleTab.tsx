@@ -5,7 +5,7 @@ import { Badge, Button, ConfirmDialog, Field, Modal, Select } from '@/components
 import { chargeBudget, importSchedule, orderKeys, type Order, type OrderItem, type Vocabulary } from '@/api/orders'
 import { arrangeSchedule, cumulativeSchedule, type ScheduleRow } from '@/api/boq'
 import { useAction } from '@/lib/mutate'
-import { cn, formatINR } from '@/lib/utils'
+import { cn, formatINR, roundTo } from '@/lib/utils'
 import { toast } from '@/stores/toast'
 import { ApiError } from '@/lib/api'
 import { BoqPicker } from './BoqPicker'
@@ -107,7 +107,7 @@ export const toPayload = (rows: LineRow[]): Partial<OrderItem>[] =>
       heading_level: r.is_header ? r.heading_level || 1 : 0,
     }))
 
-const amount = (r: LineRow) => (r.is_header || !r.quantity || !r.unit_rate ? null : Math.round(r.quantity * r.unit_rate * 100) / 100)
+const amount = (r: LineRow) => (r.is_header || !r.quantity || !r.unit_rate ? null : roundTo(r.quantity * r.unit_rate))
 
 /** What each heading adds up to, as the sheet would show it: the lines under it, down to the next heading as high as it. */
 export function headingTotals(rows: LineRow[]): (number | null)[] {
@@ -120,7 +120,7 @@ export function headingTotals(rows: LineRow[]): (number | null)[] {
       if (o.is_header && (o.heading_level || 1) <= level) break
       sum += amount(o) ?? 0
     }
-    return Math.round(sum * 100) / 100
+    return roundTo(sum)
   })
 }
 

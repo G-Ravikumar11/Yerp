@@ -14,7 +14,7 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { ApiError } from '@/lib/api'
 import { formatDate, formatQty } from '@/lib/format'
-import { cn, formatINR } from '@/lib/utils'
+import { cn, formatINR, formatRate } from '@/lib/utils'
 
 export default function BillPage() {
   const { id } = useParams()
@@ -119,7 +119,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
     { id: 'm', header: 'Measured to date', align: 'right', cell: (l) => formatQty(l.measured_to_date), hideBelow: 'md' },
     { id: 'p', header: 'Previously billed', align: 'right', cell: (l) => <span className="text-muted-foreground">{formatQty(l.previously_billed_qty)}</span>, hideBelow: 'md' },
     { id: 't', header: 'This bill', align: 'right', cell: (l) => <span className="font-medium">{formatQty(l.this_bill_qty)}</span> },
-    { id: 'r', header: 'Rate', align: 'right', cell: (l) => formatINR(l.rate), hideBelow: 'lg' },
+    { id: 'r', header: 'Rate', align: 'right', cell: (l) => formatRate(l.rate), hideBelow: 'lg' },
     { id: 'amt', header: 'Amount', align: 'right', cell: (l) => <span className="font-medium">{formatINR(l.amount)}</span> },
     { id: 'up', header: 'Up to date', align: 'right', cell: (l) => formatINR(l.upto_date_amount), hideBelow: 'xl' },
   ]

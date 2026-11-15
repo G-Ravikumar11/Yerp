@@ -11,7 +11,7 @@ from app import models
 
 from app.constants.approvals import GONE_STATUSES
 from app.constants.boq import BOQ_KINDS, BOQ_NOT_LIVE, BOQ_PRICED, BV_TRANSITIONS
-from app.core.currency import money, unit_rate
+from app.core.currency import money, qty3, unit_rate
 from app.core.naming import short_name
 from app.core.permissions import employee_can
 from app.core.queries import by_id, chain_rows, forget_chain
@@ -119,7 +119,7 @@ def boq_amount(kind, qty, rate, rate_only=False):
 
 def boq_line_dict(l):
     return {"id": l.id, "key": l.key, "kind": l.kind, "item_no": l.item_no or "", "group_code": l.group_code or "", "description": l.description or "",
-            "uom": l.uom or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
+            "uom": l.uom or "", "quantity": qty3(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
             "item_code": l.item_code or "", "remarks": l.remarks or "",
             "material": l.material or "", "rate_only": bool(l.rate_only)}
 
@@ -251,7 +251,7 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
             continue
         kind = r.kind if r.kind in BOQ_KINDS else "item"
         rate_only = bool(getattr(r, "rate_only", False)) and kind in BOQ_PRICED
-        qty = money(r.quantity or 0) if kind in BOQ_PRICED and not rate_only else 0.0
+        qty = qty3(r.quantity or 0) if kind in BOQ_PRICED and not rate_only else 0.0
         rate = unit_rate(r.rate or 0) if kind in BOQ_PRICED else 0.0
         if qty < 0 or rate < 0:
             raise HTTPException(400, "Line %d: quantity and rate cannot be negative." % (index + 1))
@@ -473,7 +473,7 @@ def boq_over_allotments(db, client_id, keys):
                                                models.DBBoqLine.revision_id.in_(list(current) or [0])).all():
         g = given.get(l.key)
         if g and g["qty"] > (l.quantity or 0) + 0.0001:
-            out.append("%s: %s given to contractors against %s in the BOQ" % (boq_line_label(l), money(g["qty"]), money(l.quantity)))
+            out.append("%s: %s given to contractors against %s in the BOQ" % (boq_line_label(l), qty3(g["qty"]), qty3(l.quantity)))
     return out
 
 
@@ -505,10 +505,10 @@ def boq_tracker_data(db, client, boq):
             continue
         g = given.get(l.key, {"qty": 0.0, "cost": 0.0, "items": [], "orders": [], "share": {}})
         contractor_rate = unit_rate(g["cost"] / g["qty"]) if g["qty"] else 0.0
-        executed = money(sum(done.get(i, 0.0) * g["share"].get(i, 1.0) for i in g["items"]))
-        contractor_billed = money(sum(billed.get(i, 0.0) * g["share"].get(i, 1.0) for i in g["items"]))
+        executed = qty3(sum(done.get(i, 0.0) * g["share"].get(i, 1.0) for i in g["items"]))
+        contractor_billed = qty3(sum(billed.get(i, 0.0) * g["share"].get(i, 1.0) for i in g["items"]))
         code = (l.item_code or "").upper()
-        c_done, c_billed = money(client_done.get(code, 0.0)), money(client_billed.get(code, 0.0))
+        c_done, c_billed = qty3(client_done.get(code, 0.0)), qty3(client_billed.get(code, 0.0))
         row_flags = []
         if (l.quantity or 0) > 0 and not g["qty"]:
             row_flags.append("no_contractor")
@@ -525,10 +525,10 @@ def boq_tracker_data(db, client, boq):
         totals["client_billed"] += c_billed * (l.rate or 0)
         totals["contractor_billed"] += contractor_billed * contractor_rate
         rows.append({"kind": l.kind, "key": l.key, "group_code": l.group_code or "", "description": l.description, "uom": l.uom or "",
-                     "item_code": l.item_code or "", "quantity": money(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
-                     "given": money(g["qty"]), "contractor_rate": contractor_rate, "contractor_cost": money(g["cost"]), "orders": g["orders"],
-                     "left_to_give": money(max(0.0, (l.quantity or 0) - g["qty"])),
-                     "left_to_execute": money(max(0.0, (l.quantity or 0) - max(executed, c_done))),
+                     "item_code": l.item_code or "", "quantity": qty3(l.quantity), "rate": unit_rate(l.rate), "amount": money(l.amount),
+                     "given": qty3(g["qty"]), "contractor_rate": contractor_rate, "contractor_cost": money(g["cost"]), "orders": g["orders"],
+                     "left_to_give": qty3(max(0.0, (l.quantity or 0) - g["qty"])),
+                     "left_to_execute": qty3(max(0.0, (l.quantity or 0) - max(executed, c_done))),
                      "executed": executed, "contractor_billed": contractor_billed, "client_executed": c_done, "client_billed": c_billed,
                      "margin_percent": round(((l.rate or 0) - contractor_rate) / l.rate * 100, 1) if g["qty"] and l.rate else None,
                      "percent_done": round(max(executed, c_done) / l.quantity * 100, 1) if l.quantity else 0.0,
@@ -562,7 +562,7 @@ def bv_write_lines(db, boq, vo, rows):
     seen, kept = set(), 0
     for index, r in enumerate(rows):
         kind = r.kind if r.kind in ("quantity", "extra") else "quantity"
-        change = money(r.change_qty or 0)
+        change = qty3(r.change_qty or 0)
         label = "Line %d" % (index + 1)
         if kind == "quantity":
             line = by_key.get(r.boq_key or "")
@@ -573,12 +573,12 @@ def bv_write_lines(db, boq, vo, rows):
             seen.add(r.boq_key)
             if not change:
                 raise HTTPException(400, "%s: say how much is added to (or taken from) %s." % (label, boq_line_label(line)))
-            if money((line.quantity or 0) + change) < 0:
+            if qty3((line.quantity or 0) + change) < 0:
                 raise HTTPException(400, "%s: that would take %s below nothing." % (label, boq_line_label(line)))
             rate = unit_rate(r.rate if r.rate is not None else line.rate)
             db.add(models.DBBoqVariationLine(
                 variation_id=vo.id, kind="quantity", boq_key=line.key, description=line.description,
-                uom=line.uom or "", old_qty=money(line.quantity), change_qty=change, rate=rate, amount=money(change * rate),
+                uom=line.uom or "", old_qty=qty3(line.quantity), change_qty=change, rate=rate, amount=money(change * rate),
                 remarks=(r.remarks or "").strip(), display_order=index))
         else:
             text = (r.description or "").strip()
@@ -622,7 +622,7 @@ def bv_dict(db, vo, detail=False):
     if detail:
         row["lines"] = [{"id": l.id, "kind": l.kind, "boq_key": l.boq_key or "", "section_key": l.section_key or "",
                          "description": l.description or "", "uom": l.uom or "",
-                         "old_qty": money(l.old_qty), "change_qty": money(l.change_qty), "new_qty": money((l.old_qty or 0) + (l.change_qty or 0)),
+                         "old_qty": qty3(l.old_qty), "change_qty": qty3(l.change_qty), "new_qty": qty3((l.old_qty or 0) + (l.change_qty or 0)),
                          "rate": unit_rate(l.rate), "amount": money(l.amount), "remarks": l.remarks or ""}
                         for l in db.query(models.DBBoqVariationLine).filter(models.DBBoqVariationLine.variation_id == vo.id).order_by(
                             models.DBBoqVariationLine.display_order, models.DBBoqVariationLine.id).all()]
@@ -724,7 +724,7 @@ def bv_apply(db, client, boq, vo):
             if line is None:
                 raise HTTPException(409, "%s is no longer in the BOQ, so this cannot be applied. Send it back and correct it."
                                     % (vl.description[:60]))
-            line.quantity = money((line.quantity or 0) + vl.change_qty)
+            line.quantity = qty3((line.quantity or 0) + vl.change_qty)
             if line.quantity < 0:
                 raise HTTPException(409, "%s would fall below nothing. Send it back and correct it." % (vl.description[:60]))
             line.amount = money(line.quantity * (line.rate or 0))
@@ -732,7 +732,7 @@ def bv_apply(db, client, boq, vo):
             # An extra item is grouped under the variation that brought it: V1, V2.
             new = models.DBBoqLine(boq_id=boq.id, revision_id=nxt.id, key=boq_new_key(), kind="item",
                                    group_code="V%d" % (vo.sequence or 1),
-                                   description=vl.description, uom=vl.uom, quantity=money(vl.change_qty), rate=unit_rate(vl.rate),
+                                   description=vl.description, uom=vl.uom, quantity=qty3(vl.change_qty), rate=unit_rate(vl.rate),
                                    amount=money(vl.change_qty * vl.rate), remarks=vl.remarks or "")
             at = len(copies)
             if vl.section_key and vl.section_key in by_key:
@@ -757,7 +757,7 @@ def bv_apply(db, client, boq, vo):
                 code = (by_key[vl.boq_key].item_code or "").upper()
                 wl = next((x for x in lines if (x.fg_code or "").upper() == code and code), None)
                 if wl:
-                    wl.qty = money((wl.qty or 0) + vl.change_qty)
+                    wl.qty = qty3((wl.qty or 0) + vl.change_qty)
                     wl.amount = money(wl.qty * (wl.rate or 0))
         for new in added:
             if new.item_code and not any((x.fg_code or "").upper() == new.item_code.upper() for x in lines):
