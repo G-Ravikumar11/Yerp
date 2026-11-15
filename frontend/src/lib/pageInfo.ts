@@ -100,6 +100,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/money/gst': 'GST on sales and purchases for the period, and what is payable or claimable.',
   '/money/assets': 'Fixed assets with cost, depreciation and book value.',
   '/money/registers': 'TDS by quarter and bank guarantees: the registers you must keep, with amounts and due dates.',
+  '/money/books': 'Check the books before Tally: the trial balance (each ledger with its opening, debits, credits and closing) and the day book (every voucher of a day), with what is not a voucher yet. Both to Excel.',
   '/money/tally': 'The period for the books in Tally Prime: an XML of ledgers and projects (cost centres) to import first, then one of vouchers - receipts, payments, expenses, transfers, client and contractor RA bills and supplier bills.',
   '/money/site-cash': 'The cash box of each site: what it should hold, what the site spent and is waiting to be checked, accepting or rejecting it against the bill, and topping the float back up.',
 

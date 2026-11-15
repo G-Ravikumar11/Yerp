@@ -83,6 +83,7 @@ export const SCREENS: Screen[] = [
   { path: '/money/adjustments', Component: page(() => import('@/features/money/AdjustmentsPage')) },
   { path: '/money/registers', Component: page(() => import('@/features/registers/RegistersPage')) },
   { path: '/money/site-cash', Component: page(() => import('@/features/sitecash/SiteCashPage')) },
+  { path: '/money/books', Component: page(() => import('@/features/money/BooksPage')) },
   { path: '/money/tally', Component: page(() => import('@/features/tally/TallyPage')) },
   { path: '/me/site-cash', Component: page(() => import('@/features/sitecash/SiteCashPage')) },
   { path: '/me/claims', Component: page(() => import('@/features/money/ClaimsPanel')) },
