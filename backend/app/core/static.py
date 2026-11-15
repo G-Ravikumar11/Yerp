@@ -85,6 +85,25 @@ async def home():
 
 app.add_api_route("/", home, methods=["GET"], include_in_schema=False)
 
+
+# What a search engine is told: the front page and the careers page are for it; the ERP and its API are not.
+async def robots(request: Request):
+    base = str(request.base_url).rstrip("/")
+    return Response("User-agent: *\nAllow: /$\nAllow: /next/jobs\nDisallow: /next/\nDisallow: /api/\n\nSitemap: %s/sitemap.xml\n" % base,
+                    media_type="text/plain")
+
+
+async def sitemap(request: Request):
+    base = str(request.base_url).rstrip("/")
+    # One page: the front page. The careers page needs the company's reference in its link, which the front page carries.
+    return Response('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                    '<url><loc>%s/</loc></url></urlset>' % base,
+                    media_type="application/xml")
+
+
+app.add_api_route("/robots.txt", robots, methods=["GET"], include_in_schema=False)
+app.add_api_route("/sitemap.xml", sitemap, methods=["GET"], include_in_schema=False)
+
 # Files that must answer at the root of the site, not under /next/.
 #   /sw.js and /manifest.webmanifest belong to the old app. A phone that installed it still asks for them; this sw.js
 #   removes itself and its caches, so those phones stop showing the old pages. Kept in app/static.

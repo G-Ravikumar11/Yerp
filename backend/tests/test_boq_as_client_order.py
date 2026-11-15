@@ -124,3 +124,34 @@ def test_the_tracker_shows_what_is_left_to_give_and_to_do(tenant):
     assert tenant.post("/api/sub-mb/%d/entries" % order["id"], json={"item_id": item, "quantity": 120, "measured_on": d(-1)}).status_code == 200
     row = next(r for r in tenant.get("/api/boqs/%d/tracker" % boq["id"]).json()["rows"] if r.get("key") == lines["EXC"]["key"])
     assert (row["given"], row["left_to_give"], row["executed"], row["left_to_execute"]) == (300, 200, 120, 380)
+
+
+def test_only_what_is_spent_past_the_allocated_budget_is_a_loss(tenant):
+    # The RCC line is budgeted at 120 cum x 7 bags x 400 = 3,36,000.
+    jid, _, lines = boq_with_lines(tenant)
+    cement = rm_item(tenant, uom="bag")
+    put_line(tenant, jid, lines["RCC"]["key"], [{"kind": "MATERIAL", "description": "Cement", "uom": "bag", "coefficient": 7, "rate": 400, "item_code": cement}])
+    receive(tenant, cement, 1000, 400)
+
+    def issue(qty):
+        i = tenant.post("/api/stock-issues", json={"job_id": jid, "lines": [{"item_code": cement, "quantity": qty}]}).json()["issue"]
+        assert tenant.post("/api/stock-issues/%d/post" % i["id"], json={}).status_code == 200
+
+    # 3,20,000 spent, inside the budget: cost, not a loss.
+    issue(800)
+    row = _pnl_row(tenant, jid)
+    assert row["budgeted_cost"] == 336000 and row["incurred"] == 320000
+    assert row["loss"] == 0 and not row["losing"] and not row["no_budget"]
+
+    # 3,60,000 spent: only the 24,000 past the budget is the loss.
+    issue(100)
+    row = _pnl_row(tenant, jid)
+    assert row["incurred"] == 360000 and row["loss"] == 24000 and row["losing"]
+    summary = tenant.get("/api/jobs-pnl").json()["summary"]
+    assert summary["loss"] == 24000 and summary["losing_money"] == 1
+
+
+def test_a_project_with_no_budget_is_never_called_a_loss(tenant):
+    job = tenant.post("/api/jobs", json={"name": "No budget yet"}).json()
+    row = _pnl_row(tenant, job["id"])
+    assert row["no_budget"] and row["loss"] == 0 and not row["losing"]

@@ -37,6 +37,7 @@ from app.schemas.projects import (
     FromWorkOrderIn,
     JobIn,
     JobStateIn,
+    JobWebsiteIn,
     ProgressIn,
     ReopenIn,
     TaskIn,
@@ -559,6 +560,19 @@ def set_job_state(job_id: int, body: JobStateIn, request: Request,
     return {"ok": True, "state_code": code, "state": GST_STATES.get(code, "")}
 
 
+@router.put("/api/jobs/{job_id}/website")
+def set_job_website(job_id: int, body: JobWebsiteIn, request: Request, db: Session = Depends(get_db)):
+    """Show the project on the company website, or take it off, with what its public card says."""
+    client = require_items_access(request, db, ("workorders.manage", "billing.manage"))
+    job = job_or_404(db, client.id, job_id)
+    job.show_on_website = bool(body.show)
+    job.website_sector = body.sector.strip()[:60]
+    job.website_location = body.location.strip()[:80]
+    job.website_scope = body.scope.strip()[:600]
+    db.commit()
+    return {"ok": True, "message": "%s is %s the website." % (job.name, "on" if job.show_on_website else "off")}
+
+
 @router.get("/api/diary")
 def list_diaries(request: Request, job_id: int = 0, date_from: str = "",
                  date_to: str = "", db: Session = Depends(get_read_db)):
@@ -900,6 +914,9 @@ def portfolio_pnl_payload(db, client):
             "over_budget": p["result"]["over_budget"],
             "outstanding": p["earned"]["outstanding"],
             "losing": p["result"]["losing"],
+            "loss": p["result"]["loss"],
+            "no_budget": p["result"]["no_budget"],
+            "budgeted_cost": p["value"]["budgeted_cost"],
             "not_billed": p["result"]["not_billed"],
         })
     rows.sort(key=lambda r: r["margin"])
@@ -914,6 +931,9 @@ def portfolio_pnl_payload(db, client):
             "margin": money(sum(r["margin"] for r in rows if not r["not_billed"])),
             "cost_not_billed": money(sum(r["incurred"] for r in rows if r["not_billed"])),
             "losing_money": len([r for r in rows if r["losing"]]),
+            # Spent past the allocated budget, added up across projects. Spending within a budget is never in it.
+            "loss": money(sum(r["loss"] for r in rows)),
+            "no_budget": len([r for r in rows if r["no_budget"]]),
             "owed_to_us": money(sum(r["outstanding"] for r in rows)),
         },
     }

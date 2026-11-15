@@ -68,6 +68,14 @@ class DBJob(Base):
     manager_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     reference = Column(String, default="")
 
+    # The company website (routers/website.py). Ticked, the project is shown there with its own photos; the sector, the
+    # place and the scope are what the public card says. Nothing else about the project - its value, its customer's
+    # contacts, its costs - ever leaves the ERP that way.
+    show_on_website = Column(Boolean, default=False, index=True)
+    website_sector = Column(String, default="")
+    website_location = Column(String, default="")
+    website_scope = Column(Text, default="")
+
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     contact = relationship("DBContact")

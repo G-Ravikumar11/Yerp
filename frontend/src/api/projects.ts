@@ -8,6 +8,8 @@ export interface Project {
   lock_reason?: string
   locked_by_name?: string
   locked_at?: string
+  /** What the company website shows of it, if it is ticked to be shown there. */
+  website?: ProjectWebsite
   id: number
   number: string
   name: string
@@ -77,4 +79,6 @@ export const clearSiteLocation = (id: number) => del<unknown>(`/api/jobs/${id}/s
 
 /** Job Lock, the Master's alone: lock needs a reason, which everybody who tries to change the project is told. */
 export const lockProject = (id: number, reason: string) => post<{ message: string }>(`/api/jobs/${id}/lock`, { reason })
+export interface ProjectWebsite { show: boolean; sector: string; location: string; scope: string }
+export const saveProjectWebsite = (id: number, body: ProjectWebsite) => put<{ message: string }>(`/api/jobs/${id}/website`, body)
 export const unlockProject = (id: number) => post<{ message: string }>(`/api/jobs/${id}/unlock`, {})

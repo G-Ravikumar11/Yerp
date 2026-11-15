@@ -9,6 +9,8 @@ import { Systems } from './Systems'
 import { Timeline } from './Timeline'
 import { Capabilities, Careers, Clients, Contact, Footer, Hero, Proof, Work } from './Sections'
 import { reduceMotion, useToast } from './lib'
+import { Credentials, LiveProjects, QualitySafety } from './Live'
+import { useLive } from './siteApi'
 import { EMPTY_PLAN, scopeLabel, type Plan } from './plan'
 
 gsap.registerPlugin(ScrollTrigger)
@@ -20,6 +22,7 @@ export default function SitePage() {
   const root = useRef<HTMLDivElement>(null)
   const [plan, setPlan] = useState<Plan>(EMPTY_PLAN)
   const toast = useToast()
+  const live = useLive()
 
   useEffect(() => {
     document.title = TITLE
@@ -37,7 +40,7 @@ export default function SitePage() {
     if (reduceMotion() || !root.current) return
     const ctx = gsap.context(() => {
       gsap.from(['.hero__title', '.hero__sub', '.hero__cta', '.hero__chapters'], { opacity: 0, y: 30, duration: 1.2, stagger: 0.12, ease: 'expo.out', delay: 0.1 })
-      gsap.utils.toArray<HTMLElement>('.sechead, .proof__lead, .proof__stats > div, .case__body, .group, .contact__item, .careers__inner, .q, .brief').forEach((el) =>
+      gsap.utils.toArray<HTMLElement>('.sechead, .proof__lead, .proof__stats > div, .case__body, .group, .contact__item, .careers__inner, .q, .brief, .live__card, .creds > div, .safety__grid > article').forEach((el) =>
         gsap.from(el, { opacity: 0, y: 32, duration: 1, ease: 'expo.out', scrollTrigger: { trigger: el, start: 'top 88%' } }))
       gsap.utils.toArray<HTMLElement>('.case').forEach((c) =>
         gsap.fromTo(c, { rotateX: 14, scale: 0.88, transformPerspective: 1400, transformOrigin: '50% 0%' }, { rotateX: 0, scale: 1, ease: 'none', scrollTrigger: { trigger: c, start: 'top bottom', end: 'top 35%', scrub: true } }))
@@ -60,16 +63,19 @@ export default function SitePage() {
       <Nav />
       <main id="main">
         <Hero />
-        <Proof />
+        <Proof live={live} />
         <Clients />
         <Capabilities scopes={plan.scopes} toggle={toggleScope} />
         <Systems scopes={plan.scopes} toggle={toggleScope} />
         <Work />
+        <LiveProjects live={live} />
         <Atlas />
         <Timeline />
+        <Credentials />
+        <QualitySafety live={live} />
         <Planner plan={plan} setPlan={setPlan} toggleScope={toggleScope} toast={toast.show} />
-        <Careers />
-        <Contact />
+        <Careers companyId={live?.company_id} />
+        <Contact toast={toast.show} />
       </main>
       <Footer />
       <div className={`toast${toast.on ? ' on' : ''}`} id="toast" role="status" aria-live="polite">{toast.text}</div>

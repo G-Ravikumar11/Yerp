@@ -9,14 +9,15 @@ import { ProjectPlantCosts } from '@/features/equipment/PlantChecks'
 import { cn, compactINR } from '@/lib/utils'
 import { alphabetical, percent, rupees } from './figures'
 
-type Filter = 'all' | 'losing' | 'over' | 'unbilled' | 'ontrack'
+type Filter = 'all' | 'losing' | 'nobudget' | 'unbilled' | 'ontrack'
 
 const FILTERS: { value: Filter; label: string; test: (r: PnlRow) => boolean }[] = [
   { value: 'all', label: 'All', test: () => true },
-  { value: 'losing', label: 'Losing money', test: (r) => r.losing },
-  { value: 'over', label: 'Over budget', test: (r) => r.over_budget && !r.losing },
-  { value: 'unbilled', label: 'Not billed yet', test: (r) => !!r.not_billed && !r.losing && !r.over_budget },
-  { value: 'ontrack', label: 'On track', test: (r) => !r.losing && !r.over_budget && !r.not_billed },
+  // A loss is only what was spent past the project's allocated budget; spending within it is cost, not loss.
+  { value: 'losing', label: 'Over budget (loss)', test: (r) => r.losing },
+  { value: 'nobudget', label: 'No budget set', test: (r) => !!r.no_budget && !r.losing },
+  { value: 'unbilled', label: 'Not billed yet', test: (r) => !!r.not_billed && !r.losing && !r.no_budget },
+  { value: 'ontrack', label: 'Within budget', test: (r) => !r.losing && !r.no_budget && !r.not_billed },
 ]
 
 /** What each project earned against what it truly cost - material, labour and plant included - listed A to Z. */
@@ -77,13 +78,21 @@ export default function ProjectProfitPage() {
     },
     {
       id: 'm', header: 'Margin', align: 'right', sort: (r) => r.margin,
-      // Nothing billed yet is no margin at all, not a loss of what it has cost so far.
+      // Billed less cost so far. Below zero while within budget is cost ahead of billing, not a loss: only spend past the budget is.
       cell: (r) => (r.not_billed && !r.losing ? <span className="text-xs text-muted-foreground">Not billed yet</span> : (
-        <div className={r.losing ? 'text-danger' : 'text-success'}>
+        <div className={r.margin >= 0 ? 'text-success' : r.losing ? 'text-danger' : 'text-muted-foreground'} title={r.margin < 0 && !r.losing ? 'Cost ahead of billing, still within budget' : undefined}>
           <div className="font-semibold">{rupees(r.margin)}</div>
           <div className="mt-0.5 text-xs font-medium opacity-90">{r.margin_percent}%</div>
         </div>
       )),
+    },
+    {
+      id: 'loss', header: 'Loss (over budget)', align: 'right', sort: (r) => r.loss ?? 0,
+      // Only what was spent past the allocated budget. Spending up to the budget is the project's cost.
+      cell: (r) => ((r.loss ?? 0) > 0
+        ? <div className="text-danger"><div className="font-semibold">{rupees(r.loss ?? 0)}</div><div className="mt-0.5 text-xs">over {rupees(r.budgeted_cost ?? 0)} budget</div></div>
+        : r.no_budget ? <span className="text-xs text-muted-foreground">No budget set</span>
+          : <div><div className="text-xs text-success">None</div><div className="mt-0.5 text-xs text-muted-foreground">{rupees(Math.max(0, (r.budgeted_cost ?? 0) - r.incurred))} left</div></div>),
     },
     {
       id: 'w', header: 'Wastage loss', align: 'right', sort: (r) => waste.data?.[String(r.job_id)] ?? 0,
@@ -96,7 +105,7 @@ export default function ProjectProfitPage() {
       },
     },
     { id: 'md', header: 'Mandays', hideBelow: 'lg', align: 'right', sort: (r) => r.mandays, cell: (r) => <span className="text-muted-foreground">{r.mandays.toLocaleString('en-IN')}</span> },
-    { id: 'st', header: 'Status', cell: (r) => (r.losing ? <Badge tone="danger" dot>Losing money</Badge> : r.over_budget ? <Badge tone="warning" dot>Over budget</Badge> : r.not_billed ? <Badge tone="neutral" dot>Not billed yet</Badge> : <Badge tone="success" dot>{JOB_STATUS[r.status] ?? (r.status || 'Live')}</Badge>) },
+    { id: 'st', header: 'Status', cell: (r) => (r.losing ? <Badge tone="danger" dot>Loss: over budget</Badge> : r.no_budget ? <Badge tone="warning" dot>No budget set</Badge> : r.not_billed ? <Badge tone="neutral" dot>Not billed yet</Badge> : <Badge tone="success" dot>{JOB_STATUS[r.status] ?? (r.status || 'Live')}</Badge>) },
     {
       id: 'x', header: '', align: 'right', width: '3rem',
       cell: (r) => <Button size="icon-sm" variant="ghost" asChild><a href={`/api/jobs/${r.job_id}/pnl.xlsx`} aria-label={`Download the workbook for ${r.name}`} title="Download as a workbook"><Download /></a></Button>,
@@ -118,6 +127,7 @@ export default function ProjectProfitPage() {
         <Stat label="Cost incurred" value={compactINR(s?.incurred)} loading={q.isPending} />
         <Stat label="Margin" value={compactINR(s?.margin)} tone={(s?.margin ?? 0) < 0 ? 'danger' : 'success'} sub={s?.cost_not_billed ? `${compactINR(s.cost_not_billed)} spent on work not billed yet` : 'On what has been billed'} loading={q.isPending} />
         <Stat label="Owed to us" value={compactINR(s?.owed_to_us)} loading={q.isPending} />
+        <Stat label="Loss (over budget)" value={compactINR(s?.loss ?? 0)} tone={(s?.loss ?? 0) > 0 ? 'danger' : undefined} sub={`Only spend past the allocated budget${s?.no_budget ? ` · ${s.no_budget} without a budget` : ''}`} loading={q.isPending} />
         <Stat label="Wastage loss" value={compactINR(totalLost)} tone={totalLost > 0 ? 'danger' : undefined} sub="Only material past its limit (BBS + 2%, store norms)" loading={waste.isPending} />
       </StatGrid>
       {lost && <WastageModal row={lost} onClose={() => setLost(null)} />}

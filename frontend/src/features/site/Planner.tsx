@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { PLAN_TYPES, SITE } from './data/content'
 import { goTo } from './Nav'
 import { inr } from './lib'
+import { EnquiryForm } from './Live'
 import { briefText, similarProjects, sizeOf, type Plan } from './plan'
 
-/** "Tell us about your project": five questions, and the brief builds beside them. It leaves as an email; nothing is stored. */
+/** "Tell us about your project": five questions, and the brief builds beside them. Sent with a name and a number, it
+ *  arrives in the ERP as a new lead in the Tender Pipeline; it can still be emailed or copied instead. */
 export function Planner({ plan, setPlan, toggleScope, toast }: { plan: Plan; setPlan: (f: (p: Plan) => Plan) => void; toggleScope: (id: string) => void; toast: (m: string) => void }) {
   const [city, setCity] = useState(plan.city)
   // The city is taken a moment after typing stops, as the earlier page did.
@@ -59,9 +61,12 @@ export function Planner({ plan, setPlan, toggleScope, toast }: { plan: Plan; set
             <div className="brief__similar" id="briefsimilar">
               {T ? (sim.total ? <>{sim.total} comparable {T.label.toLowerCase()} project{sim.total > 1 ? 's' : ''} delivered{sim.local ? ' in ' + plan.city : ''}, including:<ul>{sim.list.map((p, i) => <li key={`${p.n}-${i}`}>{p.n}<span>{p.l.split(',')[0]}</span></li>)}</ul></> : null) : 'Choose a project type to see comparable work.'}
             </div>
+            {ready
+              ? <div className="brief__send"><EnquiryForm tone="light" send="Send This Brief" toast={toast} brief={{ type: T!.label, scopes: sc.map((s) => s.label), city: plan.city, text: briefText(plan) }} /></div>
+              : <p className="brief__note">Choose a project type and at least one scope, then send the brief with your name and number.</p>}
             <div className="brief__cta">
-              <a className="btn btn--primary" id="briefsend" href={mailto} aria-disabled={!ready} onClick={(e) => { if (!ready) { e.preventDefault(); toast('Choose a project type and at least one scope first'); goTo('#quote') } else toast('Opening your email app…') }}>Email This Brief</a>
-              <button className="btn btn--line" id="briefcopy" type="button" onClick={async () => { try { await navigator.clipboard.writeText(briefText(plan)); toast('Brief copied to clipboard') } catch { toast('Copying is blocked here. Use Email This Brief instead.') } }}>Copy</button>
+              <a className="btn btn--line" id="briefsend" href={mailto} aria-disabled={!ready} onClick={(e) => { if (!ready) { e.preventDefault(); toast('Choose a project type and at least one scope first'); goTo('#quote') } else toast('Opening your email app…') }}>Email Instead</a>
+              <button className="btn btn--line" id="briefcopy" type="button" onClick={async () => { try { await navigator.clipboard.writeText(briefText(plan)); toast('Brief copied to clipboard') } catch { toast('Copying is blocked here. Use Email Instead.') } }}>Copy</button>
             </div>
             <p className="brief__note">Prefer to talk? <a href="tel:+914040059348">040 4005 9348</a></p>
           </aside>

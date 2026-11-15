@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { asset, reduceMotion } from './lib'
 import { appUrl } from '@/lib/paths'
 
-const LINKS: [string, string][] = [['capabilities', 'Capabilities'], ['work', 'Projects'], ['clients', 'Clients'], ['company', 'Company'], ['contact', 'Contact']]
-const WATCHED = ['capabilities', 'work', 'projects', 'clients', 'company', 'quote', 'contact']
+const LINKS: [string, string][] = [['capabilities', 'Capabilities'], ['work', 'Projects'], ['clients', 'Clients'], ['company', 'Company'], ['credentials', 'Credentials'], ['safety', 'Safety'], ['contact', 'Contact']]
+const WATCHED = ['capabilities', 'work', 'sites', 'projects', 'clients', 'company', 'credentials', 'safety', 'quote', 'contact']
 
 /** Scroll to a section and keep the address bar in step, as the page's own links do. */
 export function goTo(id: string) {
@@ -76,7 +76,7 @@ export function Nav() {
       </nav>
       <a href={appUrl('login')} className="btn btn--login btn--sm nav__login" title="Sign in to YERP, the Yalavarti ERP">
         <svg className="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
-        YERP Login
+        Staff Login
       </a>
       <a href="#quote" className="btn btn--primary btn--sm nav__cta" onClick={(e) => click(e, '#quote')}>Request a Quote</a>
       <button className="nav__burger" id="burger" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} aria-controls="navlinks" onClick={() => setOpen((o) => !o)}><span /><span /></button>

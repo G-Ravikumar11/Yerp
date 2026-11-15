@@ -3,6 +3,8 @@ import { SITE } from './data/content'
 import { goTo } from './Nav'
 import { asset, inr, reduceMotion } from './lib'
 import { appUrl } from '@/lib/paths'
+import { EnquiryForm } from './Live'
+import type { Live } from './siteApi'
 
 const SCOPE_OF: Record<string, string> = { electrical: 'electrical', fire: 'fire', panels: 'panels', phe: 'phe', testing: 'testing' }
 const DURATION = 7000
@@ -94,7 +96,8 @@ function Count({ to, prefix = '', suffix = '' }: { to: number; prefix?: string; 
   return <dd ref={ref as React.RefObject<HTMLElement>}>{text}</dd>
 }
 
-export function Proof() {
+export function Proof({ live }: { live: Live | null }) {
+  const n = live?.numbers
   return (
     <section className="proof" aria-label="Company at a glance">
       <div className="wrap proof__grid">
@@ -105,6 +108,13 @@ export function Proof() {
           <div><dt>Orders in 2019–20</dt><Count to={200} prefix="₹" suffix=" Cr" /></div>
           <div><dt>Engineers &amp; crew</dt><Count to={1550} suffix="+" /></div>
         </dl>
+        {n && (n.ongoing_sites > 0 || n.safe_man_hours > 0) && (
+          <p className="proof__live" aria-label="Live from our project records">
+            <span className="proof__dot" aria-hidden="true" />Live from our sites:
+            {n.ongoing_sites > 0 && <span><b className="num">{inr(n.ongoing_sites)}</b> site{n.ongoing_sites === 1 ? '' : 's'} running now</span>}
+            {n.safe_man_hours > 0 && <span><b className="num">{inr(n.safe_man_hours)}</b> safe man-hours</span>}
+          </p>
+        )}
       </div>
     </section>
   )
@@ -208,20 +218,23 @@ export function Work() {
   )
 }
 
-export function Careers() {
+export function Careers({ companyId }: { companyId?: number }) {
   return (
     <section className="careers" aria-label="Careers">
       <img src={asset('site/img/gallery/g105.jpg')} alt="" loading="lazy" width="728" height="487" />
       <div className="wrap careers__inner">
         <p className="eyebrow">Careers</p>
         <h2 className="h2">Build the infrastructure of a growing India</h2>
-        <a className="btn btn--ghost" href="https://www.yalavarti.com/current-openings.php" target="_blank" rel="noopener noreferrer">View Openings ↗</a>
+        {/* Our own openings, from the ERP's recruitment page; the old site's list until the company is known. */}
+        {companyId
+          ? <a className="btn btn--ghost" href={appUrl(`jobs?c=${companyId}`)}>View Openings</a>
+          : <a className="btn btn--ghost" href="https://www.yalavarti.com/current-openings.php" target="_blank" rel="noopener noreferrer">View Openings ↗</a>}
       </div>
     </section>
   )
 }
 
-export function Contact() {
+export function Contact({ toast }: { toast: (m: string) => void }) {
   return (
     <section className="band" id="contact">
       <div className="wrap">
@@ -232,6 +245,12 @@ export function Contact() {
           <a href="mailto:info@yalavarti.com" className="contact__item"><span className="eyebrow">Email</span>info@yalavarti.com</a>
           <a href="https://www.google.com/maps?q=Yalavarti+Projects+Kondapur+Hyderabad" target="_blank" rel="noopener noreferrer" className="contact__item"><span className="eyebrow">Corporate Office</span>Plot 1-109/21, Near RTA Office, Kondapur, Hyderabad 500084</a>
         </div>
+        <div className="contact__enq" id="enquire">
+          <p className="eyebrow">Send an Enquiry</p>
+          <EnquiryForm toast={toast} />
+        </div>
+        <iframe className="contact__map" title="Map: Yalavarti Projects corporate office, Kondapur, Hyderabad" loading="lazy" referrerPolicy="no-referrer-when-downgrade"
+          src="https://www.google.com/maps?q=Yalavarti+Projects+Kondapur+Hyderabad&output=embed" />
       </div>
     </section>
   )
@@ -243,7 +262,7 @@ export function Footer() {
       <div className="wrap footer__top">
         <a href="#top" className="brand brand--lg" aria-label="Back to top" onClick={(e) => goTo('#top') && e.preventDefault()}><img src={asset('site/img/mark.png')} alt="" width="54" height="54" /><span translate="no">Yalavarti</span></a>
         <nav className="footer__links" aria-label="Footer">
-          <a href={appUrl('login')}>YERP Login</a>
+          <a href={appUrl('login')}>Staff Login</a>
           <a href={appUrl('terms')}>Terms of Service</a>
           <a href={appUrl('privacy')}>Privacy Policy</a>
           <a href="https://www.yalavarti.com/images/pages/YPPL_PROFILE_2023.pdf" target="_blank" rel="noopener noreferrer">Company Profile (PDF)</a>

@@ -259,6 +259,12 @@ ACCOUNTS_COLUMNS = (
     ("bills", "grn_id", "INTEGER"), ("bill_line_items", "grn_line_id", "INTEGER"),
 )
 
+# (table, column, type) - a project shown on the company website, and what its public card says.
+WEBSITE_COLUMNS = (
+    ("jobs", "show_on_website", "BOOLEAN DEFAULT FALSE"), ("jobs", "website_sector", "VARCHAR DEFAULT ''"),
+    ("jobs", "website_location", "VARCHAR DEFAULT ''"), ("jobs", "website_scope", "TEXT DEFAULT ''"),
+)
+
 QUALITY_COLUMNS = (
     ("rfq_quotes", "source", "VARCHAR DEFAULT ''"),
     # (table, column, Postgres type, SQLite type) - what the quality module grew after it was first created.
@@ -2057,7 +2063,7 @@ def ensure_columns():
 
             # Quality: the workflow columns. Additive, defaulted, safe on a live database.
             try:
-                for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS:
+                for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + WEBSITE_COLUMNS:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {typedef}"))
                 conn.commit()
             except Exception:
@@ -2204,7 +2210,7 @@ def migrate_sqlite():
             add_col("subcontract_items", "material", "VARCHAR DEFAULT ''")
             add_col("subcontract_items", "heading_level", "INTEGER DEFAULT 0")
             add_col("business_units", "logo_url", "TEXT DEFAULT ''")
-            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS + SITE_RATE_COLUMNS + SITE_PLAN_COLUMNS + HR_PAYROLL_COLUMNS:
+            for table, column, typedef in QUALITY_COLUMNS + ACCOUNTS_COLUMNS + WEBSITE_COLUMNS + ITEM_MASTER_COLUMNS + STORE_OUTWARD_COLUMNS + SITE_RATE_COLUMNS + SITE_PLAN_COLUMNS + HR_PAYROLL_COLUMNS:
                 add_col(table, column, typedef.replace("BOOLEAN DEFAULT FALSE", "BOOLEAN DEFAULT 0").replace("BOOLEAN DEFAULT TRUE", "BOOLEAN DEFAULT 1"))
             try:
                 if conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='overtime_logs'")).fetchone() and not                         conn.execute(text("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_overtime_employee_date'")).fetchone():

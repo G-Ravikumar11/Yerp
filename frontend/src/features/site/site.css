@@ -425,3 +425,49 @@ body{counter-reset:sec}
   .nav .brand{font-size:1.15rem;letter-spacing:.14em}
   .nav .brand img{width:30px}
 }
+
+/* --- Live from the ERP: running sites and safe man-hours, project cards, credentials, quality & safety, enquiries --- */
+.proof__live{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:10px 28px;font:500 .82rem var(--text);letter-spacing:.12em;text-transform:uppercase;color:var(--mute)}
+.proof__live b{font:600 1.5rem var(--display);color:var(--white);margin-right:8px;letter-spacing:.02em}
+.proof__dot{width:8px;height:8px;border-radius:50%;background:#22c55e;margin-right:-18px}
+.live__filters{display:grid;gap:10px;margin-bottom:28px}
+.live__grid{list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:24px}
+.live__card{border:1px solid var(--line);background:var(--night)}
+.live__img{position:relative;aspect-ratio:4/3;overflow:hidden;background:var(--night2)}
+.live__img img{width:100%;height:100%;object-fit:cover}
+.live__img .live__ph{object-fit:contain;padding:30%;opacity:.25}
+.live__more{position:absolute;right:10px;bottom:10px;padding:4px 10px;background:rgba(0,0,0,.7);font:500 .74rem var(--text);letter-spacing:.1em}
+.live__status{position:absolute;left:10px;top:10px;padding:4px 10px;background:var(--white);color:var(--ink);font:600 .7rem var(--text);letter-spacing:.14em;text-transform:uppercase}
+.live__status.on{background:var(--blue);color:var(--white)}
+.live__body{padding:20px 22px 24px;display:grid;gap:8px}
+.live__body h3{font:600 1.7rem/1 var(--display);text-transform:uppercase}
+.live__body p{color:var(--mute);font-size:.95rem}
+.live__body .live__client{color:var(--white)}
+.creds{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--hair)}
+.creds div{padding:24px 24px 28px 0;border-bottom:1px solid var(--hair)}
+.creds dt{font:500 .74rem var(--text);letter-spacing:.14em;text-transform:uppercase;color:var(--ink2)}
+.creds dd{font:500 1.1rem/1.4 var(--text);margin-top:8px}
+.creds__cta{margin-top:36px}
+.safety__hours{max-width:30ch;color:var(--mute)}
+.safety__hours .num{display:block;font:600 clamp(2.6rem,5vw,4.2rem)/1 var(--display);color:var(--white);margin-bottom:8px}
+.safety__grid{display:grid;grid-template-columns:repeat(3,1fr);gap:40px;border-top:1px solid var(--line2);padding-top:32px}
+.safety__grid h3{font:600 1.6rem/1 var(--display);text-transform:uppercase;margin-bottom:12px}
+.safety__grid p{color:var(--mute)}
+.safety__link{display:inline-block;margin-top:14px;border-bottom:1px solid currentColor;font-weight:500}
+.contact__enq{margin-top:clamp(56px,7vw,96px);border-top:1px solid var(--line2);padding-top:32px;display:grid;gap:20px}
+.contact__map{width:100%;height:360px;border:0;margin-top:40px;filter:grayscale(1) invert(.9)}
+.enq{display:grid;grid-template-columns:repeat(2,1fr);gap:18px 32px}
+.enq__wide{grid-column:1/-1}
+.enq__f{display:grid;gap:4px}
+.enq__f span{font:500 .72rem var(--text);letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+.enq .text{font-size:1.05rem;padding:8px 0}
+.enq textarea.text{resize:vertical}
+.enq--dark .text{color:var(--white);border-color:var(--line2)}
+.enq--dark .text:focus{border-color:var(--white)}
+.enq--light .enq__f span{color:var(--ink2)}
+.enq .btn[disabled]{opacity:.5}
+.enq__done{font:500 1.2rem/1.4 var(--text);padding:20px 0}
+.enq__done.enq--light{color:var(--ink)}
+.brief__send{margin-top:22px;padding-top:18px;border-top:1px solid var(--hair)}
+.brief__send .enq{grid-template-columns:1fr;gap:12px}
+@media (max-width:900px){.creds,.safety__grid{grid-template-columns:1fr}.enq{grid-template-columns:1fr}}

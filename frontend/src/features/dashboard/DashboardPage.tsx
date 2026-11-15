@@ -212,7 +212,7 @@ export default function DashboardPage() {
                   value={fig(pnl.data?.summary.margin, pnl.isPending)}
                   loading={pnl.isPending}
                   tone={pnl.data && pnl.data.summary.margin < 0 ? 'danger' : 'success'}
-                  sub={pnl.data ? (pnl.data.summary.losing_money ? `${pnl.data.summary.losing_money} project${pnl.data.summary.losing_money === 1 ? '' : 's'} losing money` : 'No project is losing money') : undefined}
+                  sub={pnl.data ? (pnl.data.summary.losing_money ? `${pnl.data.summary.losing_money} project${pnl.data.summary.losing_money === 1 ? '' : 's'} over budget (loss)` : 'No project is over its budget') : undefined}
                 />
               </>
             )}

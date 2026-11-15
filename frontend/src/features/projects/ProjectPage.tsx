@@ -11,6 +11,7 @@ import { formatDate as fmt } from '@/lib/format'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { ProjectFormModal } from './ProjectFormModal'
+import { ProjectWebsiteButton } from './ProjectWebsite'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
 function Docs({ title, rows, party }: { title: string; rows: ProjectDoc[]; party: (d: ProjectDoc) => string }) {
@@ -32,7 +33,7 @@ export default function ProjectPage() {
   const q = useProject(id)
   const [editing, setEditing] = useState(false)
   const [locking, setLocking] = useState<'lock' | 'unlock' | null>(null)
-  const { isOwner } = useSession()
+  const { isOwner, can } = useSession()
   const lockIt = useAction((reason: string) => (locking === 'unlock' ? unlockProject(id) : lockProject(id, reason)), { invalidate: [['projects'], ['jobs']], success: (r) => r.message, onSuccess: () => setLocking(null) })
   const p = q.data
   const c = p?.costing
@@ -45,7 +46,7 @@ export default function ProjectPage() {
         <p className="rounded-lg border border-border bg-muted/40 p-4 text-sm">This project no longer exists. It may have been deleted. <Link to="/projects" className="font-medium text-primary underline underline-offset-4">Back to all projects</Link></p>
       ) : q.isPending || !p || !c ? <Skeleton className="h-64 w-full" /> : (
         <>
-          <PageHeader title={`${p.number} - ${p.name}`} description={[p.customer_name, p.site_address, JOB_STATUS[p.status] ?? p.status].filter(Boolean).join(' - ')} actions={<>{isOwner && (p.locked ? <Button variant="outline" onClick={() => setLocking('unlock')}><LockOpen /> Unlock</Button> : <Button variant="outline" onClick={() => setLocking('lock')}><Lock /> Lock</Button>)}<Button variant="outline" disabled={!!p.locked} onClick={() => setEditing(true)}>Edit</Button><MasterDelete kind="project" id={p.id} label={`${p.number} ${p.name}`} noun="project" onDeleted={() => nav('/projects')} /></>} />
+          <PageHeader title={`${p.number} - ${p.name}`} description={[p.customer_name, p.site_address, JOB_STATUS[p.status] ?? p.status].filter(Boolean).join(' - ')} actions={<>{isOwner && (p.locked ? <Button variant="outline" onClick={() => setLocking('unlock')}><LockOpen /> Unlock</Button> : <Button variant="outline" onClick={() => setLocking('lock')}><Lock /> Lock</Button>)}<Button variant="outline" disabled={!!p.locked} onClick={() => setEditing(true)}>Edit</Button>{can('workorders.manage|billing.manage') && <ProjectWebsiteButton id={p.id} name={p.name} website={p.website} />}<MasterDelete kind="project" id={p.id} label={`${p.number} ${p.name}`} noun="project" onDeleted={() => nav('/projects')} /></>} />
           {p.locked && (
             <p role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-danger/30 bg-danger-soft p-3 text-sm text-danger">
               <Lock className="mt-0.5 size-4 shrink-0" />

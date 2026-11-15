@@ -86,7 +86,8 @@ BODY_LIMIT_FORMS = 64 * 1024
 BODY_LIMIT_APPLICATION = 16 * 1024 * 1024
 SMALL_FORM_PATHS = ("/api/client/login", "/api/client/register", "/api/client/forgot-password",
                     "/api/client/reset-password", "/api/employee/auth/login", "/api/employee/forgot-password",
-                    "/api/portal/login", "/api/portal/accept-invite", "/api/superadmin/login")
+                    "/api/portal/login", "/api/portal/accept-invite", "/api/superadmin/login",
+                    "/api/public/enquiry")
 
 SLOW_REQUEST_MS = int(os.getenv("SLOW_REQUEST_MS", "1500"))
 

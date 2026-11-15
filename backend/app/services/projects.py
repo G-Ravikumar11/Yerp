@@ -259,6 +259,8 @@ def job_to_dict(db, job, costing=False):
         "currency": job.currency or "", "reference": job.reference or "",
         "manager_id": job.manager_id,
         "created_at": job.created_at or "",
+        "website": {"show": bool(job.show_on_website), "sector": job.website_sector or "",
+                    "location": job.website_location or "", "scope": job.website_scope or ""},
     }
     if job.manager_id:
         row["manager_name"] = employee_name(by_id(db, models.DBEmployee, job.manager_id))
@@ -810,10 +812,12 @@ def project_pnl(db, client_id, job, pre=None):
 
     revenue = money(max(invoiced, certified))
     margin = money(revenue - incurred)
-    # Nothing billed to the client yet is not a loss: the work is in hand and its bill is still to go. A project is losing
-    # money when what it has been paid for is less than what it cost, or when what it will cost passes what it was sold for.
     forecast = money(incurred + committed)
-    losing = (revenue > 0 and margin < 0) or (order_value > 0 and forecast > order_value)
+    # Money spent within the project's allocated budget is its cost, not a loss - even while it is ahead of what has been
+    # billed. Only what was spent past the budget is lost. A project with no budget set has nothing to measure against,
+    # so it is never called a loss; it is shown as having no budget.
+    loss = money(max(0.0, incurred - budgeted)) if budgeted else 0.0
+    losing = loss > 0
 
     return {
         "job": {"id": job.id, "number": job.number or "", "name": job.name or "",
@@ -850,6 +854,9 @@ def project_pnl(db, client_id, job, pre=None):
             "cost_per_manday": money(incurred / mandays) if mandays else 0.0,
             "mandays": mandays,
             "losing": losing,
+            # How much was spent past the allocated budget: the loss, and the only part of the cost that is.
+            "loss": loss,
+            "no_budget": not budgeted,
             # Cost on the project and nothing billed for it yet.
             "not_billed": incurred > 0 and revenue <= 0,
             # Costing more than it was budgeted to is the earliest warning

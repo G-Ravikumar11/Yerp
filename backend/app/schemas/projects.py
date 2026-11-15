@@ -30,6 +30,13 @@ class JobStateIn(BaseModel):
     state_code: str
 
 
+class JobWebsiteIn(BaseModel):
+    show: bool = False
+    sector: str = ""
+    location: str = ""
+    scope: str = ""
+
+
 class HindranceIn(BaseModel):
     """A hindrance as the register's form sends it. Left out (None) on a change keeps what it was."""
     activity_id: Optional[int] = None
