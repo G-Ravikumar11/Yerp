@@ -2,6 +2,7 @@
 import difflib
 import math
 import re
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from sqlalchemy import func, or_
@@ -122,7 +123,25 @@ def _shelf(body):
     return {"shelf_life_applicable": bool(body.shelf_life_applicable), "shelf_life_days": days if body.shelf_life_applicable else None, "expiry_tracking": bool(body.expiry_tracking)}
 
 
-def _fields(db, client_id, body):
+def check_weight_per_piece(body, kind, unit, category, name, description, segment, current=None):
+    """The weight per piece to keep: required, and above zero, for a steel material counted in Numbers; for every other item nothing is kept (so
+    a unit changed away from Numbers leaves no obsolete figure behind) and nothing is asked. A figure left out of an edit keeps what the item holds."""
+    from app.services import steel_allowance as steel
+    probe = SimpleNamespace(kind=kind, item_name=name, description=description, segment=segment, category="", item_category=category)
+    if not (steel.is_steel(probe) and steel.is_piece_unit(unit)):
+        return None
+    given = body.weight_per_piece_kg if "weight_per_piece_kg" in body.model_fields_set else None
+    if given is None and current is not None and steel.piece_weight(current) is not None:
+        return steel.piece_weight(current)                       # an edit that does not mention it keeps it
+    if given is None:
+        raise HTTPException(400, "'%s' is steel counted in Numbers, so say what one piece weighs: Weight Per Piece (kg) is required." % name)
+    weight, why = steel.clean_piece_weight(given)
+    if why:
+        raise HTTPException(400, "%s Enter the weight of one piece of '%s' in kg." % (why, name))
+    return weight
+
+
+def _fields(db, client_id, body, current=None):
     """The checked, normalised values from a request: the one place a create and an edit are both validated."""
     name = re.sub(r"\s+", " ", body.item_name or "").strip()
     if not name:
@@ -136,7 +155,9 @@ def _fields(db, client_id, body):
     category, subcategory = check_category(db, client_id, body.item_category, body.item_subcategory)
     # A name pasted from a long schedule is cut at a word, never through one; the whole text stays as the description.
     short = name if len(name) <= 200 else name[:200].rsplit(" ", 1)[0].rstrip(" ,.-/")
-    out = {**_shelf(body), "item_name": short, "description": (body.description or "").strip() or name, "units_of_measure": unit,
+    kind_now = ((body.kind if (current is None or "kind" in body.model_fields_set) else current.kind) or "FG").upper()
+    weight = check_weight_per_piece(body, kind_now, unit, category, short, (body.description or "").strip() or name, re.sub(r"\s+", " ", body.segment or "").strip()[:80], current)
+    out = {**_shelf(body), "item_name": short, "description": (body.description or "").strip() or name, "units_of_measure": unit, "weight_per_piece_kg": weight,
            "item_type": itype, "item_category": category, "item_subcategory": subcategory,
            "specification": (body.specification or "").strip()[:120], "hsn_code": (body.hsn_code or "").strip()[:20],
            "preferred_supplier": (body.preferred_supplier or "").strip()[:120], "remarks": (body.remarks or "").strip(),
@@ -267,7 +288,7 @@ def update_master_item(db, item, body, who):
     turning = "kind" in body.model_fields_set and (body.kind or "").upper() != item.kind
     if turning:
         refuse_kind_change_in_use(db, item.client_id, [item])
-    fields = _fields(db, item.client_id, body)
+    fields = _fields(db, item.client_id, body, item)
     if item.source_boq_id is None and not item.merged_into_id:
         kind = (body.kind or item.kind).upper() if turning else item.kind
         key = dup_key(item.client_id, kind, fields)
@@ -323,12 +344,24 @@ def bulk_update(db, client_id, items, body, who):
         raise HTTPException(422, "Choose at least one thing to change.")
     if "kind" in out:
         refuse_kind_change_in_use(db, client_id, [i for i in items if i.kind != out["kind"]])
+    if "units_of_measure" in out:
+        from app.services import steel_allowance as steel
+        # Steel moved to Numbers needs its weight per piece, which a change of many cannot give: say which ones, change none.
+        need = [i for i in items if steel.is_steel(i) and steel.is_piece_unit(out["units_of_measure"]) and steel.piece_weight(i) is None]
+        if need:
+            raise HTTPException(400, "%s %s steel counted in Numbers, so %s need a weight per piece: change %s one at a time in the item master and fill Weight Per Piece (kg) in."
+                                % (", ".join("'%s' (item %d)" % (i.item_name, i.id) for i in need[:5]) + (" and %d more" % (len(need) - 5) if len(need) > 5 else ""),
+                                   "is" if len(need) == 1 else "are", "it needs" if len(need) == 1 else "they", "it" if len(need) == 1 else "them"))
     for item in items:
         for key, value in out.items():
             if key == "kind":
                 set_kind(item, value)
             else:
                 setattr(item, key, value)
+        if "units_of_measure" in out:
+            from app.services import steel_allowance as steel
+            if not steel.is_piece_unit(out["units_of_measure"]):
+                item.weight_per_piece_kg = None               # not counted in numbers any more: no obsolete figure left to be applied
         item.updated_by_name, item.updated_at = who, now()
     return out
 
@@ -360,6 +393,16 @@ def stock_of(db, client_id, codes):
     return {c: a["on_hand"] for c, a in current_stock(db, client_id, codes=set(codes)).items()}
 
 
+def weight_fields(item):
+    """Steel and what one piece weighs: `weight_status` is NA for anything that is not steel counted in Numbers, OK when its weight per piece is
+    set, MISSING when it is not (flagged for correction - never assumed)."""
+    from app.services import steel_allowance as steel
+    counted = steel.is_steel(item) and steel.is_piece_unit(item.units_of_measure)
+    w = steel.piece_weight(item)
+    return {"is_steel": steel.is_steel(item), "weight_per_piece_kg": format(w, "f") if w is not None else None,
+            "weight_status": "NA" if not counted else ("OK" if w is not None else "MISSING")}
+
+
 def item_dict(item, site_count=0, stock=None):
     return {"id": item.id, "kind": item.kind, "item_code": item.item_code, "item_name": item.item_name,
             "description": item.description or "", "item_category": item.item_category or "",
@@ -370,7 +413,7 @@ def item_dict(item, site_count=0, stock=None):
             "default_rate": default_rate(item), "hsn_code": item.hsn_code or "", "item_tax_type": item.item_tax_type or "",
             "preferred_supplier": item.preferred_supplier or "", "reorder_level": money(item.reorder_level),
             "remarks": item.remarks or "", "is_active": item.is_active is not False, "sites": site_count,
-            "make": item.make or "", "segment": item.segment or "",
+            "make": item.make or "", "segment": item.segment or "", **weight_fields(item),
             "shelf_life_applicable": bool(item.shelf_life_applicable), "shelf_life_days": item.shelf_life_days, "expiry_tracking": bool(item.expiry_tracking),
             "stock": money(stock) if stock is not None else None,        # None: the store holds no record of it
             "created_by": item.created_by_name or "", "updated_by": item.updated_by_name or "",

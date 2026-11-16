@@ -147,7 +147,7 @@ def test_steel_within_the_allowance_is_cost_and_not_a_loss(account):
     w = with_steel(account)
     assert tenant.post(API + "/issue/direct", json=steel_body(w, 1080)).status_code == 200        # 1,088 kg allowed
     got = tenant.get("/api/jobs/%d/wastage-loss" % w.project).json()
-    assert got == {"total": 0.0, "rows": []}
+    assert (got["total"], got["wasted_value"], got["rows"]) == (0.0, 0.0, [])
     assert str(w.project) not in tenant.get("/api/projects/wastage-loss").json()["by_job"]
 
 

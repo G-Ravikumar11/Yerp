@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Printer } from 'lucide-react'
-import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Select, Stat, StatGrid } from '@/components/ui'
 import { useConsumption, type Consumption } from '@/api/stock'
@@ -9,8 +8,9 @@ import { formatINR } from '@/lib/utils'
 
 type Line = Consumption['lines'][number]
 
-/** What the contract was priced on, against what the site actually drew from the store. */
-export default function ConsumptionPage() {
+/** Store > Reports > Used vs budget: what the contract's budget (its BOQ, priced in Budgeting) calls for, against what the site actually drew from the stores - the Hub's
+ * issues and the old store's together - so overuse and wastage show up early. The norms report compares issues with norms; this one compares them with the budget. */
+export default function BudgetUsePage() {
   const boqs = useBoqs()
   const list = boqs.data?.boqs ?? []
   const [pick, setPick] = useState(0)
@@ -27,8 +27,10 @@ export default function ConsumptionPage() {
   ]
   return (
     <>
-      <PageHeader eyebrow="Store" title="Material Used vs Costed" description="What the contract was priced on, against what the site actually drew." actions={<Button variant="outline" onClick={() => window.print()}><Printer /> Print</Button>} />
-      <div className="mb-6 max-w-md"><Select aria-label="BOQ" value={wo || ''} disabled={boqs.isPending} placeholder={boqs.isPending ? 'Loading...' : list.length ? undefined : 'No BOQ yet'} onChange={(e) => setPick(Number(e.target.value))} options={list.map((b) => ({ value: b.id, label: `${b.number} - ${b.project}` }))} /></div>
+      <div className="mb-6 flex flex-wrap items-center gap-3 print:hidden">
+        <div className="w-full max-w-md"><Select aria-label="BOQ" value={wo || ''} disabled={boqs.isPending} placeholder={boqs.isPending ? 'Loading...' : list.length ? undefined : 'No BOQ yet'} onChange={(e) => setPick(Number(e.target.value))} options={list.map((b) => ({ value: b.id, label: `${b.number} - ${b.project}` }))} /></div>
+        <Button variant="outline" className="ml-auto" onClick={() => window.print()}><Printer /> Print</Button>
+      </div>
       <StatGrid>
         <Stat label="Costed on" value={formatINR(s?.planned_value ?? 0)} loading={q.isPending && wo > 0} />
         <Stat label="Actually drawn" value={formatINR(s?.issued_value ?? 0)} loading={q.isPending && wo > 0} />

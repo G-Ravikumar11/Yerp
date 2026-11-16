@@ -95,7 +95,19 @@ export default function DocPage({ kindKey, base }: { kindKey?: OutwardKind; base
           {doc.status === 'SUBMITTED' && <p className="mt-1 text-xs">They have been told, and it is in their Approvals list. It can be posted once approved.</p>}
         </div>
       )}
-      {doc.steel_override_by && <p role="status" className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Steel past the allowance approved by {doc.steel_override_by}{doc.steel_override_note ? `: ${doc.steel_override_note}` : ''}.</p>}
+      {(doc.free_issue?.rows ?? []).some((r) => !r.within) && ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(doc.status) && (
+        <div role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">
+          <p className="font-semibold">Free-issue material past what its norms allow for the work ordered{doc.status === 'SUBMITTED' ? ' - waiting for the Master to approve' : ' - it will need the Master to approve'}</p>
+          <ul className="mt-1 list-disc pl-5">
+            {(doc.free_issue?.rows ?? []).filter((r) => !r.within).map((r) => <li key={r.item_id}>{r.item_name}: {r.requested} {r.uom} asked, {r.permitted} permitted ({r.issued} issued before) - {r.excess} over</li>)}
+          </ul>
+        </div>
+      )}
+      {(doc.free_issue?.requests ?? []).filter((r) => r.status === 'APPROVED' || r.status === 'REJECTED').map((r) => (
+        <p key={r.id} role="status" className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
+          Free issue of {r.item_name} past the allowance ({r.excess_qty} over) {r.status === 'APPROVED' ? 'approved' : 'refused'} by {r.decided_by}{r.decision_note ? `: ${r.decision_note}` : ''}.
+        </p>
+      ))}      {doc.steel_override_by && <p role="status" className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Steel past the allowance approved by {doc.steel_override_by}{doc.steel_override_note ? `: ${doc.steel_override_note}` : ''}.</p>}
       {(doc.warnings ?? []).map((w) => <p key={w} role="status" className="mb-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Over the norm: {w}</p>)}
       {(doc.gate_passes ?? []).length > 0 && <p className="mb-3 text-sm text-muted-foreground">Gate passes: {(doc.gate_passes ?? []).map((g) => <Link key={g.id} className="mr-3 font-mono text-primary hover:underline" to={`/store/hub/outward/gate-pass/${g.id}`}>{g.number} ({g.status.toLowerCase()})</Link>)}</p>}
       {doc.status === 'CANCELLED' && <p role="status" className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Cancelled{doc.cancel_reason ? `: ${doc.cancel_reason}` : ''}.</p>}

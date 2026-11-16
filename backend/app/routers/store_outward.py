@@ -247,6 +247,8 @@ def doc_dict(db, kind, doc, detail=False):
             out["warnings"] = svc.norm_warnings(db, doc)
             # Steel past the BBS allowance: what it is waiting on, or who let it through.
             out["steel_over"] = svc.steel_over(db, doc.client_id, doc) if doc.status in (DocStatus.DRAFT.value, DocStatus.SUBMITTED.value) else []
+            from app.services import free_issue_allowance as free
+            out["free_issue"] = free.status_of(db, doc.client_id, doc, lines)
             out["steel_override_by"] = doc.steel_override_by or ""
             out["steel_override_note"] = doc.steel_override_note or ""
             out["gate_passes"] = [{"id": g.id, "number": g.number, "status": g.status} for g in db.query(DBStoreGatePass).filter(DBStoreGatePass.issue_id == doc.id).order_by(DBStoreGatePass.id).all()]
@@ -745,6 +747,10 @@ def approve_indent(indent_id: int, request: Request, body: Optional[ApproveIn] =
     indent = _indent_or_404(db, actor, indent_id)
     body = body or ApproveIn()
     svc.indent_approve(db, actor, indent, body.lines, body.remarks, _has(actor, "store.admin"))
+    # What is approved is reserved and no longer available: the store's reorder alerts on these items are checked again once this is saved.
+    from app.services.stock_ledger import note_stock_check
+    for line in svc.indent_lines(db, indent):
+        note_stock_check(db, indent.store_id, line.item_id, actor.client.id)
     log_audit(db, actor.client.id, "store_indent_approved", "store_doc", indent.id, indent.number, "", request=request, **_who(actor))
     db.commit()
     return indent_dict(db, indent, detail=True)
@@ -902,6 +908,55 @@ def cancel_gate_pass(gate_id: int, request: Request, body: Optional[ActionIn] = 
     return gate_dict(db, gp, detail=True)
 
 
+# --- free-issue allowance ---------------------------------------------------------------------------------------------------
+
+@router.get("/free-issue/allowance")
+def free_issue_allowance(subcontract_order_id: int, request: Request, item_id: int = 0, db: Session = Depends(get_read_db)):
+    """What a subcontractor may draw free of cost under a work order, material by material: the quantity ordered, the norm, what is permitted, what
+    has been issued (net of returns) and what remains."""
+    from app.services import free_issue_allowance as free
+    actor = store_actor(request, db, "store.outward.view")
+    order = db.query(models.DBSubcontractOrder).filter(models.DBSubcontractOrder.id == subcontract_order_id, models.DBSubcontractOrder.client_id == actor.client.id).first()
+    if order is None:
+        raise HTTPException(404, "Subcontract work order not found")
+    return {"subcontract_order_id": order.id, "items": free.allowance_for_order(db, actor.client.id, order, [item_id] if item_id else None)}
+
+
+@router.get("/free-issue/requests")
+def free_issue_requests(request: Request, status: str = "", subcontract_order_id: int = 0, limit: int = 200, db: Session = Depends(get_read_db)):
+    """The requests for free-issue material past its allowance, and what the Master decided - the audit trail."""
+    from app.models.store_outward import DBStoreFreeIssueRequest
+    from app.services import free_issue_allowance as free
+    actor = store_actor(request, db, "store.outward.view")
+    q = db.query(DBStoreFreeIssueRequest).filter(DBStoreFreeIssueRequest.client_id == actor.client.id)
+    if status:
+        q = q.filter(DBStoreFreeIssueRequest.status == status.strip().upper())
+    if subcontract_order_id:
+        q = q.filter(DBStoreFreeIssueRequest.subcontract_order_id == subcontract_order_id)
+    return {"items": [free.request_dict(db, r) for r in q.order_by(DBStoreFreeIssueRequest.id.desc()).limit(max(1, min(limit, 500))).all()]}
+
+
+@router.post("/issue/{doc_id}/free-issue/reject")
+def free_issue_reject(doc_id: int, request: Request, body: ActionIn, db: Session = Depends(get_db)):
+    """The Master refuses the extra material: the requests are closed as REJECTED, with who and why, and the issue is cancelled."""
+    from app.services import free_issue_allowance as free
+    actor = store_actor(request, db, "store.outward.view")
+    kind = svc.KINDS["issue"]
+    doc = _doc(db, actor, kind, doc_id)
+    try:
+        with store_errors():
+            if doc.status not in (DocStatus.SUBMITTED.value, DocStatus.APPROVED.value):
+                raise HTTPException(409, "It is %s, so there is nothing waiting for a decision." % doc.status.lower())
+            free.reject(db, actor, doc, body.reason)
+            svc.advance(db, actor, kind, doc, "cancel", "Free-issue allowance refused: %s" % body.reason.strip())
+        log_audit(db, actor.client.id, "store_issue_free_issue_refused", "store_doc", doc.id, doc.number, body.reason.strip()[:200], request=request, **_who(actor))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return doc_dict(db, kind, doc, detail=True)
+
+
 # --- listing ------------------------------------------------------------------------------------------------------------
 
 @router.get("/{kind_key}")
@@ -1026,7 +1081,15 @@ def direct_issue(body: IssueIn, request: Request, db: Session = Depends(get_db))
         with store_errors():
             issue = _new_issue(db, actor, body, request)
             _created(db, actor, kind, issue, request, direct=True)
-            svc.advance(db, actor, kind, issue, "submit", direct=True)
+            svc.advance(db, actor, kind, issue, "submit", direct=True, reason=body.purpose)
+            free_over = svc.free_issue_over(db, actor.client.id, issue) if actor.employee is not None else []
+            if free_over:
+                # Free-issue material past what its norms allow for the work ordered: it cannot go out on the storekeeper's word either. The
+                # request is recorded and the Master has been told; it goes out once approved and posted.
+                log_audit(db, actor.client.id, "store_issue_allowance_held", "store_doc", issue.id, issue.number, issue.status, request=request, **_who(actor))
+                db.commit()
+                return dict(doc_dict(db, kind, issue, detail=True), held_for_allowance=True, allowance_over=free_over,
+                            message="%s is past the free-issue allowance for the work ordered (%s), so it has gone to the Master for approval. Issue the material once it is approved." % (issue.number, "; ".join(free_over)))
             if not steel.may_approve(actor) and svc.steel_over(db, actor.client.id, issue):
                 # Past the 2%: it cannot go out on the storekeeper's word. It waits, submitted, for the Master or the BBS
                 # engineer - who have been told - and goes out once approved and posted.

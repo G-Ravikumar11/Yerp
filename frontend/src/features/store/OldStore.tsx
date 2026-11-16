@@ -18,16 +18,12 @@ const KEY = ['store', 'cutover'] as const
 /** Whether the company's old store has moved into the Hub - asked by the Hub's front page and the old screens. */
 export const useCutover = () => useQuery({ queryKey: [...KEY, 'brief'], staleTime: 60_000, queryFn: async () => (await get<{ done: Cutover | null }>('/api/stock/cutover?brief=true')).done })
 
-/** The old store's screens, kept at their new addresses. */
-export const OLD_SCREENS = [
-  { label: 'Stock & Issues', path: '/store/old/stock' },
-  { label: 'Goods Receipt & Match', path: '/store/old/goods-receipt' },
-  { label: 'Material Issue Voucher', path: '/store/old/material-vouchers' },
-  { label: 'Material Used vs Costed', path: '/store/old/material-costing' },
+/** The old store's records, read in the Store Hub's Reports: its stock and issue notes, goods receipts and match, and material issue vouchers. */
+export const OLD_RECORDS = [
+  { label: 'Stock & issue notes', path: '/store/hub/reports/old-store' },
+  { label: 'Goods receipts & match', path: '/store/hub/reports/old-store/receipts' },
+  { label: 'Material issue vouchers', path: '/store/hub/reports/old-store/vouchers' },
 ]
-
-/** The old store takes nothing new. Read-only until the server says otherwise, so nothing flashes up to be clicked while it answers. */
-export const useOldStoreClosed = () => useQuery({ queryKey: [...KEY, 'closed'], staleTime: 60_000, queryFn: async () => (await get<{ closed: boolean }>('/api/stock/cutover?brief=true')).closed }).data ?? true
 
 /** On the Hub's front page: the old store, and - until it has moved - the way to move it. */
 export function OldStoreCard() {
@@ -47,10 +43,10 @@ export function OldStoreCard() {
           <p className="mt-1 text-sm text-muted-foreground">
             {moved
               ? `The old store moved into the Hub on ${formatDate(moved.cutover_date)}. Its receipts, issues and vouchers are kept here to read; new ones are made in the Hub.`
-              : 'The old Stock & Issues and Goods Receipt screens still keep their own stock. Moving carries what each old store holds into a Hub store as opening stock, at its own rate, and keeps the old screens as records. Project costs keep counting the old issues.'}
+              : 'The old store still holds its own stock figures. Moving carries what each old store holds into a Hub store as opening stock, at its own rate, and keeps the old records to read. Project costs keep counting the old issues.'}
           </p>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-            {OLD_SCREENS.map((s) => <Link key={s.path} to={s.path} className="text-primary hover:underline">{s.label}</Link>)}
+            {OLD_RECORDS.map((s) => <Link key={s.path} to={s.path} className="text-primary hover:underline">{s.label}</Link>)}
           </div>
         </div>
         {!moved && can('store.admin') && <Button onClick={() => setOpen(true)}><ArrowRightLeft /> Move it now</Button>}
@@ -133,16 +129,5 @@ function MoveForm({ onDone }: { onDone: () => void }) {
         <Button loading={busy} disabled={!ready || !on} onClick={() => void move()}><ArrowRightLeft /> Move into the Hub</Button>
       </div>
     </div>
-  )
-}
-
-/** Above an old store screen once the store has moved: say it is a record, and where the work is done now. */
-export function OldStoreBanner({ hub }: { hub: string }) {
-  if (!useOldStoreClosed()) return null
-  return (
-    <p role="status" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg bg-warning-soft px-3 py-2 text-[13px]">
-      <Archive className="size-4 text-warning" /> This is a legacy store module. Transactions are available in read-only mode.
-      <Link to={hub} className="font-medium text-primary hover:underline">Go to the Store Hub</Link>
-    </p>
   )
 }

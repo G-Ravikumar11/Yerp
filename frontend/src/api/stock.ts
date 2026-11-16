@@ -17,14 +17,7 @@ export interface Consumption {
 export const useStock = (lowOnly: boolean, store = '') => useQuery({ queryKey: ['stock', 'held', lowOnly, store], queryFn: () => get<{ stock: StockRow[]; summary: StockSummary }>(`/api/stock?${lowOnly ? 'low_only=true&' : ''}${store ? `store=${encodeURIComponent(store)}` : ''}`) })
 export const useLedger = (code: string | null) => useQuery({ queryKey: ['stock', 'ledger', code], enabled: !!code, queryFn: () => get<Ledger>(`/api/stock/${encodeURIComponent(code as string)}/ledger`) })
 export const useIssues = () => useQuery({ queryKey: ['stock', 'issues'], queryFn: () => get<{ issues: Issue[]; summary: IssueSummary }>('/api/stock-issues') })
-export const useStores = () => useQuery({ queryKey: ['stock', 'stores'], queryFn: async () => (await get<{ stores: { store: string; value: number }[] }>('/api/stock/stores')).stores ?? [] })
 /** A BOQ's budgeted materials against what the store issued to its project. */
 export const useConsumption = (boq: number) => useQuery({ queryKey: ['stock', 'consumption', 'boq', boq], enabled: boq > 0, queryFn: () => get<Consumption>(`/api/stock/consumption/boq/${boq}`) })
-export const useContractorOrders = () => useQuery({ queryKey: ['stock', 'contractor-orders'], queryFn: async () => ((await get<{ orders: { id: number; wo_number: string; contractor: string; status: string }[] }>('/api/wo/orders')).orders ?? []).filter((o) => o.status === 'APPROVED' || o.status === 'EXECUTED') })
 
 export const countStock = (item_code: string, counted: number) => post<{ message: string; difference: number }>('/api/stock/adjustments', { item_code, counted, remarks: 'Physical count' })
-export interface IssueInput { work_order_id: number | null; job_id: number | null; store: string; issued_on: string; issued_to: string; purpose: string; lines: { item_code: string; quantity: number; rate: number }[] }
-export const openIssue = (b: IssueInput) => post<{ issue: { id: number }; message: string }>('/api/stock-issues', b)
-export const postIssue = (id: number, b: { recover_from_order_id?: number | null; markup_percent?: number; allow_negative?: boolean } = {}) => post<{ message: string }>(`/api/stock-issues/${id}/post`, b)
-export const cancelIssue = (id: number) => post<{ message: string }>(`/api/stock-issues/${id}/cancel`, {})
-export const sendStock = (b: { from_store: string; to_store: string; moved_on: string; note: string; lines: { item_code: string; qty: number }[] }) => post<{ message: string }>('/api/stock/transfers', b)

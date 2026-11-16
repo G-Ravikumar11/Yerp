@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { storeGet } from '@/api/store'
+import { storeGet, storePost } from '@/api/store'
+import { apiUrl } from '@/lib/api'
 
 /** The reports, in menu order. The key is the path under /api/store/reports and under /store/hub/reports. */
 export type ReportKey = 'valuation' | 'movement' | 'consumption' | 'norm-variance' | 'slow-moving' | 'reorder' | 'abc' | 'ageing' | 'reconciliation'
@@ -52,8 +53,109 @@ export interface Norm {
   wastage_pct: string
   notes: string
   theoretical_qty: string
+  updated_at: string
+  updated_by: string
 }
 export interface BoqPick { id: number; item_no: string; description: string; uom: string; quantity: string }
+
+/** One row of an uploaded norms sheet, as the server read and checked it. */
+export type SheetAction = 'insert' | 'update' | 'unchanged' | 'skip' | 'error'
+export type SheetFlag = 'missing_boq' | 'missing_material' | 'duplicate' | 'invalid_qty' | 'invalid_wastage'
+export interface SheetRow {
+  line: number
+  boq_text: string
+  material_text: string
+  qty_text: string
+  wastage_text: string
+  boq_item_id: number | null
+  boq_item: string
+  item_id: number | null
+  item_code: string
+  item_name: string
+  base_uom: string
+  qty_per_unit: string | null
+  wastage_pct: string | null
+  valid: boolean
+  action: SheetAction
+  errors: string[]
+  flags: SheetFlag[]
+  current: { id: number; qty_per_unit: string; wastage_pct: string } | null
+}
+export interface SheetSummary { total: number; valid: number; invalid: number; insert: number; update: number; unchanged: number; skip: number; missing_boq: number; missing_material: number; duplicate: number; invalid_qty: number }
+export interface SheetPreview { project_id: number; project: string; mode: ImportMode; rows: SheetRow[]; summary: SheetSummary }
+export interface SheetResult { inserted: number; updated: number; unchanged: number; skipped_existing: number; invalid: number; total: number; message: string }
+export type ImportMode = 'add' | 'update'
+
+export interface CopySource { id: number; label: string; norms: number }
+export type CopyStatus = 'insert' | 'update' | 'unchanged' | 'skip' | 'choose' | 'no_boq' | 'no_material'
+export interface CopyRow {
+  source_norm_id: number
+  source_boq_item: string
+  source_boq_uom: string
+  item_id: number
+  item_code: string
+  item_name: string
+  base_uom: string
+  qty_per_unit: string
+  wastage_pct: string
+  match: 'exact' | 'description' | 'number' | 'ambiguous' | 'none'
+  candidates: { id: number; label: string; uom: string }[]
+  boq_item_id: number | null
+  boq_item: string
+  status: CopyStatus
+  needs_confirmation: boolean
+  current: { id: number; qty_per_unit: string; wastage_pct: string } | null
+}
+export type CopyMode = 'add' | 'replace'
+export interface CopyPreview {
+  source: { id: number; label: string }
+  project: { id: number; label: string }
+  mode: CopyMode
+  rows: CopyRow[]
+  summary: { total: number; insert: number; update: number; unchanged: number; skip: number; choose: number; no_boq: number; no_material: number; needs_confirmation: number }
+}
+export interface CopyResult { copied: number; updated: number; unchanged: number; skipped_existing: number; not_chosen: number; source_norms: number; message: string }
+
+const sheetForm = (file: File, projectId: number, mode: ImportMode) => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('project_id', String(projectId))
+  form.append('mode', mode)
+  return form
+}
+export const previewNormSheet = (file: File, projectId: number, mode: ImportMode) => storePost<SheetPreview>('reports', '/norms/import/preview', sheetForm(file, projectId, mode))
+export const commitNormSheet = (file: File, projectId: number, mode: ImportMode) => storePost<SheetResult>('reports', '/norms/import/commit', sheetForm(file, projectId, mode))
+export const normTemplateHref = (projectId: number) => `/api/store/reports/norms/template${qs({ project_id: projectId })}`
+
+/** The sheet's rows that cannot be imported, as a workbook the server writes, saved through a link so the phone app can share it too. */
+export async function downloadNormErrors(file: File, projectId: number) {
+  const res = await fetch(apiUrl('/api/store/reports/norms/import/errors'), { method: 'POST', credentials: 'include', body: sheetForm(file, projectId, 'add') })
+  if (!res.ok) {
+    let why = ''
+    try { why = String(((await res.json()) as { detail?: unknown }).detail ?? '') } catch { /* not JSON */ }
+    throw new Error(why || 'The error report could not be made.')
+  }
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'material_norms_errors.xlsx'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 30_000)
+}
+
+export const useCopySources = (projectId: number, enabled: boolean) =>
+  useQuery({ queryKey: ['store', 'reports', 'norm-sources', projectId], enabled: enabled && projectId > 0, queryFn: async () => (await storeGet<{ items: CopySource[] }>('reports', `/norms/copy/sources${qs({ project_id: projectId })}`)).items })
+export const useCopyPreview = (sourceId: number, projectId: number, mode: CopyMode) =>
+  useQuery({
+    queryKey: ['store', 'reports', 'norm-copy', sourceId, projectId, mode],
+    enabled: sourceId > 0 && projectId > 0,
+    gcTime: 0,
+    queryFn: () => storeGet<CopyPreview>('reports', `/norms/copy/preview${qs({ source_project_id: sourceId, project_id: projectId, mode })}`),
+  })
+export const copyNorms = (body: { source_project_id: number; project_id: number; mode: CopyMode; mappings: { source_norm_id: number; boq_item_id: number }[] }) =>
+  storePost<CopyResult>('reports', '/norms/copy', body)
 
 export const qs = (params: Record<string, string | number | boolean | null | undefined>) => {
   const p = new URLSearchParams()

@@ -52,7 +52,14 @@ def active_holds(db, batch_id):
 
 def sync(db, batch):
     db.flush()
+    was = bool(batch.on_hold)
     batch.on_hold = bool(active_holds(db, batch.id))
+    if was != batch.on_hold:
+        # Held stock cannot be issued, so it is not available: each store holding the lot has its reorder alert checked again once this is saved.
+        from app.services.stock_ledger import note_stock_check
+        for store_id, item_id in db.query(DBStoreBatchBalance.store_id, DBStoreBatchBalance.item_id).filter(
+                DBStoreBatchBalance.batch_id == batch.id, DBStoreBatchBalance.qty > 0).all():
+            note_stock_check(db, store_id, item_id, batch.client_id)
 
 
 def hold_for_ncr(db, client_id, batch, ncr, reason, who):

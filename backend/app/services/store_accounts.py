@@ -129,6 +129,29 @@ def receive_scrap_proceeds(db, actor, scrap_id, amount, account_id, paid_on, mod
 
 # --- inter-project transfers -----------------------------------------------------------------------------------------------
 
+def _cancelled_at(db, transfer_id, row):
+    """The moment the transfer was cancelled - the control log has it - so the reversal is dated when it happened, not when somebody next
+    opened the list. Never before the adjustment it undoes; now when the log has nothing."""
+    from app.models.store_control import TRANSFER, DBStoreControlLog
+    at = db.query(func.max(DBStoreControlLog.at)).filter(DBStoreControlLog.doc_type == TRANSFER, DBStoreControlLog.doc_id == transfer_id,
+                                                          DBStoreControlLog.action == "cancel").scalar()
+    at = at or datetime.now()
+    floor = datetime(row.adjusted_on.year, row.adjusted_on.month, row.adjusted_on.day) if row.adjusted_on else at
+    return max(at, floor)
+
+
+def reverse_for_transfer(db, transfer):
+    """A transfer was cancelled: a charge not yet adjusted is voided; one accounts had adjusted becomes REVERSE, keeping everything it had and noting
+    the moment it was reversed. Called in the cancellation's own transaction; nothing happens for a transfer that was not between projects."""
+    row = db.query(DBStoreCrossCharge).filter(DBStoreCrossCharge.transfer_id == transfer.id).first()
+    if row is None:
+        return
+    if row.status == "PENDING":
+        row.status = "VOID"
+    elif row.status == "ADJUSTED":
+        row.status, row.reversed_on = "REVERSE", datetime.now()
+
+
 def sync_cross_charges(db, client_id):
     """Keep one row for each received inter-project transfer. A row whose transfer has since been cancelled is voided - or, if accounts had already
     adjusted for it, marked REVERSE so they put it back."""
@@ -155,8 +178,10 @@ def sync_cross_charges(db, client_id):
             if row.status == "PENDING":
                 row.status = "VOID"
             elif row.status == "ADJUSTED":
-                row.status = "REVERSE"
-        elif row.status in ("VOID", "REVERSE"):                      # received again after a cancel was undone by a new transfer is a new row; this one is live again
+                # The adjustment is reversed: the row keeps everything it had (reference, amount, projects, the adjustment date) and notes the actual
+                # moment, which is the date the reversing journal carries in Tally. Only an ADJUSTED row passes here, so it happens once.
+                row.status, row.reversed_on = "REVERSE", _cancelled_at(db, tid, row)
+        elif row.status in ("VOID", "REVERSE") and row.reversed_on is None:    # received again after a cancel was undone by a new transfer is a new row; this one is live again
             row.status = "ADJUSTED" if row.adjusted_on else "PENDING"
     db.flush()
 
@@ -168,10 +193,52 @@ def cross_charges(db, client_id, status=""):
         q = q.filter(DBStoreCrossCharge.status == status.strip().upper())
     jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client_id).all()}
     name = lambda pid: ((jobs[pid].name or jobs[pid].number) if pid in jobs else "")
+    rows = q.order_by(DBStoreCrossCharge.id.desc()).limit(500).all()
+    from app.services.tally import cross_charge_exports
+    exports = cross_charge_exports(db, client_id, [c for c, _t in rows])
     return [{"id": c.id, "transfer_id": t.id, "transfer_number": t.number, "date": t.received_at.date().isoformat() if t.received_at else (t.transfer_date.isoformat() if t.transfer_date else ""),
              "from_project_id": c.from_project_id, "from_project": name(c.from_project_id), "to_project_id": c.to_project_id, "to_project": name(c.to_project_id),
-             "amount": s2(c.amount), "status": c.status, "adjusted_on": c.adjusted_on.isoformat() if c.adjusted_on else "", "adjusted_by": c.adjusted_by_name or "", "note": c.note or ""}
-            for c, t in q.order_by(DBStoreCrossCharge.id.desc()).limit(500).all()]
+             "amount": s2(c.amount), "status": c.status, "adjusted_on": c.adjusted_on.isoformat() if c.adjusted_on else "", "adjusted_by": c.adjusted_by_name or "", "note": c.note or "",
+             **_reversal(c, t, exports.get(c.id, {}))}
+            for c, t in rows]
+
+
+def _reversal(c, t, exp):
+    """What the screens show of a reversal: its date, the original it undoes, and where each journal stands in the Tally exports."""
+    rev = is_reversed(c)
+    return {"reversed": rev, "reversed_on": c.reversed_on.isoformat(timespec="seconds") if c.reversed_on else "",
+            "txn_date": (c.reversed_on.date().isoformat() if c.reversed_on else "") if rev else (c.adjusted_on.isoformat() if c.adjusted_on else ""),
+            "original_reference": ("XC-%s" % t.number) if c.adjusted_on else "", "reversal_reference": ("XCR-%s" % t.number) if rev else "",
+            "original_amount": s2(c.amount) if c.adjusted_on else None, "reversed_amount": s2(c.amount) if rev else None,
+            "export": exp}
+
+
+def is_reversed(c) -> bool:
+    """An adjustment that was reversed: still waiting to be put back (REVERSE) or put back (VOID, with the adjustment and reversal kept)."""
+    return bool(c.adjusted_on) and (c.status == "REVERSE" or (c.status == "VOID" and c.reversed_on is not None))
+
+
+def set_reversal_date(db, actor, charge_id, day):
+    """The date a reversal is booked under in Tally, for one that has none: a charge reversed before the date was kept. Never changes a date
+    that is already there, and never one before the adjustment or after today."""
+    row = db.get(DBStoreCrossCharge, charge_id)
+    if row is None or row.client_id != actor.client.id:
+        raise HTTPException(404, "Charge not found")
+    if not is_reversed(row):
+        raise HTTPException(409, "That charge has not been reversed, so it has no reversal date.")
+    if row.reversed_on is not None:
+        raise HTTPException(409, "It already has its reversal date (%s). The reversing journal is booked under it." % row.reversed_on.date().isoformat())
+    try:
+        on = datetime.strptime(str(day or "").strip()[:10], "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "Give the reversal date as YYYY-MM-DD.") from None
+    if on > date.today():
+        raise HTTPException(400, "The reversal cannot be dated in the future.")
+    if on < row.adjusted_on:
+        raise HTTPException(400, "The reversal cannot be dated before the adjustment (%s)." % row.adjusted_on.isoformat())
+    row.reversed_on = datetime(on.year, on.month, on.day)
+    db.flush()
+    return row
 
 
 def mark_adjusted(db, actor, charge_id, note=""):
@@ -182,7 +249,12 @@ def mark_adjusted(db, actor, charge_id, note=""):
         raise HTTPException(409, "That charge is %s, so there is nothing to adjust." % row.status.lower())
     note = " ".join((note or "").split())[:200]
     if row.status == "REVERSE":
-        row.status, row.adjusted_on, row.note = "VOID", None, note or "Adjustment put back"
+        # Accounts confirm the adjustment has been put back. The adjustment date and the reversal stay on the row: the original journal and its
+        # reversal are both history that Tally has to be able to follow. A reversal recorded before its date was kept is dated now - the day it
+        # was actually put back - never the day of the adjustment.
+        row.status, row.note = "VOID", note or "Adjustment put back"
+        if row.reversed_on is None:
+            row.reversed_on = datetime.now()
     else:
         row.status, row.adjusted_on, row.adjusted_by_name, row.note = "ADJUSTED", date.today(), actor.name, note
     db.flush()

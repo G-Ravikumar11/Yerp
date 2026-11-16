@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_FILTERS, GST_RATES, NO_CATEGORY, purchaseRateOf, buildChips, clearAll, clearFilter, defaultTypeFor, groupINR, isFiltered, loadFilters, matchUnit, orderUnits, saveFilters, stockLabel, validateItem, type ItemForm } from './itemLogic'
+import { DEFAULT_FILTERS, GST_RATES, isSteelItem, needsPieceWeight, NO_CATEGORY, purchaseRateOf, buildChips, clearAll, clearFilter, defaultTypeFor, groupINR, isFiltered, loadFilters, matchUnit, orderUnits, saveFilters, stockLabel, validateItem, type ItemForm } from './itemLogic'
 
 describe('filter chips', () => {
   it('has none when nothing is chosen, and the default "active only" is not a chip', () => {
@@ -91,7 +91,7 @@ const UNITS = ['cum', 'sqm', 'rmt', 'cft', 'sqft', 'Nos', 'Sets', 'MT', 'Quintal
 const blank: ItemForm = {
   item_code: '', item_name: 'Cement - OPC 53 grade', kind: 'RM', units_of_measure: 'Bags', item_category: '', item_subcategory: '', specification: '',
   purchase_rate: '', selling_rate: '', gst_percent: '', hsn_code: '', item_type: 'Purchased', preferred_supplier: '', reorder_level: '', description: '', remarks: '', is_active: true,
-  make: '', segment: '', shelf_life_applicable: false, shelf_life_days: '', expiry_tracking: false,
+  make: '', segment: '', shelf_life_applicable: false, shelf_life_days: '', expiry_tracking: false, weight_per_piece_kg: '',
 }
 
 describe('validating the item form', () => {
@@ -147,5 +147,32 @@ describe('form helpers', () => {
   it('defaults the type from what the item is', () => {
     expect(defaultTypeFor('RM')).toBe('Purchased')
     expect(defaultTypeFor('FG')).toBe('Work')
+  })
+})
+
+describe('steel counted in Numbers', () => {
+  const steel: ItemForm = { ...blank, item_name: 'TMT Steel Rod 12mm', units_of_measure: 'Nos', weight_per_piece_kg: '' }
+  it('knows steel the way the server does, and never takes a work item or other material for it', () => {
+    expect(isSteelItem(steel)).toBe(true)
+    expect(isSteelItem({ ...blank, item_name: 'TMT Fe500D 16 mm' })).toBe(true)
+    expect(isSteelItem({ ...blank, item_name: 'Binding wire', item_category: 'Steel' })).toBe(true)
+    expect(isSteelItem({ ...blank, item_name: 'Cement - OPC 53 grade' })).toBe(false)
+    expect(isSteelItem({ ...blank, item_name: 'TMT Fe500D 24 mm' })).toBe(false)                 // 24 mm is not a bar size
+    expect(isSteelItem({ ...steel, kind: 'FG' })).toBe(false)                                    // a work item is not a stock of steel
+  })
+
+  it('asks for the weight of a piece only for steel counted in Numbers', () => {
+    expect(needsPieceWeight(steel, UNITS)).toBe(true)
+    expect(needsPieceWeight({ ...steel, units_of_measure: 'Kgs' }, UNITS)).toBe(false)
+    expect(needsPieceWeight({ ...steel, units_of_measure: 'MT' }, UNITS)).toBe(false)
+    expect(needsPieceWeight({ ...blank, item_name: 'Safety Helmet', units_of_measure: 'Nos' }, UNITS)).toBe(false)
+    expect(validateItem({ ...steel, units_of_measure: 'Kgs' }, UNITS)).toEqual({})
+    expect(validateItem({ ...blank, item_name: 'Safety Helmet', units_of_measure: 'Nos' }, UNITS)).toEqual({})
+  })
+
+  it('refuses a missing, zero, negative or non-numeric weight and accepts a positive one', () => {
+    expect(validateItem(steel, UNITS).weight_per_piece_kg).toMatch(/needs what one piece weighs/)
+    for (const bad of ['0', '-2', 'abc']) expect(validateItem({ ...steel, weight_per_piece_kg: bad }, UNITS).weight_per_piece_kg).toMatch(/above 0 kg/)
+    expect(validateItem({ ...steel, weight_per_piece_kg: '10.67' }, UNITS)).toEqual({})
   })
 })

@@ -18,7 +18,13 @@ interface Summary {
 const ACCOUNTS_VIEW = 'bills.view_all|accounts.manage|bills.pay'
 interface NotBilled { po_id: number; po_number: string; supplier_name: string; project: string; received_value: string; billed_value: string; difference: string; last_received: string; status: 'NOT_BILLED' | 'OVER_BILLED' }
 interface Sale { scrap_id: number; number: string; date: string; store_code: string; buyer: string; reference: string; realised: string; received: string; outstanding: string; settled: boolean }
-interface Charge { id: number; transfer_number: string; date: string; from_project: string; to_project: string; amount: string; status: 'PENDING' | 'ADJUSTED' | 'VOID' | 'REVERSE'; adjusted_on: string; adjusted_by: string; note: string }
+/** Where each journal of a cross-charge stands in the Tally exports. EXPORTED = an export file made after it came to be covered its date (a file import gives
+ * nothing back, so it cannot say Tally took it); the voucher keeps its own id, so exporting again gives Tally the same voucher, not a second one. */
+interface ChargeExport { original: 'NOT_ADJUSTED' | 'PENDING_EXPORT' | 'EXPORTED'; reversal: 'NONE' | 'NEEDS_DATE' | 'INVALID_DATE' | 'PENDING_EXPORT' | 'EXPORTED'; error: string }
+interface Charge {
+  id: number; transfer_number: string; date: string; from_project: string; to_project: string; amount: string; status: 'PENDING' | 'ADJUSTED' | 'VOID' | 'REVERSE'; adjusted_on: string; adjusted_by: string; note: string
+  reversed: boolean; reversed_on: string; txn_date: string; original_reference: string; reversal_reference: string; original_amount: string | null; reversed_amount: string | null; export: ChargeExport
+}
 interface Variance { grn_id: number; grn_number: string; supplier_name: string; po_number: string; linked_at: string; variance: string }
 
 const KEY = ['store', 'accounts'] as const
@@ -119,29 +125,91 @@ function ReceiveModal({ sale, onClose }: { sale: Sale; onClose: () => void }) {
   )
 }
 
+const EXPORT_LABEL: Record<ChargeExport['reversal'], { label: string; tone: 'neutral' | 'warning' | 'success' | 'danger' }> = {
+  NONE: { label: '', tone: 'neutral' },
+  PENDING_EXPORT: { label: 'Reversal pending export', tone: 'warning' },
+  EXPORTED: { label: 'Reversal exported', tone: 'success' },
+  NEEDS_DATE: { label: 'Reversal needs a date', tone: 'danger' },
+  INVALID_DATE: { label: 'Reversal date is wrong', tone: 'danger' },
+}
+
 function CrossList() {
   const { can } = useSession()
   const [adjusting, setAdjusting] = useState<Charge | null>(null)
+  const [opened, setOpened] = useState<number | null>(null)
   const rows = useQuery({ queryKey: [...KEY, 'cross'], queryFn: () => get<{ items: Charge[] }>('/api/store/accounts/cross-charges') })
+  const open = (rows.data?.items ?? []).find((r) => r.id === opened) ?? null
   const columns: TableColumn<Charge>[] = [
     { id: 'no', header: 'Transfer', width: '14rem', cell: (r) => <span className="font-mono text-[13px] font-medium">{r.transfer_number}</span> },
-    { id: 'date', header: 'Received', width: '9rem', hideBelow: 'sm', cell: (r) => dmy(r.date) },
+    { id: 'date', header: 'Received', width: '9rem', hideBelow: 'md', cell: (r) => dmy(r.date) },
     { id: 'from', header: 'From project', cell: (r) => r.from_project || '-' },
     { id: 'to', header: 'To project', cell: (r) => r.to_project || '-' },
     { id: 'amt', header: 'Amount', align: 'right', width: '9rem', cell: (r) => money(r.amount) },
-    { id: 'st', header: 'Status', width: '13rem', cell: (r) => r.status === 'PENDING' || r.status === 'REVERSE'
-      ? <span className="flex items-center gap-2"><Badge tone={r.status === 'REVERSE' ? 'danger' : 'warning'} dot>{r.status === 'REVERSE' ? 'Put back' : 'To charge'}</Badge>{can('accounts.manage|bills.pay') && <Button size="sm" variant="outline" onClick={() => setAdjusting(r)}>{r.status === 'REVERSE' ? 'Done' : 'Adjusted'}</Button>}</span>
-      : <span className="text-muted-foreground">{r.status === 'ADJUSTED' ? `Adjusted ${dmy(r.adjusted_on)}` : 'Void'}</span> },
+    // The date of the journal: the day accounts adjusted it, or - once it is reversed - the day it was reversed.
+    { id: 'booked', header: 'Booked on', width: '10rem', hideBelow: 'sm', cell: (r) => (r.txn_date ? <span>{dmy(r.txn_date)}<span className="block text-xs text-muted-foreground">{r.reversed ? 'Reversal' : 'Adjustment'}</span></span> : <span className="text-muted-foreground">-</span>) },
+    { id: 'st', header: 'Status', width: '14rem', cell: (r) => r.status === 'PENDING' || r.status === 'REVERSE'
+      ? <span className="flex items-center gap-2"><Badge tone={r.status === 'REVERSE' ? 'danger' : 'warning'} dot>{r.status === 'REVERSE' ? 'Reversed - put back' : 'To charge'}</Badge>{can('accounts.manage|bills.pay') && <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setAdjusting(r) }}>{r.status === 'REVERSE' ? 'Done' : 'Adjusted'}</Button>}</span>
+      : r.reversed ? <Badge tone="neutral" dot>Reversed</Badge>
+        : <span className="text-muted-foreground">{r.status === 'ADJUSTED' ? `Adjusted ${dmy(r.adjusted_on)}` : 'Void'}</span> },
+    { id: 'tally', header: 'Tally', width: '15rem', hideBelow: 'lg', cell: (r) => (r.adjusted_on ? (
+      <span className="flex flex-col items-start gap-1">
+        <Badge tone={r.export.original === 'EXPORTED' ? 'success' : 'warning'}>{r.export.original === 'EXPORTED' ? 'Adjustment exported' : 'Adjustment pending export'}</Badge>
+        {r.export.reversal !== 'NONE' && <Badge tone={EXPORT_LABEL[r.export.reversal].tone}>{EXPORT_LABEL[r.export.reversal].label}</Badge>}
+      </span>
+    ) : <span className="text-muted-foreground">-</span>) },
   ]
   return (
     <div>
-      <p className="mb-3 text-sm text-muted-foreground">Stock moved between two projects' stores: the cost leaves one project and lands on the other, so accounts charge it across and mark it done. A transfer cancelled after that comes back as "put back".</p>
-      {rows.isError ? <p role="alert" className="text-sm text-danger">Could not load the transfers.</p> : <DataTable label="Between projects" rows={rows.data?.items ?? []} loading={rows.isPending} columns={columns} rowKey={(r) => r.id} empty="No stock has moved between projects." />}
+      <p className="mb-3 text-sm text-muted-foreground">Stock moved between two projects' stores: the cost leaves one project and lands on the other, so accounts charge it across and mark it done. A transfer cancelled after that is reversed: its reversing journal goes to Tally dated the day it was reversed, beside the original, and accounts put it back.</p>
+      {rows.isError ? <p role="alert" className="text-sm text-danger">Could not load the transfers.</p> : <DataTable label="Between projects" rows={rows.data?.items ?? []} loading={rows.isPending} columns={columns} rowKey={(r) => r.id} onRowClick={(r) => setOpened(r.id)} empty="No stock has moved between projects." />}
       {adjusting && <AdjustModal charge={adjusting} onClose={() => setAdjusting(null)} />}
+      {open && <ChargeDetail charge={open} canAct={can('accounts.manage|bills.pay')} onClose={() => setOpened(null)} />}
     </div>
   )
 }
 
+/** One cross-charge: the original adjustment and, when it was reversed, the reversal - date, amount and reference side by side - and where each stands in Tally. */
+function ChargeDetail({ charge: c, canAct, onClose }: { charge: Charge; canAct: boolean; onClose: () => void }) {
+  const [day, setDay] = useState(today())
+  const setDate = useAction(() => post<{ reversed_on: string }>(`/api/store/accounts/cross-charges/${c.id}/reversal-date`, { reversed_on: day }), { invalidate: [[...KEY]], success: 'Reversal date saved' })
+  const rev = EXPORT_LABEL[c.export.reversal]
+  const item = (label: string, value: React.ReactNode) => <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className="text-sm font-medium">{value}</dd></div>
+  return (
+    <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title={`${c.transfer_number}: ${money(c.amount)}`} description={`${c.from_project || 'One project'} to ${c.to_project || 'another'}.`}>
+      <div className="grid gap-4">
+        <section aria-labelledby="xc-orig">
+          <h3 id="xc-orig" className="mb-2 border-b pb-1 text-sm font-semibold">Original adjustment</h3>
+          {c.adjusted_on ? (
+            <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {item('Reference', <span className="font-mono">{c.original_reference}</span>)}{item('Adjusted on', dmy(c.adjusted_on))}{item('Amount', money(c.original_amount))}{item('By', c.adjusted_by || '-')}
+              {item('In Tally', <Badge tone={c.export.original === 'EXPORTED' ? 'success' : 'warning'}>{c.export.original === 'EXPORTED' ? 'Adjustment exported' : 'Adjustment pending export'}</Badge>)}
+            </dl>
+          ) : <p className="text-sm text-muted-foreground">Not adjusted yet: nothing has gone to Tally.</p>}
+        </section>
+        {c.reversed && (
+          <section aria-labelledby="xc-rev">
+            <h3 id="xc-rev" className="mb-2 flex items-center gap-2 border-b pb-1 text-sm font-semibold">Reversal <Badge tone="danger" dot>REVERSED</Badge></h3>
+            <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {item('Reference', <span className="font-mono">{c.reversal_reference}</span>)}{item('Reversed on', c.reversed_on ? dmy(c.reversed_on) : 'Not recorded')}
+              {item('Reversed amount', money(c.reversed_amount))}{item('Reverses', <span className="font-mono">{c.original_reference}</span>)}
+              {item('Status', c.status === 'REVERSE' ? 'Waiting to be put back' : 'Put back')}{item('In Tally', rev.label ? <Badge tone={rev.tone}>{rev.label}</Badge> : '-')}
+            </dl>
+            <p className="mt-2 text-xs text-muted-foreground">The reversing journal is the original turned round: what was charged to {c.to_project || 'the receiving project'} comes off it and goes back to {c.from_project || 'the sending project'}, under the reversal date.</p>
+            {c.export.error && <p role="alert" className="mt-2 text-sm text-danger">{c.export.error}</p>}
+            {c.export.reversal === 'NEEDS_DATE' && canAct && (
+              <form className="mt-3 flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); if (day) setDate.mutate() }}>
+                <Field label="Date it was reversed" htmlFor="xc-day"><Input id="xc-day" type="date" min={c.adjusted_on} max={today()} value={day} onChange={(e) => setDay(e.target.value)} /></Field>
+                <Button type="submit" loading={setDate.isPending} disabled={!day}>Save reversal date</Button>
+              </form>
+            )}
+          </section>
+        )}
+        {c.note && <p className="text-sm text-muted-foreground">{c.note}</p>}
+        <p className="text-xs text-muted-foreground">"Exported" means a Tally file made by the ERP after the journal existed covered its date. Tally gives nothing back when a file is imported, and the voucher keeps its own id, so importing the same period again does not double it.</p>
+      </div>
+    </Modal>
+  )
+}
 function AdjustModal({ charge, onClose }: { charge: Charge; onClose: () => void }) {
   const [note, setNote] = useState('')
   const save = useAction(() => post<{ status: string }>(`/api/store/accounts/cross-charges/${charge.id}/adjust`, { note }), { invalidate: [[...KEY]], success: charge.status === 'REVERSE' ? 'Marked as put back' : 'Marked as adjusted', onSuccess: onClose })

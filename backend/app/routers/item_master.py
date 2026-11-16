@@ -282,6 +282,17 @@ def items_export(request: Request, q: str = "", category: str = "", subcategory:
     return sheet_response(headers, body, "item_master.xlsx")
 
 
+@router.get("/api/items/steel-weights/missing")
+def steel_missing_weights(request: Request, db: Session = Depends(get_read_db)):
+    """The steel materials counted in Numbers that have no weight per piece yet: the ones to correct in the item master. Nothing is guessed for them."""
+    from app.services import steel_allowance as steel
+    client = require_erp_read(request, db)
+    rows = [i for i in db.query(models.DBItem).filter(models.DBItem.client_id == client.id, models.DBItem.kind == "RM", models.DBItem.merged_into_id.is_(None)).order_by(models.DBItem.item_name).all()
+            if steel.is_steel(i) and steel.is_piece_unit(i.units_of_measure) and steel.piece_weight(i) is None]
+    return {"items": [{"id": i.id, "item_code": i.item_code, "item_name": i.item_name, "units_of_measure": i.units_of_measure or "", "is_active": i.is_active is not False,
+                       "reason": steel.MISSING_TEXT} for i in rows]}
+
+
 @router.get("/api/items/{item_id}")
 def item_get(item_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)

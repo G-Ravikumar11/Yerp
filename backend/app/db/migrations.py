@@ -99,6 +99,8 @@ ITEM_MASTER_COLUMNS = (
     ("erp_items", "updated_by_name", "VARCHAR DEFAULT ''"), ("erp_items", "updated_at", "VARCHAR DEFAULT ''"),
     ("boq_lines", "item_id", "INTEGER"),
     ("erp_items", "source_boq_id", "INTEGER"), ("erp_items", "source_boq_key", "VARCHAR DEFAULT ''"),
+    # What one piece of steel counted in numbers weighs (kg); empty until somebody who knows it says - never assumed.
+    ("erp_items", "weight_per_piece_kg", "NUMERIC(12,4)"),
 )
 
 SITE_RATE_COLUMNS = (
@@ -257,12 +259,27 @@ ACCOUNTS_COLUMNS = (
     ("site_cash_expenses", "submitted_by_member", "INTEGER"),
     # A supplier bill drawn from a goods receipt, and the receipt line each of its lines bills (signed: minus for the Hub).
     ("bills", "grn_id", "INTEGER"), ("bill_line_items", "grn_line_id", "INTEGER"),
+    # When a cross-charge adjustment was reversed: the date its reversing journal carries in Tally (empty until it is).
+    ("store_cross_charge", "reversed_on", "TIMESTAMP"),
 )
 
 # (table, column, type) - a project shown on the company website, and what its public card says.
 WEBSITE_COLUMNS = (
     ("jobs", "show_on_website", "BOOLEAN DEFAULT FALSE"), ("jobs", "website_sector", "VARCHAR DEFAULT ''"),
     ("jobs", "website_location", "VARCHAR DEFAULT ''"), ("jobs", "website_scope", "TEXT DEFAULT ''"),
+    # The budget's own wastage % on a material item; the store's norm, where one is set, is used instead of it.
+    ("boq_budget_items", "wastage_percent", "FLOAT DEFAULT 0"),
+    # A reorder alert's lifecycle: its figures at the last check, the indent or enquiry raised for it, and its earlier episodes.
+    ("store_reorder_alert", "status", "VARCHAR DEFAULT 'OPEN'"), ("store_reorder_alert", "project_id", "INTEGER"),
+    ("store_reorder_alert", "on_hand", "NUMERIC(18,3)"), ("store_reorder_alert", "available", "NUMERIC(18,3)"),
+    ("store_reorder_alert", "reorder_level", "NUMERIC(18,3)"), ("store_reorder_alert", "target_level", "NUMERIC(18,3)"),
+    ("store_reorder_alert", "suggested_qty", "NUMERIC(18,3)"), ("store_reorder_alert", "suggest_basis", "VARCHAR DEFAULT ''"),
+    ("store_reorder_alert", "last_checked_at", "TIMESTAMP"), ("store_reorder_alert", "resolved_qty", "NUMERIC(18,3)"),
+    ("store_reorder_alert", "times_raised", "INTEGER DEFAULT 1"), ("store_reorder_alert", "action", "VARCHAR DEFAULT ''"),
+    ("store_reorder_alert", "action_doc_id", "INTEGER"), ("store_reorder_alert", "action_ref", "VARCHAR DEFAULT ''"),
+    ("store_reorder_alert", "action_qty", "NUMERIC(18,3)"), ("store_reorder_alert", "action_by", "VARCHAR DEFAULT ''"),
+    ("store_reorder_alert", "action_at", "TIMESTAMP"), ("store_reorder_alert", "action_key", "VARCHAR DEFAULT ''"),
+    ("store_reorder_alert", "history", "TEXT DEFAULT '[]'"),
 )
 
 QUALITY_COLUMNS = (

@@ -36,7 +36,14 @@ export const REDIRECTS: { from: string; to: string }[] = [
   { from: '/store/goods-receipt', to: '/store/hub/inward/grn' },
   { from: '/store/stock', to: '/store/hub/enquiry' },
   { from: '/store/material-vouchers', to: '/store/hub/outward/issue' },
-  { from: '/store/material-costing', to: '/store/hub/reports/norm-variance' },
+  { from: '/store/material-costing', to: '/store/hub/reports/budget-use' },
+  // The old store's screens are gone. What they held is read in the Store Hub's Reports (Old store records, Used vs budget); a bookmark lands on the same thing there,
+  // and any other address under /store/old goes to the Store page. Every target is outside /store/old, so none can loop.
+  { from: '/store/old/stock', to: '/store/hub/reports/old-store' },
+  { from: '/store/old/goods-receipt', to: '/store/hub/reports/old-store/receipts' },
+  { from: '/store/old/material-vouchers', to: '/store/hub/reports/old-store/vouchers' },
+  { from: '/store/old/material-costing', to: '/store/hub/reports/budget-use' },
+  { from: '/store/old/*', to: '/store' },
   // The Store Desk is the Store page now, the one entry in the menu.
   { from: '/store/desk', to: '/store' },
 ]
@@ -119,11 +126,6 @@ export const SCREENS: Screen[] = [
   { path: '/store/hub/outward/*', Component: page(() => import('@/features/store/outward')) },
   { path: '/store/hub/control/*', Component: page(() => import('@/features/store/control')) },
   { path: '/store/hub/reports/*', Component: page(() => import('@/features/store/reports')) },
-  // The old store's screens: in use until the company moves into the Store Hub, then kept as records.
-  { path: '/store/old/stock', Component: page(() => import('@/features/stock/StockPage')) },
-  { path: '/store/old/material-vouchers', Component: page(() => import('@/features/stock/MaterialVouchersPage')) },
-  { path: '/store/old/material-costing', Component: page(() => import('@/features/stock/ConsumptionPage')) },
-  { path: '/store/old/goods-receipt', Component: page(() => import('@/features/grn/GrnPage')) },
   { path: '/store/invoice-tracker', Component: page(() => import('@/features/invoicetracker/InvoiceTrackerPage')) },
   { path: '/store/eway', Component: page(() => import('@/features/eway/EwayPage')) },
   { path: '/store/enquiries', Component: page(() => import('@/features/rfq/RfqPage')) },

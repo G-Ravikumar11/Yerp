@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { FileSpreadsheet, FileText, History as HistoryIcon, Pencil, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -18,7 +19,18 @@ interface Group { block: string; floor: string; element: string; bars: number; t
 interface Data { entries: Entry[]; elements: string[]; grades: string[]; shapes: Shape[]; summary: { entries: number; total_length_m: number; total_weight_kg: number; by_diameter: { diameter_mm: number; bars: number; total_length_m: number; total_weight_kg: number }[]; by_group: Group[] } }
 interface Figures { cutting_length_mm: number; total_length_m: number; unit_weight_kg_m: number; total_weight_kg: number }
 interface SteelRow { diameter_mm: number; bbs_kg: number; allowed_kg: number; issued_kg: number; wastage_kg: number; wastage_pct: number | null; status: 'OK' | 'OVER' | 'NOT_IN_BBS' }
-interface Steel { allowance_pct: number; checked: boolean; rows: SteelRow[]; unweighed: string[]; summary: { bbs_kg: number; issued_kg: number; wastage_kg: number; over: number[] } }
+/** One steel item issued to the project, and how its weight was worked out: kg and MT as they are (MT x 1000), Numbers x the weight per piece in the item master. */
+interface SteelItem {
+  item_id: number; item_code: string; item_name: string; diameter_mm: number; unit: string; quantity: number; weight_per_piece_kg: number | null; total_kg: number | null
+  status: 'WEIGHED' | 'MISSING_WEIGHT_PER_PIECE' | 'UNSUPPORTED_UNIT' | 'WEIGHT_CALCULATION_ERROR'; reason: string
+}
+interface Steel {
+  allowance_pct: number; checked: boolean; rows: SteelRow[]; items: SteelItem[]; problems: SteelItem[]
+  /** Steel issued that cannot be weighed: the check is incomplete and the schedule cannot be approved. */
+  blocked: boolean
+  unweighed: string[]; summary: { bbs_kg: number; issued_kg: number; wastage_kg: number; over: number[] }
+}
+const useSteel = (job: number) => useQuery({ queryKey: [...KEY, 'steel', job], enabled: job > 0, queryFn: () => get<Steel>(`/api/bbs/steel?job_id=${job}`) })
 interface Revision { revision: number; reason: string; by: string; at: string; entry: Entry }
 
 const KEY = ['bbs'] as const
@@ -37,6 +49,8 @@ export default function BbsPage() {
   const q = useQuery({ queryKey: [...KEY, qs], queryFn: () => get<Data>(`/api/bbs?${qs}`) })
   const approve = useAction((ids: number[]) => post<{ message: string }>('/api/bbs/approve', { ids }), { invalidate: [KEY], success: (r) => r.message })
   const d = q.data
+  // Steel issued that cannot be weighed: approving the schedule waits until the item master is corrected (the server refuses it as well).
+  const blocked = !!useSteel(job).data?.blocked
   const drafts = (d?.entries ?? []).filter((e) => e.status !== 'Approved').map((e) => e.id)
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }))
   const cols: TableColumn<Entry>[] = [
@@ -54,7 +68,7 @@ export default function BbsPage() {
       id: 'a', header: '', align: 'right',
       cell: (e) => (
         <div className="flex justify-end gap-1">
-          {e.status !== 'Approved' && can('site.signoff') && <Button size="sm" variant="outline" onClick={() => approve.mutate([e.id])}>Approve</Button>}
+          {e.status !== 'Approved' && can('site.signoff') && <Button size="sm" variant="outline" disabled={blocked} title={blocked ? 'Steel issued to this project cannot be weighed: correct the item master first' : undefined} onClick={() => approve.mutate([e.id])}>Approve</Button>}
           {(e.status !== 'Approved' ? can('site.record') : can('site.signoff')) && <Button size="icon-sm" variant="ghost" aria-label={`Edit ${e.bar_mark}`} onClick={() => setEditing(e)}><Pencil /></Button>}
           {e.revision > 0 && <Button size="icon-sm" variant="ghost" aria-label={`History of ${e.bar_mark}`} onClick={() => setHistory(e)}><HistoryIcon /></Button>}
         </div>
@@ -76,7 +90,7 @@ export default function BbsPage() {
         <div className="w-36"><Select aria-label="Element" value={f.element} placeholder="Any element" onChange={set('element')} options={(d?.elements ?? []).map((x) => ({ value: x, label: x }))} /></div>
         <div className="w-32"><Input aria-label="Bar mark" placeholder="Bar mark" value={f.bar_mark} onChange={set('bar_mark')} /></div>
         <div className="w-28"><Input aria-label="Diameter" placeholder="Dia (mm)" inputMode="decimal" value={f.diameter} onChange={set('diameter')} /></div>
-        {drafts.length > 1 && can('site.signoff') && <Button className="ml-auto" variant="outline" loading={approve.isPending} onClick={() => approve.mutate(drafts)}>Approve all {drafts.length}</Button>}
+        {drafts.length > 1 && can('site.signoff') && <Button className="ml-auto" variant="outline" disabled={blocked} loading={approve.isPending} onClick={() => approve.mutate(drafts)}>Approve all {drafts.length}</Button>}
       </div>
       <StatGrid className="lg:grid-cols-3 xl:grid-cols-3">
         <Stat label="Bar marks" value={d?.summary.entries ?? 0} loading={q.isPending} />
@@ -182,10 +196,20 @@ function RulesModal({ job, onClose }: { job: number; onClose: () => void }) {
 }
 
 
+const WEIGHT_STATUS: Record<SteelItem['status'], { label: string; tone: 'success' | 'danger' }> = {
+  WEIGHED: { label: 'Weighed', tone: 'success' },
+  MISSING_WEIGHT_PER_PIECE: { label: 'Missing weight per piece', tone: 'danger' },
+  UNSUPPORTED_UNIT: { label: 'Unsupported unit', tone: 'danger' },
+  WEIGHT_CALCULATION_ERROR: { label: 'Weight calculation error', tone: 'danger' },
+}
+
 /** The project's steel against its approved schedule: what it may draw with the allowance, what the store has issued, and the
- * wastage, diameter by diameter. Past the allowance, a store issue waits for the Master or an engineer who signs off the BBS. */
+ * wastage, diameter by diameter. Past the allowance, a store issue waits for the Master or an engineer who signs off the BBS.
+ * Every steel item issued is shown with how its weight was worked out; one that cannot be weighed is never left out quietly: the check is
+ * marked blocked and says which item, in which unit, needs what in the item master. */
 function SteelCheck({ job }: { job: number }) {
-  const q = useQuery({ queryKey: [...KEY, 'steel', job], queryFn: () => get<Steel>(`/api/bbs/steel?job_id=${job}`) })
+  const { can } = useSession()
+  const q = useSteel(job)
   const s = q.data
   if (!s) return null
   const tone = (r: SteelRow) => (r.status === 'OVER' ? 'danger' : r.status === 'NOT_IN_BBS' ? 'warning' : 'success')
@@ -198,6 +222,20 @@ function SteelCheck({ job }: { job: number }) {
           ? `Up to ${s.allowance_pct}% over the approved schedule may be issued. Past that, a store issue waits for the Master or an engineer who signs off the BBS.`
           : 'No approved bar marks yet, so steel issues are not checked. Approve the schedule to set what may be drawn.'}
       </p>
+      {s.blocked && (
+        <div role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">
+          <p className="font-semibold">Steel weight validation is blocked: {s.problems.length} steel item{s.problems.length === 1 ? '' : 's'} issued to this project cannot be weighed.</p>
+          <p className="text-xs">The kilograms below leave them out, so the schedule cannot be approved until each is corrected.</p>
+          <ul className="mt-1.5 space-y-1.5">
+            {s.problems.map((p) => (
+              <li key={`${p.item_id}-${p.unit}`}>
+                <span className="font-medium">{p.item_name}</span> <span className="text-xs">(item {p.item_id}, {p.item_code}, unit {p.unit || 'none'}, {fix(p.quantity, 0)} issued)</span>: {p.reason}{' '}
+                {can('items.manage') && <Link className="font-medium underline underline-offset-2" to={`/store/items?item=${p.item_id}`}>Open in the item master</Link>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {s.rows.length === 0 ? <p className="text-sm text-muted-foreground">No steel issued and nothing approved yet.</p> : (
         <table className="w-full text-sm">
           <thead><tr className="border-b border-border"><th className={th}>Dia (mm)</th><th className={th}>BBS (kg)</th><th className={th}>Allowed (kg)</th><th className={th}>Issued (kg)</th><th className={th}>Wastage</th><th className={th}></th></tr></thead>
@@ -215,7 +253,27 @@ function SteelCheck({ job }: { job: number }) {
           </tbody>
         </table>
       )}
-      {s.unweighed.length > 0 && <p className="mt-2 text-xs text-warning">Counted in numbers, so not weighed: {s.unweighed.join(', ')}. Keep steel in kg or MT in the item master.</p>}
+      {s.items.length > 0 && (
+        <>
+          <h3 className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Steel issued, item by item</h3>
+          <table className="w-full text-sm" aria-label="Steel items issued">
+            <thead><tr className="border-b border-border"><th className={th}>Item</th><th className={th}>Dia (mm)</th><th className={th}>Unit</th><th className={`${th} text-right`}>Quantity</th><th className={`${th} text-right`}>Weight per piece</th><th className={`${th} text-right`}>Total weight</th><th className={th}>Weight status</th></tr></thead>
+            <tbody>
+              {s.items.map((i) => (
+                <tr key={`${i.item_id}-${i.unit}`} className="border-b border-border align-top last:border-0">
+                  <td className="px-3 py-2"><span className="font-medium">{i.item_name}</span><span className="block font-mono text-xs text-muted-foreground">{i.item_code}</span></td>
+                  <td className="px-3 py-2">{i.diameter_mm}</td>
+                  <td className="px-3 py-2">{i.unit || '-'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{fix(i.quantity, 0)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{i.weight_per_piece_kg !== null ? `${fix(i.weight_per_piece_kg)} kg/piece` : <span className="text-muted-foreground">-</span>}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{i.total_kg !== null ? `${fix(i.total_kg, 1)} kg` : <span className="text-muted-foreground">-</span>}</td>
+                  <td className="px-3 py-2"><Badge tone={WEIGHT_STATUS[i.status].tone} dot>{WEIGHT_STATUS[i.status].label}</Badge>{i.status !== 'WEIGHED' && <span className="mt-1 block max-w-xs text-xs text-danger">{i.reason}</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </Card>
   )
 }

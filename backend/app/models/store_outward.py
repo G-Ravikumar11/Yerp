@@ -266,3 +266,37 @@ class DBStoreOutwardSetting(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     subcon_handling_pct = Column(PERCENT, default=0)
     default_recovery_basis = Column(String, default=AVERAGE_COST)
+
+
+FREE_PENDING, FREE_APPROVED, FREE_REJECTED, FREE_WITHDRAWN = "PENDING", "APPROVED", "REJECTED", "WITHDRAWN"
+
+
+class DBStoreFreeIssueRequest(Base):
+    """Material free of cost to a subcontractor past what its norms allow for the work ordered: the request to the Master, and what they decided.
+
+    One row per issue and material. The allowance itself is never stored as a counter - it is worked out from the norms, the order's quantities
+    and the posted issues each time (services/free_issue_allowance.py), so a cancelled or reversed issue gives it back by itself. This row is the
+    record of the excess that was asked for, who asked and why, and the Master's decision; it is kept whatever became of the issue."""
+    __tablename__ = "store_free_issue_request"
+    __table_args__ = (UniqueConstraint("issue_id", "item_id", name="uq_store_free_issue_request"), Index("ix_store_free_issue_order_item", "subcontract_order_id", "item_id"))
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    issue_id = Column(Integer, ForeignKey("store_issue.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
+    subcontractor_id = Column(Integer, ForeignKey("contractors.id"), nullable=True, index=True)
+    subcontract_order_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False)
+    permitted_qty = Column(QTY, default=0)                             # the norms x the order's quantities, in the item's base unit
+    issued_qty = Column(QTY, default=0)                                # already issued under the order when this was asked
+    requested_qty = Column(QTY, default=0)                             # what this issue takes
+    excess_qty = Column(QTY, default=0)                                # the part of it past the allowance
+    basis = Column(Text, default="")                                   # JSON: each order line's quantity x its norm
+    reason = Column(String, default="")                                # why the extra is needed, as the requester said
+    status = Column(String, nullable=False, default=FREE_PENDING, index=True)    # PENDING | APPROVED | REJECTED | WITHDRAWN
+    requested_by = Column(String, default="")
+    requested_at = Column(DateTime, default=datetime.now)
+    decided_by = Column(String, default="")
+    decided_at = Column(DateTime, nullable=True)
+    decision_note = Column(String, default="")
+    approved_excess = Column(QTY, nullable=True)                       # the excess the Master approved: an issue taking more than this needs asking again

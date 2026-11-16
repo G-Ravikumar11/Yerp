@@ -66,6 +66,7 @@ export function hrefFor(i: ApprovalItem): { to: string; external: boolean } {
     case 'ra_bill':
       return { to: `/clients/measurement?bill=${i.id}`, external: false }
     case 'steel_issue':
+    case 'free_issue':
       return { to: `/store/hub/outward/issue/${i.id}`, external: false }
     case 'expense_claim':
       return { to: '/money/expenses?tab=claims', external: false }

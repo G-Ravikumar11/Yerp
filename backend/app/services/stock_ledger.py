@@ -608,10 +608,22 @@ def unfreeze_store(db, store_id, user_id):
 
 
 # --- reorder alerts ------------------------------------------------------------------------------------------------------
-# Stock that goes out and leaves a store at or below an item's reorder level for that store (the store's own level where it has set one,
-# else the item's) puts an alert on the dashboard (the bell, and email or WhatsApp where the company has asked for them). One alert stays open
-# until stock comes back above the level, so it is raised once, not on every issue below it. The ledger never commits, and an alert is saved
-# and sent on its own, so it is only noted here and goes out once the posting itself is saved; a posting rolled back sends nothing.
+# An item is low in a store when what the store can actually give out of it - its AVAILABLE stock - is at or below its reorder level for that
+# store (the store's own level where it has set one, else the item's). Available is the stock ledger's balance less what is on quality hold,
+# rejected or expired (it cannot be issued) and less what approved indents still have reserved (it is promised): available_map below, the one
+# place this is worked out.
+#
+# One alert per store and item (DBStoreReorderAlert). Its whole life is kept here:
+#   low, none open      -> raised (told once: the bell, and email or WhatsApp where the company has asked)
+#   low, already open   -> its figures and last-checked time are brought up to date; nothing is told again
+#   back above level    -> resolved: when, and what was available then. It is never deleted.
+#   low again later     -> the resolved episode goes into the alert's history and the alert is raised afresh
+# An indent or enquiry raised for an alert is recorded on it and never resolves it: only the stock recovering does.
+#
+# Every posting and reversal notes the store and item it touched; once the posting is saved (never if it is rolled back) each is checked
+# again, so a receipt, a return, an adjustment or a transfer in resolves the alert straight away. The morning scan
+# (accounts_watch.scan_reorder_levels) checks everything again, as a safety net for what changes availability without a posting - a hold
+# placed or lifted, an indent approved - and for levels that were changed.
 
 REORDER_KEY = "store_reorder_alerts"
 
@@ -621,60 +633,194 @@ def _level(db, store, item_id):
     return levels_for(db, store.id, item_id)[0]
 
 
+def note_stock_check(db, store_id, item_id, client_id=None):
+    """Ask for the store's alert on an item to be checked once this transaction is saved."""
+    db.info.setdefault(REORDER_KEY, []).append((client_id, store_id, item_id))
+
+
 def _note_reorder(db, store, item_id, before, after):
-    level = _level(db, store, item_id)
-    if level > 0 and after <= level:
-        db.info.setdefault(REORDER_KEY, []).append(("out", store.client_id, store.id, item_id, after, level))
+    note_stock_check(db, store.id, item_id, store.client_id)
 
 
 def _note_restock(db, store, item_id, after):
-    level = _level(db, store, item_id)
-    if level > 0 and after > level:
-        db.info.setdefault(REORDER_KEY, []).append(("in", store.client_id, store.id, item_id, after, level))
+    note_stock_check(db, store.id, item_id, store.client_id)
 
 
-def raise_reorder_alert(s, client_id, store, item, left, level):
-    """One open alert per store and item: raised (and told) only if there is none open. Returns whether it was raised."""
-    from datetime import datetime as _dt
-    from app.core.notifications import notify
+def available_map(db, store_ids, item_ids=None):
+    """{(store_id, item_id): {"on_hand", "unusable", "reserved", "available"}} for what the stores hold, in a few grouped queries.
+    unusable = lots on quality hold, rejected for good, or past their expiry date (they cannot be issued); reserved = what approved indents
+    still have to be issued (store_reservations). available = on hand - unusable - reserved, never below zero."""
+    from app.services.store_reservations import reserved_map
+    store_ids = list(store_ids or [])
+    if not store_ids:
+        return {}
+    q = db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(store_ids))
+    if item_ids is not None:
+        q = q.filter(DBStoreStockBalance.item_id.in_(list(item_ids) or [0]))
+    held = {(b.store_id, b.item_id): _dec(b.qty or 0) for b in q.all()}
+    if not held:
+        return {}
+    today = date.today()
+    q = (db.query(DBStoreBatchBalance.store_id, DBStoreBatchBalance.item_id, DBStoreBatchBalance.qty, DBStoreBatch.on_hold, DBStoreBatch.lot_status, DBStoreBatch.expiry_date)
+         .join(DBStoreBatch, DBStoreBatch.id == DBStoreBatchBalance.batch_id)
+         .filter(DBStoreBatchBalance.store_id.in_(store_ids), DBStoreBatchBalance.qty > 0))
+    if item_ids is not None:
+        q = q.filter(DBStoreBatchBalance.item_id.in_(list(item_ids) or [0]))
+    unusable = {}
+    for s, i, qty, on_hold, lot_status, expiry in q.all():
+        if on_hold or lot_status == "REJECTED" or (expiry is not None and expiry < today):
+            unusable[(s, i)] = unusable.get((s, i), ZERO) + _dec(qty)
+    reserved = reserved_map(db, store_ids, item_ids)
+    out = {}
+    for key, on_hand in held.items():
+        bad = min(on_hand, unusable.get(key, ZERO))
+        res = reserved.get(key, ZERO)
+        out[key] = {"on_hand": on_hand, "unusable": bad, "reserved": res, "available": max(ZERO, on_hand - bad - res)}
+    return out
+
+
+def reorder_target(level, high):
+    """(target level, the words for it) by the store's reorder policy, the one the Reorder report uses: up to the maximum where one is set above
+    the reorder level, else to twice the reorder level. (None, why) when there is no reorder level to work from."""
+    level, high = _dec(level or 0), _dec(high or 0)
+    if level <= 0:
+        return None, "No reorder level is set"
+    if high > level:
+        return high, "Up to the maximum stock level (%s)" % format(_q(high, _QTY).normalize(), "f")
+    return level * 2, "Twice the reorder level (no maximum stock level set)"
+
+
+def reorder_figures(db, store, item_id, figures=None):
+    """Everything the alert is decided and kept by, for one store and item: {on_hand, unusable, reserved, available, reorder_level, min_qty,
+    max_qty, target, basis, suggested, low}. `figures` is the available_map entry when the caller already has it."""
+    from app.services.store_levels import levels_for
+    level, low, high = levels_for(db, store.id, item_id)
+    f = figures or available_map(db, [store.id], [item_id]).get((store.id, item_id)) or {"on_hand": ZERO, "unusable": ZERO, "reserved": ZERO, "available": ZERO}
+    target, basis = reorder_target(level, high)
+    suggested = _q(max(ZERO, target - f["available"]), _QTY) if target is not None else None
+    return {**f, "reorder_level": level, "min_qty": low, "max_qty": high, "target": target, "basis": basis, "suggested": suggested,
+            "low": level > 0 and f["available"] <= level}
+
+
+def _history(row):
+    import json
+    try:
+        got = json.loads(row.history or "[]")
+        return got if isinstance(got, list) else []
+    except ValueError:
+        return []
+
+
+def _stamp(d):
+    return d.isoformat(timespec="seconds") if d else ""
+
+
+def _num(x):
+    return format(_q(_dec(x), _QTY), "f") if x is not None else None
+
+
+def _set_figures(row, fig, now):
+    row.on_hand, row.available, row.reorder_level = _q(fig["on_hand"], _QTY), _q(fig["available"], _QTY), _q(fig["reorder_level"], _QTY)
+    row.target_level = _q(fig["target"], _QTY) if fig["target"] is not None else None
+    row.suggested_qty, row.suggest_basis, row.last_checked_at = fig["suggested"], fig["basis"], now
+
+
+def _alert_row(s, store_id, item_id, lock=False):
     from app.models.store_extras import DBStoreReorderAlert
-    row = s.query(DBStoreReorderAlert).filter(DBStoreReorderAlert.store_id == store.id, DBStoreReorderAlert.item_id == item.id).first()
+    q = s.query(DBStoreReorderAlert).filter(DBStoreReorderAlert.store_id == store_id, DBStoreReorderAlert.item_id == item_id)
+    return (q.with_for_update() if lock else q).first()
+
+
+def raise_reorder_alert(s, client_id, store, item, left, level, figures=None):
+    """Open the store's alert on the item, or bring the open one up to date. Returns whether it was raised now (and told).
+
+    Before, the alert was a bare flag: raised once and never touched again while open, so it held nothing a person could act on (the
+    stock, the level, how much to order), the morning scan only ever raised and never resolved, and reopening wrote over the earlier
+    episode. Now an open alert is updated on every check, and reopening keeps the earlier episode in the alert's history."""
+    from app.core.notifications import notify
+    from app.models.store_extras import REORDER_OPEN, DBStoreReorderAlert
+    fig = figures or reorder_figures(s, store, item.id)
+    now = datetime.now()
+    row = _alert_row(s, store.id, item.id)
     if row is not None and row.cleared_at is None:
+        _set_figures(row, fig, now)
+        row.status = REORDER_OPEN
         return False
     if row is None:
-        s.add(DBStoreReorderAlert(client_id=client_id, store_id=store.id, item_id=item.id))
+        row = DBStoreReorderAlert(client_id=client_id, store_id=store.id, item_id=item.id, history="[]", times_raised=1)
+        s.add(row)
     else:
-        row.alerted_at, row.cleared_at = _dt.now(), None
+        import json
+        past = _history(row)
+        past.append({"alerted_at": _stamp(row.alerted_at), "resolved_at": _stamp(row.cleared_at), "available": _num(row.available),
+                     "reorder_level": _num(row.reorder_level), "suggested_qty": _num(row.suggested_qty), "resolved_qty": _num(row.resolved_qty),
+                     "action": row.action or "", "action_ref": row.action_ref or "", "action_qty": _num(row.action_qty), "action_by": row.action_by or "",
+                     "action_at": _stamp(row.action_at)})
+        row.history = json.dumps(past[-50:])
+        row.times_raised = (row.times_raised or 1) + 1
+        row.cleared_at, row.resolved_qty = None, None
+        row.action, row.action_doc_id, row.action_ref, row.action_qty, row.action_by, row.action_at, row.action_key = "", None, "", None, "", None, ""
+    row.alerted_at, row.status, row.project_id = now, REORDER_OPEN, store.project_id
+    _set_figures(row, fig, now)
     settings = s.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id == item.id).first()
     unit = (settings.base_uom if settings else item.units_of_measure) or ""
+    shown = fig["available"] if figures is not None or left is None else _dec(left)
     notify(s, client_id, "store_reorder", "%s is at its reorder level in %s" % (item.item_name, store.code),
-           "%s %s left in %s - %s; the reorder level is %s. Raise a purchase enquiry for it from the Reorder report."
-           % (format(_q(left, _QTY).normalize(), "f"), unit, store.code, store.name, format(_q(level, _QTY).normalize(), "f")),
+           "%s %s left to issue in %s - %s; the reorder level is %s.%s Raise an indent or enquiry for it from the Low Stock list."
+           % (format(_q(shown, _QTY).normalize(), "f"), unit, store.code, store.name, format(_q(fig["reorder_level"] or level, _QTY).normalize(), "f"),
+              (" Suggested reorder: %s %s." % (format(fig["suggested"].normalize(), "f"), unit)) if fig["suggested"] else ""),
            view="reorder-view", ref_type="store_item", ref_id=item.id, severity="action")
     return True
+
+
+def resolve_reorder_alert(row, fig=None):
+    """The stock is back above the level: the alert is resolved, with when and what was available. Kept, never deleted."""
+    from app.models.store_extras import REORDER_RESOLVED
+    now = datetime.now()
+    if fig is not None:
+        _set_figures(row, fig, now)
+    row.cleared_at, row.status = now, REORDER_RESOLVED
+    row.resolved_qty = _q(fig["available"], _QTY) if fig is not None else row.available
+    return row
+
+
+def check_reorder(s, client_id, store, item_id, figures=None):
+    """Check one store's item now and raise, update or resolve its alert to match. Returns "raised" | "updated" | "resolved" | ""."""
+    fig = reorder_figures(s, store, item_id, figures)
+    row = _alert_row(s, store.id, item_id)
+    if fig["low"]:
+        item = s.get(models.DBItem, item_id)
+        if item is None:
+            return ""
+        return "raised" if raise_reorder_alert(s, client_id, store, item, None, fig["reorder_level"], fig) else "updated"
+    if row is not None and row.cleared_at is None:
+        resolve_reorder_alert(row, fig)
+        return "resolved"
+    return ""
 
 
 def _send_reorder_alerts(session):
     pending = session.info.pop(REORDER_KEY, None)
     if not pending:
         return
-    from datetime import datetime as _dt
     from app.db.session import SessionLocal
-    from app.models.store_extras import DBStoreReorderAlert
     with SessionLocal() as s:
-        for kind, client_id, store_id, item_id, left, level in pending:
-            if kind == "in":
-                row = s.query(DBStoreReorderAlert).filter(DBStoreReorderAlert.store_id == store_id, DBStoreReorderAlert.item_id == item_id,
-                                                          DBStoreReorderAlert.cleared_at.is_(None)).first()
-                if row is not None:
-                    row.cleared_at = _dt.now()
+        for client_id, store_id, item_id in dict.fromkeys(pending):
+            store = s.get(DBStore, store_id)
+            if store is None:
                 continue
-            store, item = s.get(DBStore, store_id), s.get(models.DBItem, item_id)
-            if store is None or item is None:
+            # Nothing to do for an item with no level here and no alert open: most postings stop at this one look.
+            if _level(s, store, item_id) <= 0 and not s.query(_alert_model().id).filter(_alert_model().store_id == store_id, _alert_model().item_id == item_id,
+                                                                                    _alert_model().cleared_at.is_(None)).first():
                 continue
-            raise_reorder_alert(s, client_id, store, item, left, level)
+            check_reorder(s, client_id or store.client_id, store, item_id)
             s.flush()
         s.commit()
+
+
+def _alert_model():
+    from app.models.store_extras import DBStoreReorderAlert
+    return DBStoreReorderAlert
 
 
 def _drop_reorder_alerts(session):

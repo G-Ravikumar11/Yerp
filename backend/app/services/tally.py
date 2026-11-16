@@ -133,6 +133,54 @@ def _tdate(iso):
     return re.sub(r"\D", "", (iso or "")[:10])
 
 
+def export_windows(db, client_id):
+    """Every earlier export of vouchers: (when, period from, period to). An export is the XML the ERP wrote for a period; it is recorded when the
+    file is made, so this says what was put in a file, not what Tally did with it (a file import gives nothing back)."""
+    out = []
+    for at, details in db.query(models.DBAuditLog.created_at, models.DBAuditLog.details).filter(
+            models.DBAuditLog.client_id == client_id, models.DBAuditLog.action == "tally_export",
+            models.DBAuditLog.entity_name == "vouchers").all():
+        m = re.search(r"(\S+) to (\S+)\s*$", details or "")
+        f, t = (m.group(1), m.group(2)) if m else ("start", "today")
+        at = at or ""
+        out.append((at, "0000-00-00" if f == "start" else f, at[:10] if t == "today" else t))
+    return out
+
+
+def cross_charge_exports(db, client_id, charges):
+    """{cross-charge id: {"original", "reversal", "error"}} - where each journal of a cross-charge stands in the exports made so far.
+    original: NOT_ADJUSTED | PENDING_EXPORT | EXPORTED. reversal: NONE | NEEDS_DATE | INVALID_DATE | PENDING_EXPORT | EXPORTED.
+    EXPORTED means an export file made after the journal existed covered its date; the voucher carries its own id, so an export made again
+    gives Tally the same voucher to recognise, not a second one. A journal that cannot be exported says why in `error`."""
+    windows = export_windows(db, client_id)
+    ids = [c.id for c in charges]
+    adjusted_at = {}
+    for eid, at in db.query(models.DBAuditLog.entity_id, models.DBAuditLog.created_at).filter(
+            models.DBAuditLog.client_id == client_id, models.DBAuditLog.action == "store_cross_charge_adjusted", models.DBAuditLog.entity_id.in_(ids or [0])).all():
+        adjusted_at[eid] = min(adjusted_at.get(eid, at or ""), at or "")
+
+    def taken(on, since):
+        # Times are kept to the second, so an export in the very second a journal came to be is not taken to have held it: when unsure, pending.
+        return any(at > since and f <= on <= t for at, f, t in windows)
+    out = {}
+    for c in charges:
+        adj = c.adjusted_on.isoformat() if c.adjusted_on else ""
+        state = {"original": "NOT_ADJUSTED", "reversal": "NONE", "error": ""}
+        if adj:
+            state["original"] = "EXPORTED" if taken(adj, adjusted_at.get(c.id) or adj) else "PENDING_EXPORT"
+        reversed_ = bool(adj) and (c.status == "REVERSE" or (c.status == "VOID" and c.reversed_on is not None))
+        if reversed_:
+            if c.reversed_on is None:
+                state["reversal"], state["error"] = "NEEDS_DATE", "This adjustment was reversed before the reversal date was kept. Give the date it was reversed, so its reversing journal can be sent to Tally."
+            elif c.reversed_on.date().isoformat() < adj:
+                state["reversal"], state["error"] = "INVALID_DATE", "The reversal is dated before the adjustment (%s), so its reversing journal is not sent." % adj
+            else:
+                on = c.reversed_on.date().isoformat()
+                state["reversal"] = "EXPORTED" if taken(on, c.reversed_on.strftime("%Y-%m-%d %H:%M:%S")) else "PENDING_EXPORT"
+        out[c.id] = state
+    return out
+
+
 class Books:
     """The period's vouchers, as balanced lists of ledger lines, and every ledger and cost centre they name."""
 
@@ -226,14 +274,7 @@ class Books:
     def _exports(self):
         """Every earlier export of vouchers: (when, period from, period to)."""
         if not hasattr(self, "_export_log"):
-            self._export_log = []
-            for at, details in self.db.query(models.DBAuditLog.created_at, models.DBAuditLog.details).filter(
-                    models.DBAuditLog.client_id == self.client.id, models.DBAuditLog.action == "tally_export",
-                    models.DBAuditLog.entity_name == "vouchers").all():
-                m = re.search(r"(\S+) to (\S+)\s*$", details or "")
-                f, t = (m.group(1), m.group(2)) if m else ("start", "today")
-                at = at or ""
-                self._export_log.append((at, "0000-00-00" if f == "start" else f, at[:10] if t == "today" else t))
+            self._export_log = export_windows(self.db, self.client.id)
         return self._export_log
 
     def _voided_at(self, numbers):
@@ -480,20 +521,50 @@ class Books:
 
     def _cross_charges(self):
         """Material one site's store sent another's, once accounts have adjusted it: the cost moves from the sending
-        project's cost centre to the receiving one's."""
+        project's cost centre to the receiving one's. An adjustment that was reversed (the transfer was cancelled afterwards) keeps that
+        journal, dated the day it was adjusted, and adds its exact opposite, dated the day it was reversed and with a voucher identity of its own -
+        so Tally holds both, nets to nothing, and an export made again gives it the same two vouchers to recognise, not more."""
+        from app.core.config import logger
         from app.models.store_control import DBStoreTransfer
         from app.models.store_extras import DBStoreCrossCharge
         for c, t in (self.db.query(DBStoreCrossCharge, DBStoreTransfer).join(DBStoreTransfer, DBStoreTransfer.id == DBStoreCrossCharge.transfer_id)
-                     .filter(DBStoreCrossCharge.client_id == self.client.id, DBStoreCrossCharge.status == "ADJUSTED").all()):
+                     .filter(DBStoreCrossCharge.client_id == self.client.id, DBStoreCrossCharge.status.in_(("ADJUSTED", "REVERSE", "VOID")),
+                             DBStoreCrossCharge.adjusted_on.isnot(None)).order_by(DBStoreCrossCharge.id).all()):
+            status, reversed_on = c.status, c.reversed_on
+            if status == "ADJUSTED" and not (t.status == "POSTED" and t.receipt_status == "RECEIVED"):
+                # Its transfer was cancelled and nobody has opened the accounts list since, which is where the row is brought up to date: seen
+                # as the reversal it is, dated when the transfer was cancelled. Read here, not written - an export changes nothing.
+                from app.services.store_accounts import _cancelled_at
+                status, reversed_on = "REVERSE", _cancelled_at(self.db, t.id, c)
             on = c.adjusted_on.isoformat() if c.adjusted_on else ""
-            if not on or not (self.date_from <= on <= self.date_to):
-                continue
             amt, ledger = money(float(c.amount or 0)), self.std("inter_site_material")
             frm, to = self.jobs.get(c.from_project_id), self.jobs.get(c.to_project_id)
-            self.add("Journal", "XC-%s" % t.number, on, "Material sent by transfer %s from %s to %s" % (
-                t.number, frm.name if frm else "the central store", to.name if to else "the central store"),
-                [(ledger, amt, "", "", self.centre(c.to_project_id)), (ledger, -amt, "", "", self.centre(c.from_project_id))],
-                "yerp-%d-crosscharge-%d" % (self.client.id, c.id))
+            sent ="Material sent by transfer %s from %s to %s" % (t.number, frm.name if frm else "the central store", to.name if to else "the central store")
+            number = "XC-%s" % t.number
+            if on and self.date_from <= on <= self.date_to:
+                self.add("Journal", number, on, sent,
+                         [(ledger, amt, "", "", self.centre(c.to_project_id)), (ledger, -amt, "", "", self.centre(c.from_project_id))],
+                         "yerp-%d-crosscharge-%d" % (self.client.id, c.id))
+            if not (status == "REVERSE" or (status == "VOID" and reversed_on is not None)):
+                continue
+            # The reversing journal: dated the day the reversal happened - never the adjustment's day - and refused rather than guessed when that
+            # day is not known or does not make sense.
+            if reversed_on is None:
+                why = "Cross-charge %s was reversed but has no reversal date, so its reversing journal was left out. Set the date under Store > Reports > For accounts > Between projects." % number
+                self.warnings.append(why)
+                logger.warning("Tally export: %s (cross-charge id %s)", why, c.id)
+                continue
+            back = reversed_on.date().isoformat()
+            if back < on:
+                why = "Cross-charge %s is reversed on %s, before it was adjusted on %s, so its reversing journal was left out." % (number, back, on)
+                self.warnings.append(why)
+                logger.warning("Tally export: %s (cross-charge id %s)", why, c.id)
+                continue
+            if self.date_from <= back <= self.date_to:
+                # Every amount and ledger of the original, turned round: what was debited to the receiving project is credited to it again.
+                self.add("Journal", "XCR-%s" % t.number, back, "Reversal of %s (adjusted %s): %s, transfer cancelled" % (number, on, sent.lower()),
+                         [(ledger, amt, "", "", self.centre(c.from_project_id)), (ledger, -amt, "", "", self.centre(c.to_project_id))],
+                         "yerp-%d-crosscharge-%d-reversal" % (self.client.id, c.id))
 
     def _claims(self):
         """Staff expense claims, once approved: the expense on its project, owed to the member of staff."""

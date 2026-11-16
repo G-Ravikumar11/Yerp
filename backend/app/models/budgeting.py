@@ -48,6 +48,10 @@ class DBBoqBudgetItem(Base):
     uom = Column(String, default="")
     coefficient = Column(Float, default=0.0)
     rate = Column(Float, default=0.0)
+    # The budget's own wastage allowance on a material, as a share of its quantity. It is what the budget is costed at only
+    # where the store has no norm for the material on this BOQ item (services/budget_wastage.py), and it is never
+    # overwritten by a norm: it stays as typed, for reference and to fall back to.
+    wastage_percent = Column(Float, default=0.0)
     item_code = Column(String, default="")                    # the item master's code, when a material came from it
     display_order = Column(Integer, default=0)
     updated_by_name = Column(String, default="")

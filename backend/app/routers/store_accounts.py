@@ -120,6 +120,26 @@ def adjust_cross_charge(charge_id: int, body: AdjustIn, request: Request, db: Se
     return {"id": row.id, "status": row.status}
 
 
+class ReversalDateIn(BaseModel):
+    reversed_on: str
+
+
+@router.post("/cross-charges/{charge_id}/reversal-date")
+def set_cross_charge_reversal_date(charge_id: int, body: ReversalDateIn, request: Request, db: Session = Depends(get_db)):
+    """The date a reversal is booked under in Tally, for an adjustment reversed before that date was kept. It cannot change a date already set."""
+    actor = store_actor(request, db, "store.reports.view")
+    require_items_access(request, db, ACCOUNTS_ACT)
+    try:
+        row = svc.set_reversal_date(db, actor, charge_id, body.reversed_on)
+        log_audit(db, actor.client.id, "store_cross_charge_reversal_dated", "store_cross_charge", row.id, str(row.id), row.reversed_on.date().isoformat(), request=request,
+                  user_type="employee" if actor.employee is not None else "client", user_name=actor.name)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"id": row.id, "status": row.status, "reversed_on": row.reversed_on.isoformat(timespec="seconds")}
+
+
 @router.get("/price-variances")
 def get_variances(request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.reports.view")

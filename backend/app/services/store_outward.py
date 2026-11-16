@@ -213,6 +213,8 @@ def build_issue_lines(db, client_id, body, head, on_date, issue_id=None):
         uom = text(r.uom, "unit", 20) or base_uom_of(db, item)
         entry = dec(r.qty, label + " quantity", allow_zero=False)
         qty = to_base(db, item.id, entry, uom)
+        from app.services import steel_allowance as steel
+        steel.refuse_unweighable(db, client_id, body.project_id, item, qty, base_uom_of(db, item))        # steel that cannot be weighed is not issued past the BBS check
         il_id = getattr(r, "indent_line_id", None) or None
         if indent is not None:
             il = ilines.get(il_id)
@@ -618,6 +620,8 @@ def advance(db, actor, kind, doc, action, reason="", direct=False):
         doc.status, doc.cancel_reason = DocStatus.CANCELLED.value, reason
         db.flush()
         if kind.key == "issue":
+            from app.services import free_issue_allowance as free
+            free.on_cancel(db, actor, doc)             # its requests are withdrawn; the allowance it used comes back by itself
             for rec in db.query(DBStoreRecovery).filter(DBStoreRecovery.issue_line_id.in_([l.id for l in issue_lines(db, doc)] or [0]), DBStoreRecovery.source == "ISSUE").all():
                 rec.status = "CANCELLED"
             if doc.indent_id:
@@ -645,12 +649,16 @@ def advance(db, actor, kind, doc, action, reason="", direct=False):
         check_not_own(db, actor, doc, DBStoreOutwardLog, kind.ref, kind.label)
     if kind.key == "issue" and action in ("approve", "post"):
         _steel_allowance(db, actor, doc, action, direct)
+        from app.services import free_issue_allowance as free
+        free.gate(db, actor, doc, action, direct, reason)
     if action == "post":
         kind.post(db, actor, doc)
         doc.posted_at = datetime.now()
     doc.status = to.value
     if kind.key == "issue" and action == "submit":
         steel_waiting(db, actor, doc)
+        from app.services import free_issue_allowance as free
+        free.waiting(db, actor, doc, reason)
     if kind.key == "issue" and action == "post" and doc.indent_id:
         db.flush()
         refresh_indent(db, db.get(DBStoreIndent, doc.indent_id))
@@ -662,6 +670,12 @@ def steel_over(db, client_id, issue):
     """What this issue would take past the BBS allowance, in words; [] when nothing."""
     from app.services import steel_allowance as steel
     return steel.issue_breaches(db, client_id, issue, issue_lines(db, issue))
+
+
+def free_issue_over(db, client_id, issue):
+    """What this issue would take past the free-issue allowance (the store's norms x the contractor's order), in words; [] when nothing."""
+    from app.services import free_issue_allowance as free
+    return free.breaches(db, client_id, issue, issue_lines(db, issue))
 
 
 def steel_waiting(db, actor, issue):

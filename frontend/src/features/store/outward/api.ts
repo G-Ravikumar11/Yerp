@@ -93,6 +93,10 @@ export interface Doc {
   steel_override_by?: string
   steel_override_note?: string
   held_for_steel?: boolean
+  /** Free-issue material past what its norms allow for the contractor's work order: waiting for the Master. */
+  held_for_allowance?: boolean
+  allowance_over?: string[]
+  free_issue?: { rows: { item_id: number; item_name: string; uom: string; permitted: string; issued: string; remaining: string; requested: string; excess: string; within: boolean }[]; requests: { id: number; status: string; item_name: string; requested_qty: string; permitted_qty: string; excess_qty: string; reason: string; requested_by: string; decided_by: string; decision_note: string }[] }
   message?: string
   gate_passes?: { id: number; number: string; status: string }[]
   // return

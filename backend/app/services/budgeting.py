@@ -3,7 +3,10 @@
 For every priced line of the project's BOQ (its current revision):
 
     revenue         = the line's amount (quantity x the client's rate; a rate-only line is nothing until it has a quantity)
-    cost per unit   = sum over the line's items of coefficient x rate, split into material, labour and other
+    cost per unit   = sum over the line's items of coefficient x rate, split into material, labour and other; a material
+                      carries its wastage on top, once: coefficient x (1 + effective wastage % / 100) x rate. The effective
+                      percentage is the store's norm for the material on that BOQ item where one is set, else the budget's
+                      own figure (services/budget_wastage.py) - the one place that decides it.
     direct cost     = quantity x cost per unit
     overheads       = overhead % of direct cost; contingency = contingency % of direct cost
     profit          = revenue - direct cost - overheads - contingency          margin = profit / revenue
@@ -15,6 +18,7 @@ from fastapi import HTTPException
 
 from app import models
 from app.core.currency import money
+from app.services import budget_wastage
 from app.services.boq import boq_lines_of_job, boq_of_job
 
 KINDS = ("MATERIAL", "LABOUR", "OTHER")
@@ -51,10 +55,20 @@ def save_settings(db, client_id, job_id, overhead, contingency, note, who):
     return row
 
 
-def item_dict(i):
+def item_cost(i, resolved) -> float:
+    """What one unit of the BOQ line costs in this item, its wastage included (once)."""
+    return (i.coefficient or 0) * budget_wastage.factor(resolved) * (i.rate or 0)
+
+
+def item_dict(i, resolved=None, boq_quantity=0.0):
+    """One budget item as the screens get it. `wastage_percent` is the budget's own figure, as typed; the rest of the wastage
+    block says which percentage the cost was worked out at and what that makes the quantities."""
+    resolved = resolved or budget_wastage.for_item({}, i.job_id, i.boq_key, i.kind, i.item_code, i.wastage_percent)
     return {"id": i.id, "kind": i.kind, "description": i.description or "", "uom": i.uom or "",
             "coefficient": i.coefficient or 0.0, "rate": money(i.rate), "item_code": i.item_code or "",
-            "per_unit": money((i.coefficient or 0) * (i.rate or 0))}
+            "wastage_percent": resolved["budgeting_wastage_percent"], **resolved,
+            **budget_wastage.quantities(boq_quantity, i.coefficient, resolved),
+            "per_unit": money(item_cost(i, resolved))}
 
 
 def clean_items(rows):
@@ -77,8 +91,10 @@ def clean_items(rows):
         for what, v in (("Quantity", coefficient), ("Rate", rate)):
             if v != v or v < 0 or v > 1e9:
                 raise HTTPException(400, "%s must be a number from 0 up." % what)
+        # Only a material wastes. The figure kept is the budget's own; the store's norm is never written over it.
+        wastage = _pct(r.get("wastage_percent"), "Wastage") if kind == "MATERIAL" else 0.0
         out.append({"kind": kind, "description": description[:200], "uom": (r.get("uom") or "").strip()[:20],
-                    "coefficient": round(coefficient, 6), "rate": round(rate, 4),
+                    "coefficient": round(coefficient, 6), "rate": round(rate, 4), "wastage_percent": wastage,
                     "item_code": (r.get("item_code") or "").strip()[:40]})
     if len(out) > MAX_ITEMS_PER_LINE:
         raise HTTPException(400, "A line has at most %d items." % MAX_ITEMS_PER_LINE)
@@ -119,10 +135,11 @@ def boq_headings(db, boq, lines):
 def unit_costs(db, client_id, job_id):
     """{BOQ key: {"MATERIAL": .., "LABOUR": .., "OTHER": ..}} - what one unit of each budgeted line is planned to cost."""
     out = {}
+    norms = budget_wastage.norm_percents(db, client_id, [job_id])
     for i in db.query(models.DBBoqBudgetItem).filter(models.DBBoqBudgetItem.client_id == client_id,
                                                   models.DBBoqBudgetItem.job_id == job_id).all():
         unit = out.setdefault(i.boq_key, {"MATERIAL": 0.0, "LABOUR": 0.0, "OTHER": 0.0})
-        unit[i.kind if i.kind in unit else "OTHER"] += (i.coefficient or 0) * (i.rate or 0)
+        unit[i.kind if i.kind in unit else "OTHER"] += item_cost(i, budget_wastage.for_item(norms, job_id, i.boq_key, i.kind, i.item_code, i.wastage_percent))
     return out
 
 
@@ -137,6 +154,8 @@ def budget_view(db, client_id, job):
         items.setdefault(i.boq_key, []).append(i)
     cfg = settings_of(db, client_id, job.id)
     oh, ct = (cfg.overhead_percent or 0.0) if cfg else 0.0, (cfg.contingency_percent or 0.0) if cfg else 0.0
+    # Read with the budget every time, never kept: a norm set, changed or removed in the store shows on the next look.
+    norms = budget_wastage.norm_percents(db, client_id, [job.id])
 
     headings = boq_headings(db, boq, lines) if boq else []
     grades = {}
@@ -161,8 +180,10 @@ def budget_view(db, client_id, job):
         qty = l.quantity or 0.0
         revenue = 0.0 if l.rate_only else money(l.amount if l.amount else qty * (l.rate or 0))
         unit = {"MATERIAL": 0.0, "LABOUR": 0.0, "OTHER": 0.0}
-        for i in got:
-            unit[i.kind if i.kind in unit else "OTHER"] += (i.coefficient or 0) * (i.rate or 0)
+        resolved = [budget_wastage.for_item(norms, job.id, l.key, i.kind, i.item_code, i.wastage_percent) for i in got]
+        for i, w in zip(got, resolved):
+            unit[i.kind if i.kind in unit else "OTHER"] += item_cost(i, w)
+        mismatches = len([w for w in resolved if w["has_wastage_mismatch"]])
         mat, lab, oth = (money(qty * unit[k]) for k in ("MATERIAL", "LABOUR", "OTHER"))
         direct = money(mat + lab + oth)
         overheads, contingency = money(direct * oh / 100), money(direct * ct / 100)
@@ -173,7 +194,8 @@ def budget_view(db, client_id, job):
         rows.append({
             "key": l.key, "under": under.get(l.key, ""), "item_no": l.item_no or "", "group_code": sec, "description": l.description or "",
             "uom": l.uom or "", "quantity": money(qty), "rate": money(l.rate), "revenue": revenue, "rate_only": bool(l.rate_only),
-            "item_code": l.item_code or "", "grade": grades.get(l.key, ""), "budgeted": budgeted, "items": [item_dict(i) for i in got],
+            "item_code": l.item_code or "", "grade": grades.get(l.key, ""), "budgeted": budgeted, "items": [item_dict(i, w, qty) for i, w in zip(got, resolved)],
+            "wastage_mismatches": mismatches,
             "unit_material": round(unit["MATERIAL"], 4), "unit_labour": round(unit["LABOUR"], 4), "unit_other": round(unit["OTHER"], 4),
             "unit_cost": round(sum(unit.values()), 4), "material": mat, "labour": lab, "other": oth, "direct": direct,
             "overheads": overheads, "contingency": contingency, "cost": cost, "profit": profit,
@@ -200,6 +222,8 @@ def budget_view(db, client_id, job):
         "overheads": overheads, "contingency": contingency, "cost": cost, "profit": profit,
         "margin": round(profit / budgeted_revenue * 100, 1) if budgeted_revenue else None,
         "lines": len(rows), "lines_budgeted": tot["budgeted"],
+        # Materials whose budget wastage % differs from the store's norm (the norm is the one used). A warning, never a stop.
+        "wastage_mismatches": sum(r["wastage_mismatches"] for r in rows),
         "losing": len([r for r in rows if r["profit"] is not None and r["profit"] < 0]),
         # What the whole BOQ would leave if the unbudgeted lines cost what the budgeted ones do, as a share of their value.
         "projected_profit": money(tot["revenue"] * profit / budgeted_revenue) if budgeted_revenue else None}
@@ -232,7 +256,6 @@ def boq_money_by_job(db, client_id, job_ids=None):
     that have a BOQ - in four queries, however many projects. The BOQ is the client's order, so this is what a project is
     sold for and budgeted at wherever the money of a project is shown. The budget counts only the lines that have been
     budgeted, with the project's overheads and contingency on top, as the Budgeting tab totals them."""
-    from sqlalchemy import func
     from app.constants.boq import BOQ_PRICED
     q = db.query(models.DBBoq).filter(models.DBBoq.client_id == client_id, models.DBBoq.job_id.isnot(None))
     if job_ids is not None:
@@ -246,11 +269,12 @@ def boq_money_by_job(db, client_id, job_ids=None):
     job_of_rev = {revs[b.id]: b.job_id for b in boqs if b.id in revs}
     jobs = set(job_of_rev.values())
     unit = {}
-    for job_id, key, per_unit in db.query(models.DBBoqBudgetItem.job_id, models.DBBoqBudgetItem.boq_key,
-                                          func.sum(models.DBBoqBudgetItem.coefficient * models.DBBoqBudgetItem.rate)).filter(
-            models.DBBoqBudgetItem.client_id == client_id, models.DBBoqBudgetItem.job_id.in_(jobs or {0})).group_by(
-            models.DBBoqBudgetItem.job_id, models.DBBoqBudgetItem.boq_key).all():
-        unit[(job_id, key)] = float(per_unit or 0)
+    # Item by item, not summed in the database: a material's wastage % is the store's norm where one is set, as on the Budgeting tab.
+    norms = budget_wastage.norm_percents(db, client_id, jobs)
+    for i in db.query(models.DBBoqBudgetItem).filter(
+            models.DBBoqBudgetItem.client_id == client_id, models.DBBoqBudgetItem.job_id.in_(jobs or {0})).all():
+        w = budget_wastage.for_item(norms, i.job_id, i.boq_key, i.kind, i.item_code, i.wastage_percent)
+        unit[(i.job_id, i.boq_key)] = unit.get((i.job_id, i.boq_key), 0.0) + item_cost(i, w)
     extra = {s.job_id: ((s.overhead_percent or 0.0) + (s.contingency_percent or 0.0)) / 100
              for s in db.query(models.DBBoqBudget).filter(models.DBBoqBudget.client_id == client_id,
                                                           models.DBBoqBudget.job_id.in_(jobs or {0})).all()}
@@ -263,3 +287,19 @@ def boq_money_by_job(db, client_id, job_ids=None):
         if (job_id, key) in unit:
             out[job_id]["budget"] += (qty or 0) * unit[(job_id, key)]
     return {j: {"value": money(v["value"]), "budget": money(v["budget"] * (1 + extra.get(j, 0.0)))} for j, v in out.items()}
+
+
+def resolve_wastage(db, client_id, job_id, boq_key, rows):
+    """The wastage answer for materials as they stand in the editor, before saving: [{item_code, wastage_percent, kind}] in,
+    the resolver's answer for each out, in the same order. The editor shows these; it never works out for itself which
+    percentage counts."""
+    norms = budget_wastage.norm_percents(db, client_id, [job_id])
+    out = []
+    for r in rows or []:
+        try:
+            own = float(r.get("wastage_percent") or 0)
+        except (TypeError, ValueError):
+            own = 0.0
+        own = min(100.0, max(0.0, own)) if own == own else 0.0
+        out.append(budget_wastage.for_item(norms, job_id, boq_key, (r.get("kind") or "MATERIAL").upper(), r.get("item_code"), own))
+    return out

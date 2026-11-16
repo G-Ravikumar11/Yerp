@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { apiUrl, get, put } from '@/lib/api'
+import { apiUrl, get, post, put } from '@/lib/api'
 
 export type CostKind = 'MATERIAL' | 'LABOUR' | 'OTHER'
 
@@ -19,7 +19,24 @@ export interface BudgetItem {
   rate: number
   item_code: string
   per_unit?: number
+  /** The budget's own wastage % on a material, as typed. It is what the cost uses only where the store has no norm. */
+  wastage_percent?: number
+  base_quantity?: number
+  wastage_quantity?: number
+  final_quantity?: number
 }
+
+/** Which wastage % a material is costed at, as the server worked it out: the store's norm where one is set for the material on
+ * the BOQ item, else the budget's own. The screens show this and never decide it themselves. */
+export interface WastageAnswer {
+  budgeting_wastage_percent: number
+  store_norm_wastage_percent: number | null
+  effective_wastage_percent: number
+  wastage_source: 'STORE_NORM' | 'BUDGETING'
+  has_wastage_mismatch: boolean
+  mismatch_message: string | null
+}
+export type SavedBudgetItem = BudgetItem & Partial<WastageAnswer>
 
 export interface BudgetRow {
   key: string
@@ -37,7 +54,9 @@ export interface BudgetRow {
   /** The grade the BOQ names for the line, or its heading does (M10). */
   grade?: string
   budgeted: boolean
-  items: BudgetItem[]
+  items: SavedBudgetItem[]
+  /** Materials of this line whose budget wastage % differs from the store's norm (the norm is the one used). */
+  wastage_mismatches?: number
   unit_material: number
   unit_labour: number
   unit_other: number
@@ -70,6 +89,7 @@ export interface BudgetTotal {
   lines_budgeted: number
   losing: number
   projected_profit: number | null
+  wastage_mismatches?: number
 }
 
 export interface Budget {
@@ -96,7 +116,11 @@ export const useBudget = (job: number) => useQuery({ queryKey: budgetKey(job), q
 export const saveBudgetLine = (job: number, key: string, items: BudgetItem[]) =>
   put<Budget>(`/api/jobs/${job}/budget/lines/${encodeURIComponent(key)}`, { items })
 
-export const saveBudgetSettings = (job: number, body: { overhead_percent: number; contingency_percent: number; note: string }) =>
+/** Ask the server which wastage % each item in the editor would be costed at, before saving. One answer per item, in order. */
+export const resolveBudgetWastage = async (job: number, key: string, items: { kind: CostKind; item_code: string; wastage_percent: number }[]) =>
+  (await post<{ items: WastageAnswer[] }>(`/api/jobs/${job}/budget/lines/${encodeURIComponent(key)}/wastage`, { items })).items
+
+export const saveBudgetSettings =(job: number, body: { overhead_percent: number; contingency_percent: number; note: string }) =>
   put<Budget>(`/api/jobs/${job}/budget`, body)
 
 export const budgetMaterials = (q: string) => get<MaterialOption[]>(`/api/budget/materials?q=${encodeURIComponent(q)}`)

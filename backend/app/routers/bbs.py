@@ -316,8 +316,16 @@ def approve_entries(body: ApproveIn, request: Request, db: Session = Depends(get
         raise HTTPException(400, "Choose what to approve.")
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     done = 0
-    for eid in dict.fromkeys(body.ids):
-        e = _entry(db, client.id, eid)
+    entries = [_entry(db, client.id, eid) for eid in dict.fromkeys(body.ids)]
+    # Approving a schedule is what sets the steel a project may draw. While steel already issued to the project cannot be weighed - counted in
+    # numbers with no weight per piece, say - that check would be missing part of what was issued, so it waits until the item master is corrected.
+    from app.services.steel_allowance import problem_words, weight_problems
+    for job_id in dict.fromkeys(e.job_id for e in entries if e.status != "Approved"):
+        bad = weight_problems(db, client.id, job_id)
+        if bad:
+            raise HTTPException(409, "The schedule cannot be approved yet: steel issued to this project cannot be weighed. %s. Correct the item master, then approve."
+                                % "; ".join(problem_words(l) for l in bad[:4]))
+    for e in entries:
         if e.status != "Approved":
             e.status, e.approved_by, e.approved_at = "Approved", actor, now
             log_audit(db, client.id, "bbs.approved", entity_type="bbs", entity_id=e.id, entity_name=e.bar_mark, details="Revision %d" % (e.revision or 0), request=request, user_name=actor)

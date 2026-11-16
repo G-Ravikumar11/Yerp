@@ -63,9 +63,16 @@ class DBStoreItemLevel(Base):
     max_qty = Column(QTY, nullable=True)
 
 
+REORDER_OPEN, REORDER_RESOLVED = "OPEN", "RESOLVED"
+
+
 class DBStoreReorderAlert(Base):
     """Whether an item in a store is at its reorder level and has been told to the company: one open alert until the stock is back above the
-    level, so it is raised once, not on every issue below it."""
+    level, so it is raised once, not on every issue below it.
+
+    One row per store and item (the unique key stays: it is what stops two alerts for one shortage). The row is the current episode - the
+    figures last checked, the indent or enquiry raised for it - and `history` keeps every earlier episode, so reopening an alert after the
+    stock fell again never loses what happened before. Nothing here is ever deleted."""
     __tablename__ = "store_reorder_alert"
     __table_args__ = (UniqueConstraint("store_id", "item_id", name="uq_store_reorder_alert"),)
 
@@ -74,7 +81,29 @@ class DBStoreReorderAlert(Base):
     store_id = Column(Integer, ForeignKey("store_store.id"), nullable=False, index=True)
     item_id = Column(Integer, ForeignKey("erp_items.id"), nullable=False, index=True)
     alerted_at = Column(DateTime, default=datetime.now)
-    cleared_at = Column(DateTime, nullable=True)
+    cleared_at = Column(DateTime, nullable=True)                 # set when the stock recovered; empty while the alert is open
+    status = Column(String, default=REORDER_OPEN, index=True)    # OPEN | RESOLVED
+    project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)      # the store's project, for a site store
+    # The figures at the last check, in the item's base unit. available = on hand less what is on hold, rejected or expired and less what
+    # approved indents have reserved (services/stock_ledger.available_map).
+    on_hand = Column(QTY, nullable=True)
+    available = Column(QTY, nullable=True)
+    reorder_level = Column(QTY, nullable=True)
+    target_level = Column(QTY, nullable=True)
+    suggested_qty = Column(QTY, nullable=True)                  # target less available, never below zero
+    suggest_basis = Column(String, default="")
+    last_checked_at = Column(DateTime, nullable=True)
+    resolved_qty = Column(QTY, nullable=True)                   # what was available when it resolved
+    times_raised = Column(Integer, default=1)
+    # The indent or enquiry raised for this episode. It never resolves the alert: only the stock recovering does.
+    action = Column(String, default="")                         # "" | INDENT | ENQUIRY
+    action_doc_id = Column(Integer, nullable=True)
+    action_ref = Column(String, default="")
+    action_qty = Column(QTY, nullable=True)
+    action_by = Column(String, default="")
+    action_at = Column(DateTime, nullable=True)
+    action_key = Column(String, default="")                     # the submission it came from, so a repeated click raises nothing twice
+    history = Column(Text, default="[]")                        # earlier episodes, oldest first, as JSON
 
 
 TOOL_AVAILABLE, TOOL_ISSUED, TOOL_IN_SERVICE, TOOL_LOST, TOOL_RETIRED = "AVAILABLE", "ISSUED", "IN_SERVICE", "LOST", "RETIRED"
@@ -182,9 +211,12 @@ class DBStoreCrossCharge(Base):
     to_project_id = Column(Integer, ForeignKey("jobs.id"), nullable=True)
     amount = Column(QTY, nullable=False, default=0)
     status = Column(String, nullable=False, default="PENDING", index=True)     # PENDING | ADJUSTED | VOID | REVERSE (cancelled after it was adjusted)
-    adjusted_on = Column(Date, nullable=True)
+    adjusted_on = Column(Date, nullable=True)                 # when accounts adjusted it: never cleared, so the original journal stays traceable
     adjusted_by_name = Column(String, default="")
     note = Column(String, default="")
+    # When the adjustment was reversed (the transfer was cancelled after accounts had adjusted it): the actual moment, and the date the reversing
+    # journal carries in Tally. Empty for a charge that was never reversed - and for one reversed before this was kept, which needs its date set.
+    reversed_on = Column(DateTime, nullable=True)
 
 
 class DBStoreScrapReceipt(Base):

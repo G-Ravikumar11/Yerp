@@ -139,7 +139,24 @@ export interface ItemForm {
   shelf_life_days: string
   expiry_tracking: boolean
   segment: string
+  /** kg for one piece: asked for steel counted in Numbers, and only then. */
+  weight_per_piece_kg: string
 }
+
+/** The same test the server uses to know steel (services/steel_allowance.py): reinforcement steel with a bar diameter in its name, or filed under a
+ * category that says steel. A work item is never a stock of steel. The server decides; this only decides whether to ask. */
+const STEEL_WORDS = /\b(tmt|rebar|reinforce\w*|steel|fe\s?-?\s?\d{3}\w*|tor\s?steel|hysd|bar|bars)\b/i
+const BAR_DIAMETERS = [6, 8, 10, 12, 16, 20, 25, 28, 32, 36, 40]
+export function isSteelItem(f: Pick<ItemForm, 'kind' | 'item_name' | 'description' | 'segment' | 'item_category'>): boolean {
+  if (f.kind !== 'RM') return false
+  if ((f.item_category || '').toLowerCase().includes('steel')) return true
+  const text = `${f.item_name} ${f.description.trim() ? f.description : f.item_name} ${f.segment}`
+  if (!STEEL_WORDS.test(text)) return false
+  return [...text.matchAll(/(?<!\d)(\d{1,2})\s*(?:mm|ø|dia\b|#)/gi)].some((m) => BAR_DIAMETERS.includes(Number(m[1])))
+}
+
+/** Steel counted in Numbers: the one case that has to say what a piece weighs. */
+export const needsPieceWeight = (f: ItemForm, units: readonly string[]) => isSteelItem(f) && matchUnit(f.units_of_measure, units) === 'Nos'
 
 export type ItemErrors = Partial<Record<keyof ItemForm, string>>
 
@@ -158,6 +175,11 @@ export function validateItem(f: ItemForm, units: readonly string[]): ItemErrors 
   if (!isMoney(f.selling_rate)) e.selling_rate = 'Enter an amount of 0 or more, for example 520.'
   if (f.gst_percent !== '' && !GST_RATES.includes(f.gst_percent)) e.gst_percent = 'Choose 0, 5, 12, 18 or 28 per cent.'
   if (!isMoney(f.reorder_level)) e.reorder_level = 'Enter a quantity of 0 or more.'
+  if (needsPieceWeight(f, units)) {
+    const w = f.weight_per_piece_kg.trim()
+    if (!w) e.weight_per_piece_kg = 'Steel counted in Numbers needs what one piece weighs, in kg, for example 10.67.'
+    else if (!Number.isFinite(Number(w)) || Number(w) <= 0) e.weight_per_piece_kg = 'Enter a weight above 0 kg for one piece, for example 10.67.'
+  }
   return e
 }
 
