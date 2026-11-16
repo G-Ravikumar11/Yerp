@@ -11,7 +11,6 @@ TEAM_ROLES = ("owner", "admin", "viewer")
 # `level` is the seniority band; `role` is the person's place in the reporting
 # line. They are deliberately separate: a senior engineer (L4) and a team lead
 # can be the same band but different roles.
-#
 # L1 is the top of the ladder, as in the company's own org notes, so a HIGHER rank is a MORE senior level.
 EMPLOYEE_LEVELS = [
     {"code": "L1", "label": "L1 - HOD", "rank": 7},
