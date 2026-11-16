@@ -258,6 +258,7 @@ from app.models.subcontracts import (
     DBSubBillLine,
     DBMaterialRecovery,
 )
+from app.models.biometric import DBBiometricDevice, DBBiometricPunch  # noqa: F401
 from app.models.journals import DBJournal, DBJournalLine, DBSupplierDebitNote  # noqa: F401
 from app.models.payouts import (DBChequeBook, DBChequeSpoilt, DBExpenseClaim, DBPaymentBatch,  # noqa: F401
                                 DBPaymentBatchLine, DBPostDatedCheque)
