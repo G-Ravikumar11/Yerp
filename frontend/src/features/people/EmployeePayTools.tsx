@@ -46,9 +46,14 @@ function SettlementView({ id, endDate }: { id: number; endDate?: string }) {
               {s.parts.map((p) => (
                 <tr key={p.item}><td className="py-2 font-medium">{p.item}<div className="text-[12px] font-normal text-muted-foreground">{p.note}</div></td><td className="py-2 text-right tabular">{formatINR(p.amount)}</td></tr>
               ))}
-              <tr><td className="py-2 font-semibold">Total payable</td><td className="py-2 text-right font-display text-base font-semibold tabular">{formatINR(s.total)}</td></tr>
+              <tr><td className="py-2 font-semibold">{s.total < 0 ? 'Recoverable from the employee' : 'Total payable'}</td><td className="py-2 text-right font-display text-base font-semibold tabular">{formatINR(Math.abs(s.total))}</td></tr>
             </tbody>
           </table>
+          {(s.claims?.rows.length ?? 0) > 0 && (
+            <details className="mt-3 text-[13px]"><summary className="cursor-pointer text-muted-foreground">Unpaid expense claims</summary>
+              <ul className="mt-2 space-y-1">{s.claims.rows.map((r) => <li key={r.number}>{r.number} ({r.spent_on}): {r.head} - {formatINR(r.amount)}{r.with_salary ? ', was to go with the salary' : ''}</li>)}</ul>
+            </details>
+          )}
           {s.arrears.rows.length > 0 && (
             <details className="mt-3 text-[13px]"><summary className="cursor-pointer text-muted-foreground">Arrears, payslip by payslip</summary>
               <ul className="mt-2 space-y-1">{s.arrears.rows.map((r) => <li key={r.payslip}>{r.payslip} ({r.period_end}): paid on {formatINR(r.paid_on_salary)}, now {formatINR(r.salary_now)} - {formatINR(r.amount)}</li>)}</ul>

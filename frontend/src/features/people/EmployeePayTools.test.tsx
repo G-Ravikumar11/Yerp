@@ -18,8 +18,13 @@ const settlement = {
     { item: 'Leave encashment', amount: 5000, note: '5 unused day(s) at 1000 a day (basic / 26)' },
     { item: 'Gratuity', amount: 120000, note: '15/26 x 26000 x 8 year(s)' },
     { item: 'Arrears of salary', amount: 3000, note: '1 payslip(s) short after a backdated increment' },
+    { item: 'Unpaid expense claims', amount: 850, note: '1 approved claim(s): EC-0001' },
+    { item: 'Salary advance recovered', amount: -6000, note: 'Advance still held, Rs 6,000, taken back' },
   ],
-  total: 157545.45,
+  claims: { rows: [{ number: 'EC-0001', spent_on: '2026-03-02', head: 'Travel & conveyance', amount: 850, with_salary: false }], total: 850 },
+  advance: { held: 6000 },
+  total: 152395.45,
+  recoverable: 0,
 }
 const ledger = {
   year: 2026, enabled: true, balance: { annual_total: 12, annual_remaining: 9, sick_total: 6, sick_remaining: 6 },
@@ -64,7 +69,9 @@ describe('Settlement, tax and leave for one person', () => {
     expect(screen.getByText('15/26 x 26000 x 8 year(s)')).toBeTruthy()
     expect(screen.getByText(/7 year\(s\) completed/)).toBeTruthy()
     const total = screen.getByText('Total payable').closest('tr')!
-    expect(within(total).getByText(/1,57,545/)).toBeTruthy()
+    expect(within(total).getByText(/1,52,395/)).toBeTruthy()
+    expect(screen.getByText('Salary advance recovered')).toBeTruthy()
+    expect(screen.getByText('Unpaid expense claims', { selector: 'td' })).toBeTruthy()
     expect(screen.getByRole('link', { name: /pdf/i }).getAttribute('href')).toContain('/api/employees/7/full-and-final.pdf?last_day=2026-03-13')
   })
 

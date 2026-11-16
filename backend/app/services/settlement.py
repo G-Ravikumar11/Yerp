@@ -11,7 +11,14 @@
 "Last drawn basic" is the Basic of the company's salary structure on the last salary (40% unless HR changed it), or the
 whole salary for somebody paid without a structure. Dearness allowance is not kept separately here, so it is not added.
 
+    advance       taken back: the salary advance the person still holds (money paid to them on account, less what has come
+                  back), less what a payslip not yet released already recovers. Shown as a deduction
+    claims        added: approved expense claims not yet paid, including those queued to go with the salary; one
+                  already on a payslip is paid by that payslip and is not counted again
+
 Arrears are worked out on the salary and nothing else: PF, ESI and TDS on them are left for the payslip that pays them.
+The sheet is a calculation: it settles nothing. The advance and the claims are cleared as they are paid or recovered.
+A total below nothing is money the person owes the company, and is said so.
 """
 import calendar
 from datetime import date
@@ -120,6 +127,30 @@ def final_month(db, emp, last):
             "working_days": days["working_days"], "lop_days": days["lop_days"]}
 
 
+def advance_held(db, emp):
+    """The salary advance still out with the person, less what unreleased payslips already take back."""
+    from app.services import staff_advances
+    held = staff_advances.balance_for(db, emp.client_id, emp)
+    spoken_for = staff_advances.pending_recoveries(db, emp.client_id).get(
+        staff_advances.norm_name(staff_advances.employee_name(emp)), 0.0)
+    return max(0.0, money(held - spoken_for))
+
+
+def unpaid_claims(db, emp):
+    """Approved expense claims of the person with money still to pay and no payslip carrying them."""
+    from app.models.payouts import DBExpenseClaim
+    from app.services.payouts import claim_left
+    rows = []
+    for c in db.query(DBExpenseClaim).filter(DBExpenseClaim.client_id == emp.client_id, DBExpenseClaim.employee_id == emp.id,
+                                             DBExpenseClaim.status == "APPROVED", DBExpenseClaim.payslip_id.is_(None)
+                                             ).order_by(DBExpenseClaim.id).all():
+        left = claim_left(db, c)
+        if left > 0.009:
+            rows.append({"number": c.number, "spent_on": c.spent_on, "head": c.head, "amount": left,
+                         "with_salary": bool(c.pay_with_salary)})
+    return {"rows": rows, "total": money(sum(r["amount"] for r in rows))}
+
+
 def settle(db, emp, last_day=None):
     """The full and final settlement for somebody whose last day is `last_day` (their end date, unless given)."""
     last = _parse_date(last_day or emp.end_date or "")
@@ -134,6 +165,8 @@ def settle(db, emp, last_day=None):
     grat = gratuity(basic, start, last)
     arr = arrears(db, emp)
     encash = money(leave * day_pay)
+    advance = advance_held(db, emp)
+    claims = unpaid_claims(db, emp)
     parts = [
         {"item": "Salary for the final month", "amount": final["amount"],
          "note": ("Already paid on %s" % final["covered_by"]) if final["covered_by"] else
@@ -143,9 +176,16 @@ def settle(db, emp, last_day=None):
             inr(basic), grat["years_counted"], " (capped)" if grat.get("capped") else "")},
         {"item": "Arrears of salary", "amount": arr["total"], "note": "%d payslip(s) short after a backdated increment" % len(arr["rows"])
          if arr["rows"] else "None"},
+        {"item": "Unpaid expense claims", "amount": claims["total"],
+         "note": ("%d approved claim(s): %s" % (len(claims["rows"]), ", ".join(r["number"] for r in claims["rows"]))) if claims["rows"] else "None"},
+        {"item": "Salary advance recovered", "amount": -advance,
+         "note": ("Advance still held, %s, taken back" % inr(advance)) if advance else "No advance held"},
     ]
+    total = money(sum(p["amount"] for p in parts))
     return {"employee_id": emp.id, "last_day": last.isoformat(), "start_date": emp.start_date or "",
             "monthly_salary": money(salary), "last_basic": basic, "service": {"completed_years": grat["completed_years"],
                                                                                 "years_counted": grat["years_counted"]},
             "final_month": final, "leave": {"unused_days": leave, "day_pay": day_pay, "amount": encash},
-            "gratuity": grat, "arrears": arr, "parts": parts, "total": money(sum(p["amount"] for p in parts))}
+            "gratuity": grat, "arrears": arr, "claims": claims, "advance": {"held": advance}, "parts": parts, "total": total,
+            # Below nothing, the person owes the company: the advance outweighs what is due to them.
+            "recoverable": money(-total) if total < 0 else 0.0}

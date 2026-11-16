@@ -2110,8 +2110,8 @@ def _payroll_person(request, db, emp_id):
 
 @router.get("/api/employees/{emp_id}/full-and-final")
 def get_full_and_final(emp_id: int, request: Request, last_day: str = "", db: Session = Depends(get_read_db)):
-    """What is owed to somebody leaving: the final month, leave encashment, gratuity and arrears. A calculation; nothing
-    is saved or paid by asking."""
+    """What is owed to somebody leaving: the final month, leave encashment, gratuity, arrears and unpaid expense claims,
+    less the salary advance they still hold. A calculation; nothing is saved or paid by asking."""
     from app.services import settlement
     client, emp = _payroll_person(request, db, emp_id)
     try:
@@ -2149,7 +2149,8 @@ def full_and_final_pdf(emp_id: int, request: Request, last_day: str = "", db: Se
                                               ("Service", "%d year(s) completed" % s["service"]["completed_years"]),
                                               ("Last drawn basic", inr(s["last_basic"]))]},
         {"type": "table", "columns": [("Item", 55, "L"), ("Working", 90, "L"), ("Amount (Rs.)", 35, "R")],
-         "rows": [[p["item"], p["note"], inr(p["amount"])] for p in s["parts"]] + [["Total payable", "", inr(s["total"])]],
+         "rows": [[p["item"], p["note"], ("-" + inr(-p["amount"])) if p["amount"] < 0 else inr(p["amount"])] for p in s["parts"]]
+                 + [["Total payable" if s["total"] >= 0 else "Recoverable from the employee", "", inr(abs(s["total"]))]],
          "bold_rows": [len(s["parts"])]},
         {"type": "text", "style": "small", "text": "PF, ESI and tax on these amounts are deducted when they are paid."},
         {"type": "signatures", "boxes": [("Prepared by", ""), ("Authorised signatory", ""), ("Received by the employee", name)]},

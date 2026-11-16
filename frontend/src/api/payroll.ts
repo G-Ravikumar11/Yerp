@@ -261,8 +261,13 @@ export interface Settlement {
   gratuity: { eligible: boolean; amount: number; reason: string; years_counted: number }
   leave: { unused_days: number; day_pay: number; amount: number }
   arrears: { rows: { payslip: string; period_end: string; paid_on_salary: number; salary_now: number; amount: number }[]; total: number }
+  /** Approved expense claims not yet paid (added), and the salary advance still held (taken back). */
+  claims: { rows: { number: string; spent_on: string; head: string; amount: number; with_salary: boolean }[]; total: number }
+  advance: { held: number }
   parts: SettlementPart[]
+  /** Below nothing when the advance outweighs what is due: `recoverable` is then what the person owes. */
   total: number
+  recoverable: number
 }
 /** What is owed to somebody leaving. A calculation: nothing is saved or paid by asking. */
 export const useSettlement = (id: number, lastDay: string) =>
