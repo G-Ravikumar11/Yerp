@@ -73,6 +73,7 @@ export const SCREENS: Screen[] = [
   { path: '/money/dashboard', Component: page(() => import('@/features/money/FinanceDashboardPage')) },
   { path: '/money/expenses', Component: page(() => import('@/features/money/ExpensesPage')) },
   { path: '/money/recurring', Component: page(() => import('@/features/money/RecurringPage')) },
+  { path: '/money/loans', Component: page(() => import('@/features/money/LoansPage')) },
   { path: '/money/cash-flow', Component: page(() => import('@/features/money/CashFlowPage')) },
   { path: '/money/owed', Component: page(() => import('@/features/owed/OwedPage')) },
   { path: '/money/ledgers', Component: page(() => import('@/features/ledger/LedgerPage')) },

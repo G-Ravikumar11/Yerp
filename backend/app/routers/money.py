@@ -791,6 +791,10 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
         owed = money(worth - already_settled(db, client.id, doc_type, doc, worth))
         if owed <= 0:
             raise HTTPException(409, "%s is already fully settled." % doc.number)
+        if doc_type == "loan_instalment" and abs(amount - owed) > 0.009:
+            # The bank takes an EMI whole. Penal interest or a charge is its own expense voucher; what the bank split differently is
+            # put right on the instalment before it is paid.
+            raise HTTPException(400, "An instalment is paid in full: %s. Change its principal and interest on the loan first if the bank charged otherwise." % inr(owed))
         if direction == "OUT" and party_type == "contractor":
             # Nobody is paid whose labour licence, PF, ESI or insurance has lapsed - the Master alone may, saying why.
             from app.services.subcontract_rules import compliance_gate

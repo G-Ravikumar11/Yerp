@@ -391,6 +391,14 @@ def _doc_for(db, client_id, doc_type, doc_id):
         if c.status not in ("APPROVED", "SETTLED"):
             raise HTTPException(409, "%s is %s. A claim is paid once it is approved." % (c.number, (c.status or "").lower()))
         return (c, money((c.amount or 0) - (c.against_advance or 0)), "OUT", "staff", c.employee_name, c.employee_id, c.job_id)
+    if doc_type == "loan_instalment":
+        from app.services.loans import instalment_or_404, loan_or_404
+        i = instalment_or_404(db, client_id, doc_id)
+        return (i, money((i.principal or 0) + (i.interest or 0)), "OUT", "other", loan_or_404(db, client_id, i.loan_id).lender, None, None)
+    if doc_type == "loan_disbursal":
+        from app.services.loans import loan_or_404
+        l = loan_or_404(db, client_id, doc_id)
+        return (l, money(l.principal), "IN", "other", l.lender, None, None)
     if doc_type == "retention_release":
         r = release_or_404(db, client_id, doc_id)
         if r.status not in ("CERTIFIED", "PAID"):
@@ -442,6 +450,8 @@ def _settle_doc(db, client_id, doc_type, doc, worth, on):
             doc.status, doc.paid_at = "PAID", on
         elif not full and doc.status == "PAID":
             doc.status, doc.paid_at = "CERTIFIED", ""
+    elif doc_type == "loan_instalment":
+        doc.status, doc.paid_on = ("PAID", on) if full else ("DUE", "")
     elif doc_type == "expense_claim":
         if full and doc.status == "APPROVED":
             doc.status = "SETTLED"
@@ -497,6 +507,14 @@ def _doc_for_any(db, client_id, doc_type, doc_id):
     if doc_type == "retention_release":
         r = release_or_404(db, client_id, doc_id)
         return r, money(r.net_amount)
+    if doc_type == "loan_instalment":
+        from app.services.loans import instalment_or_404
+        i = instalment_or_404(db, client_id, doc_id)
+        return i, money((i.principal or 0) + (i.interest or 0))
+    if doc_type == "loan_disbursal":
+        from app.services.loans import loan_or_404
+        l = loan_or_404(db, client_id, doc_id)
+        return l, money(l.principal)
     if doc_type == "expense_claim":
         from app.services.payouts import claim_or_404
         c = claim_or_404(db, client_id, doc_id)
@@ -640,7 +658,7 @@ def profit_and_loss(db, client, date_from="", date_to=""):
                                       "revenue_by_source": {"client_bills": 0.0, "invoices": 0.0, "other_income": 0.0},
                                       "expenses_by_source": {"supplier_bills": 0.0, "subcontractor_bills": 0.0,
                                                              "expense_vouchers": 0.0, "staff_claims": 0.0,
-                                                             "adjustments": 0.0}})
+                                                             "adjustments": 0.0, "loan_interest": 0.0}})
 
     def add(cur, side, source, on, amount):
         if not amount or not inside(on):
@@ -683,6 +701,10 @@ def profit_and_loss(db, client, date_from="", date_to=""):
     from app.services.payouts import DBExpenseClaim, LIVE_CLAIMS
     for c in db.query(DBExpenseClaim).filter(DBExpenseClaim.client_id == client.id, DBExpenseClaim.status.in_(LIVE_CLAIMS)).all():
         add(base, "expenses", "staff_claims", (c.spent_on or "")[:10], money(c.amount))
+    # The interest part of each instalment paid: the cost of borrowing, in the month it was paid. The principal repays the loan and is no expense.
+    from app.services.loans import interest_paid_entries
+    for on, interest in interest_paid_entries(db, client.id):
+        add(base, "expenses", "loan_interest", on[:10], interest)
     for j, l in live_lines(db, client.id):
         if l.kind == "head" and l.head in _EXP:
             add(base, "expenses", "adjustments", (j.voucher_date or "")[:10], money((l.debit or 0) - (l.credit or 0)))
@@ -763,6 +785,8 @@ def balance_sheet(db, client):
                                                    models.DBSubBill.status.in_(("CERTIFIED", "PAID"))).all())
         - released("contractor")))
     profit = profit_and_loss(db, client)
+    from app.services.loans import loans_outstanding
+    loans_owed = loans_outstanding(db, client.id)
 
     def figures(inv_list, cur):
         in_base = cur == base
@@ -775,7 +799,7 @@ def balance_sheet(db, client):
                            "accounts_receivable": money(invoiced_owed + owed_to_us),
                            "retention_receivable": held_by_clients, "advances_paid": advances_paid})
             liabilities = {"accounts_payable": we_owe, "retention_payable": held_from_contractors,
-                           "advances_received": advances_received}
+                           "advances_received": advances_received, "loans": loans_owed}
         else:
             liabilities = {"accounts_payable": 0.0}
         total_assets = money(collected + sum(v for k, v in assets.items()

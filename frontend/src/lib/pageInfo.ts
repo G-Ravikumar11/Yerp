@@ -92,6 +92,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/money/ledgers': 'Payments and ledgers: what has been paid to or received from each party, and the running balance.',
   '/money/approvals': 'Payments waiting for a decision: accounts ask, the accounts head checks, and the MD releases those over the limit. Once approved, accounts pay them here.',
   '/money/owed': 'What you have to pay, what you have to receive and the retention held, with ageing and a project filter. Accounts pay the approved bills here; with payment approval on, the accounts head checks first and the MD releases the large ones.',
+  '/money/loans': 'Loans and their EMIs: what was borrowed, what is left, the next instalment. An EMI is paid like a bill; the books put the principal on the loan and the interest on expenses.',
   '/money/recurring': 'Rent, internet, hire and insurance, set once: on its day each month a payment request is raised for approval and paid from Payment Approvals. Pause, change or end one here.',
   '/money/expenses': 'Every day’s spend - diesel, transport, sundries, rentals - entered by the site from its cash box or by accounts, by category, project and status. The Site cash boxes tab is each site’s box.',
   '/money/advances': 'Every advance paid ahead of a bill, site by site: mobilisation advances to contractors, money paid on account to suppliers and contractors, and staff advances and the cash staff hold for the site.',

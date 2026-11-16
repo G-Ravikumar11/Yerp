@@ -37,6 +37,7 @@ import re
 from xml.sax.saxutils import escape, quoteattr
 
 from app import models
+from app.constants.money import LOAN_INTEREST_HEAD as INTEREST_HEAD
 from app.core.currency import money
 from app.core.gst import GST_STATES, our_state, state_from_gstin, supply_state_for_job
 from app.core.tenant_settings import tenant_setting
@@ -165,6 +166,7 @@ class Books:
         self._cross_charges()
         self._claims()
         self._party_openings()
+        self._loans()
         self.vouchers.sort(key=lambda v: (v["date"], v["type"], v["number"]))
 
     # --- naming ---
@@ -200,6 +202,20 @@ class Books:
         group = "Indirect Incomes" if income else ("Direct Expenses" if name in DIRECT_HEADS else "Indirect Expenses")
         self.ledgers.setdefault(name, (group, True))
         return name
+
+    def loan_ledger(self, loan):
+        """The loan's own ledger, under Secured Loans or Unsecured Loans."""
+        from app.services.loans import ledger_group, ledger_name
+        name = ledger_name(loan)
+        self.ledgers.setdefault(name, (ledger_group(loan), False))
+        return name
+
+    def _loan_rows(self):
+        if not hasattr(self, "_loan_cache"):
+            from app.models.loans import DBLoan, DBLoanInstalment
+            self._loan_cache = ({l.id: l for l in self.db.query(DBLoan).filter(DBLoan.client_id == self.client.id).all()},
+                                {i.id: i for i in self.db.query(DBLoanInstalment).filter(DBLoanInstalment.client_id == self.client.id).all()})
+        return self._loan_cache
 
     def centre(self, job_id):
         j = self.jobs.get(job_id)
@@ -280,6 +296,20 @@ class Books:
                 there = self.account(other.account_id if other else None, e.mode)
                 self.add("Contra", e.number, e.paid_on, "Transfer%s%s" % (ref, (". " + e.note) if e.note else ""),
                          [(there, amt), (here, -amt)], remote)
+                continue
+            if e.doc_type in ("loan_instalment", "loan_disbursal"):
+                loans, instalments = self._loan_rows()
+                inst = instalments.get(e.doc_id) if e.doc_type == "loan_instalment" else None
+                loan = loans.get(inst.loan_id if inst else e.doc_id)
+                if loan is None:
+                    self.warnings.append("%s was paid against a loan that is no longer on the books and was left out." % e.number)
+                    continue
+                if inst is None:           # the money received: the bank on one side, the loan on the other
+                    self.add("Receipt", e.number, e.paid_on, "Loan received - %s%s" % (loan.lender, ref), [(here, amt), (self.loan_ledger(loan), -amt)], remote)
+                else:                      # an EMI leaves the bank whole, and is split in the books: principal to the loan, the rest is interest
+                    principal = min(amt, money(inst.principal))
+                    self.add("Payment", e.number, e.paid_on, "EMI %s - %s%s" % (inst.number, loan.lender, ref),
+                             [(self.loan_ledger(loan), principal), (self.head(INTEREST_HEAD), money(amt - principal)), (here, -amt)], remote)
                 continue
             if e.doc_type in ("expense", "income"):
                 ledger = self.head(e.head, income=e.doc_type == "income")
@@ -516,6 +546,17 @@ class Books:
             self.add("Journal", number_of(o), o.as_on, "Opening balance - %s: %s%s" % (o.party_name, wording(o.party_type, o.side), (". " + o.note) if o.note else ""),
                      [(party, amt if debit_party else -amt, *ref), (offset, -amt if debit_party else amt)],
                      "yerp-%d-opening-%d" % (self.client.id, o.id), o.job_id)
+
+    def _loans(self):
+        """A loan that was already running when these books began: what was left of it, as an opening journal against the one offset
+        ledger. (A loan taken in these books has its money received as an ordinary receipt, and its instalments as payments.)"""
+        from app.services.loans import ledger_name
+        for loan in self._loan_rows()[0].values():
+            if not loan.opening or not (self.date_from <= loan.taken_on <= self.date_to):
+                continue
+            amt = money(loan.principal)
+            self.add("Journal", "%s/OPEN" % loan.number, loan.taken_on, "Opening balance of loan %s - %s" % (loan.number, ledger_name(loan)[7:]),
+                     [(self.std("opening_balances"), amt), (self.loan_ledger(loan), -amt)], "yerp-%d-loanopen-%d" % (self.client.id, loan.id))
 
     def _claims(self):
         """Staff expense claims, once approved: the expense on its project, owed to the member of staff."""
