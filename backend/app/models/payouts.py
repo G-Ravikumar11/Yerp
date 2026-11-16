@@ -131,6 +131,6 @@ class DBExpenseClaim(Base):
     # Paid with the salary: queued for the person's next payslip (pay_with_salary), then carried on it as a non-taxable
     # reimbursement (payslip_id, salary_amount) and settled by an adjustment payment when it is released (salary_entry_id).
     pay_with_salary = Column(Boolean, default=False)
-    payslip_id = Column(Integer, nullable=True, index=True)
+    payslip_id = Column(Integer, nullable=True)        # no index: a column added to a table that already exists cannot carry one (the upgrade adds the bare column)
     salary_amount = Column(Float, default=0.0)
     salary_entry_id = Column(Integer, nullable=True)
