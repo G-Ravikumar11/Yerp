@@ -1,11 +1,15 @@
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
-import { Button, Select, Stat, StatGrid } from '@/components/ui'
-import { PARTY_LABEL, useParties, type Party } from '@/api/ledger'
+import { Button, ConfirmDialog, Select, Stat, StatGrid } from '@/components/ui'
+import { deleteOpening, ledgerKeys, PARTY_LABEL, useOpenings, useParties, type Opening, type Party } from '@/api/ledger'
+import { bookKeys } from '@/api/books'
+import { useAction } from '@/lib/mutate'
+import { formatDate } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { cn, compactINR, formatINR } from '@/lib/utils'
 import { OnAccountModal } from './OnAccountModal'
+import { OpeningModal } from './OpeningModal'
 import { StatementModal } from './StatementModal'
 
 /** Every party we deal with, what has been billed, what has moved, and who owes whom. */
@@ -15,6 +19,7 @@ export function PartiesTab() {
   const q = useParties(type)
   const [onAccount, setOnAccount] = useState<'IN' | 'OUT' | null>(null)
   const [statement, setStatement] = useState<Party | null>(null)
+  const [opening, setOpening] = useState<Opening | 'new' | null>(null)
   const s = q.data?.summary
 
   const columns: TableColumn<Party>[] = [
@@ -59,10 +64,49 @@ export function PartiesTab() {
             <Button variant="outline" size="sm" onClick={() => setOnAccount('OUT')}><Plus /> Advance / payment on account</Button>
           </>
         )}
+        {can('accounts.manage') && <Button variant="outline" size="sm" onClick={() => setOpening('new')}><Plus /> Opening balance</Button>}
       </div>
       <DataTable label="Parties" rows={q.data?.parties ?? []} columns={columns} rowKey={(p) => `${p.party_type}-${p.party}`} loading={q.isPending} empty="No bills and no money moved yet." />
+      <OpeningBalances onEdit={setOpening} />
+      <OpeningModal target={opening} onClose={() => setOpening(null)} />
       <OnAccountModal direction={onAccount} onClose={() => setOnAccount(null)} />
       <StatementModal target={statement ? { type: statement.party_type, party: statement.party } : null} onClose={() => setStatement(null)} />
     </>
+  )
+}
+
+/** The opening balances entered, so a wrong one is found and changed, not entered a second time. */
+function OpeningBalances({ onEdit }: { onEdit: (o: Opening) => void }) {
+  const { can } = useSession()
+  const q = useOpenings()
+  const [removing, setRemoving] = useState<Opening | null>(null)
+  const remove = useAction((id: number) => deleteOpening(id), { invalidate: [ledgerKeys.all, bookKeys.all, ['dashboard']], onSuccess: () => setRemoving(null) })
+  const rows = q.data?.openings ?? []
+  const edit = can('accounts.manage')
+  const columns: TableColumn<Opening>[] = [
+    { id: 'no', header: 'No.', cell: (o) => <span className="font-mono text-[13px]">{o.number}</span> },
+    { id: 'party', header: 'Party', sort: (o) => o.party, cell: (o) => <div className="font-medium">{o.party}<div className="text-xs font-normal text-muted-foreground">{PARTY_LABEL[o.party_type] ?? o.party_type}{o.project ? ` - ${o.project}` : ''}</div></div> },
+    { id: 'means', header: 'Balance', cell: (o) => <div>{o.means}<div className="text-xs text-muted-foreground">{o.note}</div></div> },
+    { id: 'amount', header: 'Amount', align: 'right', sort: (o) => o.amount, cell: (o) => <span className="tabular font-semibold">{formatINR(o.amount)}</span> },
+    { id: 'on', header: 'As on', hideBelow: 'md', sort: (o) => o.as_on, cell: (o) => formatDate(o.as_on) },
+    ...(edit ? [{
+      id: 'act', header: '', align: 'right' as const, cell: (o: Opening) => (
+        <div className="flex justify-end gap-1">
+          <Button size="icon-sm" variant="ghost" aria-label={`Edit ${o.number}`} onClick={() => onEdit(o)}><Pencil /></Button>
+          <Button size="icon-sm" variant="ghost" aria-label={`Delete ${o.number}`} onClick={() => setRemoving(o)}><Trash2 /></Button>
+        </div>
+      ),
+    }] : []),
+  ]
+  if (!q.isPending && !rows.length) return null
+  return (
+    <section aria-label="Opening balances" className="mt-8">
+      <h2 className="text-base font-semibold">Opening balances</h2>
+      <p className="mb-3 text-[13px] text-muted-foreground">What each party owed, or was owed, on the day the books here begin. Each is the first line of the party's ledger and goes to Tally as an opening journal. Change a wrong one; do not add a second.</p>
+      <DataTable label="Opening balances" rows={rows} columns={columns} rowKey={(o) => o.id} loading={q.isPending} />
+      <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title={`Remove ${removing?.number ?? ''}?`} tone="danger" confirmLabel="Remove" loading={remove.isPending}
+        description={removing ? `${removing.party}'s balance will no longer start from ${formatINR(removing.amount)}.` : undefined}
+        onConfirm={() => { if (removing) remove.mutate(removing.id) }} />
+    </section>
   )
 }

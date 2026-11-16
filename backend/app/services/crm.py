@@ -487,6 +487,8 @@ def _ledger_rows(db, client_id):
     from app.services.payouts import claim_ledger_rows
     rows.extend(claim_ledger_rows(db, client_id))
     rows.extend(debit_note_ledger_rows(db, client_id))
+    from app.services.party_openings import opening_ledger_rows
+    rows.extend(opening_ledger_rows(db, client_id))
 
     for e in db.query(models.DBMoneyEntry).filter(
             models.DBMoneyEntry.client_id == client_id,

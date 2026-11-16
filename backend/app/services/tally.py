@@ -79,6 +79,7 @@ LEDGERS = {
     "unassigned_bank": ("Bank (account not recorded)", "Bank Accounts", False),
     "cash": ("Cash", "Cash-in-Hand", False),
     "inter_site_material": ("Material Transferred Between Sites", "Direct Expenses", True),
+    "opening_balances": ("Opening Balance Adjustment", "Suspense A/c", False),
 }
 LABELS = {
     "sales": "Work billed to clients (RA bills)", "output_cgst": "Output CGST", "output_sgst": "Output SGST",
@@ -95,6 +96,7 @@ LABELS = {
     "salary_tds": "TDS on salaries", "pf_payable": "PF owed", "esi_payable": "ESI owed", "pt_payable": "Professional tax owed",
     "salary_deductions": "Other deductions from salaries",
     "inter_site_material": "Material moved from one site to another",
+    "opening_balances": "The other side of parties' opening balances",
 }
 # GST ledgers carry their duty head in Tally, so its GST reports pick them up.
 GST_HEADS = {"output_cgst": "Central Tax", "output_sgst": "State Tax", "output_igst": "Integrated Tax",
@@ -162,6 +164,7 @@ class Books:
         self._debit_notes()
         self._cross_charges()
         self._claims()
+        self._party_openings()
         self.vouchers.sort(key=lambda v: (v["date"], v["type"], v["number"]))
 
     # --- naming ---
@@ -494,6 +497,25 @@ class Books:
                 t.number, frm.name if frm else "the central store", to.name if to else "the central store"),
                 [(ledger, amt, "", "", self.centre(c.to_project_id)), (ledger, -amt, "", "", self.centre(c.from_project_id))],
                 "yerp-%d-crosscharge-%d" % (self.client.id, c.id))
+
+    def _party_openings(self):
+        """A party's balance on the day the books begin, as a journal against one offset ledger: how a ledger's opening is
+        carried into a new set of books. A client owing us, or a supplier we paid ahead, is a debit to the party; a client's
+        advance, or a supplier we owe, a credit. The bill reference opens it in the party's bill-wise outstanding, where it
+        is paid off like any bill."""
+        from app.models.party_openings import DBPartyOpening
+        from app.services.party_openings import number_of, wording
+        for o in self.db.query(DBPartyOpening).filter(DBPartyOpening.client_id == self.client.id).order_by(DBPartyOpening.as_on, DBPartyOpening.id).all():
+            if not (self.date_from <= o.as_on <= self.date_to):
+                continue
+            amt = money(o.amount)
+            debit_party = (o.party_type == "client") == (o.side == "owed")
+            ref = ("Opening balance", "New Ref") if o.side == "owed" else ("Opening advance", "Advance")
+            party = self.party(o.party_name, o.party_type)
+            offset = self.std("opening_balances")
+            self.add("Journal", number_of(o), o.as_on, "Opening balance - %s: %s%s" % (o.party_name, wording(o.party_type, o.side), (". " + o.note) if o.note else ""),
+                     [(party, amt if debit_party else -amt, *ref), (offset, -amt if debit_party else amt)],
+                     "yerp-%d-opening-%d" % (self.client.id, o.id), o.job_id)
 
     def _claims(self):
         """Staff expense claims, once approved: the expense on its project, owed to the member of staff."""

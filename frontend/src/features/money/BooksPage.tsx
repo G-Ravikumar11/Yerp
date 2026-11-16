@@ -6,18 +6,11 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
 import { Badge, Button, Card, Field, Input, Skeleton, Stat, StatGrid, Tabs } from '@/components/ui'
 import { dayBookXlsx, trialBalanceXlsx, useDayBook, useTrialBalance, type DayVoucher, type TbLedger } from '@/api/books'
-import { formatDate, today } from '@/lib/format'
+import { financialYearStart, formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 
 type Tab = 'trial' | 'day'
 const TABS: Tab[] = ['trial', 'day']
-
-/** 1 April of the financial year today is in. */
-function yearStart() {
-  const d = new Date()
-  const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1
-  return `${y}-04-01`
-}
 
 /** A day before or after a yyyy-mm-dd one. */
 function shift(iso: string, days: number) {
@@ -55,7 +48,7 @@ function Warnings({ list }: { list: string[] }) {
 }
 
 function TrialBalanceTab() {
-  const [from, setFrom] = useState(yearStart())
+  const [from, setFrom] = useState(financialYearStart())
   const [to, setTo] = useState(today())
   const q = useTrialBalance(from, to)
   const r = q.data

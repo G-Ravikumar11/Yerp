@@ -21,6 +21,12 @@ export function formatQty(value: number | null | undefined, max = 3): string {
 /** Today's date on this device's clock, as yyyy-mm-dd. (The UTC date is yesterday's for the first hours of an Indian morning.) */
 export const today = () => daysAgo(0)
 
+/** 1 April of the financial year today is in (the Indian financial year runs April to March), as yyyy-mm-dd. */
+export function financialYearStart() {
+  const d = new Date()
+  return `${d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1}-04-01`
+}
+
 /** The date `n` days before today on this device's clock, as yyyy-mm-dd. */
 export const daysAgo = (n: number) => {
   const d = new Date()
