@@ -56,7 +56,7 @@ class DBEmployee(Base):
     # permission keys; a denial beats a grant.
     extra_permissions = Column(Text, default="")
     denied_permissions = Column(Text, default="")
-    # Seniority band (L1..L8). Kept separate from `role`, which describes what
+    # Seniority band (L1..L19). Kept separate from `role`, which describes what
     # the person does in the reporting line, not how senior they are.
     level = Column(String, default="", index=True)
     employment_type = Column(String, default="full_time")

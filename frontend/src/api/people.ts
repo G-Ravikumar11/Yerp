@@ -201,7 +201,7 @@ export const useAllSites = () => useQuery(allSitesQuery())
 export const departmentsQuery = () => ({ queryKey: k('departments'), queryFn: () => get<Department[]>('/api/departments') })
 export const useDepartments = () => useQuery(departmentsQuery())
 /** Levels, roles, access levels and portals. They are fixed in the code, so they are read once and kept, and live outside the People keys: a save there does not read them again. */
-export const hrCatalogueQuery = () => ({ queryKey: ['hr-catalogue', 'v3'], queryFn: () => get<HrCatalogue>('/api/hr/levels'), staleTime: Infinity, gcTime: Infinity })
+export const hrCatalogueQuery = () => ({ queryKey: ['hr-catalogue', 'v4'], queryFn: () => get<HrCatalogue>('/api/hr/levels'), staleTime: Infinity, gcTime: Infinity })
 export const useHrCatalogue = () => useQuery(hrCatalogueQuery())
 export const hrStatsQuery = () => ({ queryKey: k('stats'), queryFn: () => get<{ total_employees: number; active: number; onboarding: number; offboarding: number; terminated: number; departments: number }>('/api/hr/stats') })
 export const useHrStats = () => useQuery(hrStatsQuery())

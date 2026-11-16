@@ -18,7 +18,7 @@ class DBApprovalChain(Base):
     entity_id = Column(Integer, nullable=False, index=True)    # FK → invoices.id / bills.id
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)  # who created
     approver_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)  # who approves
-    level = Column(String, default="")       # approver's level (L1-L8)
+    level = Column(String, default="")       # approver's level (L1-L19)
     step = Column(Integer, default=1)        # step number in chain
     status = Column(String, default="pending", index=True)  # pending / approved / rejected
     notes = Column(Text, default="")
