@@ -135,6 +135,8 @@ HR_PAYROLL_COLUMNS = (
     ("payslips", "paid_days", "FLOAT DEFAULT 0"), ("payslips", "professional_tax", "FLOAT DEFAULT 0"),
     ("payslips", "employer_pf", "FLOAT DEFAULT 0"), ("payslips", "employer_epf", "FLOAT DEFAULT 0"),
     ("payslips", "employer_eps", "FLOAT DEFAULT 0"), ("payslips", "employer_esi", "FLOAT DEFAULT 0"),
+    # A salary advance recovered on the payslip, and the adjustment receipt written for it on release.
+    ("payslips", "advance_recovery", "FLOAT DEFAULT 0"), ("payslips", "advance_entry_id", "INTEGER"),
     ("attendance_settings", "late_threshold", "INTEGER DEFAULT 3"),
     ("attendance_settings", "late_penalty_lop", "FLOAT DEFAULT 0.5"),
     ("attendance_settings", "auto_email_on_approval", "BOOLEAN DEFAULT FALSE"),

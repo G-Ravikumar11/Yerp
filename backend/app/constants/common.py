@@ -39,7 +39,7 @@ ORDINARY_HOURS_PER_MONTH = 160
 
 PAYSLIP_PAY_INPUTS = (
     "hours_worked", "overtime_hours", "overtime_rate", "basic_salary",
-    "bonus", "allowances", "tax_amount", "insurance", "retirement", "other_deductions",
+    "bonus", "allowances", "tax_amount", "insurance", "retirement", "other_deductions", "advance_recovery",
 )
 PAYSLIP_META_FIELDS = ("period_start", "period_end", "pay_date", "notes", "status")
 

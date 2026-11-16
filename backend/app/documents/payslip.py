@@ -85,9 +85,12 @@ def layout(p):
             deductions.append(("Prof Tax", p["professional_tax"]))
         if p.get("tax_amount"):
             deductions.append(("TDS Deduction", p["tax_amount"]))
+        if p.get("advance_recovery"):
+            deductions.append(("Salary Advance", p["advance_recovery"]))
     else:
         deductions = [
-            ("PF", p.get("retirement")), ("ESI", p.get("insurance")), ("Prof Tax", p.get("professional_tax") or None), ("Salary Advance", None),
+            ("PF", p.get("retirement")), ("ESI", p.get("insurance")), ("Prof Tax", p.get("professional_tax") or None),
+            ("Salary Advance", p.get("advance_recovery") or None),
             ("TDS Deduction", p.get("tax_amount")), ("Loss Of Pay", None), ("Other Deductions", p.get("other_deductions")),
         ]
     if (p.get("standing_deduction") or 0) > 0:
@@ -297,7 +300,7 @@ def register_columns(payloads):
                 add(ded, name)
     for name in ("Overtime", "Bonus"):
         add(earn, name)
-    for name in ("Prof Tax", "TDS Deduction", "Standing Deduction"):
+    for name in ("Prof Tax", "Salary Advance", "TDS Deduction", "Standing Deduction"):
         add(ded, name)
     return LEADING_COLUMNS + INFO_COLUMNS + earn + ded + TRAILING_COLUMNS
 
@@ -315,6 +318,7 @@ def register_row(p, columns=None):
             cells[line["name"]] = round(cells.get(line["name"], 0) + float(line["amount"] or 0), 2)
         cells["TDS Deduction"] = p.get("tax_amount") or None
         cells["Prof Tax"] = p.get("professional_tax") or None
+        cells["Salary Advance"] = p.get("advance_recovery") or None
         cells["Salary Per Month."] = p.get("monthly_salary")
     else:
         for label, value in lay["earnings"] + lay["deductions"]:

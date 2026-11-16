@@ -4,6 +4,7 @@ import { Badge, Button, ConfirmDialog, Modal, NumField, Skeleton } from '@/compo
 import { deletePayslip, emailPayslip, markPaid, payKeys, payslipFile, payslipTone, reapplyStructure, reopenPayslip, savePayslipLines, usePayslip } from '@/api/payroll'
 import { useAction } from '@/lib/mutate'
 import { formatDate } from '@/lib/format'
+import { formatINR } from '@/lib/utils'
 import { payslipHtml, printPayslip } from './print'
 
 export function PayslipModal({ id, onClose }: { id: number | null; onClose: () => void }) {
@@ -29,6 +30,11 @@ export function PayslipModal({ id, onClose }: { id: number | null; onClose: () =
             {p.sent && <Badge tone="info">Emailed</Badge>}
             <span className="text-muted-foreground">{p.employee.job_title}{p.employee.department_name && ` - ${p.employee.department_name}`} - pay date {formatDate(p.pay_date) || 'not set'}</span>
           </div>
+          {!!p.advance_recovery && (
+            <p role="status" className="mb-3 rounded-lg bg-muted/50 p-3 text-[13px]">
+              Salary advance taken back: <strong>{formatINR(p.advance_recovery)}</strong>. {p.advance_entry_id ? 'The adjustment receipt that reduces their advance was written when this payslip was marked paid.' : 'The adjustment receipt that reduces their advance is written when this payslip is marked paid.'}
+            </p>
+          )}
           <iframe title={`Payslip ${p.number}`} srcDoc={payslipHtml(p)} className="h-[620px] w-full rounded-lg border border-border bg-white" />
           {!!p.lines?.length && p.status !== 'Paid' && (
             <section aria-label="Pay components" className="mt-5 rounded-lg border border-border p-4">

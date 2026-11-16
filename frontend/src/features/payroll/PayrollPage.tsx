@@ -61,6 +61,7 @@ export default function PayrollPage() {
     { id: 'pt', header: 'PT', hideBelow: 'xl', align: 'right', cell: (p) => formatINR(p.professional_tax ?? 0) },
     { id: 'lop', header: 'LOP days', hideBelow: 'lg', align: 'right', sort: (p) => p.lop_days ?? 0, cell: (p) => (p.working_days ? p.lop_days ?? 0 : '-') },
     { id: 'days', header: 'Paid days', hideBelow: 'lg', align: 'right', cell: (p) => (p.working_days ? `${p.paid_days ?? 0} / ${p.working_days}` : '-') },
+    { id: 'adv', header: 'Advance taken back', hideBelow: 'xl', align: 'right', sort: (p) => p.advance_recovery ?? 0, cell: (p) => (p.advance_recovery ? formatINR(p.advance_recovery) : '-') },
     { id: 'net', header: 'Net pay', align: 'right', sort: (p) => p.net_pay, cell: (p) => <strong>{formatINR(p.net_pay)}</strong> },
     { id: 'status', header: 'Status', cell: (p) => <div className="flex gap-1.5"><Badge tone={payslipTone(p.status)} dot>{p.status}</Badge>{p.sent && p.status.toLowerCase() !== 'sent' && <Badge tone="info">Emailed</Badge>}{p.month_status === 'Locked' && <Badge tone="neutral">Locked</Badge>}</div> },
   ]

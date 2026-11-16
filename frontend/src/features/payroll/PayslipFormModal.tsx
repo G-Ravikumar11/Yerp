@@ -24,7 +24,7 @@ function Form({ employeeId, onClose }: { employeeId?: number; onClose: () => voi
   const [start, setStart] = useState(monthStart())
   const [end, setEnd] = useState(monthEnd())
   const [payDate, setPayDate] = useState(today())
-  const [f, setF] = useState({ basic: 0, hours: 0, otHours: 0, otRate: 0, bonus: 0, allow: 0, insurance: 0, retirement: 0, other: 0 })
+  const [f, setF] = useState({ basic: 0, hours: 0, otHours: 0, otRate: 0, bonus: 0, allow: 0, insurance: 0, retirement: 0, other: 0, advance: 0 })
   const [notes, setNotes] = useState('')
   const [clash, setClash] = useState('')
   const details = usePayDetails(emp ? Number(emp) : null, start, end)
@@ -43,9 +43,11 @@ function Form({ employeeId, onClose }: { employeeId?: number; onClose: () => voi
   const tax = d?.tax_rate ? Math.round(gross * (d.tax_rate / 100) * 100) / 100 : d?.tax_amount ?? 0
   // PF, ESI and professional tax are the law's: the server works them out and the preview follows it. A PF or ESI amount typed here stands in for its own.
   const statutory = structured ? (d?.professional_tax ?? 0) : (f.retirement || d?.provident_fund || 0) + (f.insurance || d?.state_insurance || 0) + (d?.professional_tax ?? 0)
-  const deductions = (d?.deductions ?? 0) + (structured ? made('deduction') : f.other) + statutory
+  // The salary advance the person holds (money paid to them on account): this payslip may take back up to that much.
+  const advanceHeld = d?.advance_balance ?? 0
+  const deductions = (d?.deductions ?? 0) + (structured ? made('deduction') : f.other) + statutory + f.advance
   const net = Math.round((gross - tax - deductions) * 100) / 100
-  const body = () => ({ employee_id: Number(emp), period_start: start, period_end: end, pay_date: payDate, hours_worked: f.hours, basic_salary: f.basic, overtime_hours: f.otHours, overtime_rate: f.otRate, bonus: f.bonus, allowances: f.allow, insurance: f.insurance, retirement: f.retirement, other_deductions: f.other, notes })
+  const body = () => ({ employee_id: Number(emp), period_start: start, period_end: end, pay_date: payDate, hours_worked: f.hours, basic_salary: f.basic, overtime_hours: f.otHours, overtime_rate: f.otRate, bonus: f.bonus, allowances: f.allow, insurance: f.insurance, retirement: f.retirement, other_deductions: f.other, advance_recovery: f.advance, notes })
   const save = useAction((overlap: boolean) => createPayslip(body(), overlap), {
     invalidate: [payKeys.all, ['people']],
     success: (r) => r.message || 'Payslip created',
@@ -72,6 +74,11 @@ function Form({ employeeId, onClose }: { employeeId?: number; onClose: () => voi
         {!structured && <Field label="Insurance" htmlFor="ps-ins"><NumField id="ps-ins" value={f.insurance} onValue={set('insurance')} /></Field>}
         {!structured && <Field label="Retirement / PF" htmlFor="ps-ret"><NumField id="ps-ret" value={f.retirement} onValue={set('retirement')} /></Field>}
         {!structured && <Field label="Other deductions" htmlFor="ps-oth2"><NumField id="ps-oth2" value={f.other} onValue={set('other')} /></Field>}
+        {advanceHeld > 0 && (
+          <Field label="Advance to take back" htmlFor="ps-adv" hint={`Holds an advance of ${formatINR(advanceHeld)}. The receipt that reduces it is written when the payslip is marked paid.`}>
+            <NumField id="ps-adv" value={f.advance} onValue={set('advance')} />
+          </Field>
+        )}
         <Field label="Notes" htmlFor="ps-notes" className="sm:col-span-3"><Textarea id="ps-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
       </div>
       {d?.days && d.days.paid_days < d.days.working_days && (
@@ -101,7 +108,7 @@ function Form({ employeeId, onClose }: { employeeId?: number; onClose: () => voi
       <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
         {clash ? <p role="alert" className="mr-auto max-w-md text-[13px] text-warning">{clash}</p> : save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        {clash ? <Button loading={save.isPending} onClick={() => save.mutate(true)}>Create it anyway</Button> : <Button loading={save.isPending} disabled={!emp || !start || !end || !payDate} onClick={() => save.mutate(false)}>Create payslip</Button>}
+        {clash ? <Button loading={save.isPending} onClick={() => save.mutate(true)}>Create it anyway</Button> : <Button loading={save.isPending} disabled={!emp || !start || !end || !payDate || f.advance > advanceHeld} onClick={() => save.mutate(false)}>Create payslip</Button>}
       </div>
     </div>
   )

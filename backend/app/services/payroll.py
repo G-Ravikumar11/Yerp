@@ -13,7 +13,7 @@ from app.core.scheduler import scheduled_job
 from app.services.employee_portal import attendance_settings_for, leave_balance_for, working_days_between
 from app.services.hr import resolve_basic_pay
 from app.services.salary_revisions import employee_on, salaries_on
-from app.services import lop, statutory
+from app.services import lop, staff_advances, statutory
 from app.services.income_tax import tds_function
 from app.services.salary_structure import apply_statutory, attach_lines, line_totals, structure_lines
 from app.services.holidays import custom_holidays
@@ -21,7 +21,7 @@ from app.services.wallet_ai import require_credit
 
 
 # What HR may type over a worked-out figure in the payroll preview. Everything else follows from these and the salary structure.
-PAYROLL_RUN_OVERRIDES = ("bonus", "overtime_hours", "hours_worked", "tax_amount")
+PAYROLL_RUN_OVERRIDES = ("bonus", "overtime_hours", "hours_worked", "tax_amount", "advance_recovery")
 
 
 def default_overtime_rate(emp):
@@ -82,7 +82,9 @@ def compute_payslip_figures(emp, data, lines=None, tax_fn=None):
     employer = statutory.employer_contributions(emp, basic, gross)
 
     standing = money(emp.deductions or 0)
-    total_deductions = money(tax + insurance + retirement + other + pt + standing)
+    # A salary advance taken back this month: HR's figure, checked against the advance held before it gets here.
+    advance = money(data.get("advance_recovery") or 0)
+    total_deductions = money(tax + insurance + retirement + other + pt + standing + advance)
     net = money(gross - total_deductions)
 
     return {
@@ -92,7 +94,7 @@ def compute_payslip_figures(emp, data, lines=None, tax_fn=None):
         # Deliberately not returned here: this dict is splatted straight into
         # DBPayslip, which has no such column. It is derived on read instead,
         # which also makes payslips issued before this fix reconcile.
-        "other_deductions": other, "professional_tax": pt, **employer,
+        "other_deductions": other, "professional_tax": pt, **employer, "advance_recovery": advance,
         "total_deductions": total_deductions, "net_pay": net,
     }
 
@@ -185,6 +187,8 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
     seq = int(next_number.split("-")[1])
 
     known = salaries_on(db, client_id, [e.id for e in employees], period_end)   # one read for the whole run
+    held = staff_advances.balances(db, client_id)                               # advances out with staff, by name
+    spoken_for = staff_advances.pending_recoveries(db, client_id)              # already being taken back, unreleased
     settings = attendance_settings_for(db, client_id)
     start_day, end_day = _parse_date(period_start), _parse_date(period_end)
     holidays = custom_holidays(db, client_id, date(start_day.year, 1, 1), date(end_day.year, 12, 31)) if start_day and end_day else {}
@@ -233,6 +237,8 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
                 if val < 0:
                     raise HTTPException(status_code=400, detail="%s for %s %s cannot be negative." % (key, emp.first_name, emp.last_name))
                 data[key] = val
+        advance_held = staff_advances.balance_for(db, client_id, emp, held)
+        data["advance_recovery"] = staff_advances.check_recovery(db, client_id, emp, data.get("advance_recovery"), held, spoken_for)
         days, lines = pay_basis(db, client_id, emp, period_start, period_end, data, settings=settings, holidays=holidays)
         if days and days["working_days"] > 0 and days["active_days"] <= 0:
             skipped.append({"employee_id": emp.id, "name": f"{emp.first_name} {emp.last_name}",
@@ -249,6 +255,9 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
                 "gross_pay": figures["gross_pay"], "total_deductions": figures["total_deductions"], "net_pay": figures["net_pay"],
                 "working_days": days["working_days"] if days else None, "paid_days": days["paid_days"] if days else None,
                 "lop_days": days["lop_days"] if days else None,
+                # The advance they hold (less what other unreleased payslips take back), and what this one takes.
+                "advance_balance": money(advance_held - spoken_for.get(staff_advances.norm_name(staff_advances.employee_name(emp)), 0.0)),
+                "advance_recovery": figures["advance_recovery"],
             })
             total_net += figures["net_pay"]
             total_gross += figures["gross_pay"]

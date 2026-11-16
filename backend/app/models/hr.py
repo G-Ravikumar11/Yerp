@@ -161,6 +161,11 @@ class DBPayslip(Base):
     employer_epf = Column(Float, default=0.0)        # 3.67% share
     employer_eps = Column(Float, default=0.0)        # 8.33% pension share, capped at 1,250
     employer_esi = Column(Float, default=0.0)        # 3.25%
+    # A salary advance taken back this month: typed by HR against the advance the person holds (money paid to them on
+    # account, Accounts > Advances). When the payslip is released (marked paid) an adjustment receipt is written for
+    # it, which is what brings their advance balance down; that receipt's id is kept so it is made once.
+    advance_recovery = Column(Float, default=0.0)
+    advance_entry_id = Column(Integer, nullable=True)
 
     status = Column(String, default="Draft", index=True)
     sent = Column(String, default="")

@@ -48,8 +48,8 @@ export function payslipHtml(p: PayslipDetail, { autoPrint = false } = {}): strin
   if (p.overtime_pay) earn.push([`Overtime${p.overtime_hours ? ` (${p.overtime_hours}h)` : ''}`, p.overtime_pay])
   if (p.bonus) earn.push(['Bonus', p.bonus])
   const ded: [string, number | null][] = own.length
-    ? [...own.filter((l) => l.kind === 'deduction').map((l): [string, number | null] => [l.name, l.amount]), ...(p.professional_tax ? [['Prof Tax', p.professional_tax] as [string, number | null]] : []), ...(p.tax_amount ? [['TDS Deduction', p.tax_amount] as [string, number | null]] : [])]
-    : [['PF', p.retirement], ['ESI', p.insurance], ['Prof Tax', p.professional_tax || null], ['Salary Advance', null], ['TDS Deduction', p.tax_amount], ['Loss Of Pay', null], ['Other Deductions', p.other_deductions]]
+    ? [...own.filter((l) => l.kind === 'deduction').map((l): [string, number | null] => [l.name, l.amount]), ...(p.professional_tax ? [['Prof Tax', p.professional_tax] as [string, number | null]] : []), ...(p.tax_amount ? [['TDS Deduction', p.tax_amount] as [string, number | null]] : []), ...(p.advance_recovery ? [['Salary Advance', p.advance_recovery] as [string, number | null]] : [])]
+    : [['PF', p.retirement], ['ESI', p.insurance], ['Prof Tax', p.professional_tax || null], ['Salary Advance', p.advance_recovery || null], ['TDS Deduction', p.tax_amount], ['Loss Of Pay', null], ['Other Deductions', p.other_deductions]]
   if (p.standing_deduction > 0) ded.push(['Standing Deduction', p.standing_deduction])
   const rows = Math.max(earn.length, ded.length, 4)
   const lines = Array.from({ length: rows }, (_, i) => `<tr><td colspan="2">${esc(earn[i]?.[0] ?? '')}</td><td class="r">${earn[i]?.[1] != null ? amt(earn[i][1] as number) : ''}</td><td colspan="2">${esc(ded[i]?.[0] ?? '')}</td><td class="r">${ded[i]?.[1] != null ? amt(ded[i][1] as number) : ''}</td></tr>`).join('')

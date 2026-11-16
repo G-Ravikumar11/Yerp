@@ -1360,9 +1360,14 @@ def get_employee_pay_details(emp_id: int, request: Request, period_start: str = 
     pt_amount = statutory.professional_tax(emp, gross)
     total_deductions = money(tax_amount + deductions + pf_amount + esi_amount + pt_amount)
     net_pay = money(gross - total_deductions)
+    from app.services import staff_advances
+    advance_balance = money(staff_advances.balance_for(db, client.id, emp)
+                            - staff_advances.pending_recoveries(db, client.id).get(staff_advances.norm_name(staff_advances.employee_name(emp)), 0.0))
 
     return {
         "employee_id": emp.id,
+        # The salary advance they hold, less what unreleased payslips already take back: what a new payslip may recover.
+        "advance_balance": max(0.0, advance_balance),
         "full_name": f"{emp.first_name} {emp.last_name}",
         "employee_id_code": emp.employee_id,
         "job_title": emp.job_title,

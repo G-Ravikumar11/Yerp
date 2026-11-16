@@ -20,6 +20,8 @@ class PayslipCreate(BaseModel):
     insurance: Optional[float] = 0.0
     retirement: Optional[float] = 0.0
     other_deductions: Optional[float] = 0.0
+    # A salary advance taken back this month, up to the advance the person holds.
+    advance_recovery: Optional[float] = 0.0
     notes: Optional[str] = ""
     # Work the pay out from the company's salary structure (the default) rather than from the figures above.
     use_structure: Optional[bool] = True
@@ -32,5 +34,5 @@ class PayrollRunRequest(BaseModel):
     employee_ids: Optional[List[int]] = None
     include_attendance_hours: Optional[bool] = True
     skip_existing: Optional[bool] = True
-    # employee id -> figures HR typed over the previewed ones (bonus, overtime_hours, hours_worked, tax_amount)
+    # employee id -> figures HR typed over the previewed ones (bonus, overtime_hours, hours_worked, tax_amount, advance_recovery)
     overrides: Optional[Dict[int, Dict[str, Optional[float]]]] = None

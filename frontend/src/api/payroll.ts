@@ -43,6 +43,8 @@ export interface PayslipRow {
   working_days?: number
   lop_days?: number
   paid_days?: number
+  /** A salary advance taken back on this payslip. */
+  advance_recovery?: number
   /** The YYYY-MM it belongs to, and where that month's payroll stands. */
   month?: string
   month_status?: MonthStatus
@@ -99,6 +101,9 @@ export interface PayslipDetail {
   retirement: number
   other_deductions: number
   standing_deduction: number
+  /** A salary advance taken back on this payslip, and the adjustment receipt written for it on release (none until then). */
+  advance_recovery?: number
+  advance_entry_id?: number | null
   professional_tax?: number
   /** Paid days: the period's working days, the loss of pay in them, and the days paid. */
   working_days?: number
@@ -132,6 +137,8 @@ export interface PayDetails {
   tax_rate: number
   deductions: number
   is_hourly?: boolean
+  /** The salary advance the person holds that a payslip may take back (less what unreleased payslips already recover). */
+  advance_balance?: number
   /** The month's statutory deductions as the server works them out (PF on the basic to 15,000, ESI to a 21,000 gross, PT by state slab). */
   provident_fund?: number
   state_insurance?: number
@@ -162,6 +169,8 @@ export interface PayslipInput {
   insurance: number
   retirement: number
   other_deductions: number
+  /** A salary advance taken back this month, up to the balance they hold. */
+  advance_recovery?: number
   notes: string
 }
 
@@ -187,11 +196,13 @@ export const reapplyStructure = (id: number) => put<{ message?: string }>(`/api/
 export const createPayslip = (b: PayslipInput, allowOverlap: boolean) => post<{ message?: string }>(`/api/payslips${allowOverlap ? '?allow_overlap=true' : ''}`, b)
 export type RunPeriod = { period_start: string; period_end: string; pay_date: string }
 /** Figures HR may type over a previewed row; the rest follow from them and the salary structure. */
-export type RunOverride = Partial<Record<'bonus' | 'overtime_hours' | 'hours_worked' | 'tax_amount', number>>
+export type RunOverride = Partial<Record<'bonus' | 'overtime_hours' | 'hours_worked' | 'tax_amount' | 'advance_recovery', number>>
 export interface PreviewRow {
   employee_id: number; name: string; hours_worked: number; overtime_hours: number; bonus: number; tax_amount: number
   basic_salary: number; allowances: number; gross_pay: number; total_deductions: number; net_pay: number
   working_days: number | null; paid_days: number | null; lop_days: number | null
+  /** The salary advance they hold, and what this payslip takes back of it (an adjustment receipt is written on release). */
+  advance_balance: number; advance_recovery: number
 }
 export interface PayrollPreview { rows: PreviewRow[]; skipped: { name: string; reason: string }[]; warnings: { name: string; reason: string }[]; total_gross: number; total_net: number }
 const runBody = (b: RunPeriod, employeeIds?: number[], overrides?: Record<number, RunOverride>) => ({ ...b, include_attendance_hours: true, skip_existing: true, employee_ids: employeeIds, overrides })
@@ -202,7 +213,7 @@ export const markPaid = (id: number) => post<{ message?: string }>(`/api/payslip
 export const reopenPayslip = (id: number) => post<{ message?: string }>(`/api/payslips/${id}/unmark-paid`)
 export const deletePayslip = (id: number, force: boolean) => del<{ message?: string }>(`/api/payslips/${id}${force ? '?force=true' : ''}`)
 export const usePayrollMonths = () => useQuery({ queryKey: k('months'), queryFn: () => get<PayrollMonth[]>('/api/payroll/months') })
-type MonthAnswer = PayrollMonth & { message?: string; emails?: { enabled: boolean; queued: number; skipped: string[]; message: string } }
+type MonthAnswer = PayrollMonth & { message?: string; advances_recovered?: number; emails?: { enabled: boolean; queued: number; skipped: string[]; message: string } }
 /** Draft -> Approved -> Paid -> Locked; reopening a locked month is the Master's, with a reason. */
 export const moveMonth = (action: 'approve' | 'pay' | 'lock', month: string) => post<MonthAnswer>(`/api/payroll/month/${action}`, { month })
 export const reopenMonth = (month: string, reason: string) => post<MonthAnswer>('/api/payroll/month/reopen', { month, reopen_reason: reason })
