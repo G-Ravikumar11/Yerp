@@ -243,6 +243,7 @@ NOTIFY_KINDS = {
     "payroll_failed": "A month's automatic payroll could not run",
     "payroll_check": "Something to put right before a month's payroll is approved (missing PAN, bank, UAN or ESI details, pay that looks wrong)",
     "attendance_late_penalty": "Somebody reached the late-arrival limit for the month",
+    "job_lock_weekly": "The week's Site Lock summary: who was refused a clock-in, and who again and again",
     "probation_ending": "Somebody's probation is about to end",
     "contract_ending": "Somebody's contract is about to end",
     "documents_expiring": "An employee's document is about to expire, or has expired",

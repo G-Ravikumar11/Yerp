@@ -98,6 +98,7 @@ from app.services import (
     attendance_job,
     leave_accrual,
     hr_reminders,
+    job_lock_summary,
     assets,
     auth,
     boq,

@@ -424,6 +424,8 @@ def job_lock_view(request: Request, db: Session = Depends(get_read_db)):
               "sites": [jobs[j].name or jobs[j].number or "" for j in sites_of.get(e.id, []) if j in jobs]}
              for e in sorted(people, key=lambda x: names[x.id].lower())]
     open_jobs = [j for j in jobs.values() if (j.status or "") not in JOB_CLOSED_STATUSES]
+    exempt_ids = {e.id for e in db.query(models.DBEmployee.id, models.DBEmployee.job_lock_exempt).filter(
+        models.DBEmployee.client_id == client.id, models.DBEmployee.job_lock_exempt.is_(True)).all()}
     refused = db.query(models.DBClockRefusal).filter(models.DBClockRefusal.client_id == client.id).order_by(
         models.DBClockRefusal.id.desc()).limit(100).all()
     flagged = db.query(models.DBAttendance).filter(models.DBAttendance.client_id == client.id, models.DBAttendance.location_flag != "",
@@ -433,11 +435,27 @@ def job_lock_view(request: Request, db: Session = Depends(get_read_db)):
         "office_set": bool(settings and settings.office_lat and settings.office_lng),
         "sites_without_location": [{"id": j.id, "name": ("%s %s" % (j.number or "", j.name or "")).strip()} for j in open_jobs if j.id not in fenced],
         "staff": staff,
-        "refused": [{"id": r.id, "at": r.at, "employee": names.get(r.employee_id, ""), "reason": r.reason, "lat": r.lat, "lng": r.lng,
+        "refused": [{"id": r.id, "at": r.at, "employee_id": r.employee_id, "employee": names.get(r.employee_id, ""),
+                     "exempt": r.employee_id in exempt_ids, "reason": r.reason, "lat": r.lat, "lng": r.lng,
                      "accuracy": r.accuracy, "distance_m": r.distance_m, "nearest": r.nearest} for r in refused],
         "flagged": [{"id": a.id, "date": a.date, "clock_in": a.clock_in or "", "employee": names.get(a.employee_id, ""),
                      "flag": a.location_flag, "lat": a.location_lat, "lng": a.location_lng} for a in flagged],
     }
+
+
+@router.get("/api/attendance/job-lock/weekly")
+def job_lock_weekly_view(request: Request, week_ending: str = "", db: Session = Depends(get_read_db)):
+    """The week's Site Lock refusals read as a summary - totals against the week before, by day, by person, by place -
+    for the seven days ending on `week_ending` (today unless given). The same summary HR is told on Monday morning."""
+    from app.services import job_lock_summary
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
+    end = date.today()
+    if week_ending.strip():
+        try:
+            end = date.fromisoformat(week_ending.strip()[:10])
+        except ValueError:
+            raise HTTPException(400, "Give the day as YYYY-MM-DD.")
+    return job_lock_summary.summary(db, client.id, end)
 
 
 @router.put("/api/attendance/job-lock/exempt/{employee_id}")

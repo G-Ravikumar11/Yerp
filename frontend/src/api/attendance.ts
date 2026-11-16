@@ -83,8 +83,24 @@ export interface JobLock {
   office_set: boolean
   sites_without_location: { id: number; name: string }[]
   staff: { id: number; name: string; job_title: string; exempt: boolean; sites: string[] }[]
-  refused: { id: number; at: string; employee: string; reason: string; lat: number; lng: number; accuracy: number; distance_m: number | null; nearest: string }[]
+  refused: { id: number; at: string; employee_id: number; employee: string; exempt: boolean; reason: string; lat: number; lng: number; accuracy: number; distance_m: number | null; nearest: string }[]
   flagged: { id: number; date: string; clock_in: string; employee: string; flag: string; lat: number; lng: number }[]
 }
 export const useJobLock = () => useQuery({ queryKey: [...attKeys.all, 'job-lock'], queryFn: () => get<JobLock>('/api/attendance/job-lock') })
+/** The seven days of Site Lock refusals ending on a day (today by default), set against the seven before. */
+export interface JobLockWeek {
+  from: string
+  to: string
+  refused: number
+  people: number
+  previous_refused: number
+  change: number
+  flagged_punches: number
+  repeat_people: number
+  by_day: { date: string; count: number }[]
+  by_person: { employee_id: number; name: string; job_title: string; refused: number; days: number; last_at: string; reason: string; nearest: string; farthest_m: number | null; repeat: boolean; exempt: boolean }[]
+  by_place: { place: string; refused: number }[]
+}
+export const useJobLockWeek = (weekEnding = '') =>
+  useQuery({ queryKey: [...attKeys.all, 'job-lock-week', weekEnding], queryFn: () => get<JobLockWeek>(`/api/attendance/job-lock/weekly${weekEnding ? `?week_ending=${weekEnding}` : ''}`) })
 export const setJobLockExempt = (id: number, exempt: boolean) => put<{ message: string }>(`/api/attendance/job-lock/exempt/${id}`, { exempt })
