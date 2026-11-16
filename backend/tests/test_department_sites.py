@@ -82,3 +82,34 @@ def test_deleting_a_department_takes_its_sites_with_it(tenant):
     assert tenant.delete("/api/departments/%d" % dept["id"]).status_code == 200
     again = make_dept(tenant, "Roads")
     assert again["site_ids"] == []
+
+
+def test_a_new_starter_puts_their_department_on_their_site(tenant):
+    """HR types a department that already exists on another site and gives the person a different site: the department
+    is then listed on the person's site too, and the list says which sites each person works on."""
+    from conftest import make_employee
+    iconica, arsha = make_job(tenant, "Iconica"), make_job(tenant, "Vision Arsha")
+    civil = make_dept(tenant, "Civil", [arsha["id"]])
+    emp = make_employee(tenant, department_id=civil["id"], site_ids=[iconica["id"]])
+    assert names_on(tenant, iconica["id"]) == {"Civil"}
+    assert names_on(tenant, arsha["id"]) == {"Civil"}       # kept where it was
+    row = next(e for e in tenant.get("/api/employees").json() if e["id"] == emp["id"])
+    assert row["site_ids"] == [iconica["id"]]
+
+
+def test_changing_a_persons_site_brings_their_department_along(tenant):
+    from conftest import make_employee
+    a, b = make_job(tenant, "Fairview"), make_job(tenant, "Riverside")
+    roads = make_dept(tenant, "Roads", [a["id"]])
+    emp = make_employee(tenant, department_id=roads["id"])
+    assert tenant.put("/api/employees/%d/permissions" % emp["id"],
+                      json={"permission_role": "staff", "site_ids": [b["id"]]}).status_code == 200
+    assert names_on(tenant, b["id"]) == {"Roads"}
+
+
+def test_somebody_on_every_site_adds_no_site(tenant):
+    from conftest import make_employee
+    a = make_job(tenant, "Fairview")
+    roads = make_dept(tenant, "Roads")
+    make_employee(tenant, department_id=roads["id"])
+    assert names_on(tenant, a["id"]) == set()

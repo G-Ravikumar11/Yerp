@@ -1419,6 +1419,24 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # A department is listed on the sites its people work on: put each department on its people's sites,
+            # for those saved before that was done on every save. Only missing links are added, so it is safe to repeat.
+            try:
+                conn.execute(text("""
+                    INSERT INTO department_sites (client_id, department_id, job_id, created_at)
+                    SELECT DISTINCT e.client_id, e.department_id, es.job_id, to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+                    FROM employees e JOIN employee_sites es ON es.employee_id = e.id
+                    WHERE e.department_id IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM department_sites ds WHERE ds.department_id = e.department_id AND ds.job_id = es.job_id)
+                """))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step 30c: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # Payslip period guard + YTD support
             try:
                 conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS pay_frequency VARCHAR DEFAULT ''"))

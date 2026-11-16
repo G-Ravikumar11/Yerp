@@ -64,6 +64,7 @@ from app.services.hr import (
     seed_default_requirements,
     serialise,
     set_department_sites,
+    link_department_to_employee_sites,
     set_employee_sites,
     sites_payload,
     start_onboarding,
@@ -409,12 +410,18 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
             models.DBEmployee.job_title.ilike(f"%{q}%"),
         ))
     rows = query.order_by(models.DBEmployee.created_at.desc()).all()
+    # Each person's sites, read once for everybody: none means every site.
+    site_map = {}
+    for emp_id, job_id in db.query(models.DBEmployeeSite.employee_id, models.DBEmployeeSite.job_id).filter(
+            models.DBEmployeeSite.client_id == client.id).all():
+        site_map.setdefault(emp_id, []).append(job_id)
     result = []
     for e, dept_name, mgr_first, mgr_last, sites in rows:
         dept_name = (dept_name or "") if e.department_id else ""
         manager_name = f"{mgr_first} {mgr_last}" if e.reports_to and mgr_first is not None else ""
         result.append({
             "site_count": sites or 0,
+            "site_ids": sorted(site_map.get(e.id, [])),
             "id": e.id, "employee_id": e.employee_id,
             "first_name": e.first_name, "last_name": e.last_name,
             "full_name": f"{e.first_name} {e.last_name}",
@@ -547,6 +554,7 @@ def create_employee(request: Request, body: EmployeeCreate, background_tasks: Ba
         hand_out_department_goals(db, client_id, emp.id, dept_id, pending_department_goals(db, client_id, dept_id))
     start_onboarding(db, client_id, emp, new=True)
     sites = set_employee_sites(db, client_id, emp, body.site_ids, new=True)
+    link_department_to_employee_sites(db, client_id, emp)
     name = f"{first_name} {last_name}"
     log_audit(db, client_id, "employee_created", "employee", emp.id, name, f"Dept: {dept_id or 'None'}", request)
     if body.permissions is not None:
@@ -887,6 +895,7 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if move_to_department(db, client.id, emp, new_dept) != new_dept:
         log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
                   f"{emp.first_name} {emp.last_name}", "Department set to %s" % (new_dept or "none"), request)
+    link_department_to_employee_sites(db, client.id, emp)
     log_audit(db, client.id, "employee_updated", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Fields: {', '.join(body.keys()) if body else 'none'}", request)
     out = {**_hide_ids(request, db, _profile_after(db, client.id, before, sites)), "message": "Employee updated"}
     db.commit()
@@ -1039,6 +1048,7 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
         if not isinstance(body["site_ids"], list):
             raise HTTPException(status_code=400, detail="site_ids must be a list")
         sites = set_employee_sites(db, client.id, emp, body["site_ids"])
+        link_department_to_employee_sites(db, client.id, emp)
 
     after = sorted(permissions_for(emp))
     log_audit(db, client.id, "employee_permissions_changed", "employee", emp.id,

@@ -28,6 +28,8 @@ export interface Employee {
   end_date: string
   status: string
   site_count?: number
+  /** The sites they work on; empty means every site. */
+  site_ids?: number[]
 }
 
 interface OnboardingItem {
@@ -280,7 +282,7 @@ const LIST_FIELDS = ['first_name', 'last_name', 'full_name', 'email', 'org_email
 function pickListFields(e: Partial<EmployeeDetail>): Partial<Employee> {
   const out: Partial<Employee> = {}
   for (const f of LIST_FIELDS) if (e[f] !== undefined) (out as Record<string, unknown>)[f] = e[f]
-  if (e.site_ids !== undefined) out.site_count = e.all_sites ? 0 : e.site_ids.length
+  if (e.site_ids !== undefined) { out.site_count = e.all_sites ? 0 : e.site_ids.length; out.site_ids = e.all_sites ? [] : e.site_ids }
   return out
 }
 
