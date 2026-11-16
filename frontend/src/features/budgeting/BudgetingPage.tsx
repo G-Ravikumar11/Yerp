@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight, Download, Pencil } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, Download, Pencil } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -70,7 +70,7 @@ export default function BudgetingPage() {
       : <div className="min-w-[10rem] max-w-[22rem]"><p>{r.description}{r.grade && <Badge tone="neutral" className="ml-1.5 align-middle">{r.grade}</Badge>}</p><p className="text-xs text-muted-foreground">{r.group_code}{r.group_code && ' · '}{r.quantity} {r.uom}</p></div>), sort: (r) => r.description },
     { id: 'rate', header: 'BOQ rate', align: 'right', cell: (r) => (r.heading ? none : formatRate(r.rate)), hideBelow: 'lg', sort: (r) => r.rate },
     { id: 'rev', header: 'BOQ amount', align: 'right', cell: (r) => (r.heading ? none : r.rate_only ? 'Rate only' : formatINR(r.revenue)), sort: (r) => r.revenue },
-    { id: 'cost', header: 'Our cost', align: 'right', cell: (r) => (r.heading ? none : r.budgeted ? <div><p>{formatINR(r.cost)}</p><p className="ml-auto max-w-[10rem] text-xs text-muted-foreground">Mat {compactINR(r.material)} · Lab {compactINR(r.labour)} · Other {compactINR(r.other)}</p></div> : <Badge tone="warning">Not budgeted</Badge>), sort: (r) => r.cost },
+    { id: 'cost', header: 'Our cost', align: 'right', cell: (r) => (r.heading ? none : r.budgeted ? <div><p>{formatINR(r.cost)}</p><p className="ml-auto max-w-[10rem] text-xs text-muted-foreground">Mat {compactINR(r.material)} · Lab {compactINR(r.labour)} · Other {compactINR(r.other)}</p>{(r.wastage_mismatches ?? 0) > 0 && <Badge tone="warning" className="mt-1" title={r.items.filter((i) => i.has_wastage_mismatch).map((i) => `${i.description}: ${i.mismatch_message}`).join('\n')}>Wastage % differs from store norm</Badge>}</div> : <Badge tone="warning">Not budgeted</Badge>), sort: (r) => r.cost },
     { id: 'profit', header: 'Profit', align: 'right', cell: (r) => (r.heading ? none : r.profit === null ? '-' : <span className={r.profit < 0 ? 'text-danger' : 'text-success'}>{formatINR(r.profit)}</span>), sort: (r) => r.profit ?? -Infinity },
     { id: 'margin', header: 'Margin', align: 'right', cell: (r) => (r.heading ? none : r.margin === null ? '-' : <span className={r.margin < 0 ? 'text-danger' : ''}>{pct(r.margin)}</span>), hideBelow: 'sm', sort: (r) => r.margin ?? -Infinity },
     ...(edit ? [{ id: 'edit', header: '', width: '3rem', cell: (r: Row) => (r.heading ? none : <Pencil className="size-4 text-muted-foreground" aria-label={`Budget ${r.description}`} />) }] : []),
@@ -99,6 +99,18 @@ export default function BudgetingPage() {
           <Stat label="Whole BOQ at this margin" value={t?.projected_profit != null ? compactINR(t.projected_profit) : '-'}
             sub={t && t.unbudgeted_value > 0 ? `${compactINR(t.unbudgeted_value)} of BOQ still unbudgeted` : undefined} loading={q.isPending && job > 0} />
         </StatGrid>
+        {b && (t?.wastage_mismatches ?? 0) > 0 && (
+          <div role="alert" className="mt-4 rounded-md border border-warning/40 bg-warning-soft p-3 text-sm">
+            <p className="flex items-center gap-2 font-semibold text-warning"><AlertTriangle className="size-4" aria-hidden /> Wastage Percentage Mismatch</p>
+            <p className="mt-1">{plural(t!.wastage_mismatches!, 'material')} in this budget {t!.wastage_mismatches === 1 ? 'has' : 'have'} a Budgeting wastage % that differs from the Store Material Norm. The Store Norm wastage percentage is being used for Budgeting calculations; the budget's own figure is kept as it was entered.</p>
+            <ul className="mt-1.5 space-y-0.5 text-xs">
+              {b.rows.flatMap((r) => r.items.filter((i) => i.has_wastage_mismatch).map((i) => ({ r, i }))).slice(0, 8).map(({ r, i }, n) => (
+                <li key={n}><span className="font-medium">{r.item_no ? `${r.item_no} ` : ''}{r.description.split('\n')[0].slice(0, 50)} - {i.description}</span>: Budgeting Wastage: {i.budgeting_wastage_percent}% · Store Norm Wastage: {i.store_norm_wastage_percent}% · Effective Wastage Used: {i.effective_wastage_percent}%</li>
+              ))}
+              {t!.wastage_mismatches! > 8 && <li>and {t!.wastage_mismatches! - 8} more - marked on their lines below.</li>}
+            </ul>
+          </div>
+        )}
         {b && edit && <Settings key={job + ':' + b.overhead_percent + ':' + b.contingency_percent} job={job} b={b} />}
         <div className="my-4 flex flex-wrap items-center justify-between gap-3">
           <Tabs label="Show" value={show} onChange={setShow} items={[

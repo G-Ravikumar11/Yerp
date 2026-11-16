@@ -7,13 +7,15 @@ have no draft, approval or posting of their own.
 """
 import io
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from typing import List
 
 import openpyxl
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
@@ -25,7 +27,8 @@ from app.documents import form_pdf
 from app.documents.store import report_forms
 from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreUserAssignment
 from app.models.store_reports import DBStoreMaterialNorm, DBStoreSavedReport
-from app.services import store_integration
+from app.core.sheets import read_sheet_rows
+from app.services import store_integration, store_norms
 from app.services import store_reports as svc
 from app.services.stock_ledger import assert_store_access
 
@@ -49,6 +52,18 @@ class SavedIn(BaseModel):
     name: str
     report: str
     params: dict = {}
+
+
+class CopyPick(BaseModel):
+    source_norm_id: int
+    boq_item_id: int
+
+
+class CopyIn(BaseModel):
+    source_project_id: int
+    project_id: int
+    mode: str = "add"
+    mappings: List[CopyPick] = []
 
 
 # --- helpers -----------------------------------------------------------------------------------------------------------
@@ -235,7 +250,8 @@ def _norm_dict(db, n, line=None, item=None):
     return {"id": n.id, "boq_item_id": n.boq_item_id, "boq_item": ("%s %s" % (line.item_no or "", (line.description or "").split("\n")[0][:60])).strip() if line else "", "boq_qty": svc.q3(line.quantity) if line else ZERO,
             "boq_uom": (line.uom or "") if line else "", "item_id": n.item_id, "item_code": item.item_code if item else "", "item_name": item.item_name if item else "",
             "base_uom": ((s.base_uom if s else item.units_of_measure) or "") if item else "", "qty_per_unit": Decimal(str(n.qty_per_unit)), "wastage_pct": Decimal(str(n.wastage_pct or 0)), "notes": n.notes or "",
-            "theoretical_qty": need if need is not None else ZERO}
+            "theoretical_qty": need if need is not None else ZERO,
+            "updated_at": n.updated_at.isoformat(timespec="seconds") if n.updated_at else "", "updated_by": n.updated_by_name or ""}
 
 
 def _norm_check(db, actor, body, norm_id=None):
@@ -294,7 +310,7 @@ def edit_norm(norm_id: int, body: NormIn, request: Request, db: Session = Depend
     if n is None:
         raise HTTPException(404, "Norm not found")
     line, item, qty, wastage, notes = _norm_check(db, actor, body, norm_id)
-    n.boq_item_id, n.item_id, n.qty_per_unit, n.wastage_pct, n.notes, n.updated_by_name = line.id, item.id, qty, wastage, notes, actor.name
+    n.boq_item_id, n.item_id, n.qty_per_unit, n.wastage_pct, n.notes, n.updated_by_name, n.updated_at = line.id, item.id, qty, wastage, notes, actor.name, datetime.now()
     log_audit(db, actor.client.id, "store_norm_edited", "boq_item", line.id, item.item_code, "%s per unit, wastage %s%%" % (qty, wastage), request=request,
               user_type="employee" if actor.employee is not None else "client", user_name=actor.name)
     db.commit()
@@ -312,6 +328,173 @@ def delete_norm(norm_id: int, request: Request, db: Session = Depends(get_db)):
     db.delete(n)
     db.commit()
     return {"message": "Norm removed"}
+
+
+# --- norms by the sheet ------------------------------------------------------------------------------------------------------------
+
+def _job_label(job):
+    return ("%s - %s" % (job.number, job.name) if job.number else job.name or "Project %d" % job.id)
+
+
+def _who(actor):
+    return {"user_type": "employee" if actor.employee is not None else "client", "user_name": actor.name}
+
+
+def _need_project(db, actor, project_id):
+    if not project_id:
+        raise HTTPException(400, "Choose a project.")
+    return _project(db, actor, project_id)
+
+
+def _sheet_rows_out(rows):
+    return [{k: r[k] for k in ("line", "boq_text", "material_text", "qty_text", "wastage_text", "boq_item_id", "boq_item", "item_id", "item_code", "item_name",
+                               "base_uom", "qty_per_unit", "wastage_pct", "valid", "action", "errors", "flags", "current")} for r in rows]
+
+
+async def _read_norm_sheet(db, actor, file, project_id, mode):
+    job = _need_project(db, actor, project_id)
+    header, body = await read_sheet_rows(file)
+    return job, store_norms.classify(db, actor.client.id, job.id, header, body, mode)
+
+
+@router.get("/norms/template")
+def norms_template(request: Request, project_id: int = 0, db: Session = Depends(get_read_db)):
+    """The sheet to fill in: BOQ Item, Material, Qty Per Unit, Wastage %, with four example rows. Given a project, two more tabs list
+    its BOQ items and the company's stock items, so what is typed can be copied from what will be matched."""
+    actor = store_actor(request, db, "store.reports.view")
+    job = _project(db, actor, project_id)
+    from openpyxl.styles import Font, PatternFill
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Norms"
+    ws.append(store_norms.TEMPLATE_HEADERS)
+    for row in store_norms.TEMPLATE_SAMPLE:
+        ws.append(row)
+    sheets = [ws]
+    if job is not None:
+        ref = wb.create_sheet("BOQ items")
+        ref.append(["Item No", "Description", "UOM", "Quantity", "Write in BOQ Item"])
+        for l in store_norms.priced_lines(db, actor.client.id, job.id):
+            ref.append([l.item_no or "", store_norms.first_line(l.description), l.uom or "", float(l.quantity or 0), store_norms.boq_label(l)])
+        mat = wb.create_sheet("Materials")
+        mat.append(["Item Code", "Item Name", "Unit"])
+        items = store_norms.ItemIndex(db, actor.client.id).items.values()
+        uoms = store_norms.base_uoms(db, items)
+        for it in sorted(items, key=lambda i: (i.item_name or "").lower()):
+            mat.append([it.item_code, it.item_name, uoms.get(it.id, "")])
+        sheets += [ref, mat]
+    for sheet in sheets:
+        for cell in sheet[1]:
+            cell.font, cell.fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="4F46E5")
+        for col in sheet.columns:
+            sheet.column_dimensions[col[0].column_letter].width = min(60, max(len(str(c.value or "")) for c in col) + 4)
+        sheet.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(content=buf.getvalue(), media_type=XLSX, headers={"Content-Disposition": 'attachment; filename="material_norms_template.xlsx"'})
+
+
+@router.post("/norms/import/preview")
+async def norms_import_preview(request: Request, file: UploadFile = File(...), project_id: int = Form(0), mode: str = Form("add"), db: Session = Depends(get_read_db)):
+    """Read the sheet against the project's BOQ and the item master and say, row by row, what importing it would do. Writes nothing."""
+    actor = store_actor(request, db, "store.reports.create")
+    job, rows = await _read_norm_sheet(db, actor, file, project_id, mode)
+    return jsonable({"project_id": job.id, "project": _job_label(job), "mode": mode, "rows": _sheet_rows_out(rows), "summary": store_norms.summarise(rows)})
+
+
+@router.post("/norms/import/commit")
+async def norms_import_commit(request: Request, file: UploadFile = File(...), project_id: int = Form(0), mode: str = Form("add"), db: Session = Depends(get_db)):
+    """Save the sheet's good rows. The file is read and every row checked again here, so what is saved is what the server checked;
+    the rows go in together or none do. Rows with a problem are left out and counted."""
+    actor = store_actor(request, db, "store.reports.create")
+    job, rows = await _read_norm_sheet(db, actor, file, project_id, mode)
+    if not any(r["valid"] for r in rows):
+        raise HTTPException(422, "No row of the sheet can be imported: correct the rows shown and upload it again.")
+    try:
+        result = store_norms.commit_sheet(db, actor.client.id, rows, actor.name)
+        log_audit(db, actor.client.id, "store_norms_imported", "project", job.id, _job_label(job),
+                  "Sheet '%s' (%s): %d added, %d updated, %d unchanged, %d already set and kept, %d rows with problems left out"
+                  % ((file.filename or "")[:80], "update existing" if mode == "update" else "add new only", result["inserted"], result["updated"], result["unchanged"],
+                     result["skipped_existing"], result["invalid"]), request=request, **_who(actor))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {**result, "project_id": job.id, "message": "Import finished: %d added, %d updated, %d skipped." % (result["inserted"], result["updated"], result["skipped_existing"] + result["unchanged"] + result["invalid"])}
+
+
+@router.post("/norms/import/errors")
+async def norms_import_errors(request: Request, file: UploadFile = File(...), project_id: int = Form(0), db: Session = Depends(get_read_db)):
+    """The sheet's rows that cannot be imported, each with what is wrong, as a workbook to correct and upload again."""
+    actor = store_actor(request, db, "store.reports.create")
+    _job, rows = await _read_norm_sheet(db, actor, file, project_id, "add")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Rows to correct"
+    ws.append(["Line"] + store_norms.TEMPLATE_HEADERS + ["Problem"])
+    for r in rows:
+        if not r["valid"]:
+            ws.append([r["line"], r["boq_text"], r["material_text"], r["qty_text"], r["wastage_text"], " ".join(r["errors"])])
+    for col, width in zip("ABCDEF", (8, 36, 28, 14, 12, 80)):
+        ws.column_dimensions[col].width = width
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(content=buf.getvalue(), media_type=XLSX, headers={"Content-Disposition": 'attachment; filename="material_norms_errors.xlsx"'})
+
+
+# --- norms copied from another project ------------------------------------------------------------------------------------------
+
+@router.get("/norms/copy/sources")
+def norms_copy_sources(request: Request, project_id: int = 0, db: Session = Depends(get_read_db)):
+    """The projects this person may copy norms from (their own sites only, where they are limited to some), with how many each has."""
+    actor = store_actor(request, db, "store.reports.view")
+    counts = dict(db.query(models.DBBoq.job_id, func.count(DBStoreMaterialNorm.id)).join(models.DBBoqLine, models.DBBoqLine.boq_id == models.DBBoq.id)
+                  .join(DBStoreMaterialNorm, DBStoreMaterialNorm.boq_item_id == models.DBBoqLine.id)
+                  .filter(DBStoreMaterialNorm.client_id == actor.client.id, models.DBBoq.client_id == actor.client.id).group_by(models.DBBoq.job_id).all())
+    jobs = db.query(models.DBJob).filter(models.DBJob.client_id == actor.client.id, models.DBJob.id != (project_id or 0)).order_by(models.DBJob.name).all()
+    return {"items": [{"id": j.id, "label": _job_label(j), "norms": counts.get(j.id, 0)} for j in jobs]}
+
+
+def _copy_pair(db, actor, source_project_id, project_id):
+    dest = _need_project(db, actor, project_id)
+    if not source_project_id:
+        raise HTTPException(400, "Choose the project to copy from.")
+    if source_project_id == dest.id:
+        raise HTTPException(400, "Choose a different project to copy from.")
+    return _project(db, actor, source_project_id), dest
+
+
+@router.get("/norms/copy/preview")
+def norms_copy_preview(request: Request, source_project_id: int = 0, project_id: int = 0, mode: str = "add", db: Session = Depends(get_read_db)):
+    """The source project's norms, each with the BOQ item of this project it would go to and what copying it would do. Writes nothing."""
+    actor = store_actor(request, db, "store.reports.create")
+    source, dest = _copy_pair(db, actor, source_project_id, project_id)
+    rows = store_norms.copy_preview(db, actor.client.id, source.id, dest.id, mode)
+    count = lambda *s: sum(1 for r in rows if r["status"] in s)
+    return jsonable({"source": {"id": source.id, "label": _job_label(source)}, "project": {"id": dest.id, "label": _job_label(dest)}, "mode": mode,
+                     "dest_boq_items": [{"id": l.id, "label": store_norms.boq_label(l), "uom": l.uom or ""} for l in store_norms.priced_lines(db, actor.client.id, dest.id)],
+                     "rows": rows, "summary": {"total": len(rows), "insert": count("insert"), "update": count("update"), "unchanged": count("unchanged"), "skip": count("skip"),
+                                               "choose": count("choose"), "no_boq": count("no_boq"), "no_material": count("no_material"),
+                                               "needs_confirmation": sum(1 for r in rows if r["needs_confirmation"])}})
+
+
+@router.post("/norms/copy")
+def norms_copy(body: CopyIn, request: Request, db: Session = Depends(get_db)):
+    """Copy the chosen norms into this project. The source project is only read."""
+    actor = store_actor(request, db, "store.reports.create")
+    source, dest = _copy_pair(db, actor, body.source_project_id, body.project_id)
+    try:
+        result = store_norms.copy_commit(db, actor.client.id, source.id, dest.id, body.mode, [m.dict() for m in body.mappings], actor.name)
+        log_audit(db, actor.client.id, "store_norms_copied", "project", dest.id, _job_label(dest),
+                  "From %s (project %d) to %s (project %d), %s: %d copied, %d updated, %d unchanged, %d already set and kept, %d not chosen"
+                  % (_job_label(source), source.id, _job_label(dest), dest.id, "replace matching" if body.mode == "replace" else "add missing only",
+                     result["copied"], result["updated"], result["unchanged"], result["skipped_existing"], result["not_chosen"]), request=request, **_who(actor))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {**result, "message": "Copied from %s: %d added, %d updated, %d skipped." % (_job_label(source), result["copied"], result["updated"],
+                                                                                         result["skipped_existing"] + result["unchanged"] + result["not_chosen"])}
 
 
 @router.get("/pick/boq-items")

@@ -238,6 +238,11 @@ def build_item(db, client_id, body, taken):
     itype = (body.item_type or "").strip() or "Purchased"
     if itype not in ITEM_TYPES:
         raise HTTPException(400, "Type must be one of: " + ", ".join(ITEM_TYPES))
+    from types import SimpleNamespace
+    from app.services import steel_allowance as steel
+    if steel.is_steel(SimpleNamespace(kind=kind, item_name=name, description=(body.description or "").strip() or name, segment=(body.segment or "").strip(), category="", item_category="")) \
+            and steel.is_piece_unit(unit):
+        raise HTTPException(400, "'%s' is steel counted in Numbers, so it needs its weight per piece: add it in the Item Master (Weight Per Piece (kg)), or count it in kg or MT." % name)
 
     item = models.DBItem(
         client_id=client_id, kind=kind, item_code=code, item_name=name,

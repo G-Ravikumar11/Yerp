@@ -470,6 +470,10 @@ def advance(db, actor, kind, doc, action, reason="", can_high_value=False):
                 transfer_cancel_hook(db, doc)
         doc.status, doc.cancel_reason = DocStatus.CANCELLED.value, reason
         log(db, actor, kind.ref, doc.id, "cancel", now, doc.status, reason)
+        if kind.key == "transfer" and now == DocStatus.POSTED.value:
+            # Between two projects, the cost already charged across is reversed in the same transaction as the cancellation, and its moment kept.
+            from app.services.store_accounts import reverse_for_transfer
+            reverse_for_transfer(db, doc)
         return doc
     if action not in STEPS:
         raise HTTPException(404, "There is no such action.")

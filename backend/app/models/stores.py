@@ -1,7 +1,7 @@
 """Items, serial codes, bills of materials and stock."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 
 from app.db.session import Base
 
@@ -76,6 +76,9 @@ class DBItem(Base):
     selling_rate = Column(Float, default=0.0)
     preferred_supplier = Column(String, default="")
     remarks = Column(String, default="")
+    # Reinforcement steel counted in numbers: what one piece weighs, in kg, so a count can be turned into weight (services/steel_allowance.py).
+    # Kept only for a steel item whose unit is Numbers; empty for every other item, and never assumed where it is empty.
+    weight_per_piece_kg = Column(Numeric(12, 4), nullable=True)
     created_by_name = Column(String, default="")
     updated_by_name = Column(String, default="")
     updated_at = Column(String, default="")

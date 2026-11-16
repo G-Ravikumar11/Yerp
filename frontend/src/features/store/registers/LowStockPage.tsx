@@ -1,54 +1,122 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { TriangleAlert } from 'lucide-react'
-import { Button, Card } from '@/components/ui'
+import { ShoppingCart, TriangleAlert } from 'lucide-react'
+import { Badge, Button, Card } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
-import { qty } from '../enquiry/api'
-import { isLow, levelOf, matching, useStock, type StockRow } from './api'
+import { cn } from '@/lib/utils'
+import { dmy } from '../reports/api'
+import { matching, useLowHistory, useLowStock, type LowHistoryRow, type LowRow, type LowStatus } from './api'
+import { RaiseLowStock } from './RaiseLowStock'
 import { RegisterFilters, RegisterHeader } from './RegisterParts'
 
-/** Store > Low Stock: what is at or under its reorder level (or its minimum), worst first, with how much short it is. */
-/** `storeId` given: it sits in the Store Desk, which chooses the store and has the heading. */
+const n = (v: string | number | null) => Number(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 3 })
+const STATUS: Record<LowStatus | 'RESOLVED', { label: string; tone: 'danger' | 'info' | 'warning' | 'success' }> = {
+  LOW_STOCK: { label: 'LOW STOCK', tone: 'danger' },
+  INDENT_RAISED: { label: 'INDENT RAISED', tone: 'info' },
+  ENQUIRY_RAISED: { label: 'ENQUIRY RAISED', tone: 'warning' },
+  RESOLVED: { label: 'RESOLVED', tone: 'success' },
+}
+
+/** Store > Low Stock: what is low now - its available stock (not just what is on hand) at or under its reorder level - worst first, with how
+ * much to order, the alert's dates and the indent or enquiry raised for it. Tick the ones to act on and raise them together.
+ * `storeId` given: it sits in the Store Desk, which chooses the store and has the heading. */
 export function LowStockList({ storeId: fixed }: { storeId?: number } = {}) {
   const embedded = fixed !== undefined
   const nav = useNavigate()
   const [q, setQ] = useState('')
   const [own, setStoreId] = useState(0)
+  const [view, setView] = useState<'active' | 'history'>('active')
+  const [picked, setPicked] = useState<ReadonlySet<string | number>>(new Set())
+  const [raising, setRaising] = useState(false)
   const storeId = fixed ?? own
-  // Nil stock of an item with a level is the most urgent of all, so nil lines are asked for too.
-  const stock = useStock({ store_id: storeId, category: '', include_zero: true })
-  const low = (stock.data?.items ?? []).filter(isLow)
+  const stock = useLowStock(storeId)
+  const history = useLowHistory(storeId, view === 'history')
   const fromDesk = embedded ? '&from=desk' : ''
-  const short = (r: StockRow) => Math.max(0, levelOf(r) - Number(r.qty))
-  const rows = matching(low, q, (r) => [r.item_name, r.item_code, r.category, r.store_name]).sort((a, b) => Number(a.qty) / levelOf(a) - Number(b.qty) / levelOf(b))
-  const columns: TableColumn<StockRow>[] = [
-    { id: 'code', header: 'ID', width: '7rem', sort: (r) => r.item_code, cell: (r) => <span className="font-mono text-[13px]">{r.item_code}</span> },
-    { id: 'name', header: 'Material name', sort: (r) => r.item_name, cell: (r) => <span className="font-medium">{r.item_name}</span> },
-    { id: 'cat', header: 'Category', width: '8rem', hideBelow: 'md', sort: (r) => r.category ?? '', cell: (r) => r.category ?? '-' },
-    { id: 'qty', header: 'In stock', align: 'right', width: '7rem', sort: (r) => Number(r.qty), cell: (r) => qty(r.qty) },
-    { id: 'min', header: 'Min stock', align: 'right', width: '7rem', sort: (r) => levelOf(r), cell: (r) => qty(String(levelOf(r))) },
-    { id: 'short', header: 'Deficit', align: 'right', width: '7rem', sort: short, cell: (r) => <span className="font-semibold text-danger">{qty(String(short(r)))}</span> },
-    { id: 'uom', header: 'Unit', width: '5rem', cell: (r) => r.base_uom },
-    { id: 'loc', header: 'Location', width: '9rem', hideBelow: 'sm', sort: (r) => r.store_name, cell: (r) => r.store_name },
+  const all = useMemo(() => stock.data?.items ?? [], [stock.data])
+  const rows = matching(all, q, (r) => [r.item_name, r.item_code, r.category, r.store_name, r.store_code, r.project])
+  const chosen = all.filter((r) => picked.has(r.key))
+  const canRaise = !!stock.data && (stock.data.can_indent || stock.data.can_enquire)
+  const old = matching(history.data ?? [], q, (r) => [r.item_name, r.item_code, r.store_code, r.action_ref])
+
+  const columns: TableColumn<LowRow>[] = [
+    { id: 'name', header: 'Material', sort: (r) => r.item_name, cell: (r) => <div><div className="font-medium">{r.item_name}</div><div className="font-mono text-xs text-muted-foreground">{r.item_code}</div></div> },
+    { id: 'loc', header: 'Store', width: '9rem', hideBelow: 'sm', sort: (r) => r.store_code, cell: (r) => <div>{r.store_code}<div className="text-xs text-muted-foreground">{r.project || r.store_name}</div></div> },
+    {
+      id: 'avail', header: 'Available', align: 'right', width: '8rem', sort: (r) => Number(r.available),
+      cell: (r) => (
+        <div><span className="font-semibold text-danger">{n(r.available)}</span> <span className="text-xs text-muted-foreground">{r.base_uom}</span>
+          {Number(r.on_hand) !== Number(r.available) && <div className="text-[11px] font-normal text-muted-foreground" title="On hand, before what is on hold, rejected, expired or reserved for approved indents">{n(r.on_hand)} on hand</div>}</div>
+      ),
+    },
+    { id: 'lvl', header: 'Reorder level', align: 'right', width: '7rem', hideBelow: 'md', sort: (r) => Number(r.reorder_level), cell: (r) => n(r.reorder_level) },
+    {
+      id: 'sug', header: 'Suggested reorder', align: 'right', width: '8rem', sort: (r) => Number(r.suggested_qty),
+      cell: (r) => <div title={r.suggest_basis}>{n(r.suggested_qty)} <span className="text-xs text-muted-foreground">{r.base_uom}</span>{Number(r.on_order) > 0 && <div className="text-[11px] text-muted-foreground">{n(r.on_order)} already coming</div>}</div>,
+    },
+    { id: 'since', header: 'Alert raised', width: '8rem', hideBelow: 'lg', sort: (r) => r.alerted_at, cell: (r) => (r.alerted_at ? <div className="text-xs"><div>{dmy(r.alerted_at)}</div><div className="text-muted-foreground">checked {dmy(r.last_checked_at)}</div></div> : '-') },
+    {
+      id: 'status', header: 'Status', width: '11rem', sort: (r) => r.status,
+      cell: (r) => (
+        <div>
+          <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
+          {r.action && (
+            <div className="mt-0.5 text-xs text-muted-foreground" title={r.action_by ? `Raised by ${r.action_by}` : undefined}>
+              {r.action === 'INDENT' ? 'Indent' : 'Enquiry'} {r.action_ref}{r.action_doc_status ? ` - ${r.action_doc_status.toLowerCase()}` : ''}{r.action_qty ? ` for ${n(r.action_qty)}` : ''}
+              {!r.action_live && <span className="block text-warning">no longer open - still low</span>}
+            </div>
+          )}
+        </div>
+      ),
+    },
+  ]
+  const old_columns: TableColumn<LowHistoryRow>[] = [
+    { id: 'name', header: 'Material', cell: (r) => <div><div className="font-medium">{r.item_name}</div><div className="font-mono text-xs text-muted-foreground">{r.item_code}</div></div> },
+    { id: 'store', header: 'Store', width: '6rem', cell: (r) => r.store_code },
+    { id: 'raised', header: 'Alert raised', width: '8rem', cell: (r) => (r.alerted_at ? dmy(r.alerted_at) : '-') },
+    { id: 'low', header: 'Available then', align: 'right', width: '8rem', cell: (r) => `${n(r.available)} / ${n(r.reorder_level)}` },
+    { id: 'res', header: 'Resolved', width: '9rem', cell: (r) => <div><Badge tone="success">RESOLVED</Badge><div className="mt-0.5 text-xs text-muted-foreground">{r.resolved_at ? dmy(r.resolved_at) : ''}{r.resolved_qty ? ` at ${n(r.resolved_qty)}` : ''}</div></div> },
+    { id: 'act', header: 'Raised for it', cell: (r) => (r.action ? <span className="text-xs">{r.action === 'INDENT' ? 'Indent' : 'Enquiry'} {r.action_ref}{r.action_qty ? ` for ${n(r.action_qty)}` : ''}{r.action_by ? ` by ${r.action_by}` : ''}</span> : <span className="text-xs text-muted-foreground">Nothing raised</span>) },
   ]
   return (
     <div>
-      <RegisterHeader embedded={embedded} title="Low Stock Alerts" description="Materials at or below their minimum stock level."
+      <RegisterHeader embedded={embedded} title="Low Stock Alerts" description="Materials whose available stock is at or below the reorder level."
         actions={<Button variant="outline" asChild><Link to="/store/hub/reports/reorder">Reorder report</Link></Button>} />
-      {low.length > 0 && (
+      {view === 'active' && all.length > 0 && (
         <div role="status" className="mb-5 flex items-center gap-2.5 rounded-xl border border-warning/40 bg-warning-soft px-4 py-3 text-sm text-warning">
           <TriangleAlert className="size-5 shrink-0" />
-          {low.length} {low.length === 1 ? 'material is' : 'materials are'} at or below the minimum stock level. Reorder now to avoid delays on site.
+          {all.length} {all.length === 1 ? 'material is' : 'materials are'} at or below the reorder level. Tick them and raise an indent or enquiry together.
         </div>
       )}
       <Card className="p-4">
         <RegisterFilters q={q} onQ={setQ} storeId={storeId} onStore={embedded ? undefined : setStoreId} />
-        {stock.isError ? <p role="alert" className="text-sm text-danger">Could not load the stock.</p> : (
-          <DataTable label="Low stock" rows={rows} loading={stock.isPending} columns={columns} rowKey={(r) => `${r.store_id}-${r.item_id}`}
-            onRowClick={(r) => nav(`/store/hub/enquiry/card?store=${r.store_id}&item=${r.item_id}${fromDesk}`)}
-            empty="Nothing is low. An item shows here when its stock falls to its reorder level or minimum, set on the item or the store." />
+        <div role="group" aria-label="Alerts shown" className="mb-3 flex flex-wrap items-center gap-1.5">
+          {([['active', `Low now (${all.length})`], ['history', 'Resolved alerts']] as const).map(([v, label]) => (
+            <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)}
+              className={cn('rounded-md border px-3 py-1.5 text-[13px] font-medium transition-colors', view === v ? 'border-primary bg-primary-soft text-primary' : 'border-border bg-card text-muted-foreground hover:text-foreground')}>{label}</button>
+          ))}
+          {view === 'active' && canRaise && (
+            <div className="ml-auto flex items-center gap-3">
+              <span className="text-sm text-muted-foreground" aria-live="polite">{picked.size} selected</span>
+              {picked.size > 0 && <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>Clear</Button>}
+              <Button size="sm" disabled={!chosen.length} onClick={() => setRaising(true)}><ShoppingCart /> Raise Indent / Enquiry for All Selected</Button>
+            </div>
+          )}
+        </div>
+        {view === 'active' ? (
+          stock.isError ? <p role="alert" className="text-sm text-danger">Could not load the low stock.</p> : (
+            <DataTable label="Low stock" rows={rows} loading={stock.isPending} columns={columns} rowKey={(r) => r.key}
+              selection={canRaise ? { selected: picked, onChange: setPicked } : undefined}
+              onRowClick={(r) => nav(`/store/hub/enquiry/card?store=${r.store_id}&item=${r.item_id}${fromDesk}`)}
+              empty="Nothing is low. An item shows here when what is available of it falls to its reorder level, set on the item or the store." />
+          )
+        ) : history.isError ? <p role="alert" className="text-sm text-danger">Could not load the resolved alerts.</p> : (
+          <DataTable label="Resolved low stock alerts" rows={old} loading={history.isPending} columns={old_columns} rowKey={(r) => `${r.alert_id}-${r.alerted_at}-${r.resolved_at}`}
+            empty="No alert has been resolved yet. One is resolved when the stock is back above the reorder level; it is kept here." />
         )}
       </Card>
+      {raising && stock.data && chosen.length > 0 && (
+        <RaiseLowStock rows={chosen} canIndent={stock.data.can_indent} canEnquire={stock.data.can_enquire} onClose={() => { setRaising(false); setPicked(new Set()) }} />
+      )}
     </div>
   )
 }

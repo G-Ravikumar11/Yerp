@@ -285,7 +285,18 @@ def apply_update(item, v, who):
         item.reorder_level = float(v["reorder_level"])
     if v.get("gst_percent") != "":
         item.item_tax_type = "%s%%" % v["gst_percent"]
+    from app.services import steel_allowance as steel
+    if not steel.is_piece_unit(item.units_of_measure):
+        item.weight_per_piece_kg = None                       # not counted in numbers: no obsolete weight per piece kept
     item.updated_by_name, item.updated_at = who, im.now()
+
+
+def _piece_weight_refusal(item, v):
+    """A sheet that moves a steel item to Numbers cannot say what one piece weighs: refused for that row, with why, rather than leaving steel that cannot be weighed."""
+    from app.services import steel_allowance as steel
+    if v.get("units_of_measure") and steel.is_steel(item) and steel.is_piece_unit(v["units_of_measure"]) and steel.piece_weight(item) is None:
+        return "'%s' is steel and would be counted in Numbers, which needs its weight per piece: set Weight Per Piece (kg) in the item master first." % item.item_name
+    return ""
 
 
 def new_item_body(v):
@@ -318,7 +329,13 @@ def commit(db, client_id, entries, who):
             problems.append({"line": line, "code": v["item_code"], "name": v["item_name"], "reason": r["reason"]})
             continue
         if r["status"] == "Update":
-            apply_update(db.query(models.DBItem).get(r["existing_id"]), v, who)
+            item = db.query(models.DBItem).get(r["existing_id"])
+            why = _piece_weight_refusal(item, v)
+            if why:
+                skipped += 1
+                problems.append({"line": line, "code": v["item_code"], "name": v["item_name"], "reason": why})
+                continue
+            apply_update(item, v, who)
             updated += 1
             continue
         try:

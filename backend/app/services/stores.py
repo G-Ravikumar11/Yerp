@@ -397,9 +397,12 @@ def boq_material_required(db, client_id, job_id):
 def boq_material_budget(db, client_id, job_id):
     """{key: {item_code, item_name, uom, needed, rate, value}}: the materials the project's BOQ budget takes in all, each
     priced BOQ line's quantity times what one unit of it takes. Keyed by item code, or by name and unit for a material
-    typed into the budget without one."""
+    typed into the budget without one. Each material's wastage is in the quantity, once, at the percentage the budget is
+    costed at: the store's norm for it on that BOQ line where one is set, else the budget's own."""
+    from app.services import budget_wastage
     from app.services.boq import boq_lines_of_job
     qty = {l.key: l.quantity or 0.0 for l in boq_lines_of_job(db, client_id, job_id)}
+    norms = budget_wastage.norm_percents(db, client_id, [job_id])
     needed = {}
     for i in db.query(models.DBBoqBudgetItem).filter(
             models.DBBoqBudgetItem.client_id == client_id, models.DBBoqBudgetItem.job_id == job_id,
@@ -411,8 +414,10 @@ def boq_material_budget(db, client_id, job_id):
         key = code or "%s|%s" % ((i.description or "").strip().lower(), (i.uom or "").strip().lower())
         row = needed.setdefault(key, {"item_code": code, "item_name": i.description or "",
                                       "uom": i.uom or "", "needed": 0.0, "rate": unit_rate(i.rate), "value": 0.0})
-        row["needed"] = qty3(row["needed"] + qty[i.boq_key] * (i.coefficient or 0))
-        row["value"] = money(row["value"] + qty[i.boq_key] * (i.coefficient or 0) * (i.rate or 0))
+        take = qty[i.boq_key] * (i.coefficient or 0) * budget_wastage.factor(
+            budget_wastage.for_item(norms, job_id, i.boq_key, i.kind, i.item_code, i.wastage_percent))
+        row["needed"] = qty3(row["needed"] + take)
+        row["value"] = money(row["value"] + take * (i.rate or 0))
     return needed
 
 

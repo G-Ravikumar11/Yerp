@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { storeGet } from '@/api/store'
+import { get, post } from '@/lib/api'
 import { qs, type BalanceRow, type Position } from '../enquiry/api'
 
 /** The lists pull fresh figures by themselves this often, and whenever the window is come back to. */
@@ -68,3 +69,85 @@ export function matching<T>(rows: T[], q: string, fields: (r: T) => (string | nu
   const term = q.trim().toLowerCase()
   return term ? rows.filter((r) => fields(r).some((v) => (v ?? '').toLowerCase().includes(term))) : rows
 }
+
+/** One item that is low now, as the server worked it out: what is available (not just on hand), its level, how much to order, and the
+ * store's alert with the indent or enquiry raised for it. The screen shows these and never works them out itself. */
+export type LowStatus = 'LOW_STOCK' | 'INDENT_RAISED' | 'ENQUIRY_RAISED'
+export interface LowRow {
+  key: string
+  alert_id: number | null
+  store_id: number
+  store_code: string
+  store_name: string
+  project_id: number | null
+  project: string
+  item_id: number
+  item_code: string
+  item_name: string
+  category: string | null
+  base_uom: string
+  on_hand: string
+  unusable: string
+  reserved: string
+  available: string
+  reorder_level: string
+  min_qty: string
+  max_qty: string
+  target_level: string | null
+  suggest_basis: string
+  suggested_qty: string
+  on_order: string
+  to_order: string
+  alerted_at: string
+  last_checked_at: string
+  times_raised: number
+  status: LowStatus
+  action: '' | 'INDENT' | 'ENQUIRY'
+  action_ref: string
+  action_doc_id: number | null
+  action_doc_status: string
+  action_live: boolean
+  action_qty: string | null
+  action_by: string
+  action_at: string
+}
+export interface LowHistoryRow {
+  alert_id: number
+  store_code: string
+  item_code: string
+  item_name: string
+  status: 'RESOLVED' | 'CLOSED'
+  alerted_at: string | null
+  resolved_at: string | null
+  available: string | null
+  reorder_level: string | null
+  suggested_qty: string | null
+  resolved_qty: string | null
+  action: string | null
+  action_ref: string | null
+  action_qty: string | null
+  action_by: string | null
+}
+export interface LowStock { items: LowRow[]; can_indent: boolean; can_enquire: boolean }
+
+export const lowKeys = { all: ['store', 'low-stock'] as const }
+export const useLowStock = (storeId: number) =>
+  useQuery({ queryKey: [...lowKeys.all, 'active', storeId], refetchOnMount: 'always', refetchInterval: REFRESH, refetchOnWindowFocus: true,
+    queryFn: () => get<LowStock>(`/api/store/levels/low-stock${qs({ store_id: storeId })}`) })
+export const useLowHistory = (storeId: number, enabled: boolean) =>
+  useQuery({ queryKey: [...lowKeys.all, 'history', storeId], enabled, queryFn: async () => (await get<{ items: LowHistoryRow[] }>(`/api/store/levels/low-stock${qs({ store_id: storeId, view: 'history' })}`)).items })
+
+export interface RaiseLine { store_id: number; item_id: number; qty: string; alert_id: number | null }
+export interface RaiseResult {
+  store_id: number
+  item_id: number
+  ok: boolean
+  message: string
+  ref?: string
+  doc_id?: number
+  repeat?: boolean
+  status?: string
+}
+export interface RaiseAnswer { ok: boolean; action: 'INDENT' | 'ENQUIRY'; created: { type: string; id: number; number: string; lines: number; store_code?: string; status: string }[]; results: RaiseResult[]; raised: number; failed: number; message: string }
+export const raiseLow = (body: { action: 'INDENT' | 'ENQUIRY'; lines: RaiseLine[]; request_key: string; project_id?: number; required_by?: string; title?: string }) =>
+  post<RaiseAnswer>('/api/store/levels/low-stock/raise', body)

@@ -181,16 +181,8 @@ const NAV: NavEntry[] = [
 
 export type Trail = { label: string; path?: string }[]
 
-/** Screens with no menu entry of their own: the old store's records, opened from the Store Hub. */
 /** The Store page's own lists, reached from it rather than from the menu. */
 const DESK_PAGES: [string, string][] = [['/store/issue', 'Material Issue'], ['/store/receive', 'Material Receive'], ['/store/stock-register', 'Stock Register'], ['/store/low-stock', 'Low Stock']]
-
-const OFF_MENU: Record<string, string> = {
-  '/store/old/stock': 'Stock & Issues (old store)',
-  '/store/old/goods-receipt': 'Goods Receipt & Match (old store)',
-  '/store/old/material-vouchers': 'Material Issue Voucher (old store)',
-  '/store/old/material-costing': 'Material Used vs Costed (old store)',
-}
 
 /** Home > Group > Page for whatever path is showing. */
 export function trailFor(pathname: string, staff = false): Trail {
@@ -206,8 +198,7 @@ export function trailFor(pathname: string, staff = false): Trail {
   const store: Trail = [...home, { label: 'Store', path: '/store' }]
   const desk = DESK_PAGES.find(([p]) => pathname === p || pathname.startsWith(p + '/'))
   if (desk) return [...store, ...(pathname === desk[0] ? [{ label: desk[1] }] : [{ label: desk[1], path: desk[0] }, { label: 'Details' }])]
-  const off = OFF_MENU[pathname]
-  if (off) return [...store, { label: 'Full store (Hub)', path: '/store/hub' }, { label: off }]
+
   const section = STORE_SECTIONS.find((s) => pathname === s.path) ?? STORE_SECTIONS.find((s) => pathname.startsWith(s.path + '/'))
   if (section) return [...store, ...(pathname === section.path ? [{ label: section.label }] : [{ label: section.label, path: section.path }, { label: 'Details' }])]
   // A page inside a section: /subcontractors/work-orders/12 sits under Work Orders.

@@ -1,4 +1,5 @@
 """What the item master endpoints are sent."""
+from decimal import Decimal
 from typing import List, Optional
 
 from pydantic import BaseModel
@@ -27,6 +28,8 @@ class MasterItemIn(BaseModel):
     shelf_life_days: Optional[int] = None
     expiry_tracking: Optional[bool] = False
     segment: Optional[str] = ""                # the company or division the item belongs to, as the old ERP kept it
+    # Steel counted in Numbers: what one piece weighs, in kg. Required for that, ignored for everything else; left out on an edit keeps what is held.
+    weight_per_piece_kg: Optional[Decimal] = None
 
 
 class StatusIn(BaseModel):

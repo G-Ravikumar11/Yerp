@@ -68,8 +68,6 @@ export const PAGE_INFO: Record<string, string> = {
   '/store/enquiries/:id': 'One enquiry: the items asked for, the suppliers asked and their quotes side by side, and the award that makes the purchase orders.',
   '/store/purchase-orders': 'Purchase orders to suppliers: what was ordered, at what rate, what has arrived and what is billed.',
   '/store/eway': 'E-way bills for goods moving between places, with their validity so a load is never on the road without one.',
-  '/store/old/goods-receipt': 'Record what actually arrives against a purchase order and match it to the order and the supplier\'s bill.',
-  '/store/old/material-vouchers': "The store's Material Issue Voucher, as on the printed form: project, who indented it, who issued it and for what, and each item issued and returned. Every voucher is kept in Sl. No. order, to print as a PDF or download as an Excel register.",
   '/store': "Everything in the store from one place: receive and issue material, what is in stock and running low, then purchase and the rest of the store below.",
   '/store/stock-register': 'Every material each store holds, its minimum and maximum, when it last came in and where it is kept.',
   '/store/issue/*': 'A material issue: make a new one, open one to submit, approve and post it, or edit a draft.',
@@ -84,9 +82,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/store/hub/outward/*': 'Issues to site and to subcontractors, returnable tools and write-offs.',
   '/store/hub/control/*': 'Transfers between stores, stock counts, adjustments and scrap.',
   '/store/hub/reports/*': 'Stock, consumption and material cost reports.',
-  '/store/old/stock': 'Stock on hand at each store, receipts, and issues to site. Issue material to a project and the balance falls.',
   '/store/invoice-tracker': 'Purchases by trade and supplier invoice, with each bill checked against what was received, plus a ready-mix register by lorry and block.',
-  '/store/old/material-costing': 'Material used on site against what was costed, so overuse and wastage show up early.',
 
   '/money/dashboard': "The accounts at a glance: total receivables, payables, expenses, cash position and overdue amount, insights drawn from the books, and the cash flow and revenue against expense trends.",
   '/money/ledgers': 'Payments and ledgers: what has been paid to or received from each party, and the running balance.',

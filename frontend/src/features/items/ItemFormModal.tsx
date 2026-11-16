@@ -6,7 +6,7 @@ import { createMasterItem, fetchNextCode, fetchSimilar, masterKeys, updateMaster
 import { itemKeys, type ItemVocabulary } from '@/api/items'
 import { useAction } from '@/lib/mutate'
 import { useDebounced } from '@/lib/hooks'
-import { GST_RATES, defaultTypeFor, matchUnit, orderUnits, validateItem, type ItemErrors, type ItemForm } from './itemLogic'
+import { GST_RATES, defaultTypeFor, matchUnit, needsPieceWeight, orderUnits, validateItem, type ItemErrors, type ItemForm } from './itemLogic'
 import { MoneyInput } from './MoneyInput'
 
 export type FormMode = 'create' | 'edit' | 'duplicate'
@@ -78,6 +78,7 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
     shelf_life_days: text(base?.shelf_life_days),
     expiry_tracking: !!base?.expiry_tracking,
     segment: base?.segment ?? '',
+    weight_per_piece_kg: base?.weight_per_piece_kg ? String(Number(base.weight_per_piece_kg)) : '',
   })
   const set = <K extends keyof ItemForm>(k: K, v: ItemForm[K]) => setF((s) => ({ ...s, [k]: v }))
   const field = (k: keyof ItemForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => set(k, e.target.value as never)
@@ -136,6 +137,8 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
     shelf_life_days: f.shelf_life_applicable ? num(f.shelf_life_days) : null,
     expiry_tracking: f.expiry_tracking,
     segment: f.segment,
+    // Asked for only steel counted in Numbers. Anything else sends nothing, so a unit changed away from Numbers leaves no old figure behind.
+    weight_per_piece_kg: needsPieceWeight(f, units) ? num(f.weight_per_piece_kg) : null,
   })
   const save = useAction((_again: boolean) => (editing && item ? updateMasterItem(item.id, body()) : createMasterItem(body())), {
     invalidate: [masterKeys.all, itemKeys.all],
@@ -203,6 +206,12 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
             placeholder="Start typing: Bags, cum, Kgs" autoComplete="off" aria-invalid={!!show('units_of_measure') || undefined} />
           <datalist id="im-units">{units.map((u) => <option key={u} value={u} />)}</datalist>
         </Field>
+        {needsPieceWeight(f, units) && (
+          <Field label="Weight Per Piece (kg) (required)" htmlFor="im-wpp" error={show('weight_per_piece_kg')} hint="What one piece weighs, so a count of bars can be turned into kilograms for the BBS check. Example: a 12 mm bar, 10.67 kg.">
+            <Input id="im-wpp" inputMode="decimal" className="text-right" trailing="kg/piece" value={f.weight_per_piece_kg} onChange={field('weight_per_piece_kg')} onBlur={blur('weight_per_piece_kg')}
+              placeholder="10.67" aria-invalid={!!show('weight_per_piece_kg') || undefined} />
+          </Field>
+        )}
         <Field label="Category" htmlFor="im-cat" hint="Groups the item in lists and reports.">
           <Select id="im-cat" value={f.item_category} placeholder="No category" onChange={(e) => setF((s) => ({ ...s, item_category: e.target.value, item_subcategory: '' }))}
             options={(cats.data ?? []).filter((c) => c.is_active || c.name === f.item_category).map((c) => ({ value: c.name, label: c.name }))} />

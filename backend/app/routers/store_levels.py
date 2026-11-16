@@ -1,7 +1,7 @@
 """Store module - levels per store, under /api/store/levels: an item's reorder, minimum and maximum quantity for one store where it differs from the
 item's own, and a scan that raises the alert for any item already below its level. store.masters.view reads; store.masters.create changes."""
 from decimal import Decimal, InvalidOperation
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -65,6 +65,69 @@ def _item(db, actor, item_id):
     return item
 
 
+# --- the Low Stock list, and raising for many items at once -------------------------------------------------------------------
+
+class LowLineIn(BaseModel):
+    store_id: int
+    item_id: int
+    qty: str
+    alert_id: Optional[int] = None
+
+
+class LowRaiseIn(BaseModel):
+    action: str                                  # INDENT | ENQUIRY
+    lines: List[LowLineIn] = []
+    request_key: str = ""                        # one per press of the button: a repeat raises nothing twice
+    project_id: int = 0                          # for an indent from a store that belongs to no project (and to name on an enquiry)
+    required_by: str = ""
+    title: str = ""
+
+
+@router.get("/low-stock")
+def low_stock(request: Request, store_id: int = 0, view: str = "active", db: Session = Depends(get_read_db)):
+    """What is low now (view=active), with each store's alert and the indent or enquiry raised for it; or the history of resolved alerts
+    (view=history). Only the stores this person works in."""
+    from app.services.store_low_stock import history_rows, low_rows
+    actor = store_actor(request, db, ("store.enquiry.view", "store.masters.view"))
+    seen = visible_store_ids(db, actor)
+    if store_id:
+        _store(db, actor, store_id)
+        seen = {store_id}
+    if view == "history":
+        return {"view": "history", "items": history_rows(db, actor.client.id, seen)}
+    held = _held(actor)
+    return {"view": "active", "items": low_rows(db, actor.client.id, seen),
+            "can_indent": actor.employee is None or bool(held & {"store.outward.create", "store.admin"}),
+            "can_enquire": actor.employee is None or "purchase.manage" in held}
+
+
+def _held(actor):
+    from app.core.permissions import permissions_for
+    return set(permissions_for(actor.employee)) if actor.employee is not None else set()
+
+
+@router.post("/low-stock/raise")
+def low_stock_raise(body: LowRaiseIn, request: Request, db: Session = Depends(get_db)):
+    """Raise an indent (one per store, submitted for approval) or an enquiry (one for all) for the low items chosen, at the quantities
+    given. Every line is checked again against the stock now; each is answered on its own, and the good ones go in together."""
+    from app.services.store_low_stock import raise_for
+    action = (body.action or "").strip().upper()
+    actor = store_actor(request, db, ("store.enquiry.view", "store.masters.view", "store.outward.create", "purchase.manage"))
+    held = _held(actor)
+    if actor.employee is not None:
+        if action == "INDENT" and not held & {"store.outward.create", "store.admin"}:
+            raise HTTPException(403, "Raising an indent needs the right to create store indents.")
+        if action == "ENQUIRY" and "purchase.manage" not in held:
+            raise HTTPException(403, "Raising a purchase enquiry needs the purchasing right.")
+    try:
+        out = raise_for(db, actor, action, [l.dict() for l in body.lines], body.request_key, body.project_id, body.required_by, body.title, request)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return out
+
+
 @router.get("/{store_id}")
 def store_levels_list(store_id: int, request: Request, db: Session = Depends(get_read_db)):
     actor = store_actor(request, db, "store.masters.view")
@@ -118,10 +181,11 @@ def scan(request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.masters.create")
     seen = visible_store_ids(db, actor)                                 # the stores this person works in (all of them for an administrator)
     from app.services.accounts_watch import scan_reorder_levels
+    counts = {}
     try:
-        raised = scan_reorder_levels(db, actor.client.id, seen)        # the same check runs by itself every morning
+        raised = scan_reorder_levels(db, actor.client.id, seen, counts)        # the same check runs by itself every morning
         db.commit()
     except Exception:
         db.rollback()
         raise
-    return {"raised": raised}
+    return {"raised": raised, "updated": counts.get("updated", 0), "resolved": counts.get("resolved", 0)}

@@ -31,6 +31,12 @@ export interface MasterItem {
   expiry_tracking?: boolean
   /** The company or division the item belongs to, as the old ERP's sheet has it. */
   segment: string
+  /** Steel counted in Numbers: what one piece weighs, in kg ('10.6700'), or null when none is kept. */
+  weight_per_piece_kg?: string | null
+  /** Reinforcement steel (or filed under a steel category). */
+  is_steel?: boolean
+  /** NA unless it is steel counted in Numbers; then OK, or MISSING when its weight per piece has not been set. */
+  weight_status?: 'NA' | 'OK' | 'MISSING'
   sites: number
   /** The store's running total for the item, or null when none is kept. */
   stock: number | null
@@ -63,6 +69,8 @@ export interface MasterItemInput {
   shelf_life_days?: number | null
   expiry_tracking?: boolean
   segment?: string
+  /** Steel counted in Numbers only: kg for one piece. Anything else is ignored by the server. */
+  weight_per_piece_kg?: number | null
 }
 
 /** What an item can be missing: the master's gaps. */

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Copy, Download, FileUp, ListTree, Pencil, Plus, Power, Search, SlidersHorizontal, X } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, ConfirmDialog, Field, Input, Select, Skeleton, Tabs } from '@/components/ui'
 import { bulkStatus, exportUrl, fetchItem, masterKeys, setItemActive, useCategories, useItemGaps, useMasterItems, useWhereUsed, type Gap, type ItemFilters, type MasterItem } from '@/api/itemMaster'
@@ -58,6 +58,15 @@ export default function ItemMasterPage() {
   const [bulkNote, setBulkNote] = useState('')
   const [bulkOff, setBulkOff] = useState(false)
   const [editingMany, setEditingMany] = useState(false)
+  // /store/items?item=12 opens that item (to edit, for whoever may), so another screen can send somebody straight to the one that needs correcting.
+  const [params, setParams] = useSearchParams()
+  const wanted = Number(params.get('item')) || 0
+  useEffect(() => {
+    if (!wanted) return
+    // The address is cleaned at once, so this runs for each link followed - and the answer is not dropped when that changes `wanted` back to nothing.
+    fetchItem(wanted).then((item) => { if (manage) setForm({ item, mode: 'edit' }); else setDetail(item) }).catch(() => toast.error('That item could not be opened.'))
+    setParams((p) => { const q = new URLSearchParams(p); q.delete('item'); return q }, { replace: true })
+  }, [wanted, manage, setParams])
 
   // What was ticked belongs to the list that was on screen: a different page or filter is a different list.
   const change = (patch: Partial<ItemFilters>) => {

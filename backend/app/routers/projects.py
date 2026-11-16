@@ -941,10 +941,15 @@ def portfolio_pnl_payload(db, client):
 
 @router.get("/api/projects/wastage-loss")
 def projects_wastage_loss(request: Request, db: Session = Depends(get_read_db)):
-    """{job_id: rupees} drawn past the limits - BBS + allowance for steel, the store norms for the rest - for every project."""
+    """{job_id: rupees} drawn past the limits - BBS + allowance for steel, the store norms for the rest - for every project; and in
+    `detail`, for every project with wastage of any kind, the loss, all the wastage, and the part of it with no norm to check it by."""
     client = require_items_access(request, db, "reports.view")
-    from app.services.wastage_loss import wastage_by_job
-    return cached_read(("wastage-loss", client.id, scope_key(db)), lambda: {"by_job": {str(k): v for k, v in wastage_by_job(db, client.id).items()}}, ttl=60)
+    from app.services.wastage_loss import wastage_detail_by_job
+
+    def build():
+        detail = wastage_detail_by_job(db, client.id)
+        return {"by_job": {str(k): d["loss"] for k, d in detail.items() if d["loss"] > 0}, "detail": {str(k): d for k, d in detail.items()}}
+    return cached_read(("wastage-loss", client.id, scope_key(db)), build, ttl=60)
 
 
 @router.get("/api/jobs/{job_id}/wastage-loss")

@@ -3,7 +3,7 @@ import { Download, Printer, Search } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, Input, Modal, Stat, StatGrid } from '@/components/ui'
-import { usePnl, useWastage, useWastageByJob, type PnlRow } from '@/api/costs'
+import { usePnl, useWastage, useWastageByJob, type PnlRow, type WastageNorm } from '@/api/costs'
 import { JOB_STATUS } from '@/api/projects'
 import { ProjectPlantCosts } from '@/features/equipment/PlantChecks'
 import { cn, compactINR } from '@/lib/utils'
@@ -25,7 +25,8 @@ export default function ProjectProfitPage() {
   const q = usePnl()
   const waste = useWastageByJob()
   const [lost, setLost] = useState<PnlRow | null>(null)
-  const totalLost = Object.values(waste.data ?? {}).reduce((a, b) => a + b, 0)
+  const totalLost = Object.values(waste.data ?? {}).reduce((a, b) => a + b.loss, 0)
+  const totalUnchecked = Object.values(waste.data ?? {}).reduce((a, b) => a + b.unchecked, 0)
   const s = q.data?.summary
   const [filter, setFilter] = useState<Filter>('all')
   const [search, setSearch] = useState('')
@@ -95,13 +96,24 @@ export default function ProjectProfitPage() {
           : <div><div className="text-xs text-success">None</div><div className="mt-0.5 text-xs text-muted-foreground">{rupees(Math.max(0, (r.budgeted_cost ?? 0) - r.incurred))} left</div></div>),
     },
     {
-      id: 'w', header: 'Wastage loss', align: 'right', sort: (r) => waste.data?.[String(r.job_id)] ?? 0,
-      // Material within its limit is cost; only what went past BBS + 2% or the store norm is a loss.
+      id: 'w', header: 'Wastage loss', align: 'right', sort: (r) => { const d = waste.data?.[String(r.job_id)]; return (d?.loss ?? 0) * 1e6 + (d?.wasted ?? 0) },
+      // Material within its limit is cost; only what went past BBS + 2% or the store norm is a loss. Wastage the store recorded
+      // where no norm is set is shown as well - never hidden as "None" - but is not called a loss past a limit.
       cell: (r) => {
-        const v = waste.data?.[String(r.job_id)] ?? 0
-        return v > 0
-          ? <button type="button" className="font-semibold text-danger underline-offset-4 hover:underline" onClick={() => setLost(r)} title="Material drawn past its limit - see which">{rupees(v)}</button>
-          : <span className="text-xs text-muted-foreground">None</span>
+        const d = waste.data?.[String(r.job_id)]
+        if (d && d.loss > 0) return (
+          <button type="button" className="text-right text-danger underline-offset-4 hover:underline" onClick={() => setLost(r)} title="Material drawn past its limit - see which">
+            <div className="font-semibold">{rupees(d.loss)}</div>
+            {d.unchecked > 0 && <div className="text-xs text-warning">+{rupees(d.unchecked)} wasted, no norm</div>}
+          </button>
+        )
+        if (d && d.wasted > 0) return (
+          <button type="button" className="text-right underline-offset-4 hover:underline" onClick={() => setLost(r)} title="Wastage recorded - see which materials and whether a norm is set">
+            <div className="font-semibold text-warning">{rupees(d.wasted)} wasted</div>
+            <div className="text-xs text-muted-foreground">{d.unchecked > 0 ? 'Norm not configured' : 'Within norm'}</div>
+          </button>
+        )
+        return <span className="text-xs text-muted-foreground">None</span>
       },
     },
     { id: 'md', header: 'Mandays', hideBelow: 'lg', align: 'right', sort: (r) => r.mandays, cell: (r) => <span className="text-muted-foreground">{r.mandays.toLocaleString('en-IN')}</span> },
@@ -128,7 +140,7 @@ export default function ProjectProfitPage() {
         <Stat label="Margin" value={compactINR(s?.margin)} tone={(s?.margin ?? 0) < 0 ? 'danger' : 'success'} sub={s?.cost_not_billed ? `${compactINR(s.cost_not_billed)} spent on work not billed yet` : 'On what has been billed'} loading={q.isPending} />
         <Stat label="Owed to us" value={compactINR(s?.owed_to_us)} loading={q.isPending} />
         <Stat label="Loss (over budget)" value={compactINR(s?.loss ?? 0)} tone={(s?.loss ?? 0) > 0 ? 'danger' : undefined} sub={`Only spend past the allocated budget${s?.no_budget ? ` · ${s.no_budget} without a budget` : ''}`} loading={q.isPending} />
-        <Stat label="Wastage loss" value={compactINR(totalLost)} tone={totalLost > 0 ? 'danger' : undefined} sub="Only material past its limit (BBS + 2%, store norms)" loading={waste.isPending} />
+        <Stat label="Wastage loss" value={compactINR(totalLost)} tone={totalLost > 0 ? 'danger' : undefined} sub={totalUnchecked > 0 ? `Past its limit (BBS + 2%, store norms) · ${compactINR(totalUnchecked)} more wasted with no norm set` : 'Only material past its limit (BBS + 2%, store norms)'} loading={waste.isPending} />
       </StatGrid>
       {lost && <WastageModal row={lost} onClose={() => setLost(null)} />}
 
@@ -162,32 +174,54 @@ export default function ProjectProfitPage() {
 }
 
 
-/** What one project lost: each material drawn past its limit, by how much, and what that was worth. */
+const NORM_BADGE: Record<WastageNorm, { label: string; tone: 'danger' | 'success' | 'warning' | 'neutral' }> = {
+  OVER: { label: 'Over norm', tone: 'danger' },
+  WITHIN: { label: 'Within norm', tone: 'success' },
+  BBS: { label: 'Over BBS', tone: 'danger' },
+  NO_NORM: { label: 'Norm Not Configured', tone: 'warning' },
+  NOT_LINKED: { label: 'No BOQ item named', tone: 'neutral' },
+}
+const qty = (v: number | null, uom = '') => (v == null ? <span className="text-muted-foreground" title="No norm: nothing to compare with">n/a</span> : `${v.toLocaleString('en-IN', { maximumFractionDigits: 2 })}${uom ? ` ${uom}` : ''}`)
+
+/** One project's wastage, material by material: what the work should have used, what was used, what was wasted, what the norm allows
+ * and what went past it. Where no norm is set the recorded wastage is still shown, with the comparison marked as not available. */
 function WastageModal({ row, onClose }: { row: PnlRow; onClose: () => void }) {
   const q = useWastage(row.job_id)
   const d = q.data
   return (
-    <Modal open onOpenChange={(o) => !o && onClose()} title={`Wastage loss - ${row.name}`} size="lg"
-      description="Material within its limit is the project's cost, not a loss. This is only what went past it, valued at what it was issued at. It is already inside the project's material cost.">
-      {!d ? <p className="text-sm text-muted-foreground">Loading...</p> : d.rows.length === 0 ? <p className="text-sm text-muted-foreground">Nothing past its limit.</p> : (
-        <table className="w-full text-sm">
-          <thead><tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="py-2">Material</th><th className="py-2">Limit</th><th className="py-2 text-right">Allowed</th><th className="py-2 text-right">Used</th><th className="py-2 text-right">Over</th><th className="py-2 text-right">Loss</th>
-          </tr></thead>
-          <tbody>
-            {d.rows.map((w) => (
-              <tr key={`${w.item}-${w.boq_item ?? ''}`} className="border-b border-border last:border-0 align-top">
-                <td className="py-2"><div className="font-medium">{w.item}</div>{w.boq_item && <div className="text-xs text-muted-foreground">{w.boq_item}</div>}</td>
-                <td className="py-2 text-xs text-muted-foreground">{w.basis}</td>
-                <td className="py-2 text-right tabular-nums">{w.limit.toLocaleString('en-IN', { maximumFractionDigits: 1 })} {w.uom}</td>
-                <td className="py-2 text-right tabular-nums">{w.used.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</td>
-                <td className="py-2 text-right tabular-nums text-danger">{w.over.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</td>
-                <td className="py-2 text-right font-semibold tabular-nums text-danger">{rupees(w.value)}</td>
+    <Modal open onOpenChange={(o) => !o && onClose()} title={`Wastage loss - ${row.name}`} size="xl"
+      description="Material within its limit is the project's cost, not a loss: only what went past the norm (or BBS + allowance) is counted as a loss. Wastage the store recorded where no norm is set is shown as it was recorded. All of it is already inside the project's material cost.">
+      {q.isError ? <p className="text-sm text-danger" role="alert">{(q.error as Error).message}</p> : !d ? <p className="text-sm text-muted-foreground">Loading...</p> : d.rows.length === 0 ? <p className="text-sm text-muted-foreground">No wastage recorded and nothing past its limit.</p> : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-max text-sm">
+            <thead><tr className="border-b border-border text-left text-xs text-muted-foreground">
+              <th className="py-2 pr-3">Material</th><th className="py-2 pr-3">Norm status</th>
+              <th className="py-2 pr-3 text-right">Expected consumption</th><th className="py-2 pr-3 text-right">Actual consumption</th>
+              <th className="py-2 pr-3 text-right">Actual wastage</th><th className="py-2 pr-3 text-right">Allowed wastage</th>
+              <th className="py-2 pr-3 text-right">Excess wastage</th><th className="py-2 text-right">Loss</th>
+            </tr></thead>
+            <tbody>
+              {d.rows.map((w) => (
+                <tr key={`${w.item}-${w.boq_item ?? ''}-${w.norm}`} className="border-b border-border last:border-0 align-top">
+                  <td className="py-2 pr-3"><div className="font-medium">{w.item}</div>{w.boq_item && <div className="text-xs text-muted-foreground">{w.boq_item}</div>}</td>
+                  <td className="py-2 pr-3"><Badge tone={NORM_BADGE[w.norm].tone}>{NORM_BADGE[w.norm].label}</Badge><div className="mt-0.5 text-xs text-muted-foreground">{w.basis}</div></td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{qty(w.expected, w.uom)}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{qty(w.used, w.uom)}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums font-medium">{qty(w.wasted, w.uom)}<div className="text-xs font-normal text-muted-foreground">{rupees(w.wasted_value)}</div></td>
+                  <td className="py-2 pr-3 text-right tabular-nums">{qty(w.allowed, w.uom)}</td>
+                  <td className={`py-2 pr-3 text-right tabular-nums ${w.over ? 'text-danger' : ''}`}>{qty(w.over, w.uom)}</td>
+                  <td className="py-2 text-right font-semibold tabular-nums">{w.over == null ? <span className="text-xs font-normal text-muted-foreground">No norm to compare</span> : <span className={w.value > 0 ? 'text-danger' : ''}>{rupees(w.value)}</span>}</td>
+                </tr>
+              ))}
+              <tr>
+                <td colSpan={4} className="py-2 text-right font-semibold">Total</td>
+                <td className="py-2 pr-3 text-right font-semibold tabular-nums">{rupees(d.wasted_value)}</td>
+                <td colSpan={2} className="py-2 pr-3 text-right text-xs text-muted-foreground">{d.unchecked_value > 0 ? `${rupees(d.unchecked_value)} of it with no norm set` : ''}</td>
+                <td className="py-2 text-right font-bold text-danger tabular-nums">{rupees(d.total)}</td>
               </tr>
-            ))}
-            <tr><td colSpan={5} className="py-2 text-right font-semibold">Total</td><td className="py-2 text-right font-bold text-danger tabular-nums">{rupees(d.total)}</td></tr>
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       )}
     </Modal>
   )

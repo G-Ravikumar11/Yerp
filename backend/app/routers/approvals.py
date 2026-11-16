@@ -410,6 +410,14 @@ def approvals_decide(body: ApprovalDecisionIn, request: Request, db: Session = D
             return {"ok": True, "message": "Approved. The store can post the issue now."}
         store_act("issue", body.id, "cancel", request, ActionIn(reason=("Steel refused: " + note)[:300]), db)
         return {"ok": True, "message": "Refused; the issue is cancelled and the store has the reason."}
+    if kind == "free_issue":
+        # Free-issue material past what its norms allow for the contractor's work order: the Master's alone to decide.
+        from app.routers.store_outward import ActionIn, act as store_act, free_issue_reject
+        if decision == "approve":
+            store_act("issue", body.id, "approve", request, ActionIn(reason=note), db)
+            return {"ok": True, "message": "Approved. The store can post the issue now."}
+        free_issue_reject(body.id, request, ActionIn(reason=note), db)
+        return {"ok": True, "message": "Refused; the issue is cancelled and the store has the reason."}
     if kind == "expense_claim":
         from app.routers.payouts import decide_claim
         return decide_claim(body.id, decision == "approve", note, request, db)

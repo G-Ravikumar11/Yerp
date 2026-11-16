@@ -888,6 +888,22 @@ def approval_inbox(db, client, emp):
                 what="; ".join(over)[:300], view="store-issue-view", approve_label="Approve the steel", reject_label="Refuse",
                 note_to_approve=True))
 
+    # 5d3. Store issues of free material to a contractor past what its norms allow for the work ordered: the Master's alone to decide.
+    if emp is None:
+        from app.models.store_core import DocStatus as _DS2
+        from app.models.store_outward import FREE_PENDING, DBStoreFreeIssueRequest, DBStoreIssue as _Iss
+        from app.services.free_issue_allowance import request_dict
+        waiting = {}
+        for fr in db.query(DBStoreFreeIssueRequest).filter(DBStoreFreeIssueRequest.client_id == client.id, DBStoreFreeIssueRequest.status == FREE_PENDING).order_by(DBStoreFreeIssueRequest.id).all():
+            waiting.setdefault(fr.issue_id, []).append(request_dict(db, fr))
+        for iss in db.query(_Iss).filter(_Iss.id.in_(list(waiting) or [0]), _Iss.status.in_((_DS2.SUBMITTED.value, _DS2.APPROVED.value))).order_by(_Iss.id).all():
+            asked = waiting[iss.id]
+            items.append(_row(
+                "free_issue", "Free issue over allowance", iss.id, iss.number, 0, party=asked[0]["subcontractor"] or iss.holder_name or "", project=job_label_for(db, iss.project_id),
+                raised_by=asked[0]["requested_by"], since=asked[0]["requested_at"],
+                what="; ".join("%s: %s %s asked, %s permitted, %s over%s" % (a["item_name"], a["requested_qty"], "", a["permitted_qty"], a["excess_qty"], (" - " + a["reason"]) if a["reason"] else "") for a in asked)[:300],
+                view="store-issue-view", approve_label="Approve the extra", reject_label="Refuse", note_to_approve=True))
+
     # 5e. Staff expense claims, waiting on accounts.
     if manages_cash(emp):
         from app.services.payouts import DBExpenseClaim

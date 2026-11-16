@@ -10,7 +10,7 @@ from app.core.auth import require_items_access, wo_actor
 from app.core.sheets import sheet_response
 from app.db import get_db, get_read_db
 from app.services.boq import boq_lines_of_job
-from app.services.budgeting import (KIND_LABEL, budget_view, replace_items, save_settings, suggest_items)
+from app.services.budgeting import (KIND_LABEL, MAX_ITEMS_PER_LINE, budget_view, replace_items, resolve_wastage, save_settings, suggest_items)
 from app.services.earned_value import earned_value
 from app.services.projects import job_or_404
 
@@ -24,10 +24,21 @@ class BudgetItemIn(BaseModel):
     coefficient: float = 0.0
     rate: float = 0.0
     item_code: str = ""
+    wastage_percent: float = 0.0          # the budget's own; the store's norm, where one is set, is used instead of it
 
 
 class BudgetLineIn(BaseModel):
     items: List[BudgetItemIn] = []
+
+
+class WastageAskIn(BaseModel):
+    kind: str = "MATERIAL"
+    item_code: str = ""
+    wastage_percent: float = 0.0
+
+
+class WastageAsksIn(BaseModel):
+    items: List[WastageAskIn] = []
 
 
 class BudgetSettingsIn(BaseModel):
@@ -64,6 +75,19 @@ def job_budget_line(job_id: int, key: str, body: BudgetLineIn, request: Request,
     log_audit(db, client.id, "budget_line", "job", job.id, job.number or "", "%s: %d items" % (key, len(body.items)), request)
     db.commit()
     return budget_view(db, client.id, job)
+
+
+@router.post("/api/jobs/{job_id}/budget/lines/{key}/wastage")
+def job_budget_line_wastage(job_id: int, key: str, body: WastageAsksIn, request: Request, db: Session = Depends(get_read_db)):
+    """Which wastage % each material of a line would be costed at as the editor holds it - the store's norm where one is set
+    for the material on this BOQ line, else the figure typed - with the mismatch warning. Saves nothing."""
+    client = require_items_access(request, db, "reports.view")
+    job = job_or_404(db, client.id, job_id)
+    if len(body.items) > MAX_ITEMS_PER_LINE:
+        raise HTTPException(400, "A line has at most %d items." % MAX_ITEMS_PER_LINE)
+    if not any(l.key == key for l in boq_lines_of_job(db, client.id, job.id)):
+        raise HTTPException(404, "That line is not in this project's BOQ.")
+    return {"items": resolve_wastage(db, client.id, job.id, key, [i.dict() for i in body.items])}
 
 
 @router.get("/api/budget/materials")
@@ -127,6 +151,19 @@ def job_budget_export(job_id: int, request: Request, db: Session = Depends(get_r
              "" if r["margin"] is None else r["margin"], "Yes" if r["budgeted"] else "No") for r in b["rows"]]
     closing = [("Total", "", "", "", "", t["boq_value"], "", "", "", t["material"], t["labour"], t["other"],
                 t["overheads"] + t["contingency"], t["cost"], t["profit"], t["margin"] if t["margin"] is not None else "", "")]
+    # The materials behind the figures above, each with the wastage % it was costed at and where that came from, so the
+    # sheet shows the same quantities as the screen and the store's reports. Only materials a wastage figure applies to: a
+    # budget with none, and no norms, is the sheet it always was - one row per BOQ line.
+    materials = [(r, i) for r in b["rows"] for i in r["items"]
+                 if i["kind"] == "MATERIAL" and (i["store_norm_wastage_percent"] is not None or i["budgeting_wastage_percent"])]
+    if materials:
+        closing += [(), ("MATERIAL WASTAGE USED IN THIS BUDGET", "", "The Store Material Norm % is used where a norm is set for the material on the BOQ item; otherwise the budget's own %."),
+                    ("Item", "Material", "Unit", "Qty per unit", "Budgeting wastage %", "Store Norm wastage %", "Effective wastage %", "Used from",
+                     "Base quantity", "Wastage quantity", "Final quantity", "Mismatch")]
+        closing += [(r["item_no"], i["description"], i["uom"], i["coefficient"], i["budgeting_wastage_percent"],
+                     "Not configured" if i["store_norm_wastage_percent"] is None else i["store_norm_wastage_percent"], i["effective_wastage_percent"],
+                     "Store Norm" if i["wastage_source"] == "STORE_NORM" else "Budgeting", i["base_quantity"], i["wastage_quantity"], i["final_quantity"],
+                     i["mismatch_message"] or "") for r, i in materials]
     return sheet_response(
         ("Item", "Description", "Unit", "Quantity", "BOQ rate", "BOQ amount", "%s per unit" % KIND_LABEL["MATERIAL"],
          "%s per unit" % KIND_LABEL["LABOUR"], "%s per unit" % KIND_LABEL["OTHER"], "Material", "Labour", "Plant & other",

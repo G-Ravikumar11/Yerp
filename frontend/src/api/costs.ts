@@ -46,9 +46,28 @@ export const useProjectCosts = (id: number) => useQuery({ queryKey: ['costs', 'o
 export const usePnl = () => useQuery({ queryKey: ['costs', 'pnl'], queryFn: () => get<Pnl>('/api/jobs-pnl') })
 
 /** Material drawn past its limit: steel past BBS + allowance, the rest past the store norm and its wastage %. Already inside the
- * project's material cost - this is how much of it was lost. Material within the limit is cost, not loss. */
-export interface WastageRow { item: string; boq_item?: string; basis: string; uom: string; limit: number; used: number; over: number; rate: number; value: number }
+ * project's material cost - this is how much of it was lost. Material within the limit is cost, not loss.
+ * Wastage the store recorded where no norm is set is shown too (norm NO_NORM / NOT_LINKED): expected, allowed and over are then null,
+ * since no wastage % is assumed, and its value is not counted as a loss past a limit. */
+export type WastageNorm = 'OVER' | 'WITHIN' | 'BBS' | 'NO_NORM' | 'NOT_LINKED'
+export interface WastageRow {
+  item: string
+  boq_item?: string | null
+  basis: string
+  uom: string
+  norm: WastageNorm
+  expected: number | null
+  limit: number | null
+  used: number
+  wasted: number
+  allowed: number | null
+  over: number | null
+  rate: number
+  value: number
+  wasted_value: number
+}
+export interface WastageByJob { loss: number; wasted: number; unchecked: number }
 export const useWastageByJob = () =>
-  useQuery({ queryKey: ['costs', 'wastage'], queryFn: async () => (await get<{ by_job: Record<string, number> }>('/api/projects/wastage-loss')).by_job })
+  useQuery({ queryKey: ['costs', 'wastage'], queryFn: async () => (await get<{ by_job: Record<string, number>; detail?: Record<string, WastageByJob> }>('/api/projects/wastage-loss')).detail ?? {} })
 export const useWastage = (jobId: number) =>
-  useQuery({ queryKey: ['costs', 'wastage', jobId], enabled: jobId > 0, queryFn: () => get<{ total: number; rows: WastageRow[] }>(`/api/jobs/${jobId}/wastage-loss`) })
+  useQuery({ queryKey: ['costs', 'wastage', jobId], enabled: jobId > 0, queryFn: () => get<{ total: number; wasted_value: number; unchecked_value: number; unchecked: number; rows: WastageRow[] }>(`/api/jobs/${jobId}/wastage-loss`) })

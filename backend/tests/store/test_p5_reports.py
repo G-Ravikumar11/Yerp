@@ -558,10 +558,15 @@ def test_material_inside_its_norm_is_cost_and_only_the_excess_is_a_wastage_loss(
     w = world(account)
     assert norm(tenant, w).status_code == 200                                  # 10 cum x 50 kg x 1.05 = 525 kg allowed
     inside = tenant.get("/api/jobs/%d/wastage-loss" % w.proj).json()           # 450 kg used: inside the norm
-    assert inside["total"] == 0 and not [r for r in inside["rows"] if "ement" in r["item"]]
+    assert inside["total"] == 0 and not [r for r in inside["rows"] if "ement" in r["item"] and r["over"]]
+    # The 40 kg the store wrote off as wasted names no BOQ item: shown as recorded, with no norm to compare it with.
+    [loose] = [r for r in inside["rows"] if "ement" in r["item"]]
+    assert (loose["norm"], loose["wasted"], loose["allowed"], loose["over"], loose["value"]) == ("NOT_LINKED", 40, None, None, 0)
     with database.SessionLocal() as s:
         put(s, w, MovementType.ISSUE_OUT, w.central, "cement", "200", day=TODAY, doc=("ISSUE", 21), project_id=w.proj, work_order_id=w.wo, boq_item_id=w.boq[0])
         s.commit()
     got = tenant.get("/api/jobs/%d/wastage-loss" % w.proj).json()             # 650 kg used: 125 kg past the norm
     row = next(r for r in got["rows"] if r["over"] == 125)
     assert row["basis"].startswith("Store norm") and row["limit"] == 525 and row["value"] == round(125 * row["rate"], 2) and row["rate"] > 0
+    # 10 cum x 50 kg = 500 expected; 650 used; 150 wasted, of which the norm's 5% allows 25 and 125 is past it.
+    assert (row["norm"], row["expected"], row["used"], row["wasted"], row["allowed"]) == ("OVER", 500, 650, 150, 25)

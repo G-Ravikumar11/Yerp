@@ -184,26 +184,52 @@ def debit_note_on_return(db, ret):
         return None
 
 
-def scan_reorder_levels(db, client_id, store_ids=None):
-    """Raise the alert for every item at or below its reorder level in a store with none open. Returns how many."""
+def scan_reorder_levels(db, client_id, store_ids=None, counts=None):
+    """Check every item a store holds against its reorder level and bring its alert into line: raised where it is low with none open,
+    brought up to date where one is open, and resolved where the stock is back above the level (or the level was taken away). The same
+    check every posting makes; this is the safety net for what changes availability without one - a hold placed or lifted, an indent
+    approved, a level changed. Returns how many were raised; `counts`, when given, is filled with raised / updated / resolved."""
     from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreStockBalance
+    from app.models.store_extras import DBStoreReorderAlert
     from app.services import store_levels
-    from app.services.stock_ledger import raise_reorder_alert
+    from app.services.stock_ledger import available_map, check_reorder, reorder_target
     stores = {s.id: s for s in db.query(DBStore).filter(DBStore.client_id == client_id, DBStore.is_active.is_(True)).all()
               if store_ids is None or s.id in store_ids}
+    tally = counts if counts is not None else {}
+    for k in ("raised", "updated", "resolved"):
+        tally.setdefault(k, 0)
     if not stores:
         return 0
     over = store_levels.overrides(db, list(stores))
     held = db.query(DBStoreStockBalance).filter(DBStoreStockBalance.store_id.in_(list(stores))).all()
     sets = {s.item_id: s for s in db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id.in_([b.item_id for b in held] or [0])).all()}
-    raised = 0
+    avail = available_map(db, list(stores))
+    open_alerts = {(a.store_id, a.item_id) for a in db.query(DBStoreReorderAlert).filter(
+        DBStoreReorderAlert.store_id.in_(list(stores)), DBStoreReorderAlert.cleared_at.is_(None)).all()}
+    zero = {"on_hand": Decimal(0), "unusable": Decimal(0), "reserved": Decimal(0), "available": Decimal(0)}
     for bal in held:
-        level = store_levels.effective(sets.get(bal.item_id), over.get((bal.store_id, bal.item_id)))[0]
-        if level > 0 and Decimal(str(bal.qty)) <= level:
-            item = db.get(models.DBItem, bal.item_id)
-            if item is not None and raise_reorder_alert(db, client_id, stores[bal.store_id], item, Decimal(str(bal.qty)), level):
-                raised += 1
-    return raised
+        key = (bal.store_id, bal.item_id)
+        level, _low, high = store_levels.effective(sets.get(bal.item_id), over.get(key))
+        if level <= 0 and key not in open_alerts:
+            continue
+        f = avail.get(key, zero)
+        target, basis = reorder_target(level, high)
+        fig = {**f, "reorder_level": level, "min_qty": _low, "max_qty": high, "target": target, "basis": basis,
+               "suggested": (max(Decimal(0), target - f["available"])).quantize(Decimal("0.001")) if target is not None else None,
+               "low": level > 0 and f["available"] <= level}
+        if not fig["low"] and key not in open_alerts:
+            continue
+        done = check_reorder(db, client_id, stores[bal.store_id], bal.item_id, f)
+        if done:
+            tally[done] += 1
+    # An open alert on an item the store no longer holds any record of is checked too, so nothing stays open for ever.
+    kept = {(b.store_id, b.item_id) for b in held}
+    for a in db.query(DBStoreReorderAlert).filter(DBStoreReorderAlert.store_id.in_(list(stores)), DBStoreReorderAlert.cleared_at.is_(None)).all():
+        if (a.store_id, a.item_id) not in kept:
+            done = check_reorder(db, client_id, stores[a.store_id], a.item_id)
+            if done:
+                tally[done] += 1
+    return tally["raised"]
 
 
 @scheduled_job("accounts_store_watch", digest_key)
