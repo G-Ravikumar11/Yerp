@@ -56,16 +56,19 @@ PARTY_TYPES = ("client", "supplier", "contractor", "staff", "other")
 # tea for the gang. Each goes out on an expense voucher under one of these heads, charged to the project it was for;
 # a bill with GST on it goes in as a supplier bill instead, so the input credit is claimed. Labour gangs are paid on
 # their RA bills and staff on the payroll, so neither is a head here: paid again here they would be counted twice.
+# What the interest part of a loan instalment is booked under (and what a manual interest voucher may use too).
+LOAN_INTEREST_HEAD = "Interest on loans"
 EXPENSE_HEADS = (
     "Site expenses", "Diesel & fuel", "Machinery hire", "Transport & freight", "Repairs & maintenance",
     "Rent", "Electricity & water", "Staff welfare & food", "Travel & conveyance", "Printing & stationery",
-    "Telephone & internet", "Professional & legal fees", "Bank charges", "Insurance", "Taxes & govt fees",
+    "Telephone & internet", "Professional & legal fees", "Bank charges", LOAN_INTEREST_HEAD, "Insurance", "Taxes & govt fees",
     "Security", "Office expenses", "Other expenses",
 )
 # Money that comes in with no bill of ours behind it.
 INCOME_HEADS = ("Scrap sale", "Interest received", "Deposit refunded", "Insurance claim", "Rent received", "Other income")
 # Vouchers that are nobody's account: an expense or a sundry receipt, and money moved between our own bank and cash
 # (a contra). They are in the bank book and the day's vouchers, never in a party's ledger.
-NO_PARTY_DOCS = ("expense", "income", "contra")
+# A loan is not a party: its instalments and the money received on it are in the bank book and on the loan's own ledger.
+NO_PARTY_DOCS = ("expense", "income", "contra", "loan_instalment", "loan_disbursal")
 
 ASSET_STATUSES = ("Available", "Deployed", "Under repair", "Disposed")

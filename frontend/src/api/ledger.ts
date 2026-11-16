@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { get, post, put } from '@/lib/api'
+import { del, get, post, put } from '@/lib/api'
 
 export type PartyType = 'client' | 'supplier' | 'contractor' | 'other'
 export const PARTY_LABEL: Record<string, string> = { client: 'Client', supplier: 'Supplier', contractor: 'Subcontractor', staff: 'Staff', other: 'Other' }
@@ -71,6 +71,34 @@ export const voidEntry = (id: number, reason: string) => post<{ message: string 
 /** Money paid or received against no bill yet. It sits in the party's ledger until a bill arrives to set it against. */
 export const recordOnAccount = (b: { direction: 'IN' | 'OUT'; party_type: string; party_name: string; amount: number; paid_on: string; mode: string; reference: string; note: string; account_id: number | null; job_id?: number | null }) =>
   post<{ message: string }>('/api/money/entries', { ...b, doc_type: 'on_account', doc_id: null })
+
+/* --- Opening balances ------------------------------------------------------------------------- */
+
+export type OpeningSide = 'owed' | 'advance'
+export interface Opening {
+  id: number
+  /** OB-0001 */
+  number: string
+  party_type: PartyType
+  party: string
+  side: OpeningSide
+  /** What it means for this party, in words: They owe us, We owe them, ... */
+  means: string
+  amount: number
+  /** Its effect on the party's balance: up when owed, down when it is an advance. */
+  balance: number
+  as_on: string
+  job_id: number | null
+  project: string
+  note: string
+  created_by_name: string
+  created_at: string
+}
+export interface OpeningInput { party_type: string; party_name: string; side: OpeningSide; amount: number; as_on: string; job_id: number | null; note: string }
+
+export const useOpenings = () => useQuery({ queryKey: k('openings'), queryFn: () => get<{ openings: Opening[]; summary: { count: number; owed_to_us: number; we_owe: number } }>('/api/ledger/openings') })
+export const saveOpening = (id: number | null, b: OpeningInput) => (id ? put<{ opening: Opening; message: string }>(`/api/ledger/openings/${id}`, b) : post<{ opening: Opening; message: string }>('/api/ledger/openings', b))
+export const deleteOpening = (id: number) => del<{ message: string }>(`/api/ledger/openings/${id}`)
 
 /* --- The bank book -------------------------------------------------------------------------- */
 

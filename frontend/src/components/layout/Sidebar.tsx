@@ -2,13 +2,15 @@ import { useEffect, useMemo } from 'react'
 import { NavLink, useLocation, useMatch } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { ChevronDown, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { groupFor, visibleNav, type NavGroup } from '@/lib/nav'
 import { prefetchPage, preloadScreen, preloadScreens } from '@/lib/prefetch'
 import { useSession } from '@/lib/session'
 import { useInbox } from '@/api/approvals'
 import { useUI } from '@/stores/ui'
+import { useVoucher } from '@/stores/voucher'
+import { canPassVouchers, SHORTCUT } from '@/lib/voucher'
 import { Tooltip } from '@/components/ui'
 import { useIdentity } from '@/api/identity'
 import { CompanyMark } from '@/components/company/CompanyMark'
@@ -79,6 +81,22 @@ function LinkItem({ to, label, icon: Icon, collapsed }: { to: string; label: str
   )
 }
 
+/** At the top of Accounts: one place to pass any voucher, whichever page it would otherwise be passed from. */
+function NewVoucherEntry() {
+  const { can } = useSession()
+  const show = useVoucher((s) => s.show)
+  if (!canPassVouchers(can)) return null
+  return (
+    <li>
+      <button type="button" onClick={show} className="relative flex h-8 w-full items-center gap-1.5 rounded-md px-2.5 text-left text-[13px] font-medium text-primary transition-colors duration-150 hover:bg-primary-soft">
+        <Plus className="size-3.5 shrink-0" />
+        <span className="flex-1 truncate">New voucher</span>
+        <kbd className="hidden rounded border border-border bg-muted px-1 py-px text-[10px] font-medium text-muted-foreground lg:block">{SHORTCUT}</kbd>
+      </button>
+    </li>
+  )
+}
+
 function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
   const { pathname } = useLocation()
   const qc = useQueryClient()
@@ -134,6 +152,7 @@ function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
             className="overflow-hidden"
           >
             <div className="relative ml-[21px] mt-0.5 flex flex-col gap-0.5 border-l border-border pb-1 pl-3">
+              {group.id === 'money' && <NewVoucherEntry />}
               {group.items.map((item) => (
                 <li key={item.path}>
                   <NavLink

@@ -53,6 +53,25 @@ def accounts_items(db, client, today=None):
             % (inr(sum(r["outstanding"] for r in soon)), first["number"], first["party"], first["msme"]["due"]),
             "owe-view", sum(r["outstanding"] for r in soon), len(soon))
 
+    # --- loan instalments (EMIs) ---------------------------------------------------------------------------------------
+    from app.services.loans import due_instalments, ledger_name
+    soon_emi, late_emi = due_instalments(db, cid, today)
+    if late_emi:
+        loan, oldest = late_emi[0]
+        days = (today - date.fromisoformat(oldest.due_on)).days
+        add("emi_overdue", "wrong", "EMI overdue",
+            "%d instalment%s, %s in all, %s past the due date; the oldest is %s on %s, %d day%s late. A missed EMI costs penal interest and shows against the company with the bank."
+            % (len(late_emi), _s(len(late_emi)), inr(sum((i.principal or 0) + (i.interest or 0) for _, i in late_emi)), "is" if len(late_emi) == 1 else "are",
+               ledger_name(loan)[7:], oldest.due_on, days, _s(days)),
+            "loans-view", sum((i.principal or 0) + (i.interest or 0) for _, i in late_emi), len(late_emi))
+    if soon_emi:
+        loan, first = soon_emi[0]
+        add("emi_due_week", "action", "EMI due this week",
+            "%d instalment%s, %s in all, fall%s due within a week; first is %s, %s on %s. Keep the money in the account."
+            % (len(soon_emi), _s(len(soon_emi)), inr(sum((i.principal or 0) + (i.interest or 0) for _, i in soon_emi)), "s" if len(soon_emi) == 1 else "",
+               ledger_name(loan)[7:], inr((first.principal or 0) + (first.interest or 0)), first.due_on),
+            "loans-view", sum((i.principal or 0) + (i.interest or 0) for _, i in soon_emi), len(soon_emi))
+
     # --- post-dated cheques whose day has come -------------------------------------------------------------------------
     due = db.query(DBPostDatedCheque).filter(DBPostDatedCheque.client_id == cid, DBPostDatedCheque.status == "HELD",
                                              DBPostDatedCheque.cheque_date <= today.isoformat()).all()

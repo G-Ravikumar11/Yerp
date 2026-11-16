@@ -1004,7 +1004,8 @@ def statement_form_spec(client, party_name, party_label, s, date_from="", date_t
 
 
 DOC_LABEL = {"ra_bill": "RA bill", "sub_bill": "Sub contractor's RA bill", "supplier_bill": "Supplier bill",
-             "sub_advance": "Mobilisation advance", "retention_release": "Retention release"}
+             "sub_advance": "Mobilisation advance", "retention_release": "Retention release",
+             "loan_instalment": "Loan instalment", "loan_disbursal": "Loan received"}
 PARTY_LABEL = {"client": "Client", "contractor": "Sub Contractor", "supplier": "Supplier"}
 
 

@@ -1,12 +1,14 @@
 import { lazy, Suspense } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, ArrowUpRight, Sparkles, TrendingUp } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, Plus, Sparkles, TrendingUp } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, Stat, StatGrid } from '@/components/ui'
 import { attentionHref, useAttention, useBalanceSheet, useCashFlow, usePayables, useProfitLoss, useReceivables, type AttentionItem } from '@/api/dashboard'
 import { Figure } from '@/features/dashboard/Figure'
 import { monthLabel } from '@/lib/cashflow'
 import { useSession } from '@/lib/session'
+import { canPassVouchers } from '@/lib/voucher'
+import { useVoucher } from '@/stores/voucher'
 import { compactINR } from '@/lib/utils'
 
 // The chart library is the heaviest thing on this page, and the tiles above it should not wait for it.
@@ -39,6 +41,7 @@ const ACCOUNTS_KINDS = new Set(['msme_overdue', 'msme_due_soon', 'pdc_to_deposit
  * trend behind it - the single screen a finance person opens first, instead of totting up every ledger by hand. */
 export default function FinanceDashboardPage() {
   const { can } = useSession()
+  const showVoucher = useVoucher((s) => s.show)
   const money = can('bills.view_all')
   const reports = can('reports.view')
 
@@ -63,7 +66,7 @@ export default function FinanceDashboardPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Accounts" title="Finance Dashboard" description="Receivables, payables, expenses and cash position across every project." actions={<Button variant="outline" asChild><Link to="/money/cash-flow"><TrendingUp /> Cash flow by month</Link></Button>} />
+      <PageHeader eyebrow="Accounts" title="Finance Dashboard" description="Receivables, payables, expenses and cash position across every project." actions={<>{canPassVouchers(can) && <Button onClick={showVoucher}><Plus /> New voucher</Button>}<Button variant="outline" asChild><Link to="/money/cash-flow"><TrendingUp /> Cash flow by month</Link></Button></>} />
 
       <StatGrid>
         {money && (
