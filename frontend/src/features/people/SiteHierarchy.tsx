@@ -8,7 +8,7 @@ const tier = (row: number) => TIERS[Math.min(row, TIERS.length - 1)]
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('')
 
 /**
- * The hierarchy of one department, built from the level each person has been given (L8 Executive down to L1 Trainee):
+ * The hierarchy of one department, built from the level each person has been given (L1 HOD down to L19 Store Keeper):
  * one row for each level that somebody holds, most senior at the top, and each row hangs from the one above. People
  * with no level are in a last row of their own. Choosing a person shows their details here; it does not leave the page.
  */

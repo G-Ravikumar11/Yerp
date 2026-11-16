@@ -12,6 +12,11 @@ from app.db.session import DATABASE_URL, engine
 MIGRATION_ERRORS = []
 
 
+# Old level code -> new code, when the levels were put in hierarchy order.
+LEVEL_RENUMBER = {"L8": "L4", "L4": "L5", "L9": "L6", "L5": "L7", "L6": "L8", "L10": "L9", "L11": "L10",
+                  "L12": "L11", "L13": "L12", "L7": "L13"}
+
+
 def migration_report():
     return list(MIGRATION_ERRORS)
 
@@ -1391,6 +1396,24 @@ def ensure_columns():
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 30: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
+            # The level codes were renumbered into hierarchy order (L1..L19). Every saved level is moved to its new code
+            # exactly once: the marker row stops a second start-up from moving them again.
+            try:
+                conn.execute(text("CREATE TABLE IF NOT EXISTS data_fixes (name VARCHAR PRIMARY KEY)"))
+                done = conn.execute(text("SELECT 1 FROM data_fixes WHERE name = 'levels_in_hierarchy_order'")).fetchone()
+                if not done:
+                    case = "CASE level " + " ".join(f"WHEN '{o}' THEN '{n}'" for o, n in LEVEL_RENUMBER.items()) + " ELSE level END"
+                    for table in ("employees", "job_requisitions", "offers", "document_requirements", "approval_chains"):
+                        conn.execute(text(f"UPDATE {table} SET level = {case} WHERE level IS NOT NULL AND level <> ''"))
+                    conn.execute(text("INSERT INTO data_fixes (name) VALUES ('levels_in_hierarchy_order')"))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step 30b: {sys.exc_info()[1]}")
                 try:
                     conn.rollback()
                 except Exception:

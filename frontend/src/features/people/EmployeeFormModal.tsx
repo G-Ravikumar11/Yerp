@@ -67,7 +67,7 @@ function Form({ onClose }: { onClose: () => void }) {
     })
     giveAccess(r?.access)
   }
-  // A level on its own gives access too: the level is named for its main role ("L4 - Project Manager", "L6 - Site Engineer"),
+  // A level on its own gives access too: the level is named for its main role ("L5 - Project Manager", "L8 - Site Engineer"),
   // so that role's access is used; the role can then be chosen to refine it. Where no role fits the name, an access every
   // role at the level shares is used, and otherwise nothing is guessed.
   const pickLevel = (level: string) => {
