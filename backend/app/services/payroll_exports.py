@@ -30,6 +30,30 @@ def month_payslips(db, client_id, month):
     return pairs
 
 
+def salary_bank_file(db, client_id, pairs, month, bank, account, pay_on):
+    """The month's salary transfer in one of the banks' own layouts (services.payouts.FORMATS), the same files a payment
+    batch writes: (header or None, rows, [(name, reason)] for those left out). `account` is the bank account the salary
+    goes out of (needed by banks whose layout names it); nobody is sent whose account number or IFSC is missing."""
+    from app.services import payouts
+    batch = SimpleNamespace(number="SAL-%s" % month, bank_format=bank, pay_on=pay_on)
+    lines, left_out = [], []
+    for ps, emp in pairs:
+        acct, ifsc = (emp.bank_account or ""), (emp.bank_ifsc or "").strip().upper()
+        why = payouts.beneficiary_problem(acct, ifsc, ps.net_pay)
+        if why:
+            left_out.append((full_name(emp), why.replace(" on file", "")))
+            continue
+        lines.append(SimpleNamespace(
+            party_name=full_name(emp), doc_number=ps.number or "", amount=money(ps.net_pay), beneficiary_account=acct,
+            beneficiary_ifsc=ifsc, beneficiary_bank=emp.bank_name or "", beneficiary_email=emp.email or ""))
+    ours = account or SimpleNamespace(account_no="", ifsc="")
+    header, rows = payouts.file_rows(batch, lines, ours)
+    if bank == "csv":
+        for r in rows:
+            r[4] = money(r[4])              # the plain sheet keeps the amount a number, so it can be summed
+    return header, rows, left_out
+
+
 def full_name(emp):
     return ("%s %s" % (emp.first_name or "", emp.last_name or "")).strip()
 

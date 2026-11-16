@@ -6,8 +6,8 @@ them while there is still time to put it right; the files themselves are made wh
 payslips as they then stand.
 """
 from app import models
-from app.documents import ecr, esic, neft
-from app.services import payroll_exports
+from app.documents import ecr, esic
+from app.services import payouts, payroll_exports
 
 WAGE_SWING = 20.0          # per cent change in net pay from the month before that is worth a look
 
@@ -38,8 +38,9 @@ def month_checks(db, client_id, month):
             found["no_hours"].append(name)
         if not (emp.pan_no or "").strip():
             found["no_pan"].append(name)
-        if neft.problem(emp, ps.net_pay or 1) and (ps.net_pay or 0) > 0:
-            found["no_bank"].append("%s (%s)" % (name, neft.problem(emp, ps.net_pay)))
+        bank_problem = payouts.beneficiary_problem(emp.bank_account, emp.bank_ifsc, ps.net_pay or 1)
+        if bank_problem and (ps.net_pay or 0) > 0:
+            found["no_bank"].append("%s (%s)" % (name, bank_problem.replace(" on file", "")))
         if (ps.retirement or 0) > 0 and not ecr.UAN_RE.match("".join(ch for ch in (emp.uan_no or "") if ch.isdigit())):
             found["no_uan"].append(name)
         if (ps.insurance or 0) > 0 and not esic.IP_RE.match("".join(ch for ch in (emp.esi_no or "") if ch.isdigit())):

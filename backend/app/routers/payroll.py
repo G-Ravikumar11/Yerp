@@ -1,5 +1,7 @@
 """The payroll endpoints."""
 import base64
+import csv
+import io
 import os
 from datetime import datetime
 from typing import Optional
@@ -21,10 +23,11 @@ from app.core.dates import _parse_date
 from app.core.notifications import default_from_email, send_email_background
 from app.core.serials import next_sequence_number
 from app.core.sheets import sheet_response
-from app.documents import ecr, esic, neft
+from app.documents import ecr, esic
 from app.documents import payslip as payslip_sheet
 from app.documents.letterhead import letterhead
 from app.services import claim_reimbursement, payroll_exports, payroll_month, staff_advances
+from app.services.payouts import FORMATS
 from app.services.hr import ytd_totals
 from app.services.income_tax import tds_function
 from app.services.salary_revisions import employee_on, salary_on
@@ -331,16 +334,43 @@ def _file_headers(response, left_out):
 
 
 @router.get("/api/payroll/exports/neft")
-def export_neft(request: Request, month: str = "", format: str = "xlsx", allow_incomplete: bool = False,
-                db: Session = Depends(get_read_db)):
-    """The bank's bulk salary transfer file for a month: account, name, IFSC, net pay and the narration."""
+def export_neft(request: Request, month: str = "", format: str = "xlsx", bank: str = "csv", account_id: int = 0,
+                pay_on: str = "", allow_incomplete: bool = False, db: Session = Depends(get_read_db)):
+    """The bank's bulk salary transfer file for a month, in one of the layouts the payment files use (hdfc, icici, sbi,
+    axis, or csv for any bank's plain sheet). `account_id` is the bank account the salary goes out of: the ICICI and
+    Axis layouts name it, and with it a payment to somebody at the same bank goes as a transfer within the bank.
+    `format` (xlsx or csv) applies to the plain sheet; the banks' own layouts are always their CSV text."""
     client, month, pairs = _export_month(request, db, month)
-    rows, left_out = neft.rows(pairs, month)
+    bank = (bank or "csv").lower()
+    if bank not in FORMATS:
+        raise HTTPException(status_code=400, detail="Choose the bank's layout: %s." % ", ".join(FORMATS))
+    account = None
+    if account_id:
+        account = db.query(models.DBBankAccount).filter(models.DBBankAccount.id == account_id,
+                                                        models.DBBankAccount.client_id == client.id).first()
+        if account is None or account.kind == "Cash":
+            raise HTTPException(status_code=400, detail="Choose the bank account the salary goes out of.")
+    if bank in ("icici", "axis") and account is None:
+        raise HTTPException(status_code=400, detail="The %s layout names the account the salary goes out of: choose it." % bank.upper())
+    if account is not None and bank != "csv" and not (account.account_no or "").strip():
+        raise HTTPException(status_code=400, detail="%s has no account number on file; the bank's file needs it." % account.name)
+    on = (pay_on or "").strip()[:10]
+    if on and not _parse_date(on):
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format")
+    header, rows, left_out = payroll_exports.salary_bank_file(db, client.id, pairs, month, bank, account, on or datetime.now().strftime("%Y-%m-%d"))
     _refuse_left_out(left_out, "people", allow_incomplete)
     if not rows:
         raise HTTPException(status_code=400, detail="Nobody in %s can be paid by bank transfer yet." % month)
-    fmt = "csv" if format == "csv" else "xlsx"
-    return _file_headers(sheet_response(neft.HEADERS, rows, "Salary_NEFT_%s.%s" % (month, fmt), fmt, branded=False), left_out)
+    if bank == "csv":
+        fmt = "csv" if format == "csv" else "xlsx"
+        return _file_headers(sheet_response(header, rows, "Salary_NEFT_%s.%s" % (month, fmt), fmt, branded=False), left_out)
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\r\n")
+    if header:
+        writer.writerow(header)
+    writer.writerows(rows)
+    return _file_headers(Response(content=buf.getvalue().encode("utf-8"), media_type="text/csv",
+                                  headers={"Content-Disposition": 'attachment; filename="Salary_%s_%s.csv"' % (bank.upper(), month)}), left_out)
 
 
 @router.get("/api/payroll/exports/ecr")

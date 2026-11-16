@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Download, Lock, LockOpen } from 'lucide-react'
 import { Badge, Button, ConfirmDialog, Select } from '@/components/ui'
-import { EXPORTS, exportUrl, monthTone, moveMonth, payKeys, reopenMonth, usePayrollMonths, type ExportKind, type MonthStatus, type PayrollMonth } from '@/api/payroll'
+import { BANK_LAYOUTS, EXPORTS, exportUrl, monthTone, moveMonth, payKeys, reopenMonth, usePayrollMonths, type ExportKind, type MonthStatus, type PayrollMonth } from '@/api/payroll'
+import { useAccounts } from '@/api/ledger'
 import { apiUrl } from '@/lib/api'
 import { fileNameFor } from '@/lib/download'
 import { useAction } from '@/lib/mutate'
@@ -53,6 +54,11 @@ export function MonthPanel() {
   const [reopening, setReopening] = useState(false)
   const [refused, setRefused] = useState<{ kind: ExportKind; detail: string } | null>(null)
   const [busy, setBusy] = useState<ExportKind | null>(null)
+  // The bank's layout for the salary file, and the account the salary goes out of (the ICICI and Axis layouts name it).
+  const accounts = useAccounts()
+  const [bank, setBank] = useState('csv')
+  const [account, setAccount] = useState('')
+  const banks = (accounts.data ?? []).filter((a) => a.kind !== 'Cash')
 
   const next = m ? NEXT[m.status] : undefined
   const move = useAction(() => moveMonth(next!.action, month), {
@@ -65,7 +71,7 @@ export function MonthPanel() {
   const download = async (kind: ExportKind, allowIncomplete = false) => {
     setBusy(kind)
     try {
-      const r = await fetchExport(exportUrl(kind, month, allowIncomplete))
+      const r = await fetchExport(exportUrl(kind, month, allowIncomplete, { bank, accountId: Number(account) || 0 }))
       if (r.ok) setRefused(null)
       // Somebody's details are missing: say who, and offer the file without them.
       else if (r.status === 400 && /cannot go in the file/.test(r.detail)) setRefused({ kind, detail: r.detail })
@@ -94,6 +100,11 @@ export function MonthPanel() {
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
         <span className="mr-1 text-[13px] text-muted-foreground">Files for {month ? label(month) : 'the month'}:</span>
         {EXPORTS.map((x) => <Button key={x.kind} size="sm" variant="outline" loading={busy === x.kind} disabled={!month || !!busy} onClick={() => download(x.kind)}><Download /> {x.label}</Button>)}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className="mr-1 text-[13px] text-muted-foreground">NEFT bank file layout:</span>
+        <div className="w-60"><Select aria-label="Bank file layout" value={bank} onChange={(e) => setBank(e.target.value)} options={BANK_LAYOUTS} /></div>
+        <div className="w-52"><Select aria-label="Salary paid from" value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Paid from (account)" options={banks.map((a) => ({ value: a.id, label: a.name }))} /></div>
       </div>
       {refused && (
         <div role="alert" className="mt-3 rounded-md bg-warning-soft p-3 text-[13px] text-warning">

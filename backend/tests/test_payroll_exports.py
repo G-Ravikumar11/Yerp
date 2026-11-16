@@ -36,11 +36,13 @@ def get(tenant, kind, **params):
 
 def test_neft_has_a_row_per_person_with_net_pay_and_the_narration(tenant):
     _, slip = person(tenant, 18000, **FULL)
-    res = get(tenant, "neft")
+    res = get(tenant, "neft", pay_on="2026-08-31")
     assert res.status_code == 200, res.text
     rows = sheet_rows(res)
-    assert rows[0] == ["Beneficiary Account No", "Beneficiary Name", "IFSC Code", "Amount", "Transaction Reference / Narration"]
-    assert rows[1] == ["501001234567", "Ravi Kumar18000", "HDFC0001234", slip["net_pay"], "Salary for August 2026"]
+    # With no bank chosen it is the plain sheet of the payment files, in the same columns.
+    assert rows[0] == ["Beneficiary Name", "Account No", "IFSC", "Bank", "Amount", "Mode", "Date", "Reference", "Email"]
+    assert rows[1][:3] == ["Ravi Kumar18000", "501001234567", "HDFC0001234"] and rows[1][4] == slip["net_pay"]
+    assert rows[1][5] == "NEFT" and rows[1][6] == "2026-08-31" and rows[1][7] == "SAL-2026-08 %s" % slip["number"]
     assert res.headers["X-Rows-Left-Out"] == "0"
 
 
@@ -49,7 +51,58 @@ def test_neft_as_csv(tenant):
     res = get(tenant, "neft", format="csv")
     assert res.status_code == 200 and res.headers["content-type"].startswith("text/csv")
     rows = list(csv.reader(io.StringIO(res.content.decode("utf-8-sig"))))
-    assert rows[1][0] == "501001234567" and rows[1][2] == "HDFC0001234"
+    assert rows[1][1] == "501001234567" and rows[1][2] == "HDFC0001234"
+
+
+def bank_rows(res):
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("text/csv") and res.headers["content-disposition"].endswith('.csv"')
+    return list(csv.reader(io.StringIO(res.content.decode("utf-8"))))
+
+
+def our_account(tenant, ifsc="HDFC0000999"):
+    res = tenant.post("/api/bank-accounts", json={"name": "Salary account", "kind": "Bank", "account_no": "50100999888", "ifsc": ifsc,
+                                                  "opening_balance": 0, "opening_date": "2026-01-01"})
+    assert res.status_code == 200, res.text
+    return res.json()["id"]
+
+
+def test_each_bank_gets_its_own_layout_and_a_transfer_within_the_bank_goes_as_one(tenant):
+    _, slip = person(tenant, 18000, **FULL)                      # HDFC account
+    person(tenant, 20000, bank_account="9988776655", bank_ifsc="SBIN0001234")
+    acc = our_account(tenant)
+    net = "%.2f" % slip["net_pay"]
+
+    rows = bank_rows(get(tenant, "neft", bank="hdfc", account_id=acc, pay_on="2026-08-31"))
+    assert len(rows) == 2 and all(len(r) == 28 for r in rows), "Enet: no header, 28 fields"
+    mine = next(r for r in rows if r[2] == "501001234567")
+    assert mine[0] == "I" and mine[3] == net and mine[4] == "Ravi Kumar18000", "same bank: a transfer within HDFC"
+    assert next(r for r in rows if r[2] == "9988776655")[0] == "N"
+
+    rows = bank_rows(get(tenant, "neft", bank="icici", account_id=acc, pay_on="2026-08-31"))
+    assert rows[0][0] == "Debit Ac No" and rows[1][0] == "50100999888" and rows[1][-1].startswith("SAL-2026-08 PS-")
+
+    rows = bank_rows(get(tenant, "neft", bank="sbi"))
+    assert rows[0][:4] == ["Beneficiary Name", "Beneficiary Account No", "IFSC", "Amount"] and rows[1][4] == "NEFT"
+
+    rows = bank_rows(get(tenant, "neft", bank="axis", account_id=acc, pay_on="2026-08-31"))
+    assert rows[0][0] == "Payment Mode" and rows[1][2] == "31-08-2026" and rows[1][6] == "50100999888"
+    assert rows[1][7] == "SAL-2026-08"
+
+
+def test_a_big_salary_goes_by_rtgs(tenant):
+    person(tenant, 400000, bank_account="9988776655", bank_ifsc="SBIN0001234")
+    rows = bank_rows(get(tenant, "neft", bank="sbi"))
+    assert rows[1][4] == "RTGS"
+
+
+def test_the_bank_file_needs_a_known_layout_and_the_account_the_bank_names(tenant):
+    person(tenant, 18000, **FULL)
+    assert get(tenant, "neft", bank="nosuchbank").status_code == 400
+    res = get(tenant, "neft", bank="icici")
+    assert res.status_code == 400 and "choose it" in res.json()["detail"]
+    assert get(tenant, "neft", bank="axis", account_id=99999).status_code == 400
+    assert get(tenant, "neft", bank="sbi", pay_on="31/08/2026").status_code == 400
 
 
 def test_neft_names_whoever_has_no_bank_details_and_leaves_them_out_only_when_told(tenant):
@@ -59,6 +112,10 @@ def test_neft_names_whoever_has_no_bank_details_and_leaves_them_out_only_when_to
     assert res.status_code == 400 and "Ravi Kumar20000 (no IFSC)" in res.json()["detail"]
     res = get(tenant, "neft", allow_incomplete="true")
     assert res.status_code == 200 and len(sheet_rows(res)) == 2 and res.headers["X-Rows-Left-Out"] == "1"
+    res = get(tenant, "neft", bank="sbi")
+    assert res.status_code == 400 and "Ravi Kumar20000 (no IFSC)" in res.json()["detail"]
+    res = get(tenant, "neft", bank="sbi", allow_incomplete="true")
+    assert len(bank_rows(res)) == 2 and res.headers["X-Rows-Left-Out"] == "1"
 
 
 # --- ECR -------------------------------------------------------------------------------------------------------------

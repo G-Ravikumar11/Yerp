@@ -231,8 +231,17 @@ export const EXPORTS: { kind: ExportKind; label: string }[] = [
   { kind: 'ecr', label: 'EPFO ECR 2.0' },
   { kind: 'esic', label: 'ESIC sheet' },
 ]
-export const exportUrl = (kind: ExportKind, month: string, allowIncomplete = false) =>
-  `/api/payroll/exports/${kind}?month=${month}${allowIncomplete ? '&allow_incomplete=true' : ''}`
+/** The bank layouts the salary file can be written in (the same ones the payment files use); "csv" is any bank's plain sheet. */
+export const BANK_LAYOUTS: { value: string; label: string }[] = [
+  { value: 'csv', label: 'Any bank - plain spreadsheet' },
+  { value: 'hdfc', label: 'HDFC Bank - Enet bulk upload' },
+  { value: 'icici', label: 'ICICI Bank - CIB bulk payments' },
+  { value: 'sbi', label: 'SBI - CINB bulk upload' },
+  { value: 'axis', label: 'Axis Bank - CIB bulk payments' },
+]
+export interface BankChoice { bank: string; accountId: number }
+export const exportUrl = (kind: ExportKind, month: string, allowIncomplete = false, choice?: BankChoice) =>
+  `/api/payroll/exports/${kind}?month=${month}${allowIncomplete ? '&allow_incomplete=true' : ''}${kind === 'neft' && choice && choice.bank !== 'csv' ? `&bank=${choice.bank}` : ''}${kind === 'neft' && choice?.accountId ? `&account_id=${choice.accountId}` : ''}`
 
 export const emailPayslip = (id: number) => post<{ message?: string }>(`/api/payslips/${id}/send`)
 
