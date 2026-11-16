@@ -5,6 +5,7 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Select, Stat, StatGrid, Tabs } from '@/components/ui'
 import { cancelRelease, certifyRelease, owedKeys, useOwedPayables, useOwedReceivables, useRetentionPage, type CreditBalance, type Payable, type PartyPosition, type Position, type Receivable, type Release } from '@/api/owed'
 import { PayModal } from '@/features/money/PayModal'
+import { usePaymentRules } from '@/api/payments'
 import { EInvoiceModal } from '@/features/einvoice/EInvoiceModal'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -63,6 +64,7 @@ export default function OwedPage() {
   const [certifying, setCertifying] = useState<Release | null>(null)
   const certify = useAction((a: { r: Release; comments: string }) => certifyRelease(a.r.id, a.comments), { invalidate: [owedKeys.all], onSuccess: () => setCertifying(null) })
   const canPay = can('bills.pay')
+  const rules = usePaymentRules()
   const rs = recv.data?.summary ?? {}
   const ps = pay.data?.summary ?? {}
   const t = ret.data?.summary
@@ -97,7 +99,7 @@ export default function OwedPage() {
       ),
     },
     { id: 'out', header: 'Outstanding', align: 'right', sort: (r) => r.outstanding, cell: (r) => <span className={`${money} font-bold`}>{formatINR(r.outstanding)}</span> },
-    { id: 'ap', header: 'Approval', hideBelow: 'md', cell: (r) => <Badge tone={r.approved ? 'success' : 'warning'}>{r.approved ? 'approved' : 'not approved'}</Badge> },
+    { id: 'ap', header: 'Approval', hideBelow: 'md', cell: (r) => <ApprovalBadge r={r} on={!!rules.data?.on} /> },
     { id: 'age', header: 'Age', cell: (r) => <div className="flex items-center gap-2"><Age r={r} />{r.doc_type && r.approved !== false && canPay && <Button size="sm" variant="outline" onClick={() => setSettle({ type: r.doc_type!, id: r.id, title: r.number, verb: 'Pay' })}>Pay</Button>}</div> },
   ]
 
@@ -240,4 +242,16 @@ export default function OwedPage() {
       <ConfirmDialog open={!!cancelling} onOpenChange={(o) => !o && setCancelling(null)} title={`Cancel ${cancelling?.number ?? 'this release'}?`} description="The retention goes back to being held." confirmLabel="Cancel the release" tone="danger" reason={{ label: 'Why is this release being cancelled?', required: true }} loading={cancel.isPending} onConfirm={(reason) => { if (cancelling) cancel.mutate({ r: cancelling, reason }) }} />
     </>
   )
+}
+
+/** The bill's approval, then its payment's: what the accounts head or the MD decided in Payment Approvals shows here. */
+function ApprovalBadge({ r, on }: { r: Payable; on: boolean }) {
+  const q = r.payment_request
+  if (q) {
+    const tone = q.status === 'APPROVED' ? 'success' : q.status === 'REJECTED' || q.status === 'EXPIRED' ? 'danger' : 'warning'
+    const text = q.status === 'APPROVED' ? 'approved - to pay' : q.label.toLowerCase()
+    return <Badge tone={tone} title={`${q.number}${q.by ? `, ${q.by}` : ''}: ${formatINR(q.amount)}. Decided in Payment Approvals.`}>{text}</Badge>
+  }
+  if (!r.approved) return <Badge tone="warning">bill not approved</Badge>
+  return on ? <Badge tone="neutral" title="Pay it to send it for approval; the accounts head decides in Payment Approvals.">not sent</Badge> : <Badge tone="success">approved</Badge>
 }

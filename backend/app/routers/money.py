@@ -483,6 +483,12 @@ def payables_payload(db, client):
                      "outstanding": outstanding, "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
                      "status": c.status, "approved": True, "msme": None})
 
+    # Where the payment approval stands, so a decision taken in Payment Approvals shows here as well.
+    from app.services.payment_requests import state_by_doc
+    asked = state_by_doc(db, client.id)
+    for r in rows:
+        r["payment_request"] = asked.get((r["doc_type"], r["id"]))
+
     rows.sort(key=lambda r: -(r["days_overdue"] or 0))
     parties = _party_positions(rows, credits, _on_account_by_party(db, client.id, ("contractor", "supplier"), False),
                                lambda r: r["party"])

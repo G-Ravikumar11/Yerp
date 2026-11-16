@@ -25,6 +25,8 @@ export interface Receivable extends Aged {
 export interface Payable extends Aged {
   party: string
   approved?: boolean
+  /** Where the payment approval stands (Payment Approvals), when one was asked for. */
+  payment_request?: { id: number; number: string; status: string; label: string; amount: number; by: string } | null
   /** A micro or small enterprise (Udyam): paid within 45 days of the bill at most. */
   msme?: { kind: string; udyam: string; due: string; days_left: number } | null
 }
