@@ -260,6 +260,7 @@ from app.models.subcontracts import (
 )
 from app.models.journals import DBJournal, DBJournalLine, DBSupplierDebitNote  # noqa: F401
 from app.models.party_openings import DBPartyOpening  # noqa: F401
+from app.models.recurring_payments import DBRecurringPayment, DBRecurringPaymentRun  # noqa: F401
 from app.models.payouts import (DBChequeBook, DBChequeSpoilt, DBExpenseClaim, DBPaymentBatch,  # noqa: F401
                                 DBPaymentBatchLine, DBPostDatedCheque)
 from app.models.wallet import (
