@@ -298,6 +298,8 @@ from app.routers import journals as _journals  # noqa: E402
 app.include_router(_journals.router)
 from app.routers import payouts as _payouts  # noqa: E402
 app.include_router(_payouts.router)
+from app.routers import biometric as _biometric  # noqa: E402
+app.include_router(_biometric.router)
 
 # Everything that calls an AI model lives in backend/app/ai, one file per function.
 from app.ai import routers as ai_routers

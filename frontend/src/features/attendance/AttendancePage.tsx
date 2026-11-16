@@ -2,19 +2,21 @@ import { useState } from 'react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Tabs } from '@/components/ui'
 import { AnalyticsTab } from './AnalyticsTab'
+import { BiometricTab } from './BiometricTab'
 import { HistoryTab } from './HistoryTab'
 import { JobLockTab } from './JobLockTab'
 import { OvertimeTab } from './OvertimeTab'
 import { SettingsTab } from './SettingsTab'
 import { TodayTab } from './TodayTab'
 
-type Tab = 'today' | 'history' | 'analytics' | 'overtime' | 'joblock' | 'settings'
+type Tab = 'today' | 'history' | 'analytics' | 'overtime' | 'joblock' | 'biometric' | 'settings'
 const TABS = [
   { value: 'today', label: 'Today' },
   { value: 'history', label: 'History' },
   { value: 'analytics', label: 'Analytics' },
   { value: 'overtime', label: 'Overtime' },
   { value: 'joblock', label: 'Site Lock' },
+  { value: 'biometric', label: 'Biometric' },
   { value: 'settings', label: 'Settings' },
 ] as const
 
@@ -29,6 +31,7 @@ export default function AttendancePage() {
       {tab === 'analytics' && <AnalyticsTab />}
       {tab === 'overtime' && <OvertimeTab />}
       {tab === 'joblock' && <JobLockTab />}
+      {tab === 'biometric' && <BiometricTab />}
       {tab === 'settings' && <SettingsTab />}
     </>
   )

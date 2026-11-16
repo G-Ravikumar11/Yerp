@@ -32,6 +32,8 @@ class DBEmployee(Base):
     reports_to = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
 
     employee_id = Column(String, default="")
+    # The person's number on the biometric attendance machines, where it is not the employee code above.
+    biometric_id = Column(String, default="")
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
     email = Column(String, nullable=False)

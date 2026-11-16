@@ -156,6 +156,8 @@ HR_PAYROLL_COLUMNS = (
     # MSME (Udyam) suppliers and contractors.
     ("suppliers", "msme_type", "VARCHAR DEFAULT ''"), ("suppliers", "udyam_no", "VARCHAR DEFAULT ''"),
     ("contractors", "msme_type", "VARCHAR DEFAULT ''"), ("contractors", "udyam_no", "VARCHAR DEFAULT ''"),
+    # Attendance from the biometric machines.
+    ("employees", "biometric_id", "VARCHAR DEFAULT ''"),
 )
 
 # One overtime entry per person per day. Run after any duplicates are removed, or the index cannot be built.
