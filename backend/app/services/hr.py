@@ -258,14 +258,18 @@ def set_department_sites(db, client_id, dept, job_ids):
         db.add(models.DBDepartmentSite(client_id=client_id, department_id=dept.id, job_id=job_id))
 
 
-def link_department_to_employee_sites(db, client_id, emp):
+def link_department_to_employee_sites(db, client_id, emp, saved=None):
     """Put this person's department on every site they work on, so it is listed on those sites. Sites the department
-    is already on are kept; somebody on every site (no list) adds nothing."""
+    is already on are kept; somebody on every site (no list) adds nothing. `saved` is what set_employee_sites just
+    returned (rows with an id), so their sites need not be read back; left out, they are read."""
     if not emp or not emp.department_id:
         return
-    db.flush()
-    theirs = {r.job_id for r in db.query(models.DBEmployeeSite.job_id).filter(
-        models.DBEmployeeSite.client_id == client_id, models.DBEmployeeSite.employee_id == emp.id).all()}
+    if saved is not None:
+        theirs = {j.id for j in saved}
+    else:
+        db.flush()
+        theirs = {r.job_id for r in db.query(models.DBEmployeeSite.job_id).filter(
+            models.DBEmployeeSite.client_id == client_id, models.DBEmployeeSite.employee_id == emp.id).all()}
     if not theirs:
         return
     have = {r.job_id for r in db.query(models.DBDepartmentSite.job_id).filter(

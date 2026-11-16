@@ -554,7 +554,7 @@ def create_employee(request: Request, body: EmployeeCreate, background_tasks: Ba
         hand_out_department_goals(db, client_id, emp.id, dept_id, pending_department_goals(db, client_id, dept_id))
     start_onboarding(db, client_id, emp, new=True)
     sites = set_employee_sites(db, client_id, emp, body.site_ids, new=True)
-    link_department_to_employee_sites(db, client_id, emp)
+    link_department_to_employee_sites(db, client_id, emp, sites)
     name = f"{first_name} {last_name}"
     log_audit(db, client_id, "employee_created", "employee", emp.id, name, f"Dept: {dept_id or 'None'}", request)
     if body.permissions is not None:
@@ -853,6 +853,7 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     # So is the department: only the Master moves people between them. The
     # profile form sends the current one back unchanged, which is fine.
     new_dept = body.pop("department_id", emp.department_id) or None
+    dept_before = emp.department_id
     if new_dept != emp.department_id:
         require_people_admin(request, db)
     if "permission_role" in body:
@@ -895,7 +896,9 @@ def update_employee(emp_id: int, request: Request, body: dict = None, db: Sessio
     if move_to_department(db, client.id, emp, new_dept) != new_dept:
         log_audit(db, client.id, "employee_department_changed", "employee", emp.id,
                   f"{emp.first_name} {emp.last_name}", "Department set to %s" % (new_dept or "none"), request)
-    link_department_to_employee_sites(db, client.id, emp)
+    if site_ids is not None or new_dept != dept_before:
+        # Only when the department or the sites changed: a phone number saved alone has nothing to link.
+        link_department_to_employee_sites(db, client.id, emp, sites)
     log_audit(db, client.id, "employee_updated", "employee", emp.id, f"{emp.first_name} {emp.last_name}", f"Fields: {', '.join(body.keys()) if body else 'none'}", request)
     out = {**_hide_ids(request, db, _profile_after(db, client.id, before, sites)), "message": "Employee updated"}
     db.commit()
@@ -1048,7 +1051,7 @@ def set_employee_permissions(emp_id: int, request: Request, body: dict = None,
         if not isinstance(body["site_ids"], list):
             raise HTTPException(status_code=400, detail="site_ids must be a list")
         sites = set_employee_sites(db, client.id, emp, body["site_ids"])
-        link_department_to_employee_sites(db, client.id, emp)
+        link_department_to_employee_sites(db, client.id, emp, sites)
 
     after = sorted(permissions_for(emp))
     log_audit(db, client.id, "employee_permissions_changed", "employee", emp.id,

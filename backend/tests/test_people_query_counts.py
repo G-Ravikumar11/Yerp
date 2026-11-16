@@ -53,8 +53,9 @@ def test_adding_an_employee_is_one_short_transaction(tenant):
     dept, sites = setup(tenant)
     sent, res = new_starter(tenant, dept, sites, permissions=["projects.view", "invoices.manage"])
     # Signed-in check, org domain, email free, department, next number, the employee, the department's goals,
-    # the requirements, the sites, then one insert per table and one commit - with nothing looked up twice.
-    assert len(sent) <= 15, "%d statements:\n%s" % (len(sent), "\n".join(s[:120] for s in sent))
+    # the requirements, the sites, then one insert per table and one commit - with nothing looked up twice. And the
+    # department's own sites: one read of what it already has, one write listing it on the new person's sites.
+    assert len(sent) <= 16, "%d statements:\n%s" % (len(sent), "\n".join(s[:120] for s in sent))
     assert sum(1 for s in sent if s.startswith("COMMIT")) <= 1
     out = res.json()
     assert out["site_ids"] == sorted(sites) and out["all_sites"] is False and out["department_id"] == dept
@@ -221,7 +222,8 @@ def test_the_employee_list_and_counts_are_one_read_each(tenant):
     for _ in range(3):
         new_starter(tenant, dept, sites)
     sent, res = statements(tenant, "get", "/api/employees")
-    assert len(sent) <= 2, sent
+    # The people, and every person's sites read once for all of them (not one read each).
+    assert len(sent) <= 3, sent
     rows = {r["id"]: r for r in res.json()}
     starters = [r for r in rows.values() if r["department_id"] == dept]
     assert len(starters) == 3 and all(r["department_name"] == "Ops" and r["site_count"] == 2 for r in starters)
