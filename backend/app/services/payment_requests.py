@@ -154,6 +154,27 @@ def asked_on_doc(db, client_id, doc_type, doc_id, but=None):
     return money(sum(r.amount or 0 for r in q.all() if not is_expired(r, days)))
 
 
+def state_by_doc(db, client_id):
+    """Where each bill's payment approval stands, for the To pay list: {(doc_type, doc_id): {number, status, label, amount, by}}.
+    An open request wins (the furthest along first); a bill with none open but a refused one shows the refusal."""
+    days = valid_days(db, client_id)
+    rank = {"APPROVED": 3, "AWAITING_MD": 2, "PENDING": 1, "REJECTED": 0}
+    found = {}
+    for r in db.query(models.DBPaymentRequest).filter(
+            models.DBPaymentRequest.client_id == client_id, models.DBPaymentRequest.doc_id.isnot(None),
+            models.DBPaymentRequest.status.in_(OPEN + ("REJECTED",))).order_by(models.DBPaymentRequest.id).all():
+        status = r.status
+        if status == "APPROVED" and is_expired(r, days):
+            status = "EXPIRED"
+        current = found.get((r.doc_type, r.doc_id))
+        if current is None or rank.get(status, -1) >= rank.get(current["status"], -1):
+            found[(r.doc_type, r.doc_id)] = {
+                "id": r.id, "number": r.number, "status": status, "amount": money(r.amount or 0),
+                "label": "Approval expired" if status == "EXPIRED" else STATUS_LABEL.get(status, status),
+                "by": (r.approved_by_name if status == "APPROVED" else r.rejected_by_name if status == "REJECTED" else "") or ""}
+    return found
+
+
 def raise_request(db, client, emp, actor_name, body, member=None):
     """A request to pay a bill (or part of it), an advance on account, or an expense."""
     from app.services.crm import settled_on

@@ -213,3 +213,32 @@ def test_a_bill_whose_payee_changed_after_approval_is_not_paid(tenant, office):
         s.commit()
     res = clerk.post("/api/payment-requests/%d/pay" % r["id"], json={"mode": "Bank transfer"})
     assert res.status_code == 409 and "Raise a new request" in res.json()["detail"]
+
+
+def _row(tenant, bill):
+    rows = tenant.get("/api/money/payables").json()["bills"]
+    return next(r for r in rows if r["doc_type"] == "supplier_bill" and r["id"] == bill["id"])
+
+
+def test_money_to_pay_shows_where_the_payment_approval_stands(tenant, office):
+    clerk, head = office
+    bill = supplier_bill(tenant, amount=50000, tax=9000)
+    assert _row(tenant, bill)["payment_request"] is None
+    req = clerk.post("/api/payment-requests", json={"doc_type": "supplier_bill", "doc_id": bill["id"], "amount": 59000}).json()["request"]
+    row = _row(tenant, bill)["payment_request"]
+    assert row["number"] == req["number"] and row["status"] == "PENDING" and row["label"] == "With the accounts head"
+    # What the accounts head decides in Payment Approvals is what To pay shows.
+    assert head.post("/api/payment-requests/%d/decide" % req["id"], json={"decision": "approve"}).status_code == 200
+    row = _row(tenant, bill)["payment_request"]
+    assert row["status"] == "APPROVED" and row["label"] == "Approved - to pay" and row["by"]
+    # Paid under it, the bill is settled and the request is no longer asked about.
+    assert clerk.post("/api/payment-requests/%d/pay" % req["id"], json={"mode": "Bank transfer"}).status_code == 200
+    assert not [r for r in tenant.get("/api/money/payables").json()["bills"] if r["id"] == bill["id"] and r["doc_type"] == "supplier_bill"]
+
+
+def test_a_refused_request_shows_as_refused_on_money_to_pay(tenant, office):
+    clerk, head = office
+    bill = supplier_bill(tenant, amount=50000, tax=9000)
+    req = clerk.post("/api/payment-requests", json={"doc_type": "supplier_bill", "doc_id": bill["id"], "amount": 59000}).json()["request"]
+    assert head.post("/api/payment-requests/%d/decide" % req["id"], json={"decision": "reject", "note": "wrong rate"}).status_code == 200
+    assert _row(tenant, bill)["payment_request"]["status"] == "REJECTED"
