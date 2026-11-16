@@ -12,7 +12,7 @@ const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2)
  * one row for each level that somebody holds, most senior at the top, and each row hangs from the one above. People
  * with no level are in a last row of their own. Choosing a person shows their details here; it does not leave the page.
  */
-export function DepartmentHierarchy({ dept }: { dept: Department }) {
+export function DepartmentHierarchy({ dept, siteId }: { dept: Department; siteId?: number }) {
   const staff = useEmployees('')
   const catalogue = useHrCatalogue()
   const [shown, setShown] = useState<Employee | null>(null)
@@ -20,7 +20,9 @@ export function DepartmentHierarchy({ dept }: { dept: Department }) {
   const levelLabel = (code: string) => levels.find((l) => l.code === code)?.label ?? code
 
   const rows = useMemo(() => {
-    const people = (staff.data ?? []).filter((e) => e.department_id === dept.id && ['active', 'onboarding'].includes(e.status))
+    const people = (staff.data ?? []).filter((e) => e.department_id === dept.id && ['active', 'onboarding'].includes(e.status)
+      // On a site, only the people who work there: somebody with no site list works on every site.
+      && (siteId == null || !e.site_ids?.length || e.site_ids.includes(siteId)))
     const byLevel = new Map<string, Employee[]>()
     for (const e of people) byLevel.set(e.level || '', [...(byLevel.get(e.level || '') ?? []), e])
     // Most senior first (a higher rank is more senior); unlevelled people come last.
@@ -28,7 +30,7 @@ export function DepartmentHierarchy({ dept }: { dept: Department }) {
     return order.filter((code) => byLevel.has(code)).map((code) => ({
       code, people: byLevel.get(code)!.sort((a, b) => a.full_name.localeCompare(b.full_name)),
     }))
-  }, [staff.data, dept.id, levels])
+  }, [staff.data, dept.id, siteId, levels])
 
   if (staff.isPending || catalogue.isPending) return <Skeleton className="h-32 w-full" />
   if (rows.length === 0) return <p className="text-sm text-muted-foreground">Nobody is in {dept.name} yet. Use Edit, then Manage people, to put people in it.</p>

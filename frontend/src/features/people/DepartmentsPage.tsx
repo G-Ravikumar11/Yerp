@@ -52,7 +52,7 @@ export default function DepartmentsPage() {
         <section aria-label={`${picked.name} hierarchy`} className="mt-5 rounded-xl border border-border bg-card p-5 shadow-card">
           <h2 className="text-lg font-semibold">{picked.name}</h2>
           <p className="mb-5 text-[13px] text-muted-foreground">One row for each level, the most senior at the top. Choose a person to see their details.</p>
-          <DepartmentHierarchy dept={picked} />
+          <DepartmentHierarchy dept={picked} siteId={site?.id} />
         </section>
       )}
       {site && <SiteDepartmentsModal key={`site-${site.id}`} site={site} all={all} open={editing} onClose={() => setEditing(false)} onManage={(d) => { setEditing(false); setStaffing(d) }} />}

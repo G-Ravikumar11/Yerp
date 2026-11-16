@@ -258,6 +258,22 @@ def set_department_sites(db, client_id, dept, job_ids):
         db.add(models.DBDepartmentSite(client_id=client_id, department_id=dept.id, job_id=job_id))
 
 
+def link_department_to_employee_sites(db, client_id, emp):
+    """Put this person's department on every site they work on, so it is listed on those sites. Sites the department
+    is already on are kept; somebody on every site (no list) adds nothing."""
+    if not emp or not emp.department_id:
+        return
+    db.flush()
+    theirs = {r.job_id for r in db.query(models.DBEmployeeSite.job_id).filter(
+        models.DBEmployeeSite.client_id == client_id, models.DBEmployeeSite.employee_id == emp.id).all()}
+    if not theirs:
+        return
+    have = {r.job_id for r in db.query(models.DBDepartmentSite.job_id).filter(
+        models.DBDepartmentSite.department_id == emp.department_id).all()}
+    for job_id in sorted(theirs - have):
+        db.add(models.DBDepartmentSite(client_id=client_id, department_id=emp.department_id, job_id=job_id))
+
+
 def departments_on_site(db, client_id, depts, site_id):
     """The departments that were added to this site, and only those."""
     sites = department_site_map(db, client_id, [d.id for d in depts])

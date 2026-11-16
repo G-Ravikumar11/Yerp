@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Modal, NumField, Select, Textarea } from '@/components/ui'
-import { ID_DOCUMENTS, createEmployee, peopleKeys, uploadEmployeeDocument, useDepartments, useEmployees, useHrCatalogue, useSuggestedEmail, type EmployeeInput, type IdDocumentKey } from '@/api/people'
+import { ID_DOCUMENTS, createEmployee, saveDepartment, peopleKeys, uploadEmployeeDocument, useDepartments, useEmployees, useHrCatalogue, useSuggestedEmail, type EmployeeInput, type IdDocumentKey } from '@/api/people'
 import { useJobOptions } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
@@ -9,6 +9,7 @@ import { useSession } from '@/lib/session'
 import { useDebounced } from '@/lib/hooks'
 import { AccessPicker } from './AccessPicker'
 import { DocumentPick } from './EmployeeDocuments'
+import { DEPARTMENT_COLORS } from './icons'
 import { PayrollFields } from './PayrollFields'
 import { PASSWORD_RULE, PasswordField, passwordProblem } from '@/features/auth/PasswordField'
 
@@ -42,6 +43,8 @@ function Form({ onClose }: { onClose: () => void }) {
   const { can, isHrOrMaster: hrOnly } = useSession()
   const canManage = can('people.manage')
   const depts = useDepartments()
+  // HR types the department. A name that matches one already set up joins it; a new name is made into a department on save.
+  const [deptName, setDeptName] = useState('')
   const people = useEmployees('')
   const jobs = useJobOptions(false)
   // Not on every letter: the address is asked for once the name has stopped changing.
@@ -88,7 +91,17 @@ function Form({ onClose }: { onClose: () => void }) {
   // One request: the access the Master ticked is saved with the employee. The People lists then
   // refresh behind the details screen rather than holding it until every one has reloaded.
   const save = useAction(async () => {
-    const r = await createEmployee({ ...f, password: f.password?.trim(), ...(canManage ? { permissions: granted } : {}) })
+    const typedDept = deptName.trim().replace(/\s+/g, ' ')
+    let department_id: number | null = null
+    if (typedDept) {
+      const known = (depts.data ?? []).find((d) => d.name.trim().toLowerCase() === typedDept.toLowerCase())
+      if (known) department_id = known.id
+      else {
+        department_id = (await saveDepartment(null, { name: typedDept, description: '', color: DEPARTMENT_COLORS[0], icon: 'building' })).id
+        await depts.refetch()   // so a retry after a failed save finds it instead of making it twice
+      }
+    }
+    const r = await createEmployee({ ...f, department_id, password: f.password?.trim(), ...(canManage ? { permissions: granted } : {}) })
     // The employee exists now, so the cards can be kept on their record. One that cannot be does not undo the rest.
     const notKept: string[] = []
     for (const d of ID_DOCUMENTS) {
@@ -161,7 +174,7 @@ function Form({ onClose }: { onClose: () => void }) {
         {pass && <PasswordField id="ef-pass2" label="Confirm password" value={confirm} onChange={setConfirm} error={confirm ? confirmError || undefined : undefined} placeholder="Type it again" />}
         <Field label="Job title" htmlFor="ef-title"><Input id="ef-title" value={f.job_title} onChange={set('job_title')} /></Field>
         <Field label="Level" htmlFor="ef-level"><Select id="ef-level" value={f.level} onChange={(e) => pickLevel(e.target.value)} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
-        <Field label="Department" htmlFor="ef-dept" hint={canManage ? undefined : 'Only the Master or HR places people in departments.'}><Select id="ef-dept" disabled={!canManage} value={f.department_id ?? ''} onChange={(e) => setF((s) => ({ ...s, department_id: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={(depts.data ?? []).filter((d) => d.site_ids.length > 0 || d.id === f.department_id).map((d) => ({ value: d.id, label: d.name }))} /></Field>
+        <Field label="Department" htmlFor="ef-dept" hint={canManage ? 'Type the department. A new name is added as a department.' : 'Only the Master or HR places people in departments.'}><Input id="ef-dept" disabled={!canManage} value={deptName} onChange={(e) => setDeptName(e.target.value)} placeholder="e.g. Civil" autoComplete="off" /></Field>
         <Field label="Reports to" htmlFor="ef-mgr" hint={canManage ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master or HR can change it.'}><Select id="ef-mgr" disabled={!canManage} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
         <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={(e) => pickRole(e.target.value)} placeholder="Not set" options={(cat.data?.roles ?? []).filter((r) => !f.level || r.level === f.level).map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ef-start"><Input id="ef-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
