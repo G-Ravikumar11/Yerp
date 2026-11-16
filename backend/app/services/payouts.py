@@ -611,7 +611,8 @@ def claim_dict(c, jobs=None, photos=None):
             "head": c.head, "job_id": c.job_id, "project": ("%s %s" % (j.number or "", j.name or "")).strip() if j else "",
             "amount": money(c.amount), "description": c.description, "bill_no": c.bill_no, "status": c.status,
             "submitted_at": c.submitted_at, "decided_by_name": c.decided_by_name, "decided_at": c.decided_at,
-            "decision_note": c.decision_note, "against_advance": money(c.against_advance), "photos": (photos or {}).get(c.id, [])}
+            "decision_note": c.decision_note, "against_advance": money(c.against_advance), "photos": (photos or {}).get(c.id, []),
+            "pay_with_salary": bool(c.pay_with_salary), "payslip_id": c.payslip_id}
 
 
 LIVE_CLAIMS = ("APPROVED", "SETTLED")

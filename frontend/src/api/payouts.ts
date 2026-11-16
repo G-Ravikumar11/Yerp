@@ -117,6 +117,9 @@ export interface Claim {
   decision_note: string
   against_advance: number
   left: number
+  /** Queued for the person's next salary (and the payslip that picked it up, once one has). */
+  pay_with_salary?: boolean
+  payslip_id?: number | null
   photos: { id: number; name: string }[]
 }
 
@@ -126,6 +129,8 @@ export const submitClaim = (b: { spent_on: string; head: string; job_id: number 
   post<Claim & { message: string }>('/api/expense-claims', b)
 export const decideClaim = (id: number, decision: 'approve' | 'reject', note = '') => post<Claim & { message: string }>(`/api/expense-claims/${id}/decide`, { decision, note })
 export const claimAgainstAdvance = (id: number) => post<Claim & { message: string }>(`/api/expense-claims/${id}/against-advance`, {})
+/** Pay an approved claim with the salary: the next payslip adds it, untaxed, and it is settled on release. `on: false` takes it off. */
+export const claimPayWithSalary = (id: number, on = true) => post<Claim & { message: string }>(`/api/expense-claims/${id}/pay-with-salary`, { on })
 export const cancelClaim = (id: number) => post<Claim & { message: string }>(`/api/expense-claims/${id}/cancel`, {})
 /** The bill's photo, kept with the claim. */
 export function attachClaimPhoto(id: number, file: File) {

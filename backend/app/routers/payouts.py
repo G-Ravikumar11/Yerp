@@ -308,6 +308,22 @@ def claim_against_advance(cid: int, request: Request, db: Session = Depends(get_
         inr(took), c.employee_name, (" - %s still to reimburse" % inr(left)) if left > 0 else ""))
 
 
+@router.post("/api/expense-claims/{cid}/pay-with-salary")
+def claim_pay_with_salary(cid: int, request: Request, body: dict = Body(default={}), db: Session = Depends(get_db)):
+    """Put an approved claim on the salary (or take it off again before a payslip picks it up): the person's next
+    payslip adds it as a non-taxable reimbursement, and it is settled when that payslip is released."""
+    from app.services import claim_reimbursement
+    client, _, who = wo_actor(request, db, PAY)
+    c = po.claim_or_404(db, client.id, cid)
+    on = body.get("on") is not False
+    claim_reimbursement.set_queue(db, c, on)
+    log_audit(db, client.id, "expense_claim_pay_with_salary" if on else "expense_claim_salary_removed", "expense_claim", c.id, c.number,
+              inr(po.claim_left(db, c)), request=request, user_name=who)
+    db.commit()
+    return dict(po.claim_dict(c, _jobs(db, client.id)), message=("%s will be paid with %s's next salary." % (c.number, c.employee_name)) if on
+                else "%s taken off the salary." % c.number)
+
+
 @router.post("/api/expense-claims/{cid}/cancel")
 def claim_cancel(cid: int, request: Request, db: Session = Depends(get_db)):
     client, emp = session_person(request, db)

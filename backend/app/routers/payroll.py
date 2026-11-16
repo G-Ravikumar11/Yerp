@@ -24,7 +24,7 @@ from app.core.sheets import sheet_response
 from app.documents import ecr, esic, neft
 from app.documents import payslip as payslip_sheet
 from app.documents.letterhead import letterhead
-from app.services import payroll_exports, payroll_month, staff_advances
+from app.services import claim_reimbursement, payroll_exports, payroll_month, staff_advances
 from app.services.hr import ytd_totals
 from app.services.income_tax import tds_function
 from app.services.salary_revisions import employee_on, salary_on
@@ -71,7 +71,7 @@ def get_payslips(request: Request, status: str = "", db: Session = Depends(get_r
             "employee_esi": p.insurance or 0.0, "employer_esi": p.employer_esi or 0.0,
             "professional_tax": p.professional_tax or 0.0,
             "working_days": p.working_days or 0.0, "lop_days": p.lop_days or 0.0, "paid_days": p.paid_days or 0.0,
-            "advance_recovery": p.advance_recovery or 0.0,
+            "advance_recovery": p.advance_recovery or 0.0, "reimbursement": p.reimbursement or 0.0,
             "net_pay": p.net_pay, "status": p.status, "sent": p.sent,
             "created_at": p.created_at,
         })
@@ -101,6 +101,8 @@ def create_payslip(request: Request, body: PayslipCreate, allow_overlap: bool = 
     emp = employee_on(db, emp, body.period_end)         # the salary of the period, if an increment came after it
     data = body.model_dump()
     data["advance_recovery"] = staff_advances.check_recovery(db, client.id, emp, body.advance_recovery)
+    claims = claim_reimbursement.queued(db, client.id, emp.id)
+    data["reimbursement"] = claim_reimbursement.total(db, claims)
     days, lines = pay_basis(db, client.id, emp, body.period_start, body.period_end, data, use_structure=body.use_structure is not False)
     figures = compute_payslip_figures(emp, data, lines, tds_function(db, client.id, emp, body.period_end))
 
@@ -114,6 +116,7 @@ def create_payslip(request: Request, body: PayslipCreate, allow_overlap: bool = 
     if lines is not None:
         attach_lines(ps, emp, lines)
     db.add(ps)
+    claim_reimbursement.attach(db, ps, claims)
     log_audit(db, client.id, "payslip_created", "payslip", None, ps_number,
               f"{emp.first_name} {emp.last_name}: net {figures['net_pay']:.2f}", request)
     db.commit()
@@ -274,9 +277,10 @@ def pay_payroll_month(request: Request, body: dict = None, db: Session = Depends
     log_audit(db, client.id, "payroll_month_paid", "payroll_month", row.id, month,
               "%d payslip(s), net %.2f" % (len(slips), sum(p.net_pay or 0 for p in slips)), request)
     made = _recover_advances(request, db, client, slips)
+    settled = claim_reimbursement.settle_on_release(db, client.id, slips, _actor(request, db))
     db.commit()
     taken = ("; %d salary advance(s) taken back, %s" % (len(made), inr(sum(e.amount or 0 for e in made)))) if made else ""
-    return {"message": "Payroll for %s marked paid%s" % (month, taken), "advances_recovered": len(made),
+    return {"message": "Payroll for %s marked paid%s" % (month, taken), "advances_recovered": len(made), "claims_settled": len(settled),
             **payroll_month.as_dict(row, slips)}
 
 
@@ -636,6 +640,11 @@ def payslip_payload(db, client, ps, light=False, row=None):
         "standing_deduction": money(
             (ps.total_deductions or 0) - (ps.tax_amount or 0) - (ps.insurance or 0)
             - (ps.retirement or 0) - (ps.other_deductions or 0) - (ps.professional_tax or 0) - (ps.advance_recovery or 0)),
+        # Expense claims paid with this salary: in the net pay, outside the gross and so untaxed.
+        "reimbursement": ps.reimbursement or 0.0,
+        "reimbursed_claims": [] if light else [
+            {"id": c.id, "number": c.number, "head": c.head, "amount": c.salary_amount or 0.0, "settled": c.status == "SETTLED"}
+            for c in claim_reimbursement.on_payslip(db, ps)],
         # The salary advance taken back on this payslip, and the adjustment receipt written for it when it was released.
         "advance_recovery": ps.advance_recovery or 0.0,
         "advance_entry_id": ps.advance_entry_id,
@@ -699,6 +708,7 @@ def update_payslip(ps_id: int, request: Request, body: dict = None, db: Session 
             line.amount = money(amount)
 
     inputs = {key: getattr(ps, key) for key in PAYSLIP_PAY_INPUTS}
+    inputs["reimbursement"] = ps.reimbursement or 0.0       # the claims on it; not typed
     for key in PAYSLIP_PAY_INPUTS:
         if key in body and body[key] is not None:
             inputs[key] = body[key]
@@ -741,8 +751,10 @@ def mark_payslip_paid(ps_id: int, request: Request, db: Session = Depends(get_db
     ps.pay_date = ps.pay_date or datetime.now().strftime("%Y-%m-%d")
     log_audit(db, client.id, "payslip_marked_paid", "payslip", ps.id, ps.number, f"Net: {ps.net_pay}", request)
     made = _recover_advances(request, db, client, [ps])
+    claims = claim_reimbursement.settle_on_release(db, client.id, [ps], _actor(request, db))
     db.commit()
-    return {"message": "Payslip marked as paid" + (("; advance of %s taken back (%s)" % (inr(made[0].amount), made[0].number)) if made else "")}
+    return {"message": "Payslip marked as paid" + (("; advance of %s taken back (%s)" % (inr(made[0].amount), made[0].number)) if made else "")
+            + ("; %d expense claim(s) settled" % len(claims) if claims else "")}
 
 
 def _recover_advances(request, db, client, slips):
@@ -764,6 +776,7 @@ def unmark_payslip_paid(ps_id: int, request: Request, db: Session = Depends(get_
     payroll_month.assert_open(db, client.id, payroll_month.month_of(ps.period_end, ps.period_start, ps.pay_date))
     ps.status = "Sent" if ps.sent else "Draft"
     undone = staff_advances.undo_recovery(db, client.id, ps, "Payslip %s reopened" % ps.number)
+    claim_reimbursement.undo(db, client.id, ps, "Payslip %s reopened" % ps.number, keep_link=True)
     log_audit(db, client.id, "payslip_unmarked_paid", "payslip", ps.id, ps.number,
               ("advance receipt %s voided" % undone.number) if undone else "", request)
     db.commit()
@@ -783,6 +796,7 @@ def delete_payslip(ps_id: int, request: Request, force: bool = False, db: Sessio
             detail="This payslip is marked as paid. Reopen it first, or pass force=true to delete anyway.",
         )
     staff_advances.undo_recovery(db, client.id, ps, "Payslip %s deleted" % ps.number)
+    claim_reimbursement.undo(db, client.id, ps, "Payslip %s deleted" % ps.number, keep_link=False)
     log_audit(db, client.id, "payslip_deleted", "payslip", ps.id, ps.number, f"Net: {ps.net_pay}", request)
     db.delete(ps)
     db.commit()

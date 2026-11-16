@@ -41,13 +41,14 @@ function Form({ onClose }: { onClose: () => void }) {
       <Input aria-label={`${key} for ${r.name}`} type="number" min="0" max={max} className="h-8 w-24 text-right" value={edits[r.employee_id]?.[key] ?? r[key]} onChange={(e) => type(r.employee_id, key, e.target.value)} />
     )
     // The advance column is shown only when somebody in the run holds one.
+    const anyClaims = preview.rows.some((r) => r.reimbursement > 0)
     const anyAdvance = preview.rows.some((r) => r.advance_balance > 0 || r.advance_recovery > 0)
     return (
       <div>
         <div className="max-h-[55vh] overflow-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-card text-left text-[12px] text-muted-foreground"><tr>
-              <th className="py-1.5">Person</th><th>Paid days</th><th className="text-right">Basic</th><th>Bonus</th><th>OT hrs</th><th>Tax</th>{anyAdvance && <><th className="text-right" title="The salary advance they hold">Advance held</th><th title="Taken back from this month's pay; an adjustment receipt is written when the payslip is released">Recover</th></>}<th className="text-right">Gross</th><th className="text-right">Net</th><th />
+              <th className="py-1.5">Person</th><th>Paid days</th><th className="text-right">Basic</th><th>Bonus</th><th>OT hrs</th><th>Tax</th>{anyClaims && <th className="text-right" title="Approved expense claims paid with this salary: added to the net, not taxed">Claims</th>}{anyAdvance && <><th className="text-right" title="The salary advance they hold">Advance held</th><th title="Taken back from this month's pay; an adjustment receipt is written when the payslip is released">Recover</th></>}<th className="text-right">Gross</th><th className="text-right">Net</th><th />
             </tr></thead>
             <tbody>{preview.rows.map((r) => {
               const out = left.includes(r.employee_id)
@@ -57,6 +58,7 @@ function Form({ onClose }: { onClose: () => void }) {
                   <td>{r.paid_days ?? '-'}{r.lop_days ? ` (${r.lop_days} LOP)` : ''}</td>
                   <td className="text-right">{formatINR(r.basic_salary)}</td>
                   <td>{cell(r, 'bonus')}</td><td>{cell(r, 'overtime_hours')}</td><td>{cell(r, 'tax_amount')}</td>
+                  {anyClaims && <td className="text-right">{r.reimbursement > 0 ? formatINR(r.reimbursement) : '-'}</td>}
                   {anyAdvance && <><td className="text-right">{r.advance_balance > 0 ? formatINR(r.advance_balance) : '-'}</td><td>{r.advance_balance > 0 || r.advance_recovery > 0 ? cell(r, 'advance_recovery', r.advance_balance) : '-'}</td></>}
                   <td className="text-right">{formatINR(r.gross_pay)}</td><td className="text-right font-semibold">{formatINR(r.net_pay)}</td>
                   <td><Button size="sm" variant="ghost" onClick={() => setLeft((l) => out ? l.filter((x) => x !== r.employee_id) : [...l, r.employee_id])}>{out ? 'Add back' : 'Leave out'}</Button></td>

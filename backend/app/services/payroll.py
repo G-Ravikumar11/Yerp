@@ -13,7 +13,7 @@ from app.core.scheduler import scheduled_job
 from app.services.employee_portal import attendance_settings_for, leave_balance_for, working_days_between
 from app.services.hr import resolve_basic_pay
 from app.services.salary_revisions import employee_on, salaries_on
-from app.services import lop, staff_advances, statutory
+from app.services import claim_reimbursement, lop, staff_advances, statutory
 from app.services.income_tax import tds_function
 from app.services.salary_structure import apply_statutory, attach_lines, line_totals, structure_lines
 from app.services.holidays import custom_holidays
@@ -85,7 +85,9 @@ def compute_payslip_figures(emp, data, lines=None, tax_fn=None):
     # A salary advance taken back this month: HR's figure, checked against the advance held before it gets here.
     advance = money(data.get("advance_recovery") or 0)
     total_deductions = money(tax + insurance + retirement + other + pt + standing + advance)
-    net = money(gross - total_deductions)
+    # Expense claims paid with the salary: repaid money, not pay. Outside the gross, so no tax, PF or ESI is worked on it.
+    reimbursement = money(data.get("reimbursement") or 0)
+    net = money(gross - total_deductions + reimbursement)
 
     return {
         "hours_worked": hours, "overtime_hours": ot_hours, "overtime_rate": money(ot_rate),
@@ -94,7 +96,7 @@ def compute_payslip_figures(emp, data, lines=None, tax_fn=None):
         # Deliberately not returned here: this dict is splatted straight into
         # DBPayslip, which has no such column. It is derived on read instead,
         # which also makes payslips issued before this fix reconcile.
-        "other_deductions": other, "professional_tax": pt, **employer, "advance_recovery": advance,
+        "other_deductions": other, "professional_tax": pt, **employer, "advance_recovery": advance, "reimbursement": reimbursement,
         "total_deductions": total_deductions, "net_pay": net,
     }
 
@@ -239,6 +241,8 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
                 data[key] = val
         advance_held = staff_advances.balance_for(db, client_id, emp, held)
         data["advance_recovery"] = staff_advances.check_recovery(db, client_id, emp, data.get("advance_recovery"), held, spoken_for)
+        claims = claim_reimbursement.queued(db, client_id, emp.id)
+        data["reimbursement"] = claim_reimbursement.total(db, claims)
         days, lines = pay_basis(db, client_id, emp, period_start, period_end, data, settings=settings, holidays=holidays)
         if days and days["working_days"] > 0 and days["active_days"] <= 0:
             skipped.append({"employee_id": emp.id, "name": f"{emp.first_name} {emp.last_name}",
@@ -257,7 +261,7 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
                 "lop_days": days["lop_days"] if days else None,
                 # The advance they hold (less what other unreleased payslips take back), and what this one takes.
                 "advance_balance": money(advance_held - spoken_for.get(staff_advances.norm_name(staff_advances.employee_name(emp)), 0.0)),
-                "advance_recovery": figures["advance_recovery"],
+                "advance_recovery": figures["advance_recovery"], "reimbursement": figures["reimbursement"],
             })
             total_net += figures["net_pay"]
             total_gross += figures["gross_pay"]
@@ -275,6 +279,7 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
             attach_lines(ps, emp, lines)
         seq += 1
         db.add(ps)
+        claim_reimbursement.attach(db, ps, claims)
         total_net += figures["net_pay"]
         total_gross += figures["gross_pay"]
         created.append({

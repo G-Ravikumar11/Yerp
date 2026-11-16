@@ -166,6 +166,8 @@ class DBPayslip(Base):
     # it, which is what brings their advance balance down; that receipt's id is kept so it is made once.
     advance_recovery = Column(Float, default=0.0)
     advance_entry_id = Column(Integer, nullable=True)
+    # Approved expense claims paid with this salary: added to the net pay, outside the gross, so never taxed.
+    reimbursement = Column(Float, default=0.0)
 
     status = Column(String, default="Draft", index=True)
     sent = Column(String, default="")

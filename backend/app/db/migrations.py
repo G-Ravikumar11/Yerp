@@ -137,6 +137,10 @@ HR_PAYROLL_COLUMNS = (
     ("payslips", "employer_eps", "FLOAT DEFAULT 0"), ("payslips", "employer_esi", "FLOAT DEFAULT 0"),
     # A salary advance recovered on the payslip, and the adjustment receipt written for it on release.
     ("payslips", "advance_recovery", "FLOAT DEFAULT 0"), ("payslips", "advance_entry_id", "INTEGER"),
+    # Expense claims paid with the salary: the reimbursement on the payslip, and the claim's link to it.
+    ("payslips", "reimbursement", "FLOAT DEFAULT 0"),
+    ("expense_claims", "pay_with_salary", "BOOLEAN DEFAULT FALSE"), ("expense_claims", "payslip_id", "INTEGER"),
+    ("expense_claims", "salary_amount", "FLOAT DEFAULT 0"), ("expense_claims", "salary_entry_id", "INTEGER"),
     ("attendance_settings", "late_threshold", "INTEGER DEFAULT 3"),
     ("attendance_settings", "late_penalty_lop", "FLOAT DEFAULT 0.5"),
     ("attendance_settings", "auto_email_on_approval", "BOOLEAN DEFAULT FALSE"),

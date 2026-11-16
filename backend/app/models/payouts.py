@@ -1,7 +1,7 @@
 """Paying out: bank payment files, cheque books and post-dated cheques, and staff expense claims."""
 from datetime import datetime
 
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
 
 from app.db.session import Base
 
@@ -128,3 +128,9 @@ class DBExpenseClaim(Base):
     decided_at = Column(String, default="")
     decision_note = Column(String, default="")
     against_advance = Column(Float, default=0.0)                    # what was set against an advance they held
+    # Paid with the salary: queued for the person's next payslip (pay_with_salary), then carried on it as a non-taxable
+    # reimbursement (payslip_id, salary_amount) and settled by an adjustment payment when it is released (salary_entry_id).
+    pay_with_salary = Column(Boolean, default=False)
+    payslip_id = Column(Integer, nullable=True, index=True)
+    salary_amount = Column(Float, default=0.0)
+    salary_entry_id = Column(Integer, nullable=True)

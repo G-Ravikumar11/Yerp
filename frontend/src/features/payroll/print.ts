@@ -47,6 +47,7 @@ export function payslipHtml(p: PayslipDetail, { autoPrint = false } = {}): strin
   const earn: [string, number | null][] = own.length ? own.filter((l) => l.kind === 'earning').map((l) => [l.name, l.amount]) : [['Basic', p.basic_salary], ['HRA', null], ['Site Allowance', null], ['Special Allownace', null], ['Mobile Allowance', null], ['Transport Allowance', null], ['Other Allowance', p.allowances]]
   if (p.overtime_pay) earn.push([`Overtime${p.overtime_hours ? ` (${p.overtime_hours}h)` : ''}`, p.overtime_pay])
   if (p.bonus) earn.push(['Bonus', p.bonus])
+  if (p.reimbursement) earn.push(['Expense Reimbursement (non-taxable)', p.reimbursement])
   const ded: [string, number | null][] = own.length
     ? [...own.filter((l) => l.kind === 'deduction').map((l): [string, number | null] => [l.name, l.amount]), ...(p.professional_tax ? [['Prof Tax', p.professional_tax] as [string, number | null]] : []), ...(p.tax_amount ? [['TDS Deduction', p.tax_amount] as [string, number | null]] : []), ...(p.advance_recovery ? [['Salary Advance', p.advance_recovery] as [string, number | null]] : [])]
     : [['PF', p.retirement], ['ESI', p.insurance], ['Prof Tax', p.professional_tax || null], ['Salary Advance', p.advance_recovery || null], ['TDS Deduction', p.tax_amount], ['Loss Of Pay', null], ['Other Deductions', p.other_deductions]]
@@ -71,7 +72,7 @@ ${info('Aadhar No.', e.aadhaar_masked, 'Effective Work days.', counted ? p.paid_
 ${info('UAN No', e.uan_no, 'ESI No', e.esi_no)}
 <tr class="h"><td colspan="3">Earnings</td><td colspan="3">Deductions</td></tr>
 ${lines}
-<tr class="b"><td colspan="2">Total Earnings : Rs.</td><td class="r">${amt(p.gross_pay)}</td><td colspan="2">Total Deductions : Rs.</td><td class="r">${amt(p.total_deductions)}</td></tr>
+<tr class="b"><td colspan="2">Total Earnings : Rs.</td><td class="r">${amt(p.gross_pay + (p.reimbursement ?? 0))}</td><td colspan="2">Total Deductions : Rs.</td><td class="r">${amt(p.total_deductions)}</td></tr>
 </table>
 <div class="net">Net Pay : &nbsp;&nbsp;&nbsp;<span>Rs.</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${amt(p.net_pay)}</div>
 <div class="words">In Words : &nbsp;${esc(rupeesInWords(p.net_pay))}</div>

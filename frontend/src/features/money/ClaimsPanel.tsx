@@ -3,7 +3,7 @@ import { Camera, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, NumField, Select } from '@/components/ui'
-import { attachClaimPhoto, cancelClaim, claimAgainstAdvance, decideClaim, payoutKeys, submitClaim, useClaims, type Claim } from '@/api/payouts'
+import { attachClaimPhoto, cancelClaim, claimAgainstAdvance, claimPayWithSalary, decideClaim, payoutKeys, submitClaim, useClaims, type Claim } from '@/api/payouts'
 import { useMoneyHeads } from '@/api/ledger'
 import { owedKeys } from '@/api/owed'
 import { projectLabel, useProjects } from '@/api/projects'
@@ -38,6 +38,7 @@ export function ClaimsPanel({ mine = false }: { mine?: boolean }) {
   const [paying, setPaying] = useState<Claim | null>(null)
   const decide = useAction((v: { id: number; decision: 'approve' | 'reject'; note?: string }) => decideClaim(v.id, v.decision, v.note), { invalidate: INVALIDATE, onSuccess: () => setRejecting(null) })
   const setOff = useAction((id: number) => claimAgainstAdvance(id), { invalidate: INVALIDATE })
+  const bySalary = useAction((v: { id: number; on: boolean }) => claimPayWithSalary(v.id, v.on), { invalidate: INVALIDATE, success: (r) => r.message })
   const withdraw = useAction((id: number) => cancelClaim(id), { invalidate: INVALIDATE })
   const checker = !mine && !!q.data?.can_decide
   const me = q.data?.me
@@ -52,7 +53,7 @@ export function ClaimsPanel({ mine = false }: { mine?: boolean }) {
       cell: (r) => r.photos.length ? <Button size="icon-sm" variant="ghost" asChild><a href={`/api/files/${r.photos[0].id}`} target="_blank" rel="noreferrer" aria-label={`Bill for ${r.number}`}><Camera /></a></Button>
         : r.status === 'SUBMITTED' && (mine || checker) ? <PhotoButton id={r.id} /> : <span className="text-xs text-muted-foreground">no photo</span>,
     },
-    { id: 's', header: 'Status', cell: (r) => <Badge tone={TONE[r.status]} title={r.decision_note || undefined}>{LABEL[r.status]}</Badge> },
+    { id: 's', header: 'Status', cell: (r) => <div className="flex flex-wrap gap-1"><Badge tone={TONE[r.status]} title={r.decision_note || undefined}>{LABEL[r.status]}</Badge>{r.status === 'APPROVED' && r.pay_with_salary && <Badge tone="info">{r.payslip_id ? 'On a payslip' : 'With next salary'}</Badge>}</div> },
     {
       id: 'x', header: '', align: 'right',
       cell: (r) => (
@@ -60,6 +61,7 @@ export function ClaimsPanel({ mine = false }: { mine?: boolean }) {
           {checker && r.status === 'SUBMITTED' && r.employee_id !== me && <Button size="sm" loading={decide.isPending && decide.variables?.id === r.id} onClick={() => decide.mutate({ id: r.id, decision: 'approve' })}>Approve</Button>}
           {checker && r.status === 'SUBMITTED' && r.employee_id !== me && <Button size="sm" variant="outline" onClick={() => setRejecting(r)}>Send back</Button>}
           {!mine && r.status === 'APPROVED' && can('bills.pay') && <Button size="sm" onClick={() => setPaying(r)}>Pay</Button>}
+          {!mine && r.status === 'APPROVED' && can('bills.pay') && !r.payslip_id && <Button size="sm" variant="outline" loading={bySalary.isPending && bySalary.variables?.id === r.id} onClick={() => bySalary.mutate({ id: r.id, on: !r.pay_with_salary })}>{r.pay_with_salary ? 'Take off salary' : 'Pay with salary'}</Button>}
           {!mine && r.status === 'APPROVED' && can('bills.pay') && <Button size="sm" variant="outline" loading={setOff.isPending && setOff.variables === r.id} onClick={() => setOff.mutate(r.id)}>Off advance</Button>}
           {r.status === 'SUBMITTED' && r.employee_id === me && <Button size="sm" variant="ghost" loading={withdraw.isPending} onClick={() => withdraw.mutate(r.id)}>Withdraw</Button>}
         </div>

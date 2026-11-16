@@ -30,6 +30,12 @@ export function PayslipModal({ id, onClose }: { id: number | null; onClose: () =
             {p.sent && <Badge tone="info">Emailed</Badge>}
             <span className="text-muted-foreground">{p.employee.job_title}{p.employee.department_name && ` - ${p.employee.department_name}`} - pay date {formatDate(p.pay_date) || 'not set'}</span>
           </div>
+          {!!p.reimbursement && (
+            <p role="status" className="mb-3 rounded-lg bg-muted/50 p-3 text-[13px]">
+              Expense claims paid with this salary: <strong>{formatINR(p.reimbursement)}</strong>, added to the net pay and not taxed
+              {p.reimbursed_claims?.length ? ` (${p.reimbursed_claims.map((c) => c.number).join(', ')})` : ''}. {p.status === 'Paid' ? 'The claims were settled when this payslip was marked paid.' : 'They are marked settled when this payslip is marked paid.'}
+            </p>
+          )}
           {!!p.advance_recovery && (
             <p role="status" className="mb-3 rounded-lg bg-muted/50 p-3 text-[13px]">
               Salary advance taken back: <strong>{formatINR(p.advance_recovery)}</strong>. {p.advance_entry_id ? 'The adjustment receipt that reduces their advance was written when this payslip was marked paid.' : 'The adjustment receipt that reduces their advance is written when this payslip is marked paid.'}

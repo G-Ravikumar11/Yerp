@@ -45,6 +45,8 @@ export interface PayslipRow {
   paid_days?: number
   /** A salary advance taken back on this payslip. */
   advance_recovery?: number
+  /** Approved expense claims paid with this salary: added to the net pay, not taxed. */
+  reimbursement?: number
   /** The YYYY-MM it belongs to, and where that month's payroll stands. */
   month?: string
   month_status?: MonthStatus
@@ -104,6 +106,9 @@ export interface PayslipDetail {
   /** A salary advance taken back on this payslip, and the adjustment receipt written for it on release (none until then). */
   advance_recovery?: number
   advance_entry_id?: number | null
+  /** Approved expense claims paid with this salary: in the net pay, outside the gross, untaxed. */
+  reimbursement?: number
+  reimbursed_claims?: { id: number; number: string; head: string; amount: number; settled: boolean }[]
   professional_tax?: number
   /** Paid days: the period's working days, the loss of pay in them, and the days paid. */
   working_days?: number
@@ -203,6 +208,8 @@ export interface PreviewRow {
   working_days: number | null; paid_days: number | null; lop_days: number | null
   /** The salary advance they hold, and what this payslip takes back of it (an adjustment receipt is written on release). */
   advance_balance: number; advance_recovery: number
+  /** Expense claims on the salary that this payslip will carry (non-taxable, added to the net). */
+  reimbursement: number
 }
 export interface PayrollPreview { rows: PreviewRow[]; skipped: { name: string; reason: string }[]; warnings: { name: string; reason: string }[]; total_gross: number; total_net: number }
 const runBody = (b: RunPeriod, employeeIds?: number[], overrides?: Record<number, RunOverride>) => ({ ...b, include_attendance_hours: true, skip_existing: true, employee_ids: employeeIds, overrides })

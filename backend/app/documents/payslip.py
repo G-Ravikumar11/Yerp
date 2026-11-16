@@ -79,6 +79,8 @@ def layout(p):
         earnings.append(("Overtime%s" % (" (%sh)" % _figure(hours) if hours else ""), p["overtime_pay"]))
     if p.get("bonus"):
         earnings.append(("Bonus", p["bonus"]))
+    if p.get("reimbursement"):
+        earnings.append(("Expense Reimbursement (non-taxable)", p["reimbursement"]))
     if own:
         deductions = [(l["name"], l["amount"]) for l in own if l["kind"] == "deduction"]
         if p.get("professional_tax"):
@@ -103,7 +105,7 @@ def layout(p):
         "company": (p.get("company") or {}),
         "title": "Payslip For The Month of %s" % month_year(p.get("period_end") or p.get("period_start")),
         "info": info, "earnings": earnings, "deductions": deductions,
-        "total_earnings": _figure(p.get("gross_pay")), "total_deductions": _figure(p.get("total_deductions")),
+        "total_earnings": _figure((p.get("gross_pay") or 0) + (p.get("reimbursement") or 0)), "total_deductions": _figure(p.get("total_deductions")),
         "net": _figure(net), "words": amount_in_words(net), "note": NOTE, "notes": p.get("notes") or "",
     }
 
@@ -266,7 +268,7 @@ INFO_COLUMNS = ["Employee No.", "Name.", "Department.", "Designation.", "Locatio
                 "Father Name.", "Aadhar No.", "UAN No", "ESI No", "DOJ.", "Total Days.", "Work Days.",
                 "Effective Work days.", "LOP .", "Balance Leaves.", "Salary Per Month."]
 EARNING_COLUMNS = ["Basic", "HRA", "Site Allowance", "Special Allownace", "Mobile Allowance", "Transport Allowance",
-                   "Other Allowance", "Overtime", "Bonus"]
+                   "Other Allowance", "Overtime", "Bonus", "Reimbursement"]
 DEDUCTION_COLUMNS = ["PF", "ESI", "Prof Tax", "Salary Advance", "TDS Deduction", "Loss Of Pay", "Other Deductions",
                      "Standing Deduction"]
 LEADING_COLUMNS = ["Payslip No.", "Month", "Pay Date"]
@@ -298,7 +300,7 @@ def register_columns(payloads):
                 add(earn, name)
             for name in DEDUCTION_COLUMNS[:7]:
                 add(ded, name)
-    for name in ("Overtime", "Bonus"):
+    for name in ("Overtime", "Bonus", "Reimbursement"):
         add(earn, name)
     for name in ("Prof Tax", "Salary Advance", "TDS Deduction", "Standing Deduction"):
         add(ded, name)
@@ -326,10 +328,11 @@ def register_row(p, columns=None):
                 cells[label] = value
         cells["Salary Per Month."] = p.get("gross_pay")
     cells["Overtime"], cells["Bonus"] = p.get("overtime_pay") or None, p.get("bonus") or None
+    cells["Reimbursement"] = p.get("reimbursement") or None
     cells["Standing Deduction"] = p.get("standing_deduction") or None
     cells.update({"Payslip No.": p.get("number") or "", "Month": month_year(p.get("period_end") or p.get("period_start")),
                   "Pay Date": joined_on(p.get("pay_date")), "Status": p.get("status") or "",
-                  "Total Earnings": p.get("gross_pay"), "Total Deductions": p.get("total_deductions"),
+                  "Total Earnings": (p.get("gross_pay") or 0) + (p.get("reimbursement") or 0), "Total Deductions": p.get("total_deductions"),
                   "Net Pay": p.get("net_pay")})
     out = []
     for column in columns:
