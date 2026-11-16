@@ -3,6 +3,9 @@ import { get, post } from '@/lib/api'
 
 export const journalKeys = { all: ['journals'] as const }
 
+/** What a journal changes, so every screen that shows it is read again. */
+export const JOURNAL_INVALIDATE = [journalKeys.all, ['ledger'], ['money'], ['supplier-bills'], ['approvals'], ['projects']]
+
 export type LineKind = 'party' | 'head' | 'account' | 'ledger'
 
 export interface JournalLine {
