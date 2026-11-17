@@ -267,7 +267,7 @@ def suggest_person(candidates, name):
     return {"id": hits[0][0], "name": hits[0][1]} if len(hits) == 1 else None
 
 
-SETUP_FILES = ("sync.py", "SETUP.bat", "run_check.bat", "run_now.bat", "install_task.bat", "remove_task.bat",
+SETUP_FILES = ("sync.py", "SETUP.bat", "get_python.ps1", "run_check.bat", "run_now.bat", "install_task.bat", "remove_task.bat",
                "make_reader_login.sql", "README.md")
 
 

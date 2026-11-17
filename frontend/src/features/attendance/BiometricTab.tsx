@@ -94,8 +94,8 @@ export function BiometricTab() {
             </p>
             {master && !s?.connected && (
               <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-[13px] text-muted-foreground">
-                <li>Press <strong>Download set-up package</strong> and copy the zip to the office computer.</li>
-                <li>Unzip it, double-click <strong>SETUP.bat</strong> and answer what it asks.</li>
+                <li>On the office computer that holds the attendance database, open this page and press <strong>Download set-up package</strong>.</li>
+                <li>Unzip it, double-click <strong>SETUP.bat</strong> and click Yes. It does the rest in about two minutes.</li>
                 <li>This page then says <strong>Working</strong>, and attendance arrives by itself.</li>
               </ol>
             )}

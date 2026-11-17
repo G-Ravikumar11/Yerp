@@ -517,10 +517,10 @@ def setup():
 
     print("\n5. Reading the attendance system ...")
     check(cfg)
-    days = ask("\n   How many days back should be brought into Y ERP now (0 = just today)", "7")
-    print("\n6. Sending the first punches ...")
+    # No question here: the last week comes in; more can be brought later with  sync.py --backfill DAYS
+    print("\n6. Sending the last 7 days' punches ...")
     try:
-        run_once(cfg, int(days) if days.isdigit() else 0)
+        run_once(cfg, 7)
     except Exception as exc:
         print("   Failed: %s" % exc)
         return 1

@@ -2,3 +2,5 @@ config.ini
 state.json
 state.json.tmp
 sync.log
+python/
+_download/

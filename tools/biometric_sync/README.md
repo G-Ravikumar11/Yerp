@@ -3,24 +3,22 @@
 Sends punches from the office's eSSL eTimeTrackLite attendance system to Y ERP, so attendance shows there within a
 minute or two. It runs on the office computer that holds the attendance database and only **reads** it.
 
-## Set up (about 5 minutes)
+## Set up (under 2 minutes)
 
-1. **In Y ERP**, signed in as the Master: People > Attendance > **Biometric** > **Download set-up package**. It is a
-   zip with this program and a `config.ini` that already holds your address and a key.
-2. **Copy the zip to the office computer**, unzip it (for example to `C:\YERP\biometric_sync`).
-3. **Double-click `SETUP.bat`** and answer what it asks. It:
-   - installs the one extra part it needs (pyodbc), if Python is there;
-   - finds the SQL Server and the attendance database by itself, signing in with this Windows account, or asking for
-     the SQL login you use in Management Studio if that does not work;
-   - makes a login that can only **read** the attendance database;
-   - sends the first punches (it asks how many days back);
-   - starts an every-minute Windows task, so it keeps going with nobody signed in and after restarts.
+1. **On the office computer** (over AnyDesk is fine), open Y ERP in its browser, sign in as the Master, and go to
+   People > Attendance > **Biometric** > **Download set-up package**.
+2. **Unzip it** and double-click **`SETUP.bat`**. Click **Yes** when Windows asks for permission.
 
-If Python is not on that computer, `SETUP.bat` says so and opens the download page. Install Python 3 (64-bit) and
-**tick "Add python.exe to PATH"**, then double-click `SETUP.bat` again. Windows 7 needs Python 3.8, Windows 8.1 needs
-3.9; Windows 10, 11 and Server 2016 or newer take 3.12.
+That is all. `SETUP.bat`:
+- fetches its own copy of Python and pyodbc into the folder (about 11 MB, the first time only), checking both files
+  against fixed fingerprints; nothing is installed in Windows;
+- finds the SQL Server and the attendance database by itself, signing in with this Windows account, or asking for
+  the SQL login you use in Management Studio if that does not work;
+- makes a login that can only **read** the attendance database;
+- sends the last 7 days' punches, and starts an every-minute Windows task that keeps going with nobody signed in.
 
-For the every-minute task, right-click `SETUP.bat` > **Run as administrator** if it says it could not make it.
+Needs 64-bit Windows 8.1 / Server 2012 R2 or newer, and internet on that computer. On older Windows, `SETUP.bat`
+says which Python to install by hand. To bring in more history later: `python\python.exe sync.py --backfill 30`.
 
 ## In Y ERP afterwards
 
