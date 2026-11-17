@@ -288,3 +288,15 @@ def test_a_stored_pdf_in_the_app_is_a_download_but_a_photo_is_not(tenant):
     assert not by_app(web.get(doc["url"]))                        # the website is unchanged
     grant(tenant, person, add=["app.download_pdf"])
     assert not by_app(sign_in(person, "app").get(doc["url"]))
+
+
+def test_a_staff_member_may_claim_their_own_expense_from_the_phone_but_not_decide_or_pay_one():
+    # The claim and its bill's photo are the person's own money, open whatever they hold ...
+    for path in ("/api/expense-claims", "/api/expense-claims/7/photo"):
+        assert app_limits.refusal("POST", path, set()) is None, path
+    # ... while deciding, paying and setting off stay with the approval rule and the website.
+    assert "Approve" in app_limits.refusal("POST", "/api/expense-claims/7/decide", {"app.site_edit"})
+    assert app_limits.refusal("POST", "/api/expense-claims/7/decide", {"app.approve"}) is None
+    for path in ("/api/expense-claims/7/against-advance", "/api/expense-claims/7/pay-with-salary", "/api/expense-claims/7/cancel"):
+        assert "not available in the app" in app_limits.refusal("POST", path, set(app_limits.APP_KEYS)), path
+    assert "not available in the app" in app_limits.refusal("DELETE", "/api/expense-claims/7", set(app_limits.APP_KEYS))

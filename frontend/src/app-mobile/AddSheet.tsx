@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { AlertTriangle, BookOpen, ClipboardCheck, ListChecks, PackageCheck, Ruler, Wallet, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, BookOpen, ClipboardCheck, ListChecks, PackageCheck, Receipt, Ruler, Wallet, type LucideIcon } from 'lucide-react'
 import { useSiteCash } from '@/api/sitecash'
 import { useSession } from '@/lib/session'
 import { useCurrentSite } from './site'
@@ -10,12 +10,13 @@ import { useCurrentSite } from './site'
  * (and, for the diary, the measurement book, the goods receipt and the cash box, on today's form). A tile appears only for
  * someone who may do it.
  */
-const TILES: { label: string; hint: string; to: (site: number) => string; perm?: string; icon: LucideIcon; from: string; to2: string; needsBox?: boolean }[] = [
+const TILES: { label: string; hint: string; to: (site: number) => string; perm?: string; icon: LucideIcon; from: string; to2: string; needsBox?: boolean; staffOnly?: boolean }[] = [
   { label: 'Site diary', hint: 'Labour, weather, photos', to: (s) => `/projects/diary?job=${s}&today=1`, perm: 'site.record', icon: BookOpen, from: '#8b5cf6', to2: '#a78bfa' },
   { label: 'Tasks', hint: 'Tick what got done', to: (s) => `/projects/programme?job=${s}`, icon: ListChecks, from: '#10b981', to2: '#34d399' },
   { label: 'Measurement', hint: 'No × L × B × D', to: (s) => `/subcontractors/measurement-book?site=${s}&add=1`, perm: 'site.record', icon: Ruler, from: '#0ea5e9', to2: '#38bdf8' },
   { label: 'Goods in', hint: 'Material at the gate', to: (s) => `/store/hub/inward/grn/new?project=${s}`, perm: 'store.inward.create', icon: PackageCheck, from: '#f59e0b', to2: '#fbbf24' },
   { label: 'Site cash', hint: 'Spent from the box', to: (s) => `/me/site-cash?job=${s}&spend=1`, icon: Wallet, from: '#14b8a6', to2: '#2dd4bf', needsBox: true },
+  { label: 'Expense claim', hint: 'Your own money, with the bill', to: (s) => `/me/claims?job=${s}&add=1`, icon: Receipt, from: '#f97316', to2: '#fb923c', staffOnly: true },
   { label: 'Safety', hint: 'Near miss or incident', to: () => '/projects/safety', icon: AlertTriangle, from: '#ef4444', to2: '#f87171' },
   { label: 'Quality', hint: 'Inspection or snag', to: () => '/projects/quality', icon: ClipboardCheck, from: '#64748b', to2: '#94a3b8' },
 ]
@@ -23,10 +24,10 @@ const TILES: { label: string; hint: string; to: (site: number) => string; perm?:
 /** The tiles themselves. Kept apart so the cash boxes are looked up only while the sheet is open, not every time the app starts. */
 function Tiles({ onClose }: { onClose: () => void }) {
   const go = useNavigate()
-  const { can } = useSession()
+  const { can, user } = useSession()
   const { site } = useCurrentSite()
   const boxes = useSiteCash().data?.boxes
-  const tiles = TILES.filter((t) => (!t.perm || can(t.perm)) && (!t.needsBox || !!boxes?.length))
+  const tiles = TILES.filter((t) => (!t.perm || can(t.perm)) && (!t.needsBox || !!boxes?.length) && (!t.staffOnly || user?.type === 'employee'))
   // Two rows of three on a phone held upright; wider where there is room, or too little height for two rows.
   const wide = tiles.length > 6 ? 'md:grid-cols-4 [@media(max-height:480px)]:grid-cols-4' : 'md:grid-cols-6 [@media(max-height:480px)]:grid-cols-6'
   return (

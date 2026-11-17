@@ -133,8 +133,8 @@ export const claimAgainstAdvance = (id: number) => post<Claim & { message: strin
 export const claimPayWithSalary = (id: number, on = true) => post<Claim & { message: string }>(`/api/expense-claims/${id}/pay-with-salary`, { on })
 export const cancelClaim = (id: number) => post<Claim & { message: string }>(`/api/expense-claims/${id}/cancel`, {})
 /** The bill's photo, kept with the claim. */
-export function attachClaimPhoto(id: number, file: File) {
+export function attachClaimPhoto(id: number, file: File, key?: string) {
   const form = new FormData()
   form.append('file', file)
-  return api<{ message: string }>(`/api/expense-claims/${id}/photo`, { method: 'POST', body: form })
+  return api<{ message: string }>(`/api/expense-claims/${id}/photo`, { method: 'POST', body: form, headers: key ? { 'Idempotency-Key': key } : undefined })
 }

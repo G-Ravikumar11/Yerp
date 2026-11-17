@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { createStore, del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval'
 import { sendFile } from '@/api/files'
+import { attachClaimPhoto } from '@/api/payouts'
 import { attachBillPhoto } from '@/api/sitecash'
 import { ApiError, api, apiUrl } from '@/lib/api'
 import { queryClient } from '@/lib/query'
@@ -18,8 +19,8 @@ export const CONFLICT_TEXT = 'was changed by somebody else'
 export interface StoredFiles {
   /** Where each is kept (IndexedDB, apart from the app's cache, so signing out does not clear them). */
   keys: string[]
-  /** Against a record in the file store (`type`, `id`), or the bill of a site cash expense. */
-  via: 'attached' | 'bill'
+  /** Against a record in the file store (`type`, `id`), the bill of a site cash expense, or the bill of an expense claim. */
+  via: 'attached' | 'bill' | 'claim'
   type?: string
   /** The record's number: known for an edit, else read from the reply of the request that makes it (`idFrom`, as 'diary.id'). */
   id?: number
@@ -101,6 +102,7 @@ async function sendStored(item: QueuedRequest) {
   const file = await takeFile(key)
   if (!file) throw new ApiError(410, 'The picture is no longer on this phone. Take it again.')
   if (f.via === 'bill') await attachBillPhoto(f.id, file, item.id)
+  else if (f.via === 'claim') await attachClaimPhoto(f.id, file, item.id)
   else await sendFile(file, f.type ?? '', f.id, {}, item.id)
   await dropFiles(f.keys)
 }
