@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, get, post, put } from '@/lib/api'
+import { reportsMockLocation } from '@/lib/mockLocation'
 
 /** A member of staff's own day: where they are clocked in, what waits for them, and the sites they work on. */
 export interface Today {
@@ -29,14 +30,19 @@ function deviceId() {
   }
 }
 
-/** Clocked in where the phone is now, never where it was a minute ago: the server matches the position to the person's sites. */
-export async function clock(which: 'in' | 'out') {
+/** Clocked in where the phone is now, never where it was a minute ago: the server matches the position to the person's sites.
+ *  With a clock-in the phone also says whether it reports a mock location, and may send a selfie (a small JPEG data URL). */
+export async function clock(which: 'in' | 'out', selfie?: string | null) {
   const coords = await new Promise<GeolocationCoordinates | null>((res) => {
     if (!navigator.geolocation) return res(null)
     navigator.geolocation.getCurrentPosition((p) => res(p.coords), () => res(null), { timeout: 15000, enableHighAccuracy: true, maximumAge: 0 })
   })
   const body: Record<string, unknown> = { device_info: navigator.userAgent.slice(0, 120), device_id: deviceId() }
   if (coords) Object.assign(body, { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy })
+  if (which === 'in') {
+    if (await reportsMockLocation()) body.mock_location = true
+    if (selfie) body.selfie = selfie
+  }
   return post<{ message?: string }>(`/api/employee/attendance/clock-${which}`, body)
 }
 

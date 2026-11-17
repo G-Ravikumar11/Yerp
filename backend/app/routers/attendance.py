@@ -443,6 +443,18 @@ def job_lock_view(request: Request, db: Session = Depends(get_read_db)):
     }
 
 
+@router.get("/api/attendance/{attendance_id}/selfie")
+def clock_selfie(attendance_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The selfie sent with that day's clock-in: HR's and the Master's alone."""
+    from fastapi.responses import Response
+    client = require_items_access(request, db, ("attendance.view_team", "people.manage"))
+    row = db.query(models.DBClockSelfie).filter(models.DBClockSelfie.client_id == client.id,
+                                                models.DBClockSelfie.attendance_id == attendance_id).first()
+    if row is None:
+        raise HTTPException(404, "No selfie with that clock-in.")
+    return Response(content=row.data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=0, no-store"})
+
+
 @router.get("/api/attendance/job-lock/weekly")
 def job_lock_weekly_view(request: Request, week_ending: str = "", db: Session = Depends(get_read_db)):
     """The week's Site Lock refusals read as a summary - totals against the week before, by day, by person, by place -

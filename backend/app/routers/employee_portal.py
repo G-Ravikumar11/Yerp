@@ -262,6 +262,26 @@ def employee_me(request: Request, db: Session = Depends(get_read_db)):
     }
 
 
+SELFIE_MAX_BYTES = 600_000
+
+
+def _selfie_bytes(value):
+    """The selfie sent with a clock-in, as a JPEG (sent as base64, with or without the data: prefix), or b'' if there is none
+    or it is not a small JPEG. It is optional, so one that cannot be kept never stops a clock-in."""
+    if not isinstance(value, str) or not value:
+        return b""
+    import base64
+    import binascii
+    raw = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
+    if len(raw) > SELFIE_MAX_BYTES * 4 // 3 + 16:
+        return b""
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        return b""
+    return data if data[:3] == b"\xff\xd8\xff" and len(data) <= SELFIE_MAX_BYTES else b""
+
+
 @router.post("/api/employee/attendance/clock-in")
 def employee_clock_in(request: Request, body: dict = None, db: Session = Depends(get_db)):
     emp_id = request.session.get('employee_id')
@@ -286,6 +306,8 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
     lat = lng = 0.0
     loc_label = ""
     accuracy, device_id = None, ""
+    mock = False
+    selfie = b""
     if body:
         # The address is the one the request came from: a phone does not get to say where it is calling from.
         device = body.get("device_info", "")
@@ -294,10 +316,13 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
         accuracy = body.get("accuracy")
         device_id = str(body.get("device_id") or "")[:64]
         loc_label = body.get("location_label", "")
+        # Only the phone app can tell: the website never says it. A phone that reports a mock location is turned away.
+        mock = body.get("mock_location") is True
+        selfie = _selfie_bytes(body.get("selfie"))
     check_type = "manual"
     settings = attendance_settings_for(db, client_id)
     me = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client_id).first()
-    locked_site, flag = job_lock_check(db, client_id, me, settings, lat, lng, accuracy, ip, device)
+    locked_site, flag = job_lock_check(db, client_id, me, settings, lat, lng, accuracy, ip, device, mock)
     check_clock_in_location(db, client_id, settings, lat, lng)
     flag = "; ".join(x for x in (flag, same_device_flag(db, client_id, emp_id, device_id, today)) if x)
     if lat and lng:
@@ -362,10 +387,14 @@ def employee_clock_in(request: Request, body: dict = None, db: Session = Depends
             job_id=site.id if site else None,
         )
         db.add(att)
+    db.flush()
+    if selfie:
+        db.query(models.DBClockSelfie).filter(models.DBClockSelfie.attendance_id == att.id).delete()
+        db.add(models.DBClockSelfie(client_id=client_id, attendance_id=att.id, data=selfie))
     db.commit()
     return {
         "message": ("Clocked in at %s" % loc_label) if site else "Clocked in",
-        "clock_in": now_str, "check_type": check_type,
+        "attendance_id": att.id, "clock_in": now_str, "check_type": check_type,
         "status": status, "minutes_late": minutes_late,
         "site": ({"job_id": site.id, "name": "%s %s" % (site.number, site.name)} if site else None),
     }

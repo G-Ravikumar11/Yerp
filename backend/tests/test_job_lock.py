@@ -163,3 +163,36 @@ def test_another_company_sees_none_of_it(tenant, second_tenant, portal):
     staff_on(tenant, portal, [site])
     clock_in(portal, HOME)
     assert second_tenant.get("/api/attendance/job-lock").json()["refused"] == []
+
+
+def test_a_phone_that_reports_a_mock_location_is_refused_and_hr_sees_it(tenant, portal):
+    site = project(tenant, "Tellapur Towers", SITE)
+    e = staff_on(tenant, portal, [site])
+    res = clock_in(portal, SITE, mock_location=True)
+    assert res.status_code == 403 and "mock-location" in res.json()["detail"]
+    row = tenant.get("/api/attendance/job-lock").json()["refused"][0]
+    assert e["first_name"] in row["employee"] and "mock-location" in row["reason"]
+    # The same position without the report goes through: only what the phone says about itself is acted on.
+    assert clock_in(portal, SITE).status_code == 200
+
+
+def test_the_optional_selfie_is_kept_for_hr_alone_and_a_bad_one_never_stops_the_clock_in(tenant, portal):
+    import base64
+    site = project(tenant, "Tellapur Towers", SITE)
+    staff_on(tenant, portal, [site])
+    jpeg = b"\xff\xd8\xff\xe0" + b"selfie" * 40
+    res = clock_in(portal, SITE, selfie="data:image/jpeg;base64," + base64.b64encode(jpeg).decode())
+    assert res.status_code == 200, res.text
+    att = res.json()["attendance_id"]
+    got = tenant.get("/api/attendance/%d/selfie" % att)
+    assert got.status_code == 200 and got.content == jpeg and got.headers["content-type"] == "image/jpeg"
+    assert portal.get("/api/attendance/%d/selfie" % att).status_code == 403       # not the staff's to browse, their own included
+
+
+def test_a_selfie_that_is_not_a_small_jpeg_is_left_out_without_stopping_the_clock_in(tenant, portal):
+    import base64
+    site = project(tenant, "Tellapur Towers", SITE)
+    staff_on(tenant, portal, [site])
+    res = clock_in(portal, SITE, selfie=base64.b64encode(b"<html>not a picture</html>").decode())
+    assert res.status_code == 200, res.text
+    assert tenant.get("/api/attendance/%d/selfie" % res.json()["attendance_id"]).status_code == 404
