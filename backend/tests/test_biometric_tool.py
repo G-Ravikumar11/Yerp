@@ -1,99 +1,65 @@
-"""The office sync program (tools/biometric_sync/sync.py): its reading of the attendance system's tables, with a fake
-database cursor standing in for SQL Server - which is not here - so what it sends is what the real one would."""
-import importlib.util
+"""The office sync program (tools/biometric_sync/YerpBiometric.cs). It is C# made on the office computer by the compiler
+that comes with Windows' .NET Framework, so its own tests (tools/biometric_sync/test/SelfTest.cs, with a fake database in
+place of SQL Server) are compiled and run here wherever that compiler is - on Windows - and skipped elsewhere. The CI's
+Windows job runs them on every push."""
 import os
-import sys
-from datetime import datetime
+import subprocess
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-spec = importlib.util.spec_from_file_location("biometric_sync", os.path.join(ROOT, "tools", "biometric_sync", "sync.py"))
-sync = importlib.util.module_from_spec(spec)
-_argv, sys.argv = sys.argv, ["sync.py"]
-spec.loader.exec_module(sync)
-sys.argv = _argv
+TOOL = os.path.join(ROOT, "tools", "biometric_sync")
 
 
-class Cur:
-    """Answers the few queries the program makes from tables given as {name: (columns, rows)}."""
-
-    def __init__(self, tables):
-        self.t, self.last = tables, []
-
-    def execute(self, sql, *args):
-        s = " ".join(sql.split())
-        if "FROM INFORMATION_SCHEMA.COLUMNS" in s:
-            cols = self.t.get(args[0], ([], []))[0]
-            self.last = [(c,) for c in cols]
-        elif "FROM INFORMATION_SCHEMA.TABLES" in s:
-            pat = args[0]
-            hit = [n for n in self.t if (n.startswith(pat.split("[")[0]) if "[" in pat else n == pat)]
-            self.last = [(n,) for n in hit]
-        elif "FROM Employees" in s:
-            self.last = self.t["Employees"][1]
-        elif "FROM [DeviceLogs_" in s:
-            table = s.split("FROM [")[1].split("]")[0]
-            self.last = self.t[table][1]
-        elif "FROM AttendanceLogs" in s:
-            self.last = self.t["AttendanceLogs"][1]
-        else:
-            raise AssertionError("unexpected query: " + s)
-
-    def fetchall(self):
-        return self.last
+def csc():
+    windir = os.environ.get("WINDIR") or os.environ.get("SystemRoot") or ""
+    for folder in ("Framework64", "Framework"):
+        path = os.path.join(windir, "Microsoft.NET", folder, "v4.0.30319", "csc.exe")
+        if windir and os.path.exists(path):
+            return path
+    return None
 
 
-def cfg(**db):
-    c = sync.settings(must_exist=False)
-    for k, v in db.items():
-        c["database"][k] = v
-    return c
+needs_csc = pytest.mark.skipif(csc() is None, reason="the .NET Framework C# compiler is on Windows only")
 
 
-# Columns as the table has them; the rows come back in the order the program selects them: id, code, number, name.
-EMPLOYEES = (["EmployeeId", "EmployeeName", "EmployeeCode", "EmployeeCodeInDevice"],
-             [(11, "E-77", "5", "RAVI  KUMAR"), (12, "E-78", "6", "Sita Rao"), (13, "", "7", "No Code")])
+def build(tmp_path, *extra):
+    out = str(tmp_path / "out.exe")
+    sources = [os.path.join(TOOL, "YerpBiometric.cs")] + [os.path.join(TOOL, x) for x in extra]
+    main = ["/main:YerpBiometric.SelfTest"] if extra else []
+    done = subprocess.run([csc(), "/nologo", "/target:exe", "/out:" + out, "/r:System.Web.Extensions.dll", *main, *sources],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    return out
 
 
-def test_raw_punches_carry_the_hr_code_and_the_name():
-    now = datetime.now()
-    table = "DeviceLogs_%d_%d" % (now.month, now.year)
-    t = {"Employees": EMPLOYEES, table: (["UserId", "LogDate", "DeviceId", "Direction"], [("5", now, 3, "In"), ("9", now, 3, None)])}
-    source, punches = sync.gather(cfg(), Cur(t), now.replace(hour=0, minute=0, second=0, microsecond=0))
-    assert source == "DeviceLogs"
-    assert punches[0]["employee_code"] == "E-77" and punches[0]["employee_name"] == "RAVI KUMAR" and punches[0]["direction"] == "in"
-    assert punches[1]["employee_code"] == "9" and punches[1]["employee_name"] == ""          # a number nobody has: sent as it is
-    assert sync.gather(cfg(send="device"), Cur(t), now.replace(hour=0, minute=0, second=0))[1][0]["employee_code"] == "5"
+@needs_csc
+def test_the_program_compiles_with_the_compiler_windows_carries(tmp_path):
+    """The C# 5 compiler of .NET Framework 4.x: no newer language may creep in, or a Windows 7 office cannot make it."""
+    exe = build(tmp_path)
+    done = subprocess.run([exe, "--backfill", "x"], capture_output=True, text=True, cwd=str(tmp_path))
+    assert done.returncode == 2 and "--backfill needs a number" in done.stdout
+    done = subprocess.run([exe, "--once"], capture_output=True, text=True, cwd=str(tmp_path))
+    assert done.returncode == 1 and "config.ini is missing" in done.stdout
 
 
-def test_daily_rows_give_an_in_and_an_out_when_there_are_no_raw_logs():
-    day = datetime(2026, 11, 16)
-    t = {"Employees": EMPLOYEES,
-         "AttendanceLogs": (["EmployeeId", "AttendanceDate", "InTime", "OutTime", "InDeviceId", "OutDeviceId"],
-                            [(12, day, "09:02", "18:31", 1, 1), (11, day, "09:10", "1900-01-01 00:00:00", 1, None)])}
-    source, punches = sync.gather(cfg(), Cur(t), day)
-    assert source == "AttendanceLogs"
-    got = {(p["employee_code"], p["direction"]): p for p in punches}
-    assert got[("E-78", "in")]["time"] == "2026-11-16 09:02:00" and got[("E-78", "out")]["time"] == "2026-11-16 18:31:00"
-    assert ("E-77", "out") not in got and got[("E-77", "in")]["employee_name"] == "RAVI KUMAR"
-
-
-def test_server_names_to_try_start_with_the_one_given_and_have_no_repeats():
-    got = sync.server_candidates("YPPL_WEB01")
-    assert got[0] == "YPPL_WEB01" and "localhost" in got and len(got) == len(set(got))
-
-
-def test_config_is_written_and_read_back_as_it_was(tmp_path, monkeypatch):
-    monkeypatch.setattr(sync, "CONFIG", str(tmp_path / "config.ini"))
-    c = sync.settings(must_exist=False)
-    c["yerp"]["url"], c["yerp"]["api_key"] = "https://yalavartiinfra.com", "ybio_1_" + "k" * 30
-    c["database"].update(server="YPPL_WEB01", name="etimetracklite", user="yerp_reader", password="p@ss=word")
-    sync.write_config(c)
-    back = sync.settings()
-    assert back["yerp"]["api_key"] == c["yerp"]["api_key"] and back["database"]["password"] == "p@ss=word"
-    assert back["database"]["source"] == "auto" and back["database"]["send"] == "code"
+@needs_csc
+def test_its_own_tests_pass(tmp_path):
+    exe = build(tmp_path, os.path.join("test", "SelfTest.cs"))
+    done = subprocess.run([exe], capture_output=True, text=True, cwd=str(tmp_path))
+    assert done.returncode == 0 and " 0 failed" in done.stdout, done.stdout + done.stderr
 
 
 def test_the_set_up_package_files_all_exist():
     from app.services.biometric import SETUP_FILES
     for name in SETUP_FILES:
-        assert os.path.exists(os.path.join(ROOT, "tools", "biometric_sync", name)), name
+        assert os.path.exists(os.path.join(TOOL, name)), name
+
+
+def test_batch_files_are_plain_ascii_and_call_the_program_not_python():
+    """cmd.exe reads batch files in the computer's own code page: anything but plain ASCII can garble them on some Windows."""
+    for name in os.listdir(TOOL):
+        if name.endswith(".bat"):
+            text = open(os.path.join(TOOL, name), "rb").read()
+            assert all(b < 128 for b in text), name
+            assert b"python" not in text.lower(), name

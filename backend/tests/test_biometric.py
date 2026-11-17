@@ -144,7 +144,9 @@ def test_the_master_downloads_a_set_up_package_with_the_key_already_in_it(tenant
     assert res.status_code == 200 and res.headers["content-type"] == "application/zip"
     z = zipfile.ZipFile(io.BytesIO(res.content))
     names = set(z.namelist())
-    assert {"biometric_sync/sync.py", "biometric_sync/SETUP.bat", "biometric_sync/config.ini", "biometric_sync/START HERE.txt"} <= names
+    assert {"biometric_sync/YerpBiometric.cs", "biometric_sync/build.bat", "biometric_sync/SETUP.bat", "biometric_sync/config.ini",
+            "biometric_sync/START HERE.txt"} <= names
+    assert not any(n.endswith((".py", ".ps1", ".exe")) for n in names), "nothing to download or trust beyond the source and batch files"
     config = z.read("biometric_sync/config.ini").decode()
     key = [l.split("=", 1)[1].strip() for l in config.splitlines() if l.startswith("api_key")][0]
     assert key.startswith("ybio_") and "url = http" in config

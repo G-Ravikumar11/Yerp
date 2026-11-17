@@ -267,7 +267,9 @@ def suggest_person(candidates, name):
     return {"id": hits[0][0], "name": hits[0][1]} if len(hits) == 1 else None
 
 
-SETUP_FILES = ("sync.py", "SETUP.bat", "get_python.ps1", "run_check.bat", "run_now.bat", "install_task.bat", "remove_task.bat",
+# The office program travels as source and is made on the office computer by build.bat, with the C# compiler that comes
+# with Windows' .NET Framework: nothing to download there, and the same package for every Windows from 7 to 11.
+SETUP_FILES = ("YerpBiometric.cs", "build.bat", "SETUP.bat", "run_check.bat", "run_now.bat", "install_task.bat", "remove_task.bat",
                "make_reader_login.sql", "README.md")
 
 
@@ -279,11 +281,13 @@ def setup_package(db, client, base_url):
     crlf = lambda text: text.replace("\r\n", "\n").replace("\n", "\r\n")        # batch files need Windows line ends
     config = ("; Made by Y ERP for %s. Safe to edit by hand; the set-up fills in the database part.\n"
               "[yerp]\nurl = %s\napi_key = %s\nevery_seconds = 60\noverlap_minutes = 30\n\n"
-              "[database]\nserver =\nname =\nuser =\npassword =\ndriver =\nsource = auto\nsend = code\n"
+              "[database]\nserver =\nname =\nuser =\npassword =\nsource = auto\nsend = code\n"
               % (client.company_name or "this company", base_url.rstrip("/"), key))
     start = ("START HERE\n\n1. Copy this whole folder to the computer that holds the attendance system's database "
-             "(for example C:\\YERP\\biometric_sync).\n2. Double-click SETUP.bat and answer what it asks. It finds the database, "
-             "makes a read-only login, sends the first punches and starts the every-minute sync.\n\n"
+             "(for example C:\\YERP\\biometric_sync).\n2. Double-click SETUP.bat and click Yes. It makes the program on the spot "
+             "(nothing is downloaded), finds the database, gives the sync read-only access, sends the first punches and starts "
+             "the every-minute sync.\n\nAny Windows from 7 SP1 to 11, 32- or 64-bit. Windows 7 needs .NET Framework 4.5 or newer; "
+             "SETUP.bat says so if it is missing.\n\n"
              "config.ini holds this company's key. Do not share the folder; if it gets out, make a new key in Y ERP "
              "(People > Attendance > Biometric) and the old one stops working.\n")
     out = io.BytesIO()
