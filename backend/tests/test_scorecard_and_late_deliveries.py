@@ -83,3 +83,29 @@ def test_a_late_order_is_chased_until_goods_arrive(tenant, sent):
     sent.clear()
     run("late_deliveries", date.today() + timedelta(days=6))
     assert sent == []
+
+
+def test_the_supplier_is_chased_on_the_needed_by_day_with_what_is_still_to_come(tenant, sent):
+    po = order(tenant, "Balaji Steels", date.today().isoformat(), qty=12)
+    tenant.post("/api/suppliers", json={"name": "Balaji Steels", "email": "orders@balaji.example.com"})
+    run("late_deliveries", date.today())
+    assert [m[0] for m in sent] == ["orders@balaji.example.com"]
+    subject, body = sent[0][1], sent[0][2]
+    assert subject == "Delivery due today: %s" % po["number"] and "Still to come" in body and "12" in body and "Cement" in body
+    assert any(a["title"] == "Due today, not received: %s" % po["number"] for a in tenant.get("/api/alerts").json()["alerts"])
+    sent.clear()
+    for days in (1, 2):
+        run("late_deliveries", date.today() + timedelta(days=days))
+    assert sent == []
+    run("late_deliveries", date.today() + timedelta(days=3))
+    assert [m[1] for m in sent] == ["Delivery overdue: %s" % po["number"]] and "3 days late" not in sent[0][2]
+
+
+def test_an_order_not_yet_due_and_a_bad_address_are_left_alone(tenant, sent):
+    order(tenant, "Future Co", (date.today() + timedelta(days=1)).isoformat())
+    tenant.post("/api/suppliers", json={"name": "Future Co", "email": "f@future.example.com"})
+    late = order(tenant, "No Mail Co", (date.today() - timedelta(days=1)).isoformat())
+    tenant.post("/api/suppliers", json={"name": "No Mail Co", "email": "not an address"})
+    run("late_deliveries", date.today())
+    assert sent == []
+    assert any(a["title"] == "Late: %s" % late["number"] for a in tenant.get("/api/alerts").json()["alerts"]), "the buyer still hears"

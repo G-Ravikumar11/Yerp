@@ -13,7 +13,8 @@ def incident_dict(i):
             "immediate_action": i.immediate_action or "", "root_cause": i.root_cause or "",
             "corrective_action": i.corrective_action or "", "reported_by": i.reported_by or "",
             "status": i.status, "closed_on": i.closed_on or "", "closure_note": i.closure_note or "",
-            "serious": i.kind in SERIOUS_KINDS}
+            "serious": i.kind in SERIOUS_KINDS, "owner_id": i.owner_id, "due_date": i.due_date or "",
+            "overdue": i.status == "OPEN" and bool(i.due_date) and i.due_date < datetime.now().strftime("%Y-%m-%d")}
 
 
 def permit_dict(p):
@@ -26,5 +27,5 @@ def permit_dict(p):
             "description": p.description or "", "valid_from": p.valid_from or "", "valid_to": p.valid_to or "",
             "issued_by": p.issued_by or "", "receiver": p.receiver or "", "precautions": pre,
             "status": p.status, "closed_at": p.closed_at or "", "closed_by": p.closed_by or "",
-            "closure_note": p.closure_note or "",
+            "closure_note": p.closure_note or "", "owner_id": p.owner_id,
             "expired": p.status == "ACTIVE" and bool(p.valid_to) and p.valid_to < now}

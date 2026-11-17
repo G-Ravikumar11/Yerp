@@ -309,6 +309,10 @@ class DBRfqInvite(Base):
     emailed_at = Column(String, default="")               # the link sent by the server
     reminded_on = Column(String, default="")              # the last reminder's day
     reminders = Column(Integer, default=0)
+    # What he said of himself on the reply form: none | micro | small | medium, and his Udyam number. Copied to the
+    # supplier master only where the master says nothing yet; the master, once filled, is what the screens show.
+    msme_type = Column(String, default="")
+    udyam_no = Column(String, default="")
 
 
 class DBRfqQuoteLine(Base):

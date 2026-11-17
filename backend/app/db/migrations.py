@@ -211,6 +211,13 @@ STORE_OUTWARD_COLUMNS = (
     ("rfqs", "quotes_due", "VARCHAR DEFAULT ''"), ("rfqs", "link_base", "VARCHAR DEFAULT ''"), ("rfqs", "l1_sent_at", "VARCHAR DEFAULT ''"),
     ("rfqs", "created_by_id", "INTEGER"), ("rfq_invites", "emailed_at", "VARCHAR DEFAULT ''"), ("rfq_invites", "reminded_on", "VARCHAR DEFAULT ''"),
     ("rfq_invites", "reminders", "INTEGER DEFAULT 0"),
+    # MSME status as the supplier gave it on the enquiry reply form.
+    ("rfq_invites", "msme_type", "VARCHAR DEFAULT ''"), ("rfq_invites", "udyam_no", "VARCHAR DEFAULT ''"),
+    # NCRs, incidents and permits: an owner on the staff, reminded daily as each falls due (services/follow_up.py).
+    ("qc_ncrs", "owner_id", "INTEGER"), ("qc_ncrs", "reminded_on", "VARCHAR DEFAULT ''"), ("qc_ncrs", "overdue_told", "INTEGER DEFAULT 0"),
+    ("safety_incidents", "owner_id", "INTEGER"), ("safety_incidents", "due_date", "VARCHAR DEFAULT ''"),
+    ("safety_incidents", "reminded_on", "VARCHAR DEFAULT ''"), ("safety_incidents", "overdue_told", "INTEGER DEFAULT 0"),
+    ("work_permits", "owner_id", "INTEGER"), ("work_permits", "reminded_on", "VARCHAR DEFAULT ''"), ("work_permits", "overdue_told", "INTEGER DEFAULT 0"),
 )
 
 SUBCONTRACT_CONTROL_COLUMNS = (

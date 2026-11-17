@@ -46,6 +46,13 @@ export interface PortalStatement {
 
 export interface PortalInvite { name?: string; party: string; company: string; email: string }
 
+/** The partner's MSME status and bank account as the company holds them. Only the last four digits of the account. */
+export interface PortalDetails {
+  msme_type: '' | 'micro' | 'small' | 'medium'
+  udyam_no: string
+  bank: { on_file: boolean; bank_name: string; ifsc: string; account_ending: string }
+}
+
 export const portalKeys = { me: ['portal', 'me'] as const, all: ['portal'] as const }
 
 /** Who is signed in to the portal. A 401 is the answer "nobody", not an error to show. */
@@ -60,4 +67,6 @@ export const portalLogout = () => post('/api/portal/logout')
 export const portalInvite = (token: string) => api<PortalInvite>('/api/portal/invite?token=' + encodeURIComponent(token), { quiet: true })
 export const portalAcceptInvite = (token: string, password: string) => post('/api/portal/accept-invite', { token, password })
 export const portalAcceptBill = (id: number) => post<{ message?: string }>(`/api/portal/bills/${id}/accept`)
+export const portalSaveDetails = (body: { msme_type?: string; udyam_no?: string; bank_name?: string; bank_account?: string; bank_ifsc?: string }) =>
+  api<PortalDetails & { message: string }>('/api/portal/details', { method: 'PUT', body, quiet: true })
 export const portalSendInvoice = (form: FormData) => api<{ message: string; flagged?: string[] }>('/api/portal/invoices', { method: 'POST', body: form })

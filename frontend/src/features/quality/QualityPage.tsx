@@ -6,8 +6,9 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilesModal } from '@/components/data/FilesModal'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { Badge, Button, Card, Stat, StatGrid, Tabs } from '@/components/ui'
-import { emptyQuery, exportUrl, useCubes, useInspections, useNcrs, useSummary, type CubeSet, type Inspection, type ListQuery, type Ncr } from '@/api/quality'
+import { emptyQuery, exportUrl, qcKeys, useCubes, useInspections, useNcrs, useSummary, type CubeSet, type Inspection, type ListQuery, type Ncr } from '@/api/quality'
 import { useSession } from '@/lib/session'
+import { FollowUp } from '@/components/data/FollowUp'
 import { formatDate } from '@/lib/format'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 import { CubeModal, CubeSetModal } from './CubeModals'
@@ -132,6 +133,7 @@ export default function QualityPage() {
     { id: 'sev', header: 'Severity', hideBelow: 'sm', cell: (n) => <Badge tone={n.severity === 'Minor' ? 'neutral' : 'danger'}>{n.severity}</Badge> },
     { id: 'owner', header: 'Responsible', hideBelow: 'lg', cell: (n) => n.responsible },
     { id: 'by', header: 'Due', hideBelow: 'lg', cell: (n) => <span className={n.overdue ? 'font-semibold text-danger' : ''}>{formatDate(n.target_date)}</span> },
+    { id: 'follow', header: 'Owner', hideBelow: 'md', cell: (n) => <FollowUp kind="ncr" id={n.id} number={n.number} ownerId={n.owner_id} due={n.target_date} open={!['CLOSED', 'REJECTED'].includes(n.status)} canEdit={can('site.signoff')} invalidate={qcKeys.all} /> },
     { id: 'st', header: 'Status', cell: (n) => <Badge tone={ncrTone(n.status, n.overdue)} dot>{n.overdue ? 'Late - ' : ''}{n.status_label}</Badge> },
     {
       id: 'act', header: 'Actions', align: 'right',

@@ -26,6 +26,8 @@ export interface RfqSupplier {
   document?: QuoteDocument | null
   /** Their record with us: delivered on time, rejected at the gate, price against L1, days to answer. */
   scorecard?: { on_time_pct: number | null; orders_scored: number; rejection_pct: number | null; above_l1_pct: number | null; l1_wins: number; quoted: number; response_days: number | null } | null
+  /** MSME (Udyam): from the supplier master, or as the supplier said on his reply when the master has nothing. */
+  msme?: { type: string; udyam: string; source: 'master' | 'declared' } | null
 }
 /** A link sent to a supplier to quote on his own: sent, opened, quoted, or his file sent without rates (document). */
 export interface RfqInvite {
@@ -96,6 +98,8 @@ export interface VendorQuotePage {
   document_sent: boolean
   can_read: boolean
   accept: string
+  /** His MSME answer from before, or what the company already holds; type '' when never answered. */
+  msme: { type: '' | 'none' | 'micro' | 'small' | 'medium'; udyam_no: string }
 }
 
 export const vendorQuotePage = (token: string) => api<VendorQuotePage>(`/api/vendor-quote/${encodeURIComponent(token)}`, { quiet: true })

@@ -6,6 +6,7 @@ import type { RfqLine, RfqSupplier, Statement } from '@/api/rfq'
 import { compare, type Comparison } from '@/lib/rfqCompare'
 import { formatDate, formatQty } from '@/lib/format'
 import { cn, formatINR, formatRate } from '@/lib/utils'
+import { MsmeBadge } from '@/components/data/MsmeBadge'
 import { PriceTrend } from '@/features/items/PriceHistory'
 import type { AwardPreset } from './AwardModal'
 import { QuoteCheckModal } from './QuoteCheck'
@@ -134,6 +135,7 @@ function Sheet({ d, c, onQuote }: { d: Statement; c: Comparison; onQuote: (suppl
                       <div className="truncate font-semibold" title={s.supplier_name}>{s.supplier_name}</div>
                       <div className="mt-1 flex flex-wrap items-center justify-end gap-1">
                         <Rank rank={c.rank.get(s.supplier_name)} />
+                        <MsmeBadge msme={s.msme} className="px-1.5 py-px text-[10px]" />
                         {!s.complete && <span className="rounded-md bg-warning-soft px-1.5 py-px text-[10px] font-medium text-warning" title={`Quoted ${s.lines_quoted} of ${d.lines.length} items`}>{s.lines_quoted} of {d.lines.length} items</span>}
                       </div>
                     </div>

@@ -22,6 +22,8 @@ interface Row {
   price: number | null
   tax: string
   boq_key: string
+  /** The rate was put there by the app (the item's last price, or a contract), not typed: a contract may replace it. */
+  auto?: boolean
 }
 
 const blank = (): Row => ({ item_code: '', description: '', qty: null, uom: '', price: null, tax: '18', boq_key: '' })
@@ -51,11 +53,13 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
   const [reason, setReason] = useState(order?.budget_reason ?? '')
   const heads = useBudgetHeads(Number(job) || 0)
   const contract = useContractRates(supplier)
-  // The supplier named after the items were chosen: their contract rates fill the lines still without a rate.
+  // The supplier named after the items were chosen: their contract rates fill every line the buyer did not price by
+  // hand - one still empty, or one the app had filled with the item's last price.
   useEffect(() => {
     const agreed = contract.data
     if (!agreed) return
-    setRows((cur) => (cur.some((r) => r.item_code && !r.price && agreed[r.item_code]) ? cur.map((r) => (r.item_code && !r.price && agreed[r.item_code] ? { ...r, price: agreed[r.item_code] } : r)) : cur))
+    const takes = (r: Row) => !!r.item_code && !!agreed[r.item_code] && (!r.price || r.auto) && r.price !== agreed[r.item_code]
+    setRows((cur) => (cur.some(takes) ? cur.map((r) => (takes(r) ? { ...r, price: agreed[r.item_code], auto: true } : r)) : cur))
   }, [contract.data])
   const [importing, setImporting] = useState(false)
   const master = useMemo(() => new Map((rm.data?.items ?? []).map((i) => [i.item_code, i])), [rm.data])
@@ -75,13 +79,20 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
         set: (r, v) => {
           const it = master.get(String(v))
           const agreed = contract.data?.[String(v)]
-          return { ...r, item_code: String(v ?? ''), description: r.description || it?.item_name || '', uom: r.uom || it?.units_of_measure || '', price: agreed || r.price || it?.last_rate || null }
+          const typed = r.price && !r.auto ? r.price : null
+          const price = agreed || typed || it?.last_rate || null
+          return { ...r, item_code: String(v ?? ''), description: r.description || it?.item_name || '', uom: r.uom || it?.units_of_measure || '', price, auto: !!price && price !== typed }
         },
       },
       { id: 'description', header: 'Description', width: 230, placeholder: 'Crane hire, 2 days' },
       { id: 'qty', header: 'Quantity', type: 'number', width: 100 },
       { id: 'uom', header: 'Unit', width: 80 },
-      { id: 'price', header: 'Rate', type: 'number', decimals: 2, width: 110 },
+      // Typed by hand, a rate is the buyer's own: a contract named later no longer replaces it (it is flagged instead).
+      { id: 'price', header: 'Rate', type: 'number', decimals: 2, width: 110, set: (r, v) => ({ ...r, price: v == null || v === '' ? null : Number(v), auto: false }) },
+      // The supplier's rate contract in force for the item, and whether this line is priced above it.
+      { id: 'contract', header: 'Contract rate', hint: 'In force for this supplier', width: 130, readOnly: true, countsAsData: false,
+        get: (r) => (r.item_code ? contract.data?.[r.item_code] ?? null : null),
+        format: (v, r) => (v == null ? '' : `${Number(v).toFixed(2)}${(r.price ?? 0) > Number(v) + 0.0001 ? '  - above it' : ''}`) },
       { id: 'tax', header: 'GST %', type: 'select', width: 90, options: GST_RATES.map(String), empty: '18', countsAsData: false },
       { id: 'amount', header: 'Amount', type: 'number', decimals: 2, width: 130, readOnly: true, get: (r) => lineAmount(r) || null, summary: 'sum' },
       // Charged to a BOQ line or heading of the job: its budget is checked as the order is filled in.
@@ -118,7 +129,13 @@ function Form({ order, staff, onClose }: { order: PurchaseOrder | null; staff: b
     { invalidate: [poKeys.all, ['approvals']], onSuccess: onClose },
   )
   const fromSheet = (r: { [k: string]: string | number | null }[]) =>
-    setRows((cur) => [...cur.filter((x) => x.item_code || x.description || x.qty), ...r.map((x) => ({ item_code: master.has(String(x.item_code ?? '')) ? String(x.item_code) : '', description: String(x.description || x.item_code || ''), qty: Number(x.qty) || 0, uom: String(x.uom ?? ''), price: Number(x.price) || 0, tax: '18', boq_key: '' }))])
+    setRows((cur) => [...cur.filter((x) => x.item_code || x.description || x.qty), ...r.map((x) => {
+      const code = master.has(String(x.item_code ?? '')) ? String(x.item_code) : ''
+      // A sheet without a rate takes the contract's; a rate on the sheet is the supplier's word and is checked against it.
+      const agreed = code ? contract.data?.[code] : undefined
+      const price = Number(x.price) || agreed || 0
+      return { item_code: code, description: String(x.description || x.item_code || ''), qty: Number(x.qty) || 0, uom: String(x.uom ?? ''), price, tax: '18', boq_key: '', auto: !Number(x.price) && !!agreed }
+    })])
   const names = [...(suppliers.data?.suppliers ?? []).map((s) => s.name), ...(suppliers.data?.unregistered ?? [])]
 
   // The budget and the prices, checked as the order is filled in (a moment after the typing stops).

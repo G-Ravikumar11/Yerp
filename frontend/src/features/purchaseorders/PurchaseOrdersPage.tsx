@@ -16,6 +16,7 @@ import { OrderFormModal } from './OrderFormModal'
 import { SendEmailDialog } from '@/components/data/SendEmailDialog'
 import { PurchaseSettingsButton } from './PurchaseSettings'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
+import { MsmeBadge } from '@/components/data/MsmeBadge'
 
 const tone = (o: PurchaseOrder) => (o.approval_status === 'pending' ? 'warning' : o.status === 'Approved' || o.status === 'Received' ? 'success' : o.status === 'Rejected' ? 'danger' : 'neutral') as 'warning' | 'success' | 'danger' | 'neutral'
 
@@ -40,12 +41,12 @@ export default function PurchaseOrdersPage() {
 
   const columns: TableColumn<PurchaseOrder>[] = [
     { id: 'no', header: 'Order', sort: (o) => o.number, cell: (o) => <span className="font-mono text-[13px] font-semibold">{o.number}</span> },
-    { id: 'sup', header: 'Supplier', sort: (o) => o.supplier_name, cell: (o) => o.supplier_name },
+    { id: 'sup', header: 'Supplier', sort: (o) => o.supplier_name, cell: (o) => <span className="inline-flex flex-wrap items-center gap-1.5">{o.supplier_name}<MsmeBadge msme={o.msme} /></span> },
     { id: 'job', header: 'Job', hideBelow: 'lg', cell: (o) => o.job_name || '-' },
     { id: 'date', header: 'Date', hideBelow: 'xl', sort: (o) => o.issue_date, cell: (o) => formatDate(o.issue_date) },
     { id: 'total', header: 'Total', align: 'right', sort: (o) => o.total, cell: (o) => formatINR(o.total) },
     { id: 'billed', header: 'Billed', hideBelow: 'md', align: 'right', cell: (o) => (o.billed_count ? <>{formatINR(o.billed_total)} <span className="text-xs text-muted-foreground">({o.billed_count})</span></> : '-') },
-    { id: 'status', header: 'Status', cell: (o) => <div><Badge tone={tone(o)}>{o.status}</Badge>{o.rejection_reason && <div className="mt-1 max-w-56 text-xs text-muted-foreground">{o.rejection_reason}</div>}</div> },
+    { id: 'status', header: 'Status', cell: (o) => <div><Badge tone={tone(o)}>{o.status}</Badge>{!!o.rate_flags?.length && <Badge tone="warning" className="ml-1.5" title={o.rate_flags.map((f) => `${f.description || f.item_code}: ${f.rate} is ${f.why}`).join(' · ')}>{o.rate_flags.some((f) => f.contract_rate != null && f.rate > f.contract_rate) ? 'Above contract' : 'Rate alert'}</Badge>}{o.rejection_reason && <div className="mt-1 max-w-56 text-xs text-muted-foreground">{o.rejection_reason}</div>}</div> },
     {
       id: 'act',
       header: '',

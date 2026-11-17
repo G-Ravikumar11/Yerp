@@ -77,7 +77,16 @@ export interface Takeoff {
   quantities: { wall_m?: number; floor_sqm?: number; doors?: number; windows?: number }
   materials: { group: string; item: string; quantity: number; uom: string; how: string }[]
   assumptions: Record<string, number>
+  /** "DWG" when the sheet was a DWG turned into a DXF on the server. */
+  converted_from?: string
 }
+export interface TakeoffSendLine { description: string; uom: string; quantity: number }
+/** The ticked quantities added, unpriced, to the end of the project's BOQ under a heading naming the drawing. */
+export const takeoffToBoq = (id: number, lines: TakeoffSendLine[]) =>
+  post<{ message: string; boq_id: number }>(`/api/drawings/${id}/takeoff/boq`, { lines })
+/** A new enquiry to suppliers for the ticked materials, on the drawing's project. */
+export const takeoffToEnquiry = (id: number, lines: TakeoffSendLine[]) =>
+  post<{ message: string; rfq: { id: number; number: string } }>(`/api/drawings/${id}/takeoff/enquiry`, { lines })
 /** The quantities on the current sheet and the material they take. Nothing is saved. */
 export const drawingTakeoff = (id: number, b: { assumptions?: Record<string, number>; kinds?: Record<string, string>; width_m?: number }) => post<Takeoff>(`/api/drawings/${id}/takeoff`, b)
 

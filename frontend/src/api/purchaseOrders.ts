@@ -21,6 +21,10 @@ export interface PurchaseOrder {
   budget_reason?: string
   number: string
   supplier_name: string
+  /** The supplier's MSME (Udyam) registration, from the supplier master. Not on a staff member's own list. */
+  msme?: { type: string; udyam: string } | null
+  /** Lines priced over the last price or over a rate contract in force, as found when the order was saved. */
+  rate_flags?: { item_code: string; description: string; rate: number; last_rate: number | null; contract_rate: number | null; why: string }[]
   job_id: number | null
   job_name: string
   issue_date: string

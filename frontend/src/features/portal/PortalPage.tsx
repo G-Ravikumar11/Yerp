@@ -5,9 +5,9 @@ import { ApiError } from '@/lib/api'
 import { AuthLayout, Notice, YahooMark } from '@/features/auth/AuthLayout'
 import { CaptchaBox, type CaptchaValue } from '@/features/auth/CaptchaBox'
 import { portalAcceptInvite, portalInvite, portalKeys, portalLogin, portalLogout, usePortalMe, type PortalInvite } from '@/api/portal'
-import { Bills, Orders, Overview, Payments, SendInvoice, Statement } from './PortalTabs'
+import { Bills, Details, Orders, Overview, Payments, SendInvoice, Statement } from './PortalTabs'
 
-type Tab = 'overview' | 'orders' | 'bills' | 'payments' | 'statement' | 'send'
+type Tab = 'overview' | 'orders' | 'bills' | 'payments' | 'statement' | 'send' | 'details'
 
 const GOOGLE_ERRORS: Record<string, string> = {
   yahoo_failed: 'Yahoo sign-in did not complete. Try again.',
@@ -117,6 +117,7 @@ function PortalApp() {
     { value: 'overview', label: 'Overview' }, { value: 'orders', label: 'Orders' }, { value: 'bills', label: 'Bills' },
     { value: 'payments', label: 'Payments' }, { value: 'statement', label: 'Statement' },
     ...(me.party_type === 'supplier' ? [{ value: 'send', label: 'Send an invoice' }] : []),
+    { value: 'details', label: 'Your details' },
   ] as { value: Tab; label: string }[]
   return (
     <div className="min-h-screen bg-background">
@@ -129,12 +130,13 @@ function PortalApp() {
       <div className="mx-auto max-w-5xl px-4 py-5">
         <Tabs label="Portal sections" items={items} value={tab} onChange={setTab} />
         <div className="mt-5">
-          {tab === 'overview' && <Overview />}
+          {tab === 'overview' && <Overview onDetails={() => setTab('details')} />}
           {tab === 'orders' && <Orders />}
           {tab === 'bills' && <Bills contractor={me.party_type === 'contractor'} />}
           {tab === 'payments' && <Payments />}
           {tab === 'statement' && <Statement />}
           {tab === 'send' && <SendInvoice />}
+          {tab === 'details' && <Details />}
         </div>
       </div>
     </div>

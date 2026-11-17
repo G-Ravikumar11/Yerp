@@ -15,7 +15,7 @@ from app.core.audit import log_audit
 from app.core.auth import require_erp_read, wo_actor
 from app.core.files import file_bytes, store_file
 from app.core.config import logger
-from app.schemas.drawings import DrawingStatusIn
+from app.schemas.drawings import DrawingStatusIn, TakeoffSendIn
 from app.services import purge, takeoff
 from app.services.drawing_rules import ever_gfc, is_later, log_status
 from app.services.projects import drawing_dict
@@ -60,10 +60,12 @@ def drawing_takeoff(did: int, request: Request, body: dict = None, db: Session =
     a = takeoff.clean_assumptions(body.get("assumptions"))
     name = (f.name or "").lower()
     head = {"drawing": "%s %s" % (d.number or "", d.title or ""), "revision": cur.revision, "assumptions": a}
-    if name.endswith(".dwg"):
-        raise HTTPException(400, "A DWG cannot be read directly. In AutoCAD use Save As, choose DXF, and add that file as a new revision of this drawing.")
-    if name.endswith(".dxf"):
-        read = takeoff.read_dxf(file_bytes(db, f))
+    if name.endswith(".dwg") or name.endswith(".dxf"):
+        data = file_bytes(db, f)
+        if name.endswith(".dwg"):
+            data = takeoff.dwg_to_dxf(data, key=(client.id, f.id))
+            head["converted_from"] = "DWG"
+        read = takeoff.read_dxf(data)
         kinds = {k: v for k, v in (body.get("kinds") or {}).items() if v in takeoff.KINDS}
         for row in read["layers"]:
             row["kind"] = kinds.get(row["name"], row["kind"])
@@ -90,6 +92,94 @@ def drawing_takeoff(did: int, request: Request, body: dict = None, db: Session =
         raise HTTPException(400, "The sheet's proportions could not be read. Add the plan as a JPG or PNG.")
     q = takeoff.plan_quantities(trace, width, aspect)
     return {**out, "quantities": q, "materials": takeoff.materials(q, a)}
+
+
+def _takeoff_source(db, client_id, did):
+    """(drawing, its current revision's label): what a take-off sent on says it came from."""
+    d = db.query(models.DBDrawing).filter(models.DBDrawing.id == did, models.DBDrawing.client_id == client_id).first()
+    if not d:
+        raise HTTPException(404, "Drawing not found")
+    cur = db.query(models.DBDrawingRevision).filter(models.DBDrawingRevision.drawing_id == d.id,
+                                                    models.DBDrawingRevision.file_id.isnot(None)).order_by(
+        models.DBDrawingRevision.id.desc()).first()
+    return d, (cur.revision if cur else "")
+
+
+def _takeoff_lines(body, merge=False):
+    """The lines sent, each with something named and a quantity; for an enquiry, the same material from several parts
+    of the take-off (cement for masonry, plaster and slab) is asked for once."""
+    out = {}
+    for l in body.lines[:200]:
+        text, uom = (l.description or "").strip()[:200], (l.uom or "").strip()[:20]
+        qty = float(l.quantity or 0)
+        if not text or qty <= 0:
+            continue
+        key = (text.lower(), uom.lower()) if merge else len(out)
+        if key in out:
+            out[key]["quantity"] += qty
+        else:
+            out[key] = {"description": text, "uom": uom, "quantity": qty, "item_code": (l.item_code or "").strip().upper()[:40]}
+    if not out:
+        raise HTTPException(400, "Tick at least one line with a quantity.")
+    return list(out.values())
+
+
+@router.post("/api/drawings/{did}/takeoff/boq")
+def takeoff_to_boq(did: int, body: TakeoffSendIn, request: Request, db: Session = Depends(get_db)):
+    """The take-off's quantities added to the end of the project's BOQ, under a heading naming the drawing and its
+    revision, unpriced: the QS prices them in the BOQ. Sent once per revision of a drawing."""
+    from app.schemas.boq import ProjectBoqLineIn
+    from app.services.boq import boq_revision_of, boq_save_lines
+    from app.services.projects import job_or_404
+    client, _, actor_name = wo_actor(request, db)
+    d, revision = _takeoff_source(db, client.id, did)
+    lines = _takeoff_lines(body)
+    job = job_or_404(db, client.id, d.job_id)
+    boq = db.query(models.DBBoq).filter(models.DBBoq.client_id == client.id, models.DBBoq.job_id == d.job_id).first()
+    if boq is None:
+        raise HTTPException(409, "%s has no BOQ yet. Open it under Projects, BOQ, then send the quantities again." % job.name)
+    rev = boq_revision_of(db, boq)
+    if rev.status != "OPEN":
+        raise HTTPException(409, "%s of %s is issued. Start a new revision to add to it." % (rev.label or "R%d" % rev.rev_no, boq.number))
+    heading = "Take-off from drawing %s rev %s" % (d.number or "", revision or "-")
+    have = db.query(models.DBBoqLine).filter(models.DBBoqLine.revision_id == rev.id).order_by(models.DBBoqLine.display_order,
+                                                                                               models.DBBoqLine.id).all()
+    if any(l.kind == "section" and (l.description or "").strip().lower() == heading.lower() for l in have):
+        raise HTTPException(409, "%s is already on %s. Change the lines there." % (heading, boq.number))
+    rows = [ProjectBoqLineIn(key=l.key, kind=l.kind, item_no=l.item_no or "", group_code=l.group_code or "",
+                             description=l.description or "", uom=l.uom or "", quantity=l.quantity or 0, rate=l.rate or 0,
+                             item_code=l.item_code or "", remarks=l.remarks or "", material=l.material or "",
+                             rate_only=bool(l.rate_only)) for l in have]
+    rows.append(ProjectBoqLineIn(kind="section", description=heading))
+    rows += [ProjectBoqLineIn(kind="item", description=l["description"], uom=l["uom"], quantity=l["quantity"], rate=0,
+                              item_code=l["item_code"], remarks="From the take-off of %s rev %s: check before pricing" % (
+                                  d.number or "", revision or "-")) for l in lines]
+    boq_save_lines(db, boq, rev, rows, False, client.id)
+    log_audit(db, client.id, "boq_from_takeoff", "boq", boq.id, boq.number, "%s: %d line(s)" % (heading, len(lines)), request)
+    db.commit()
+    return {"ok": True, "boq_id": boq.id, "job_id": d.job_id,
+            "message": "%d line%s added to %s under \"%s\", unpriced. Price them in the BOQ." % (
+                len(lines), "" if len(lines) == 1 else "s", boq.number, heading)}
+
+
+@router.post("/api/drawings/{did}/takeoff/enquiry")
+def takeoff_to_enquiry(did: int, body: TakeoffSendIn, request: Request, db: Session = Depends(get_db)):
+    """An enquiry to suppliers for the take-off's materials, on the drawing's project. It opens like any other enquiry:
+    suppliers are added and asked from there."""
+    from app.services.procurement import _make_rfq, rfq_dict
+    client, actor_id, actor_name = wo_actor(request, db, "purchase.manage")
+    d, revision = _takeoff_source(db, client.id, did)
+    lines = _takeoff_lines(body, merge=True)
+    r = _make_rfq(db, client, actor_name, "Materials from drawing %s rev %s" % (d.number or "", revision or "-"), d.job_id,
+                  body.needed_by, "Quantities from the take-off of %s %s, rev %s. Rules of thumb with wastage: checked by "
+                  "the engineer before ordering." % (d.number or "", d.title or "", revision or "-"),
+                  [{"description": l["description"], "uom": l["uom"], "qty": round(l["quantity"], 2), "item_code": l["item_code"]}
+                   for l in lines])
+    r.created_by_id = actor_id
+    log_audit(db, client.id, "rfq_from_takeoff", "rfq", r.id, r.number, "%s rev %s: %d line(s)" % (d.number, revision, len(lines)), request)
+    db.commit()
+    return {"ok": True, "rfq": rfq_dict(db, r), "message": "%s opened with %d item%s. Add the suppliers to ask." % (
+        r.number, len(lines), "" if len(lines) == 1 else "s")}
 
 
 @router.post("/api/drawings/{did}/revisions")

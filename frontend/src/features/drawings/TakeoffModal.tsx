@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Download, ListPlus, Send } from 'lucide-react'
 import { Badge, Button, Field, Modal, NumField, Select, Skeleton } from '@/components/ui'
-import { drawingTakeoff, type Drawing, type Takeoff } from '@/api/drawings'
+import { drawingTakeoff, takeoffToBoq, takeoffToEnquiry, type Drawing, type Takeoff, type TakeoffSendLine } from '@/api/drawings'
+import { ApiError } from '@/lib/api'
+import { useSession } from '@/lib/session'
 import { downloadCsv } from '@/lib/utils'
+
+type Material = Takeoff['materials'][number]
+// Work a client is billed for, measured off the sheet: what goes to the BOQ unless unticked.
+const BOQ_WORK = new Set(['Wall length', 'Wall area, openings taken off', 'Masonry', 'Plaster area', 'Floor area', 'Concrete', 'Shuttering', 'Floor tiles', 'Doors', 'Windows'])
+// Measurements, not things bought: never on an enquiry.
+const NOT_BOUGHT = new Set(['Wall length', 'Wall area, openings taken off', 'Masonry', 'Plaster area', 'Floor area'])
 
 const KINDS = [{ value: 'wall', label: 'Wall' }, { value: 'slab', label: 'Floor / slab' }, { value: 'door', label: 'Door' }, { value: 'window', label: 'Window' }, { value: 'ignore', label: 'Ignore' }]
 const SETTINGS: [string, string][] = [
@@ -26,6 +35,8 @@ function Body({ id, number }: { id: number; number: string }) {
   const [assumptions, setAssumptions] = useState<Record<string, number>>({})
   const [kinds, setKinds] = useState<Record<string, string>>({})
   const [width, setWidth] = useState(0)
+  const [sending, setSending] = useState<'boq' | 'enquiry' | null>(null)
+  const { can } = useSession()
   useEffect(() => {
     let live = true
     setBusy(true)
@@ -48,7 +59,7 @@ function Body({ id, number }: { id: number; number: string }) {
   return (
     <div className="grid gap-5">
       <p className="flex flex-wrap items-center gap-2 text-sm">
-        {t.exact ? <Badge tone="success">Exact, from AutoCAD</Badge> : <Badge tone="warning">Estimate, from a picture</Badge>}
+        {t.exact ? <Badge tone="success">Exact, from AutoCAD{t.converted_from ? ` (${t.converted_from} read as DXF)` : ''}</Badge> : <Badge tone="warning">Estimate, from a picture</Badge>}
         <span className="text-muted-foreground">{t.drawing}, revision {t.revision}.{t.units ? ` Drawn in ${t.units}.` : ''}</span>
       </p>
       {!t.exact && <p className="rounded-lg border border-warning/40 bg-warning-soft p-3 text-[13px]">Read off the picture, so use it for an early idea and not for ordering. For exact figures add the DXF from AutoCAD as a new revision.{t.low_confidence ? ' This sheet was hard to read: treat these figures with extra care.' : ''}</p>}
@@ -94,9 +105,73 @@ function Body({ id, number }: { id: number; number: string }) {
             ))}
           </table>
           <p className="mt-3 text-xs text-muted-foreground">Rules of thumb, for planning and enquiries. Columns, beams and footings are not on a plan and are left out; have your engineer check before ordering.</p>
-          <div className="mt-3 flex justify-end"><Button variant="outline" onClick={() => downloadCsv(`takeoff-${number}`, ['Group', 'Item', 'Quantity', 'Unit', 'How'], t.materials.map((m) => [m.group, m.item, m.quantity, m.uom, m.how]))}><Download /> Download</Button></div>
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <Button variant="outline" onClick={() => downloadCsv(`takeoff-${number}`, ['Group', 'Item', 'Quantity', 'Unit', 'How'], t.materials.map((m) => [m.group, m.item, m.quantity, m.uom, m.how]))}><Download /> Download</Button>
+            {can('workorders.manage') && <Button variant="outline" onClick={() => setSending('boq')}><ListPlus /> Send to BOQ lines</Button>}
+            {can('purchase.manage') && <Button onClick={() => setSending('enquiry')}><Send /> Raise enquiry</Button>}
+          </div>
+          {sending && <SendPanel key={sending} to={sending} id={id} materials={t.materials} exact={t.exact} onDone={() => setSending(null)} />}
         </div>
       )}
     </div>
+  )
+}
+
+/** The lines to send on, ticked by what usually goes there: the work measured to the BOQ, the materials to an enquiry
+ * (the same material from several parts asked for once). Each can be unticked before it goes. */
+function SendPanel({ to, id, materials, exact, onDone }: { to: 'boq' | 'enquiry'; id: number; materials: Material[]; exact: boolean; onDone: () => void }) {
+  const rows = useMemo(() => {
+    if (to === 'boq') return materials.map((m) => ({ key: `${m.group}|${m.item}`, description: m.group === 'Quantities' || m.group === 'Openings' ? m.item : `${m.group} - ${m.item}`, uom: m.uom, quantity: m.quantity, on: BOQ_WORK.has(m.item) }))
+    const merged = new Map<string, { key: string; description: string; uom: string; quantity: number; on: boolean }>()
+    for (const m of materials.filter((x) => !NOT_BOUGHT.has(x.item))) {
+      const key = `${m.item.toLowerCase()}|${m.uom.toLowerCase()}`
+      const had = merged.get(key)
+      merged.set(key, had ? { ...had, quantity: Math.round((had.quantity + m.quantity) * 100) / 100 } : { key, description: m.item, uom: m.uom, quantity: m.quantity, on: true })
+    }
+    return [...merged.values()]
+  }, [to, materials])
+  const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.key, r.on])))
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState<{ text: string; link?: string; label?: string } | null>(null)
+  const [error, setError] = useState('')
+  const picked: TakeoffSendLine[] = rows.filter((r) => on[r.key] && r.quantity > 0).map(({ description, uom, quantity }) => ({ description, uom, quantity }))
+  const send = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      if (to === 'boq') {
+        const r = await takeoffToBoq(id, picked)
+        setDone({ text: r.message, link: `/projects/boq/${r.boq_id}`, label: 'Open the BOQ' })
+      } else {
+        const r = await takeoffToEnquiry(id, picked)
+        setDone({ text: r.message, link: `/store/enquiries/${r.rfq.id}`, label: `Open ${r.rfq.number}` })
+      }
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Not sent.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section aria-label={to === 'boq' ? 'Send to BOQ lines' : 'Raise enquiry'} className="mt-4 rounded-lg border border-border bg-surface/50 p-3">
+      <h3 className="text-sm font-semibold">{to === 'boq' ? 'Add to the project BOQ' : 'Ask suppliers for these materials'}</h3>
+      <p className="mt-0.5 text-[13px] text-muted-foreground">{to === 'boq' ? 'Added at the end of the BOQ under a heading naming this drawing and revision, without rates: price them in the BOQ.' : 'A new enquiry on this project. Add the suppliers to ask from the enquiry.'}{!exact && ' These are estimates from a picture: check them first.'}</p>
+      {done ? (
+        <p role="status" className="mt-3 text-sm">{done.text} {done.link && <Link className="font-medium text-primary underline underline-offset-2" to={done.link}>{done.label}</Link>}</p>
+      ) : (
+        <>
+          <ul className="mt-3 grid gap-1 text-sm">
+            {rows.map((r) => (
+              <li key={r.key}><label className="flex items-center gap-2"><input type="checkbox" checked={!!on[r.key]} onChange={(e) => setOn((o) => ({ ...o, [r.key]: e.target.checked }))} /><span className="flex-1">{r.description}</span><span className="tabular-nums">{r.quantity.toLocaleString('en-IN')} {r.uom}</span></label></li>
+            ))}
+          </ul>
+          {error && <p role="alert" className="mt-2 text-sm text-danger">{error}</p>}
+          <div className="mt-3 flex justify-end gap-2">
+            <Button variant="ghost" onClick={onDone}>Cancel</Button>
+            <Button loading={busy} disabled={!picked.length} onClick={() => void send()}>{to === 'boq' ? `Add ${picked.length} line${picked.length === 1 ? '' : 's'} to the BOQ` : `Raise enquiry for ${picked.length} item${picked.length === 1 ? '' : 's'}`}</Button>
+          </div>
+        </>
+      )}
+    </section>
   )
 }

@@ -31,6 +31,11 @@ class DBSafetyIncident(Base):
     status = Column(String, default="OPEN", index=True)         # OPEN | CLOSED
     closed_on = Column(String, default="")
     closure_note = Column(Text, default="")
+    due_date = Column(String, default="")                        # the corrective action done and the incident closed by
+    # Follow-up (services/follow_up.py): the member of staff who sees it through, reminded daily as it falls due.
+    owner_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    reminded_on = Column(String, default="")                     # the day the owner was last reminded
+    overdue_told = Column(Integer, default=0)                    # the bell told once that it is overdue
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
@@ -71,6 +76,10 @@ class DBWorkPermit(Base):
     closed_at = Column(String, default="")
     closed_by = Column(String, default="")
     closure_note = Column(Text, default="")
+    # Follow-up (services/follow_up.py): the member of staff who sees it through, reminded daily as it falls due.
+    owner_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    reminded_on = Column(String, default="")                     # the day the owner was last reminded
+    overdue_told = Column(Integer, default=0)                    # the bell told once that it is overdue
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 

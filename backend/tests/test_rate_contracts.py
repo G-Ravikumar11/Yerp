@@ -55,3 +55,22 @@ def test_purchasing_is_told_30_and_7_days_before_it_ends(tenant):
     assert len(told()) == 1
     run(end - timedelta(days=6))                                         # 6 days left: the 7-day notice
     assert len(told()) == 2
+
+
+def test_an_order_drawn_from_the_budget_takes_the_contract_rate(tenant):
+    """The budget priced the conduit at 40; the supplier's contract says 35, so the drawn-up order is at 35."""
+    from test_handoffs import order_with_budget
+    wo, rm, _ = order_with_budget(tenant, rm_qty=1000, rm_rate=40)
+    contract(tenant, supplier_name="Conduit Co", items=[{"item_code": rm, "rate": 35}])
+    res = tenant.post("/api/erp/work-orders/%d/raise-po" % wo["id"], json={"supplier_name": "conduit co"})
+    assert res.status_code == 200, res.text
+    po = res.json()["order"]
+    assert [l["price"] for l in po["line_items"]] == [35] and po["total"] == 35000
+
+
+def test_without_a_contract_the_budget_rate_stands(tenant):
+    from test_handoffs import order_with_budget
+    wo, rm, _ = order_with_budget(tenant, rm_qty=1000, rm_rate=40)
+    contract(tenant, supplier_name="Someone Else", items=[{"item_code": rm, "rate": 35}])
+    po = tenant.post("/api/erp/work-orders/%d/raise-po" % wo["id"], json={"supplier_name": "Conduit Co"}).json()["order"]
+    assert po["total"] == 40000
