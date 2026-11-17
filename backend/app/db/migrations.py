@@ -165,6 +165,7 @@ HR_PAYROLL_COLUMNS = (
     ("contractors", "msme_type", "VARCHAR DEFAULT ''"), ("contractors", "udyam_no", "VARCHAR DEFAULT ''"),
     # Attendance from the biometric machines.
     ("employees", "biometric_id", "VARCHAR DEFAULT ''"),
+    ("biometric_punches", "employee_name", "VARCHAR DEFAULT ''"),
 )
 
 # One overtime entry per person per day. Run after any duplicates are removed, or the index cannot be built.

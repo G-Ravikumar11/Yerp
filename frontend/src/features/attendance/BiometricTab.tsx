@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { KeyRound, RefreshCw } from 'lucide-react'
+import { Download, KeyRound, RefreshCw } from 'lucide-react'
 import { Badge, Button, Card, ConfirmDialog, Input, Modal, Select, Stat, StatGrid } from '@/components/ui'
-import { get, post, put } from '@/lib/api'
+import { apiUrl, get, post, put } from '@/lib/api'
+import { toast } from '@/stores/toast'
 import { projectLabel, useProjects } from '@/api/projects'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -18,7 +19,7 @@ interface Status {
   punches_today: number
   people_today: number
   devices: Device[]
-  unmatched: { biometric_id: string; punches: number; last: string }[]
+  unmatched: { biometric_id: string; punches: number; last: string; name: string; suggestion: { id: number; name: string } | null }[]
   employees: Person[]
 }
 
@@ -38,6 +39,32 @@ export function BiometricTab() {
   const [key, setKey] = useState('')
   const [asking, setAsking] = useState(false)
   const make = useAction(() => post<{ key: string }>('/api/biometric/key'), { invalidate: [KEY], success: false, onSuccess: (r) => { setKey(r.key); setAsking(false) } })
+  const [downloading, setDownloading] = useState(false)
+  const [confirmPackage, setConfirmPackage] = useState(false)
+  // The set-up package: the office program with this company's address and a new key already in it.
+  const downloadPackage = async () => {
+    setDownloading(true)
+    try {
+      const res = await fetch(apiUrl('/api/biometric/setup-package'), { method: 'POST', credentials: 'include' })
+      if (!res.ok) throw new Error(res.status === 403 ? 'Only the Master can make the set-up package.' : 'Could not make the package. Try again.')
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = 'YERP-biometric-setup.zip'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
+      toast.success('Downloaded. Unzip it on the office computer and double-click SETUP.bat.')
+      void q.refetch()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not make the package.')
+    } finally {
+      setDownloading(false)
+      setConfirmPackage(false)
+    }
+  }
+  const match = useAction((v: { id: number; number: string }) => put<{ message: string }>(`/api/biometric/employees/${v.id}`, { biometric_id: v.number }), { invalidate: INVALIDATE })
   const rematch = useAction(() => post<{ message: string }>('/api/biometric/rematch'), { invalidate: INVALIDATE })
   const s = q.data
   const manage = can('people.manage')
@@ -62,11 +89,23 @@ export function BiometricTab() {
           <div>
             <h2 className="text-sm font-semibold">The office sync program</h2>
             <p className="text-[13px] text-muted-foreground">
-              It runs on the computer that holds the attendance system's database and sends new punches every minute. It signs in with a key made here.
+              It runs on the computer that holds the attendance system's database and sends new punches every minute.
               {s?.agent ? ` Last sent by: ${s.agent}.` : ''}
             </p>
+            {master && !s?.connected && (
+              <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-[13px] text-muted-foreground">
+                <li>Press <strong>Download set-up package</strong> and copy the zip to the office computer.</li>
+                <li>Unzip it, double-click <strong>SETUP.bat</strong> and answer what it asks.</li>
+                <li>This page then says <strong>Working</strong>, and attendance arrives by itself.</li>
+              </ol>
+            )}
           </div>
-          {master && <Button variant="outline" onClick={() => setAsking(true)}><KeyRound /> {s?.connected ? 'Make a new key' : 'Make the key'}</Button>}
+          {master && (
+            <div className="flex flex-wrap gap-2">
+              <Button loading={downloading} onClick={() => (s?.connected ? setConfirmPackage(true) : void downloadPackage())}><Download /> Download set-up package</Button>
+              <Button variant="ghost" onClick={() => setAsking(true)}><KeyRound /> Key only</Button>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -88,9 +127,23 @@ export function BiometricTab() {
           </div>
           <Card className="mb-5 p-4">
             <p className="mb-3 text-[13px] text-muted-foreground">These numbers came from the machines and match no employee code. Put each number against its person below; their punches are counted at once.</p>
-            <div className="flex flex-wrap gap-2">
-              {(s?.unmatched ?? []).map((u) => <Badge key={u.biometric_id} tone="warning">{u.biometric_id} - {u.punches} punch{u.punches === 1 ? '' : 'es'}, last {u.last.slice(0, 16)}</Badge>)}
-            </div>
+            <ul className="divide-y divide-border">
+              {(s?.unmatched ?? []).map((u) => (
+                <li key={u.biometric_id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                  <span>
+                    <Badge tone="warning">{u.biometric_id}</Badge>{' '}
+                    <span className="font-medium">{u.name || 'No name on the machine'}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{u.punches} punch{u.punches === 1 ? '' : 'es'}, last {u.last.slice(0, 16)}</span>
+                  </span>
+                  {manage && u.suggestion && (
+                    <Button size="sm" variant="outline" loading={match.isPending && match.variables?.number === u.biometric_id}
+                      onClick={() => match.mutate({ id: u.suggestion!.id, number: u.biometric_id })}>
+                      Looks like {u.suggestion.name} - match
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
           </Card>
         </>
       )}
@@ -104,6 +157,8 @@ export function BiometricTab() {
         </table>
       </Card>
 
+      <ConfirmDialog open={confirmPackage} onOpenChange={setConfirmPackage} title="Make a new set-up package?" confirmLabel="Download"
+        description="It carries a new key, so the key in use stops working: the program on the office computer sends nothing until it is set up again from this package." loading={downloading} onConfirm={() => void downloadPackage()} />
       <ConfirmDialog open={asking} onOpenChange={setAsking} title={s?.connected ? 'Make a new key?' : 'Make the key'} confirmLabel="Make the key"
         description={s?.connected ? 'The key in use stops working at once: the office program sends nothing until the new key is put in its settings.' : 'It is shown once. Put it in the sync program\'s settings file on the office computer.'}
         loading={make.isPending} onConfirm={() => make.mutate()} />

@@ -1,5 +1,6 @@
 """Attendance from the biometric machines: where the office program sends punches, and HR's page for it."""
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app import models
@@ -51,6 +52,20 @@ def make_key(request: Request, db: Session = Depends(get_db)):
     log_audit(db, client.id, "biometric_key_made", "settings", None, "biometric", "A new key for the attendance sync program", request)
     db.commit()
     return {"key": key, "message": "Copy this key into the sync program's settings now. It is not shown again."}
+
+
+@router.post("/api/biometric/setup-package")
+def setup_package(request: Request, db: Session = Depends(get_db)):
+    """The office program with this company's address and a new key already in its config.ini - unzip, double-click
+    SETUP.bat. The key before it stops working, so this is the Master's to press."""
+    require_owner(request, db)
+    client = require_items_access(request, db, HR)
+    from app.core.static import _public_base
+    data = bio.setup_package(db, client, _public_base(request))
+    log_audit(db, client.id, "biometric_key_made", "settings", None, "biometric", "A new key, in the downloaded set-up package", request)
+    db.commit()
+    return Response(data, media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="YERP-biometric-setup.zip"', "Content-Length": str(len(data)), "Cache-Control": "no-store"})
 
 
 @router.put("/api/biometric/devices/{device_id}")

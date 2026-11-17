@@ -37,4 +37,5 @@ class DBBiometricPunch(Base):
     device_code = Column(String, default="")
     direction = Column(String, default="")                       # in | out | "" when the machine does not say
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    employee_name = Column(String, default="")                   # the person's name in the attendance system, to suggest who a number is
     received_at = Column(String, default=_now)

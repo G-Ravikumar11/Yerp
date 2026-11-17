@@ -10,9 +10,12 @@ A day somebody also clocked in on the phone keeps the earlier clock-in and the l
 """
 import hashlib
 import hmac
+import io
 import re
 import secrets
+import zipfile
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from fastapi import HTTPException
 
@@ -116,7 +119,8 @@ def take_punches(db, client, rows, agent=""):
         have.add((bid, stamp, device))
         emp = people.get(bid)
         db.add(DBBiometricPunch(client_id=client.id, biometric_id=bid, punched_at=stamp, device_code=device,
-                                direction=_direction(r.get("direction")), employee_id=emp.id if emp else None))
+                                direction=_direction(r.get("direction")), employee_id=emp.id if emp else None,
+                                employee_name=" ".join(str(r.get("employee_name") or "").split())[:100]))
         new += 1
         if device:
             devices[device] = max(devices.get(device, ""), stamp)
@@ -239,6 +243,60 @@ def rematch(db, client_id):
     return found
 
 
+def _tokens(name):
+    return set(re.sub(r"[^a-z ]", " ", (name or "").lower()).split())
+
+
+def suggest_person(candidates, name):
+    """The one employee a machine's name for somebody most plainly is, or None. `candidates` are (id, display name).
+    The same words (in any order) or - from two words up - all the words of the shorter name inside the longer one
+    ("Ravi Kumar" is "Ravi Kumar Reddy"). More than one possible person is no suggestion: a wrong match counts someone
+    else's attendance."""
+    want = _tokens(name)
+    if not want:
+        return None
+    hits = []
+    for emp_id, shown in candidates:
+        have = _tokens(shown)
+        if not have:
+            continue
+        same = want == have
+        inside = min(len(want), len(have)) >= 2 and (want <= have or have <= want)
+        if same or inside:
+            hits.append((emp_id, shown))
+    return {"id": hits[0][0], "name": hits[0][1]} if len(hits) == 1 else None
+
+
+SETUP_FILES = ("sync.py", "SETUP.bat", "run_check.bat", "run_now.bat", "install_task.bat", "remove_task.bat",
+               "make_reader_login.sql", "README.md")
+
+
+def setup_package(db, client, base_url):
+    """The office program as a zip, with its config.ini already holding this company's address and a NEW key (the one
+    before it stops working). Unzip on the office computer and double-click SETUP.bat."""
+    folder = Path(__file__).resolve().parents[3] / "tools" / "biometric_sync"
+    key = new_key(db, client.id)
+    crlf = lambda text: text.replace("\r\n", "\n").replace("\n", "\r\n")        # batch files need Windows line ends
+    config = ("; Made by Y ERP for %s. Safe to edit by hand; the set-up fills in the database part.\n"
+              "[yerp]\nurl = %s\napi_key = %s\nevery_seconds = 60\noverlap_minutes = 30\n\n"
+              "[database]\nserver =\nname =\nuser =\npassword =\ndriver =\nsource = auto\nsend = code\n"
+              % (client.company_name or "this company", base_url.rstrip("/"), key))
+    start = ("START HERE\n\n1. Copy this whole folder to the computer that holds the attendance system's database "
+             "(for example C:\\YERP\\biometric_sync).\n2. Double-click SETUP.bat and answer what it asks. It finds the database, "
+             "makes a read-only login, sends the first punches and starts the every-minute sync.\n\n"
+             "config.ini holds this company's key. Do not share the folder; if it gets out, make a new key in Y ERP "
+             "(People > Attendance > Biometric) and the old one stops working.\n")
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in SETUP_FILES:
+            path = folder / name
+            if path.exists():
+                z.writestr("biometric_sync/" + name, crlf(path.read_text(encoding="utf-8")))
+        z.writestr("biometric_sync/config.ini", crlf(config))
+        z.writestr("biometric_sync/START HERE.txt", crlf(start))
+    return out.getvalue()
+
+
 def status(db, client_id):
     from app.services.hr import employee_name
     today = datetime.now().strftime("%Y-%m-%d")
@@ -251,12 +309,18 @@ def status(db, client_id):
             stale = None
     jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client_id).all()}
     waiting = {}
-    for bid, at in db.query(DBBiometricPunch.biometric_id, DBBiometricPunch.punched_at).filter(
+    for bid, at, who in db.query(DBBiometricPunch.biometric_id, DBBiometricPunch.punched_at, DBBiometricPunch.employee_name).filter(
             DBBiometricPunch.client_id == client_id, DBBiometricPunch.employee_id.is_(None)).all():
-        w = waiting.setdefault(bid, {"biometric_id": bid, "punches": 0, "last": ""})
+        w = waiting.setdefault(bid, {"biometric_id": bid, "punches": 0, "last": "", "name": "", "suggestion": None})
         w["punches"] += 1
-        w["last"] = max(w["last"], at)
+        if at >= w["last"]:
+            w["last"] = at
+            w["name"] = who or w["name"]
     people = db.query(models.DBEmployee).filter(models.DBEmployee.client_id == client_id).order_by(models.DBEmployee.first_name).all()
+    free = [(e.id, employee_name(e)) for e in people if not norm_id(e.biometric_id)
+            and (e.status or "active") not in ("terminated", "left", "inactive")]
+    for w in waiting.values():
+        w["suggestion"] = suggest_person(free, w["name"])
     return {
         "connected": bool(tenant_setting(db, client_id, KEY_SETTING, "")), "last_sync": last, "minutes_since_sync": stale,
         "agent": tenant_setting(db, client_id, LAST_AGENT, ""),
