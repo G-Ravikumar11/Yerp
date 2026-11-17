@@ -1454,6 +1454,26 @@ def ensure_columns():
                 except Exception:
                     pass
 
+            # Somebody saved with a department but no site was counted on every site that department is on. Where
+            # their department is on exactly one site, place them on that site; anybody else is left for HR to place.
+            try:
+                conn.execute(text("""
+                    INSERT INTO employee_sites (client_id, employee_id, job_id, created_at)
+                    SELECT e.client_id, e.id, MIN(ds.job_id), to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+                    FROM employees e JOIN department_sites ds ON ds.department_id = e.department_id
+                    WHERE e.department_id IS NOT NULL
+                      AND NOT EXISTS (SELECT 1 FROM employee_sites es WHERE es.employee_id = e.id)
+                    GROUP BY e.client_id, e.id
+                    HAVING COUNT(DISTINCT ds.job_id) = 1
+                """))
+                conn.commit()
+            except Exception:
+                MIGRATION_ERRORS.append(f"migration step 30d: {sys.exc_info()[1]}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+
             # Payslip period guard + YTD support
             try:
                 conn.execute(text("ALTER TABLE payslips ADD COLUMN IF NOT EXISTS pay_frequency VARCHAR DEFAULT ''"))

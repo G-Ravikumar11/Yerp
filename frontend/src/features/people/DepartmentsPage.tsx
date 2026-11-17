@@ -19,6 +19,8 @@ export default function DepartmentsPage() {
   // Nothing is listed until a site is chosen, and then what was added to that site plus the department of
   // everybody who works there, so a department given to a new starter shows on their site straight away.
   const staffedHere = new Set(site ? staff.filter((e) => e.department_id && e.site_ids?.includes(site.id)).map((e) => e.department_id) : [])
+  // A department's head count on a site is the people placed on that site, not everybody in the department.
+  const hereCount = (deptId: number) => site ? staff.filter((e) => e.department_id === deptId && ['active', 'onboarding'].includes(e.status) && e.site_ids?.includes(site.id)).length : 0
   const onSite = site ? all.filter((d) => d.site_ids.includes(site.id) || staffedHere.has(d.id)) : []
   // The department whose chart is open. Choosing another site closes it.
   const [pickedId, setPickedId] = useState<number | null>(null)
@@ -43,7 +45,7 @@ export default function DepartmentsPage() {
                 <li key={x.id}>
                   <button type="button" aria-pressed={x.id === picked?.id} onClick={() => setPickedId(x.id === picked?.id ? null : x.id)}
                     className={'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ' + (x.id === picked?.id ? 'border-[var(--primary)] bg-[var(--primary)]/15' : 'border-border hover:bg-muted')}>
-                    {x.name} <span className="text-muted-foreground">({x.employee_count})</span>
+                    {x.name} <span className="text-muted-foreground">({hereCount(x.id)})</span>
                   </button>
                 </li>
               ))}
