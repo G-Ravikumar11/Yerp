@@ -21,7 +21,7 @@ from app.core.config import LOGIN_PER_MINUTE, logger
 from app.core.dates import _parse_date
 from app.core.files import ALLOWED_DOCUMENT_EXTENSIONS, MAX_DOCUMENT_BYTES
 from app.core.notifications import default_from_email, notify_employee, send_email_background, tell_approvers
-from app.core.permissions import DEFAULT_PERMISSION_ROLE, PERMISSION_ROLES, employee_can, is_head_office, permissions_for
+from app.core.permissions import DEFAULT_PERMISSION_ROLE, PERMISSION_ROLES, employee_can, is_head_office, permissions_for, is_no_access
 from app.core.security import RESET_TOKEN_TTL_MINUTES, issue_reset_token, rate_limiter, upgrade_password_hash
 from app.core.serials import allocate_bill_number, allocate_po_number
 from app.schemas.auth import ForgotPasswordIn
@@ -169,6 +169,8 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     upgrade_password_hash(emp, "password_hash", body["password"])
     if emp.status in ("terminated",):
         raise HTTPException(status_code=403, detail="Account deactivated")
+    if is_no_access(emp):
+        raise HTTPException(status_code=403, detail="This person is kept for attendance only and cannot sign in.")
     # One identity per session. Signing in as staff ends any owner session in
     # this browser; without that the owner's rights survive underneath and
     # every permission check below is answered by the wrong person.

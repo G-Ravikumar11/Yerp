@@ -21,8 +21,8 @@ export function DepartmentHierarchy({ dept, siteId }: { dept: Department; siteId
 
   const rows = useMemo(() => {
     const people = (staff.data ?? []).filter((e) => e.department_id === dept.id && ['active', 'onboarding'].includes(e.status)
-      // On a site, only the people who work there: somebody with no site list works on every site.
-      && (siteId == null || !e.site_ids?.length || e.site_ids.includes(siteId)))
+      // On a site, only the people placed on that site. Somebody with no site ticked is not shown on every site's chart.
+      && (siteId == null || !!e.site_ids?.includes(siteId)))
     const byLevel = new Map<string, Employee[]>()
     for (const e of people) byLevel.set(e.level || '', [...(byLevel.get(e.level || '') ?? []), e])
     // Most senior first (a higher rank is more senior); unlevelled people come last.

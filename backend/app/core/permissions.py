@@ -306,6 +306,12 @@ _PROJECT_MANAGER = _PROJECT_MANAGER + _STORE_APPROVE_PROJECT
 _HEAD_OFFICE = _HEAD_OFFICE + _STORE_VIEW
 PERMISSION_ROLES = [
     {
+        "code": "attendance", "label": "Attendance only", "rank": 0,
+        "description": "No access to Y ERP and cannot sign in. The person is kept on the books only: "
+                       "their attendance and salary are recorded by HR.",
+        "permissions": [],
+    },
+    {
         "code": "staff", "label": "Site staff", "rank": 1,
         "description": "Their own timesheet, leave and payslips; records site work "
                        "and sends a cost up for approval.",
@@ -454,6 +460,14 @@ PERMISSION_ROLES = [
     },
 ]
 
+# The base role for people kept only for attendance and pay: they hold nothing and may not sign in.
+NO_ACCESS_ROLE = "attendance"
+
+
+def is_no_access(emp) -> bool:
+    return (getattr(emp, "permission_role", "") or "").lower() == NO_ACCESS_ROLE
+
+
 # What each role gets in the phone app to begin with, from what it already does on the website: the people who record site
 # work may record it from the phone, the people who approve may approve there, and everybody may download a PDF. Excel
 # reports are given by hand. The Master changes any of this for one person on the same Access screen as every other right.
@@ -463,7 +477,7 @@ _APP_DEFAULTS = (
     ("app.download_pdf", None),
 )
 for _role in PERMISSION_ROLES:
-    if _role["code"] == "owner":
+    if _role["code"] in ("owner", NO_ACCESS_ROLE):
         continue
     _held = set(_role["permissions"])
     for _key, _needs in _APP_DEFAULTS:
@@ -540,7 +554,7 @@ def permissions_for(emp) -> set:
     denial always beats a grant - taking a right away has to be reliable in a
     way that handing one out does not.
     """
-    if emp is None:
+    if emp is None or is_no_access(emp):
         return set()
     role = (getattr(emp, "permission_role", "") or DEFAULT_PERMISSION_ROLE).lower()
     held = set(ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS[DEFAULT_PERMISSION_ROLE]))
