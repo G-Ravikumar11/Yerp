@@ -71,4 +71,5 @@ def test_one_reorder_level_for_an_item(tenant):
     assert tenant.put("/api/erp/items/%d" % iid, json={"kind": "RM", "item_name": "Ready mix", "units_of_measure": "Bag", "reorder_level": 40}).status_code == 200
     with main.SessionLocal() as db:
         assert float(db.query(models.DBStoreItemSettings).filter(models.DBStoreItemSettings.item_id == iid).first().reorder_level) == 40
-        assert db.query(models.DBItem).get(iid).reorder_level == 40
+        assert not db.query(models.DBItem).get(iid).reorder_level, "the item master keeps no second figure of its own"
+    assert tenant.get("/api/items/%d" % iid).json()["item"]["reorder_level"] == 40

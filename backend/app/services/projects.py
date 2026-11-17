@@ -955,12 +955,15 @@ def attention_items(db, client_id):
 
     # --- the store -------------------------------------------------------
     balances = current_stock(db, client_id)
-    levels = {i.item_code: (i.reorder_level or 0.0)
-              for i in db.query(models.DBItem).filter(
-                  models.DBItem.client_id == client_id).all()}
+    # The one level per item (the Store Hub's). Once the old store is moved into the Hub these balances are the Hub's, in
+    # the base unit the level is kept in; before that they are the old store's, in the unit each line was booked in.
+    from app.services.store_cutover import cutover_of
+    from app.services.store_levels import company_reorder_levels, level_in
+    levels, moved = company_reorder_levels(db, client_id), cutover_of(db, client_id) is not None
+    at = {code: (float(levels[code][0]) if moved else level_in(levels[code], a.get("uom"))) if code in levels else 0.0
+          for code, a in balances.items()}
     negative = [a for a in balances.values() if a["on_hand"] < 0]
-    low = [a for code, a in balances.items()
-           if levels.get(code, 0) and 0 <= a["on_hand"] < levels[code]]
+    low = [a for code, a in balances.items() if at[code] and 0 <= a["on_hand"] < at[code]]
     if negative:
         items.append({
             "kind": "negative_stock", "severity": "wrong",

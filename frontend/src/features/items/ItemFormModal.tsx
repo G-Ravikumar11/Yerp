@@ -87,6 +87,8 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
   const errors: ItemErrors = validateItem(f, units)
   const show = (k: keyof ItemForm) => (submitted || touched.has(k) ? errors[k] : undefined)
   const blur = (k: keyof ItemForm) => () => setTouched((t) => new Set(t).add(k))
+  // The stores count an item in its base unit; a new item, or one with no store settings yet, in its own unit.
+  const levelUnit = (editing && base?.reorder_unit) || f.units_of_measure
   const hasMore = !!(f.hsn_code || f.preferred_supplier || f.reorder_level || f.description || f.remarks || f.segment || (editing && base && f.item_type !== defaultTypeFor(base.kind)))
   const [more, setMore] = useState(hasMore)
   const nameRef = useRef<HTMLInputElement>(null)
@@ -129,7 +131,8 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
     hsn_code: f.hsn_code,
     gst_percent: num(f.gst_percent),
     preferred_supplier: f.preferred_supplier,
-    reorder_level: num(f.reorder_level),
+    // Only a material is kept in stock, so only a material has a reorder level.
+    reorder_level: f.kind === 'RM' ? num(f.reorder_level) : null,
     remarks: f.remarks,
     is_active: f.is_active,
     make: f.make,
@@ -254,9 +257,12 @@ function Form({ item, mode, carry, vocab, onClose, onOpenItem, onAnother }: {
         <>
           <Section title="Purchasing and stock">
             <Field label="Usual supplier" htmlFor="im-sup"><Input id="im-sup" value={f.preferred_supplier} onChange={field('preferred_supplier')} /></Field>
-            <Field label="Tell me when stock falls below" htmlFor="im-min" error={show('reorder_level')} hint="The store is warned when it holds less than this.">
-              <Input id="im-min" type="number" min={0} step="any" value={f.reorder_level} onChange={field('reorder_level')} onBlur={blur('reorder_level')} aria-invalid={!!show('reorder_level') || undefined} />
-            </Field>
+            {f.kind === 'RM' && (
+              <Field label={`Reorder level${levelUnit ? ` (${levelUnit})` : ''}`} htmlFor="im-min" error={show('reorder_level')}
+                hint="The stores are warned when they hold less than this. It is the same level as in Store Hub > Item settings; a store can set its own under Store levels.">
+                <Input id="im-min" type="number" min={0} step="any" value={f.reorder_level} onChange={field('reorder_level')} onBlur={blur('reorder_level')} aria-invalid={!!show('reorder_level') || undefined} />
+              </Field>
+            )}
             <Field label="HSN / SAC code" htmlFor="im-hsn" hint="The government's tax code for the item: HSN for goods, SAC for services. Optional.">
               <Input id="im-hsn" className="font-mono" value={f.hsn_code} onChange={field('hsn_code')} />
             </Field>

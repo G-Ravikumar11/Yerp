@@ -35,6 +35,7 @@ from app.services.stores import (
 from app.services import store_cutover
 from app.services.store_cutover import refuse_if_moved
 from app.services.subcontract_orders import wo_or_404, work_order_or_404, work_order_to_dict
+from app.services.store_levels import company_reorder_levels, level_in
 
 
 router = APIRouter()
@@ -45,13 +46,11 @@ def stock_on_hand(request: Request, store: str = "", low_only: bool = False,
                   db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     balances = stock_balances(db, client.id, store=store or None)
-    levels = {i.item_code: (i.reorder_level or 0.0)
-              for i in db.query(models.DBItem).filter(
-                  models.DBItem.client_id == client.id).all()}
+    levels = company_reorder_levels(db, client.id)          # the one level per item, the Store Hub's
 
     rows = []
     for code, a in balances.items():
-        level = levels.get(code, 0.0)
+        level = level_in(levels.get(code), a.get("uom"))
         a = dict(a)
         a["received"] = qty3(a["received"])
         a["issued"] = money(a["issued"])
@@ -475,13 +474,11 @@ def material_consumption(work_order_id: int, request: Request,
 def stock_export(request: Request, db: Session = Depends(get_db)):
     client = require_erp_read(request, db)
     balances = stock_balances(db, client.id)
-    levels = {i.item_code: (i.reorder_level or 0.0)
-              for i in db.query(models.DBItem).filter(
-                  models.DBItem.client_id == client.id).all()}
+    levels = company_reorder_levels(db, client.id)
+    at = {code: level_in(levels.get(code), a.get("uom")) for code, a in balances.items()}
     rows = [(a["item_code"], a["item_name"], a["uom"], qty3(a["received"]),
              money(a["issued"]), a["on_hand"], unit_rate(a["rate"]), a["value"],
-             money(levels.get(code, 0.0)),
-             "yes" if levels.get(code, 0.0) and a["on_hand"] < levels[code] else "")
+             money(at[code]), "yes" if at[code] and a["on_hand"] < at[code] else "")
             for code, a in sorted(balances.items())]
     return sheet_response(
         ("Item code", "Description", "UOM", "Received", "Issued", "On hand",

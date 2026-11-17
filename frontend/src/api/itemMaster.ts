@@ -21,7 +21,9 @@ export interface MasterItem {
   hsn_code: string
   item_tax_type: string
   preferred_supplier: string
+  /** The item's one reorder level - the Store Hub's - in `reorder_unit`, the unit the stores count it in. */
   reorder_level: number
+  reorder_unit: string
   remarks: string
   is_active: boolean
   /** The brand: UltraTech, Tata Tiscon, Finolex. */

@@ -9,6 +9,7 @@ from app.core.sheets import HINT_PHRASES
 from app.core.units import BOQ_ITEM_TYPES, UNITS_OF_MEASURE, canonical_unit
 from app.schemas.item_master import MasterItemIn
 from app.services import item_master as im
+from app.services.store_levels import item_reorder_levels, set_item_reorder_level
 
 MAX_ROWS = 5000
 
@@ -182,17 +183,20 @@ def _name_key(text):
     return " ".join(re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower()).split())
 
 
-def _changes(item, v):
-    """What the sheet would change on an item that already exists: only what it actually says, and only where it differs."""
+def _changes(item, v, level=0):
+    """What the sheet would change on an item that already exists: only what it actually says, and only where it differs.
+    `level` is the item's one reorder level (the Store Hub's), which the sheet's minimum stock is compared with."""
     out = []
     for field in COMPARE:
         new = v.get(field, "")
         if new and (getattr(item, field, "") or "") != new:
             out.append(field)
-    for field in ("purchase_rate", "selling_rate", "reorder_level"):
+    for field in ("purchase_rate", "selling_rate"):
         new = v.get(field, "")
         if new != "" and unit_rate(getattr(item, field, 0) or 0) != unit_rate(float(new)):
             out.append(field)
+    if v.get("reorder_level", "") != "" and item.kind == "RM" and round(float(level), 3) != round(float(v["reorder_level"]), 3):
+        out.append("reorder_level")
     if v.get("gst_percent") != "" and (item.item_tax_type or "") != "%s%%" % v["gst_percent"]:
         out.append("gst_percent")
     return out
@@ -212,6 +216,7 @@ def classify(db, client_id, entries):
                 existing[i.item_code] = i
             else:
                 elsewhere.add(i.item_code)
+    levels = item_reorder_levels(db, list(existing.values()))
     by_name = {}
     for i in db.query(models.DBItem.id, models.DBItem.item_code, models.DBItem.item_name).filter(models.DBItem.client_id == client_id).all():
         by_name.setdefault(_name_key(i.item_name), i)
@@ -230,7 +235,7 @@ def classify(db, client_id, entries):
             row.update(status="Error", reason="This code is already used by another item. Use a different code.", action="skip")
         elif code and code in existing:
             item = existing[code]
-            changes = _changes(item, v)
+            changes = _changes(item, v, levels.get(item.id, (0, ""))[0])
             row["existing_id"] = item.id
             if changes:
                 row.update(status="Update", changes=changes, reason="Already in the master as '%s'. Changes: %s." % (item.item_name, ", ".join(c.replace("_", " ") for c in changes)))
@@ -272,7 +277,7 @@ def read_rows(header, body):
     return [{"line": r["_line"], "values": {k: r.get(k, "") for k in FIELDS}} for r in rows], mapping_report(header, mapping), unmapped
 
 
-def apply_update(item, v, who):
+def apply_update(db, item, v, who):
     """Change only what the sheet actually says: a blank cell never wipes what the master already holds."""
     for field in COMPARE:
         if v.get(field):
@@ -282,7 +287,7 @@ def apply_update(item, v, who):
     if v.get("selling_rate") != "":
         item.selling_rate = unit_rate(float(v["selling_rate"]))
     if v.get("reorder_level") != "":
-        item.reorder_level = float(v["reorder_level"])
+        set_item_reorder_level(db, item, v["reorder_level"])             # the one level, the Store Hub's
     if v.get("gst_percent") != "":
         item.item_tax_type = "%s%%" % v["gst_percent"]
     from app.services import steel_allowance as steel
@@ -335,7 +340,7 @@ def commit(db, client_id, entries, who):
                 skipped += 1
                 problems.append({"line": line, "code": v["item_code"], "name": v["item_name"], "reason": why})
                 continue
-            apply_update(item, v, who)
+            apply_update(db, item, v, who)
             updated += 1
             continue
         try:
