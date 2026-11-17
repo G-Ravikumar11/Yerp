@@ -11,7 +11,8 @@ let waiting = ''
 /** The place inside the app a notice's link means: '' for anything that is not a path of this app. */
 export function linkTarget(link: unknown): string {
   if (typeof link !== 'string' || !link.startsWith('/') || link.startsWith('//') || link.includes('\\')) return ''
-  return link.replace(/^\/next(?=[/?#]|$)/, '') || '/'
+  const path = link.replace(/^\/next(?=[/?#]|$)/, '')
+  return !path ? '/' : /^[?#]/.test(path) ? '/' + path : path
 }
 
 /** A notice was tapped: go there now, or as soon as the app can. */
