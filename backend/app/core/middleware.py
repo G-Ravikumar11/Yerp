@@ -131,7 +131,10 @@ app.add_middleware(
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    # The phone app is another origin, so a header it adds is asked about first (the preflight) and refused if it is not listed:
+    # the browser then reports an ordinary network failure, which the offline queue reads as "no signal". Idempotency-Key is sent
+    # with every change that may be kept for later (stores/offline.ts), X-Base-Version with an edit sent from the queue.
+    allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Base-Version"],
     # The installed phone app talks to the server from another origin; these are read by lib/freshness.ts.
     expose_headers=["X-App-Build", "X-Client-Reset"],
 )
