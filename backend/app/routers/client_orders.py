@@ -618,6 +618,13 @@ def raise_po_from_bom(wo_id: int, body: RaisePoIn, request: Request,
             409, "Nothing on this order still needs buying. The budget is "
                  "covered by what is in the store and what is already on order.")
 
+    # The supplier's rate contract in force sets the price of the items it covers; the rest go at the budget's rate.
+    from app.services.rate_contracts import active_rates
+    agreed = active_rates(db, client.id, body.supplier_name.strip())
+    for r in rows:
+        if agreed.get(r["item_code"]):
+            r["rate"] = agreed[r["item_code"]]
+            r["amount"] = money(r["to_buy"] * r["rate"])
     amount = money(sum(r["amount"] for r in rows))
     order = models.DBPurchaseOrder(
         client_id=client.id, job_id=wo.job_id,
