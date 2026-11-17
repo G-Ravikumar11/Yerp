@@ -38,7 +38,7 @@ function Form({ onClose }: { onClose: () => void }) {
     const live = preview.rows.filter((r) => !left.includes(r.employee_id))
     const type = (id: number, key: keyof RunOverride, v: string) => setEdits((e) => ({ ...e, [id]: { ...e[id], [key]: v === '' ? undefined : Number(v) } }))
     const cell = (r: PreviewRow, key: keyof RunOverride, max?: number) => (
-      <Input aria-label={`${key} for ${r.name}`} type="number" min="0" max={max} className="h-8 w-24 text-right" value={edits[r.employee_id]?.[key] ?? r[key]} onChange={(e) => type(r.employee_id, key, e.target.value)} />
+      <Input aria-label={`${key} for ${r.name}`} type="number" min="0" max={max} className="ml-auto h-8 w-20 text-right" value={edits[r.employee_id]?.[key] ?? r[key]} onChange={(e) => type(r.employee_id, key, e.target.value)} />
     )
     // The advance column is shown only when somebody in the run holds one.
     const anyClaims = preview.rows.some((r) => r.reimbursement > 0)
@@ -46,22 +46,22 @@ function Form({ onClose }: { onClose: () => void }) {
     return (
       <div>
         <div className="max-h-[55vh] overflow-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-card text-left text-[12px] text-muted-foreground"><tr>
-              <th className="py-1.5">Person</th><th>Paid days</th><th className="text-right">Basic</th><th>Bonus</th><th>OT hrs</th><th>Tax</th>{anyClaims && <th className="text-right" title="Approved expense claims paid with this salary: added to the net, not taxed">Claims</th>}{anyAdvance && <><th className="text-right" title="The salary advance they hold">Advance held</th><th title="Taken back from this month's pay; an adjustment receipt is written when the payslip is released">Recover</th></>}<th className="text-right">Gross</th><th className="text-right">Net</th><th />
+          <table className="w-full whitespace-nowrap text-sm tabular-nums [&_td]:px-3 [&_td]:py-1.5 [&_th]:px-3 [&_th]:py-2 [&_th]:font-medium">
+            <thead className="sticky top-0 z-10 bg-card text-left text-[12px] text-muted-foreground"><tr className="border-b border-border">
+              <th>Person</th><th className="text-right">Paid days</th><th className="text-right">Basic</th><th className="text-right">Bonus</th><th className="text-right">OT hrs</th><th className="text-right">Tax</th>{anyClaims && <th className="text-right" title="Approved expense claims paid with this salary: added to the net, not taxed">Claims</th>}{anyAdvance && <><th className="text-right" title="The salary advance they hold">Advance held</th><th className="text-right" title="Taken back from this month's pay; an adjustment receipt is written when the payslip is released">Recover</th></>}<th className="text-right">Gross</th><th className="text-right">Net</th><th />
             </tr></thead>
             <tbody>{preview.rows.map((r) => {
               const out = left.includes(r.employee_id)
               return (
-                <tr key={r.employee_id} className={out ? 'opacity-40' : ''}>
-                  <td className="py-1">{r.name}</td>
-                  <td>{r.paid_days ?? '-'}{r.lop_days ? ` (${r.lop_days} LOP)` : ''}</td>
+                <tr key={r.employee_id} className={'border-b border-border/60 last:border-0 ' + (out ? 'opacity-40' : '')}>
+                  <td className="font-medium">{r.name}</td>
+                  <td className="text-right">{r.paid_days ?? '-'}{r.lop_days ? ` (${r.lop_days} LOP)` : ''}</td>
                   <td className="text-right">{formatINR(r.basic_salary)}</td>
                   <td>{cell(r, 'bonus')}</td><td>{cell(r, 'overtime_hours')}</td><td>{cell(r, 'tax_amount')}</td>
                   {anyClaims && <td className="text-right">{r.reimbursement > 0 ? formatINR(r.reimbursement) : '-'}</td>}
-                  {anyAdvance && <><td className="text-right">{r.advance_balance > 0 ? formatINR(r.advance_balance) : '-'}</td><td>{r.advance_balance > 0 || r.advance_recovery > 0 ? cell(r, 'advance_recovery', r.advance_balance) : '-'}</td></>}
+                  {anyAdvance && <><td className="text-right">{r.advance_balance > 0 ? formatINR(r.advance_balance) : '-'}</td><td className="text-right">{r.advance_balance > 0 || r.advance_recovery > 0 ? cell(r, 'advance_recovery', r.advance_balance) : '-'}</td></>}
                   <td className="text-right">{formatINR(r.gross_pay)}</td><td className="text-right font-semibold">{formatINR(r.net_pay)}</td>
-                  <td><Button size="sm" variant="ghost" onClick={() => setLeft((l) => out ? l.filter((x) => x !== r.employee_id) : [...l, r.employee_id])}>{out ? 'Add back' : 'Leave out'}</Button></td>
+                  <td className="text-right"><Button size="sm" variant="ghost" onClick={() => setLeft((l) => out ? l.filter((x) => x !== r.employee_id) : [...l, r.employee_id])}>{out ? 'Add back' : 'Leave out'}</Button></td>
                 </tr>
               )
             })}</tbody>
