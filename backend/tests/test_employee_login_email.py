@@ -131,3 +131,16 @@ def test_a_message_has_a_date_with_its_timezone_and_no_empty_html_part():
 def test_a_message_to_one_person_does_not_dress_as_a_mailing_list():
     raw = notifications.prepare_email_message("a@b.c", "Hi", "plain words", "<p>hi</p>", "Co <a@b.c>")
     assert "List-Unsubscribe" not in raw
+
+
+def test_hr_can_send_the_new_starter_their_details_from_the_hr_department(tenant, mail):
+    e = make_employee(tenant, password=PASSWORD, org_email=org(), first_name="Ravi", last_name="K")
+    mail.clear()
+    assert tenant.post(f"/api/employees/{e['id']}/credentials-email", json={"password": "Wrong1Pass"}).status_code == 400
+    assert mail == []                                     # only the password actually set can be mailed
+    r = tenant.post(f"/api/employees/{e['id']}/credentials-email", json={"password": PASSWORD})
+    assert r.status_code == 200 and r.json()["ok"]
+    assert [m["to"] for m in mail] == [e["email"]]        # their own email
+    body = mail[0]["body"]
+    assert "Employee ID: %s" % e["employee_id"] in body and "Password: %s" % PASSWORD in body
+    assert "HR Department" in body

@@ -14,6 +14,7 @@ from app.db import get_db, get_read_db
 from app.constants.common import ALLOW_SELF_REGISTRATION, GMAIL_SCOPES, GOOGLE_SIGNIN_SCOPES
 from app.core.audit import log_audit, log_login
 from app.core import app_limits
+from app.core.permissions import is_no_access
 from app.core.auth import current_role, end_every_session, get_client_user, set_session_lifetime
 from app.core.config import LOGIN_PER_MINUTE, logger
 from app.core.notifications import default_from_email, send_email_background
@@ -383,7 +384,7 @@ def _sign_in_with_identity(request: Request, db: Session, info: dict, provider: 
     # Yahoo signs staff in by the address the organisation issued them, never by their personal one.
     emp_col = models.DBEmployee.org_email if provider == "yahoo" else models.DBEmployee.email
     emp = db.query(models.DBEmployee).filter(sqlfunc.lower(emp_col) == email).first()
-    if emp and emp.status != "terminated":
+    if emp and emp.status != "terminated" and not is_no_access(emp):
         request.session.pop("client_id", None)
         request.session.pop("member_id", None)
         request.session.pop("portal_user_id", None)
