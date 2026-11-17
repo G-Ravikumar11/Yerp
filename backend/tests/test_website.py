@@ -91,8 +91,12 @@ def test_the_front_page_is_described_as_the_civil_company():
 def test_the_link_preview_picture_is_a_full_address(client, monkeypatch, tmp_path):
     """WhatsApp shows the picture only when og:image is a full https address, as the visitor reached the site."""
     from app.core import static
-    (tmp_path / "index.html").write_text("<html><head><title>Y ERP</title></head><body></body></html>", encoding="utf8")
+    (tmp_path / "index.html").write_text('<html><head><title>Y ERP</title><meta name="description" content="Y ERP - billing">'
+                                         '</head><body><noscript><p>Y ERP needs JavaScript to run.</p></noscript></body></html>',
+                                         encoding="utf8")
     monkeypatch.setattr(static, "FRONTEND_DIST", str(tmp_path))
     html = client.get("/", headers={"x-forwarded-proto": "https"}).text
     assert "<title>Yalavarti Infra Projects | Homes, Townships &amp; Civil Infrastructure</title>" in html
     assert '<meta property="og:image" content="https://testserver/next/site/img/cat3.jpg">' in html
+    # No ERP wording anywhere a visitor or a search engine can see it.
+    assert "ERP" not in html and "info@yalavartiinfra.com" in html

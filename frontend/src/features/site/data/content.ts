@@ -21,7 +21,7 @@ export const COMPANY = {
   // TODO(Uday): staff strength (engineers, supervisors and crew on the rolls). Shown once set.
   staff: null as number | null,
   // The group company that does building services (MEP). Its own site.
-  group: { name: 'Yalavarti Projects', url: 'https://www.yalavarti.com/', does: 'Building services (MEP)' },
+  group: { name: 'Yalavarti Projects', url: 'https://www.yalavarti.com/', does: 'building services (MEP)' },
 }
 
 export const SITE = {
@@ -42,7 +42,7 @@ export const SITE = {
 
   about: [
     'Yalavarti Infra Projects builds houses, apartments and townships, and the civil infrastructure around them: roads, drainage, water supply and sewerage.',
-    'We take a project from the land and its approvals through design and construction to handover, with one team answerable for the whole job.',
+    'We take a project from the land and its approvals through design and construction to handover.',
     // TODO(Uday): a short paragraph of our own story - when the company began, who leads it (directors), what it has built.
   ],
 
@@ -65,7 +65,7 @@ export const SITE = {
       list: ['Site clearing, grading and levelling', 'Internal roads, footpaths and kerbs', 'Storm water drains and culverts', 'Compound walls, gates and security rooms', 'Clubhouses, parks and open spaces'],
     },
     {
-      id: 'road', title: 'Roads & drainage', tag: 'Built to last the monsoon', img: 'site/img/gallery/g63.jpg',
+      id: 'road', title: 'Roads & drainage', tag: 'Roads, drains, culverts', img: 'site/img/gallery/g63.jpg',
       intro: 'Roads and the drains beside them, for layouts, campuses and public works.',
       list: ['CC and bituminous roads', 'Granular sub-base and WBM', 'Storm water and roadside drains', 'Culverts and cross drainage', 'Kerbs, footpaths and medians'],
     },
@@ -80,20 +80,21 @@ export const SITE = {
       list: ['Office and retail buildings', 'Schools and institutional buildings', 'Warehouses and industrial sheds', 'Foundations for pre-engineered buildings', 'Hard standings and yards'],
     },
     {
-      id: 'civil', title: 'Civil structures', tag: 'Concrete that carries load', img: 'site/img/cat2.jpg',
+      id: 'civil', title: 'Civil structures', tag: 'Walls, tanks, foundations', img: 'site/img/cat2.jpg',
       intro: 'The structures a site needs around its buildings.',
       list: ['Retaining walls', 'Water tanks and reservoirs', 'Compound walls', 'Foundations for plant and equipment', 'Culverts'],
     },
   ] as Capability[],
 
-  // How a job runs, in the order it happens.
+  // How a job runs, in the order it happens. Describes the stages, not promises about them.
+  // TODO(Uday): confirm this is how we run a job, and say if a stage is one the client usually does himself.
   steps: [
     { t: 'Land & approvals', d: 'We check the plot, its title papers and the rules that apply, and take the plans through building permission.' },
     { t: 'Design', d: 'Architectural and structural drawings, the specification and a costed bill of quantities you can check line by line.' },
     { t: 'Foundation', d: 'Soil checked, the site set out, excavation and footings cast to the drawings.' },
-    { t: 'Structure', d: 'Columns, beams and slabs, floor by floor, with each pour inspected before it is cast.' },
+    { t: 'Structure', d: 'Columns, beams and slabs, floor by floor, to the structural drawings.' },
     { t: 'Finishing', d: 'Masonry, plastering, flooring, doors, windows and paint, to the specification you agreed.' },
-    { t: 'Handover', d: 'A walk-through with you, the snags put right, and the keys with the drawings of what was built.' },
+    { t: 'Handover', d: 'A walk-through with you, any snags put right, and the keys.' },
   ],
 
   // TODO(Uday): our own milestones, in this shape: { y: '2012', t: 'First township', d: 'One line.', img: 'site/img/...' }.

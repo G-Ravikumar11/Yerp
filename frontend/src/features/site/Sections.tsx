@@ -132,7 +132,7 @@ export function About() {
         <div className="group" id="company-group">
           <p className="eyebrow">The Yalavarti Group</p>
           <p className="group__text">
-            {COMPANY.group.does} on our projects and others are done by our group company,{' '}
+            For {COMPANY.group.does}, see our group company,{' '}
             <a href={COMPANY.group.url} target="_blank" rel="noopener noreferrer">{COMPANY.group.name} ↗</a>
           </p>
         </div>
@@ -187,7 +187,7 @@ export function HowWeBuild() {
       <div className="wrap">
         <div className="sechead sechead--split">
           <div><p className="eyebrow">How We Build</p><h2 className="h2">From the land to the keys</h2></div>
-          <p className="lede">Six stages, one team. You know who is answerable at every step.</p>
+          <p className="lede">The six stages of a job, in the order they happen.</p>
         </div>
         <ol className="steps">
           {SITE.steps.map((s, i) => (

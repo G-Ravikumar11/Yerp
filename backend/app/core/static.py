@@ -70,6 +70,12 @@ HOME_HEAD = (
     '<meta name="theme-color" content="#000000">' % HOME_DESCRIPTION.replace("'", "&#39;"))
 
 
+HOME_NOSCRIPT = ('<noscript><p style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center">'
+                 'Yalavarti Infra Projects - homes, townships and civil infrastructure. This page needs JavaScript; '
+                 'please turn it on, or write to us at <a href="mailto:info@yalavartiinfra.com">info@yalavartiinfra.com</a>.'
+                 '</p></noscript>')
+
+
 def _public_base(request: Request):
     """https://yalavartiinfra.com as the visitor typed it. Behind Railway's proxy the app itself is reached over http, so
     the scheme the visitor used comes from the proxy's header."""
@@ -90,6 +96,8 @@ async def home(request: Request):
         html = f.read()
     html = re.sub(r"<title>.*?</title>", "<title>%s</title>" % HOME_TITLE, html, count=1, flags=re.S)
     html = re.sub(r'<meta name="(description|theme-color)"[^>]*>', "", html)
+    # The ERP's own words stay on the ERP: a visitor without JavaScript, and a search engine, see the company's.
+    html = re.sub(r"<noscript>.*?</noscript>", HOME_NOSCRIPT, html, count=1, flags=re.S)
     html = html.replace("</head>", HOME_HEAD % _public_base(request) + "</head>", 1)
     return HTMLResponse(html)
 

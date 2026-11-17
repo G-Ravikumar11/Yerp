@@ -25,8 +25,9 @@ describe('Company front page', () => {
     expect(await screen.findByText('Projects delivered')).toBeTruthy()
     const text = document.body.textContent ?? ''
     for (const word of [/electrical/i, /33\s*kV/i, /\bpanels?\b/i, /YERP/, /\bERP\b/]) expect(text).not.toMatch(word)
-    // Nor in the alt text of any picture.
-    for (const img of document.querySelectorAll('img')) expect(img.alt).not.toMatch(/electrical|33\s*kV|panel|YERP/i)
+    // Nor anywhere hidden in the markup: picture descriptions, labels for screen readers, tooltips.
+    const html = document.body.innerHTML
+    for (const word of [/electrical/i, /33\s*kV/i, /\bpanels?\b/i, /ERP/]) expect(html).not.toMatch(word)
     expect(document.title).toMatch(/^Yalavarti Infra Projects/)
   })
 
