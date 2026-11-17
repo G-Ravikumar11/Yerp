@@ -133,6 +133,10 @@ class DBNcr(Base):
     verified_by = Column(String, default="")
     verified_on = Column(String, default="")
     reinspection_ref = Column(String, default="")               # the inspection that re-checked it
+    # Follow-up (services/follow_up.py): the member of staff who sees it through, reminded daily as it falls due.
+    owner_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
+    reminded_on = Column(String, default="")                     # the day the owner was last reminded
+    overdue_told = Column(Integer, default=0)                    # the bell told once that it is overdue
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 

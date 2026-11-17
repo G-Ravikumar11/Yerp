@@ -394,6 +394,7 @@ def ncr_dict(n, names=None):
             "verified_by": n.verified_by or "", "verified_on": n.verified_on or "",
             "reinspection_ref": n.reinspection_ref or "",
             "needs_root_cause": (n.severity or "") in NCR_ROOT_CAUSE_FROM and not (n.root_cause or "").strip(),
+            "owner_id": getattr(n, "owner_id", None),
             "overdue": status not in ("CLOSED", "REJECTED") and bool(n.target_date) and n.target_date < today}
 
 

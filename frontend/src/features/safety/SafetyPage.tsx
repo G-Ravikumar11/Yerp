@@ -10,6 +10,7 @@ import { Badge, Button, Stat, StatGrid, Tabs } from '@/components/ui'
 import { closeIncident, closePermit, recordTalk, safetyKeys, useManHours, useSafety, type Incident, type Permit, type Talk } from '@/api/safety'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
+import { FollowUp } from '@/components/data/FollowUp'
 import { formatDate } from '@/lib/format'
 import { IncidentModal } from './IncidentModal'
 import { PermitModal } from './PermitModal'
@@ -57,7 +58,8 @@ export default function SafetyPage() {
     { id: 'kind', header: 'Kind', cell: (i) => <span className={i.serious ? 'font-semibold text-danger' : ''}>{i.kind}</span> },
     { id: 'what', header: 'What happened', hideBelow: 'md', cell: (i) => <div className="max-w-80"><span className="line-clamp-2">{i.description}</span>{i.location && <div className="text-xs text-muted-foreground">{i.location}</div>}{i.root_cause && <div className="text-xs text-success">Cause: {i.root_cause} - Fix: {i.corrective_action}</div>}</div> },
     { id: 'hurt', header: 'Hurt', hideBelow: 'lg', cell: (i) => (i.injured_name ? <div>{i.injured_name}<div className="text-xs text-muted-foreground">{i.injury}{i.lost_days ? `, ${i.lost_days} days lost` : ''}</div></div> : '-') },
-    { id: 'status', header: 'Status', cell: (i) => <Badge tone={i.status === 'OPEN' ? (i.serious ? 'danger' : 'warning') : 'success'} dot>{i.status === 'OPEN' ? 'Open' : 'Closed'}</Badge> },
+    { id: 'follow', header: 'Owner', hideBelow: 'md', cell: (i) => <FollowUp kind="incident" id={i.id} number={i.number} ownerId={i.owner_id} due={i.due_date} open={i.status === 'OPEN'} canEdit={signoff} invalidate={safetyKeys.all} /> },
+    { id: 'status', header: 'Status', cell: (i) => <Badge tone={i.status === 'OPEN' ? (i.serious || i.overdue ? 'danger' : 'warning') : 'success'} dot>{i.status === 'OPEN' ? (i.overdue ? 'Open - late' : 'Open') : 'Closed'}</Badge> },
     {
       id: 'act',
       header: '',
@@ -85,6 +87,7 @@ export default function SafetyPage() {
     { id: 'where', header: 'Where', hideBelow: 'md', cell: (p) => p.location },
     { id: 'runs', header: 'Runs', hideBelow: 'lg', cell: (p) => `${p.valid_from.slice(5)} to ${p.valid_to.slice(5)}` },
     { id: 'who', header: 'Worker', hideBelow: 'md', cell: (p) => p.receiver },
+    { id: 'follow', header: 'Owner', hideBelow: 'lg', cell: (p) => <FollowUp kind="permit" id={p.id} number={p.number} ownerId={p.owner_id} open={p.status === 'ACTIVE'} canEdit={signoff} invalidate={safetyKeys.all} /> },
     { id: 'status', header: 'Status', cell: (p) => <Badge tone={p.expired ? 'danger' : p.status === 'ACTIVE' ? 'success' : 'neutral'} dot>{p.expired ? 'Run out' : p.status === 'ACTIVE' ? 'Live' : 'Closed'}</Badge> },
     {
       id: 'act',

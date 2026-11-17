@@ -35,6 +35,8 @@ export interface NcrBatch { id: number; batch_no: string; item_name: string; uom
 export interface Ncr {
   id: number; job_id: number; project: string; number: string; severity: string; raised_on: string; raised_by: string; location: string; description: string
   responsible: string; target_date: string; corrective_action: string; root_cause: string; status: string; status_label: string; overdue: boolean
+  /** The member of staff who sees it through, reminded daily as it falls due. */
+  owner_id?: number | null
   source_type: string; source_id: number | null; source_ref: string; source_number?: string
   assigned_by: string; assigned_on: string; corrective_done: string; corrective_on: string
   verification_result: string; verification_note: string; verified_by: string; verified_on: string; reinspection_ref: string
