@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button, Field, Select, Skeleton } from '@/components/ui'
-import { useAllSites, useDepartments, type Department } from '@/api/people'
+import { useAllSites, useDepartments, useEmployees, type Department } from '@/api/people'
 import { useSession } from '@/lib/session'
 import { DepartmentModal } from './DepartmentModal'
 import { SiteDepartmentsModal } from './SiteDepartmentsModal'
@@ -15,8 +15,11 @@ export default function DepartmentsPage() {
   const sites = useAllSites().data ?? []
   const [siteId, setSiteId] = useState('')
   const site = sites.find((j) => String(j.id) === siteId) ?? null
-  // Nothing is listed until a site is chosen, and then only what was added to that site.
-  const onSite = site ? all.filter((d) => d.site_ids.includes(site.id)) : []
+  const staff = useEmployees('').data ?? []
+  // Nothing is listed until a site is chosen, and then what was added to that site plus the department of
+  // everybody who works there, so a department given to a new starter shows on their site straight away.
+  const staffedHere = new Set(site ? staff.filter((e) => e.department_id && e.site_ids?.includes(site.id)).map((e) => e.department_id) : [])
+  const onSite = site ? all.filter((d) => d.site_ids.includes(site.id) || staffedHere.has(d.id)) : []
   // The department whose chart is open. Choosing another site closes it.
   const [pickedId, setPickedId] = useState<number | null>(null)
   const picked = onSite.find((d) => d.id === pickedId) ?? null

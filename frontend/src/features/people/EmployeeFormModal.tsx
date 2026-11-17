@@ -11,7 +11,7 @@ import { AccessPicker } from './AccessPicker'
 import { DocumentPick } from './EmployeeDocuments'
 import { DEPARTMENT_COLORS } from './icons'
 import { PayrollFields } from './PayrollFields'
-import { PASSWORD_RULE, PasswordField, passwordProblem } from '@/features/auth/PasswordField'
+import { PasswordField, passwordProblem } from '@/features/auth/PasswordField'
 
 export const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say']
 
@@ -123,6 +123,7 @@ function Form({ onClose }: { onClose: () => void }) {
   const confirmError = pass && confirm !== pass ? 'Those two do not match.' : ''
   // The one thing every new starter must have: somebody to call in an emergency, by name and number.
   const emergencyOk = f.emergency_contact.trim() !== '' && f.emergency_phone.replace(/\D/g, '').length >= 7
+  const digitsBad = (v: string | null | undefined, n: number) => !!v && !(/^\d+$/.test(v.replace(/\s/g, '')) && v.replace(/\s/g, '').length === n)
   const ready = f.first_name.trim() && f.last_name.trim() && !!f.gender && emergencyOk && (!pass || (f.email.trim() && !passError && !confirmError))
 
   if (given)
@@ -161,35 +162,35 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="Gender *" htmlFor="ef-gender"><Select id="ef-gender" value={f.gender ?? ''} placeholder="Choose" onChange={set('gender')} options={GENDERS.map((g) => ({ value: g, label: g }))} /></Field>
         <Field label="Date of birth" htmlFor="ef-dob" hint="Optional. Colleagues are told on the day."><Input id="ef-dob" type="date" max={new Date().toISOString().slice(0, 10)} value={f.date_of_birth ?? ''} onChange={set('date_of_birth')} /></Field>
         <Field label="Phone" htmlFor="ef-phone"><Input id="ef-phone" type="tel" value={f.phone} onChange={set('phone')} /></Field>
-        <Field label="Personal email" htmlFor="ef-email"><Input id="ef-email" type="email" autoComplete="off" value={f.email} onChange={(e) => { setTyped(true); set('email')(e) }} /></Field>
+        <Field label={pass ? 'Personal email *' : 'Personal email'} htmlFor="ef-email" error={f.email.trim() && !/^\S+@\S+\.\S+$/.test(f.email.trim()) ? 'Enter a valid email.' : undefined}><Input id="ef-email" type="email" autoComplete="off" value={f.email} onChange={(e) => { setTyped(true); set('email')(e) }} /></Field>
         <Field label="Address" htmlFor="ef-address" className="sm:col-span-2 lg:col-span-3"><Textarea id="ef-address" rows={2} value={f.address ?? ''} onChange={(e) => setF((s) => ({ ...s, address: e.target.value }))} /></Field>
-        {hrOnly && <Field label="Aadhaar number" htmlFor="ef-aadhaar" hint="Optional. 12 digits."><Input id="ef-aadhaar" inputMode="numeric" value={f.aadhaar_no ?? ''} onChange={set('aadhaar_no')} onFocus={reveal('aadhaar')} onClick={reveal('aadhaar')} autoComplete="off" /><DocumentPick label="Aadhaar card" file={files.aadhaar ?? null} shown={!!shown.aadhaar} onFile={pickFile('aadhaar')} /></Field>}
-        {hrOnly && <Field label="PAN number" htmlFor="ef-pan" hint="Optional. Like ABCDE1234F."><Input id="ef-pan" value={f.pan_no ?? ''} onChange={(e) => setF((s) => ({ ...s, pan_no: e.target.value.toUpperCase() }))} onFocus={reveal('pan')} onClick={reveal('pan')} autoComplete="off" /><DocumentPick label="PAN card" file={files.pan ?? null} shown={!!shown.pan} onFile={pickFile('pan')} /></Field>}
-        <Field label="Emergency contact name *" htmlFor="ef-em" hint="Required: who to call in an emergency."><Input id="ef-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
-        <Field label="Emergency contact phone *" htmlFor="ef-emp" error={f.emergency_phone && !emergencyOk && f.emergency_contact ? 'Enter a phone number.' : undefined}><Input id="ef-emp" type="tel" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
+        {hrOnly && <Field label="Aadhaar number" htmlFor="ef-aadhaar" hint="Optional." error={digitsBad(f.aadhaar_no, 12) ? 'Aadhaar is 12 digits.' : undefined}><Input id="ef-aadhaar" inputMode="numeric" value={f.aadhaar_no ?? ''} onChange={set('aadhaar_no')} onFocus={reveal('aadhaar')} onClick={reveal('aadhaar')} autoComplete="off" /><DocumentPick label="Aadhaar card" file={files.aadhaar ?? null} shown={!!shown.aadhaar} onFile={pickFile('aadhaar')} /></Field>}
+        {hrOnly && <Field label="PAN number" htmlFor="ef-pan" hint="Optional." error={f.pan_no && !/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(f.pan_no.trim()) ? 'PAN looks like ABCDE1234F.' : undefined}><Input id="ef-pan" value={f.pan_no ?? ''} onChange={(e) => setF((s) => ({ ...s, pan_no: e.target.value.toUpperCase() }))} onFocus={reveal('pan')} onClick={reveal('pan')} autoComplete="off" /><DocumentPick label="PAN card" file={files.pan ?? null} shown={!!shown.pan} onFile={pickFile('pan')} /></Field>}
+        <Field label="Emergency contact name *" htmlFor="ef-em"><Input id="ef-em" value={f.emergency_contact} onChange={set('emergency_contact')} /></Field>
+        <Field label="Emergency contact phone *" htmlFor="ef-emp" error={f.emergency_phone && f.emergency_phone.replace(/\D/g, '').length < 7 ? 'Enter a phone number of at least 7 digits.' : undefined}><Input id="ef-emp" type="tel" value={f.emergency_phone} onChange={set('emergency_phone')} /></Field>
         <div className="col-span-full mt-1 border-t border-border pt-4"><h4 className="text-sm font-semibold">Company details</h4></div>
-        <Field label="Employee ID" htmlFor="ef-eid" hint="Leave blank to number it."><Input id="ef-eid" value={f.employee_id ?? ''} onChange={set('employee_id')} /></Field>
+        <Field label="Employee ID" htmlFor="ef-eid"><Input id="ef-eid" value={f.employee_id ?? ''} onChange={set('employee_id')} /></Field>
         <Field label="Organization email (Yahoo sign-in)" htmlFor="ef-org-email"><Input id="ef-org-email" type="email" autoComplete="off" value={f.org_email ?? ''} onChange={set('org_email')} /></Field>
-        <PasswordField id="ef-pass" label="Password" value={f.password ?? ''} onChange={(v) => setF((s) => ({ ...s, password: v }))} error={pass && passError ? passError : undefined} hint={`They sign in with their email and this password - nothing is emailed. ${PASSWORD_RULE} Leave blank for site staff who are paid without signing in.`} />
-        {pass && <PasswordField id="ef-pass2" label="Confirm password" value={confirm} onChange={setConfirm} error={confirm ? confirmError || undefined : undefined} placeholder="Type it again" />}
+        <PasswordField id="ef-pass" label="Password" value={f.password ?? ''} onChange={(v) => setF((s) => ({ ...s, password: v }))} error={pass && passError ? passError : undefined} />
+        {pass && <PasswordField id="ef-pass2" label="Confirm password *" value={confirm} onChange={setConfirm} error={confirm ? confirmError || undefined : undefined} placeholder="Type it again" />}
         <Field label="Job title" htmlFor="ef-title"><Input id="ef-title" value={f.job_title} onChange={set('job_title')} /></Field>
         <Field label="Level" htmlFor="ef-level"><Select id="ef-level" value={f.level} onChange={(e) => pickLevel(e.target.value)} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
-        <Field label="Department" htmlFor="ef-dept" hint={canManage ? 'Type the department. A new name is added as a department.' : 'Only the Master or HR places people in departments.'}><Input id="ef-dept" disabled={!canManage} value={deptName} onChange={(e) => setDeptName(e.target.value)} placeholder="e.g. Civil" autoComplete="off" /></Field>
-        <Field label="Reports to" htmlFor="ef-mgr" hint={canManage ? 'Follows the role; change it if needed.' : 'Set automatically from the role. Only the Master or HR can change it.'}><Select id="ef-mgr" disabled={!canManage} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
+        <Field label="Department" htmlFor="ef-dept"><Input id="ef-dept" disabled={!canManage} value={deptName} onChange={(e) => setDeptName(e.target.value)} placeholder="e.g. Civil" autoComplete="off" /></Field>
+        <Field label="Reports to" htmlFor="ef-mgr"><Select id="ef-mgr" disabled={!canManage} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
         <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={(e) => pickRole(e.target.value)} placeholder="Not set" options={(cat.data?.roles ?? []).filter((r) => !f.level || r.level === f.level).map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ef-start"><Input id="ef-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
         <Field label="Type" htmlFor="ef-type"><Select id="ef-type" value={f.employment_type} onChange={set('employment_type')} options={[['full_time', 'Full time'], ['part_time', 'Part time'], ['contract', 'Contract'], ['intern', 'Intern']].map(([v, l]) => ({ value: v, label: l }))} /></Field>
         <Field label="Paid" htmlFor="ef-freq"><Select id="ef-freq" value={f.pay_frequency} onChange={set('pay_frequency')} options={[['monthly', 'Monthly'], ['biweekly', 'Every two weeks'], ['weekly', 'Weekly'], ['hourly', 'Hourly']].map(([v, l]) => ({ value: v, label: l }))} /></Field>
         <Field label="Salary" htmlFor="ef-salary"><NumField id="ef-salary" value={f.salary} onValue={num('salary')} /></Field>
         <Field label="Tax rate %" htmlFor="ef-tax"><NumField id="ef-tax" value={f.tax_rate} onValue={num('tax_rate')} /></Field>
-        {hrOnly && <Field label="UAN" htmlFor="ef-uan" hint="Optional. 12 digits."><Input id="ef-uan" inputMode="numeric" value={f.uan_no ?? ''} onChange={set('uan_no')} autoComplete="off" /></Field>}
-        {hrOnly && <Field label="ESI number" htmlFor="ef-esi" hint="Optional. 10 digits."><Input id="ef-esi" inputMode="numeric" value={f.esi_no ?? ''} onChange={set('esi_no')} onFocus={reveal('esi')} onClick={reveal('esi')} autoComplete="off" /><DocumentPick label="ESI card" file={files.esi ?? null} shown={!!shown.esi} onFile={pickFile('esi')} /></Field>}
+        {hrOnly && <Field label="UAN" htmlFor="ef-uan" hint="Optional." error={digitsBad(f.uan_no, 12) ? 'UAN is 12 digits.' : undefined}><Input id="ef-uan" inputMode="numeric" value={f.uan_no ?? ''} onChange={set('uan_no')} autoComplete="off" /></Field>}
+        {hrOnly && <Field label="ESI number" htmlFor="ef-esi" hint="Optional." error={digitsBad(f.esi_no, 10) ? 'ESI number is 10 digits.' : undefined}><Input id="ef-esi" inputMode="numeric" value={f.esi_no ?? ''} onChange={set('esi_no')} onFocus={reveal('esi')} onClick={reveal('esi')} autoComplete="off" /><DocumentPick label="ESI card" file={files.esi ?? null} shown={!!shown.esi} onFile={pickFile('esi')} /></Field>}
         {hrOnly && <PayrollFields id="ef" value={f} onChange={(patch) => setF((s) => ({ ...s, ...patch }))} />}
       </div>
       </div>
       <div hidden={step !== 2}>
         <div className="grid gap-4">
-          <Field label="Sites" htmlFor="ef-sites" hint="None ticked means every site.">
+          <Field label="Sites" htmlFor="ef-sites">
             <div className="flex flex-col gap-y-1.5" id="ef-sites">
               {(jobs.data ?? []).map((j) => <label key={j.id} className="flex items-center gap-1.5 text-[13px]"><input type="checkbox" className="size-4 accent-[var(--primary)]" checked={f.site_ids.includes(j.id)} onChange={(e) => setF((s) => ({ ...s, site_ids: e.target.checked ? [...s.site_ids, j.id] : s.site_ids.filter((x) => x !== j.id) }))} />{j.number} {j.name}</label>)}
             </div>
