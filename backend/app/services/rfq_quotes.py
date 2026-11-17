@@ -125,6 +125,15 @@ def statement_for_screen(db, client_id, rfq, base=""):
     for s in st["suppliers"]:
         s["document"] = docs.get(s["quote_id"])
     invites = invites_of(db, rfq.id)
+    # MSME (Udyam): what the supplier master says; failing that, what the supplier said on his reply to this enquiry.
+    from app.services.payouts import msme_badge, msme_parties
+    parties = msme_parties(db, client_id)
+    declared = {norm_name(i.supplier_name): i for i in invites if i.msme_type and i.msme_type != "none"}
+    for s in st["suppliers"]:
+        badge = msme_badge(parties, "supplier", s["supplier_name"])
+        said = declared.get(norm_name(s["supplier_name"]))
+        s["msme"] = (dict(badge, source="master") if badge else
+                     {"type": said.msme_type, "udyam": said.udyam_no or "", "source": "declared"} if said else None)
     inv_docs = documents_of(db, client_id, "rfq_invite", [i.id for i in invites if i.document_id])
     st["invites"] = [dict(invite_dict(i, base), document=inv_docs.get(i.id)) for i in invites]
     return st

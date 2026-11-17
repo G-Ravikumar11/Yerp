@@ -1,4 +1,5 @@
 """The partner portal endpoints."""
+import re
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -33,7 +34,7 @@ from app.documents.forms import (
     sub_bill_form_spec,
     wo_form_spec,
 )
-from app.schemas.partner_portal import PortalLoginIn, PortalPasswordIn
+from app.schemas.partner_portal import PortalDetailsIn, PortalLoginIn, PortalPasswordIn
 from app.services.crm import norm_name
 from app.services.partner_portal import (
     _portal_bills,
@@ -117,6 +118,67 @@ def portal_me(request: Request, db: Session = Depends(get_read_db)):
     return {"name": u.name or "", "email": u.email, "party_type": u.party_type, "party": name,
             "company": client.company_name or "", "company_logo": client.logo_url or "",
             "company_phone": client.phone_number or "", "company_email": client.email or ""}
+
+
+def _details(party):
+    account = (party.bank_account or "").strip()
+    return {"msme_type": party.msme_type or "", "udyam_no": party.udyam_no or "",
+            "bank": {"on_file": bool(account), "bank_name": party.bank_name or "", "ifsc": party.bank_ifsc or "",
+                     # Never the whole number: a portal page left open must not hand it to whoever looks.
+                     "account_ending": account[-4:] if account else ""}}
+
+
+@router.get("/api/portal/details")
+def portal_details(request: Request, db: Session = Depends(get_read_db)):
+    """The partner's MSME status and bank account, as the company holds them."""
+    u, client, party, name = get_portal_user(request, db)
+    return _details(party)
+
+
+@router.put("/api/portal/details")
+def portal_save_details(body: PortalDetailsIn, request: Request, db: Session = Depends(get_db)):
+    """The partner gives their MSME (Udyam) status and, where the company has none on file, their bank account.
+
+    Bank details already on file are never changed from here: a stolen portal password must not be able to send the
+    next payment to somebody else's account. A change goes to the office in writing, with a cancelled cheque."""
+    from app.services.payouts import clean_bank, clean_msme
+    u, client, party, name = get_portal_user(request, db)
+    said = []
+    if body.msme_type is not None:
+        kind = (body.msme_type or "").strip().lower()
+        if kind not in ("none", "micro", "small", "medium"):
+            raise HTTPException(400, "Say whether you are registered under MSME (Udyam): no, micro, small or medium.")
+        if kind == "none":
+            kind, udyam = "", ""
+        else:
+            kind, udyam = clean_msme(kind, body.udyam_no)
+            if not udyam:
+                raise HTTPException(400, "Give your Udyam registration number, as on your certificate (UDYAM-TS-02-0012345).")
+        if (kind, udyam) != (party.msme_type or "", party.udyam_no or ""):
+            party.msme_type, party.udyam_no = kind, udyam
+            said.append("MSME: %s" % ("%s enterprise, %s" % (kind, udyam) if kind else "not registered"))
+    if (body.bank_account or "").strip() or (body.bank_ifsc or "").strip():
+        account, ifsc = clean_bank(body.bank_account, body.bank_ifsc)
+        held = (party.bank_account or "").strip()
+        if held and (re.sub(r"\D", "", held) != account or (party.bank_ifsc or "").strip().upper() != ifsc):
+            raise HTTPException(409, "Your bank account ending %s is already on file, and it is not changed from the portal. "
+                                     "To change it, send %s a letter on your letterhead with a cancelled cheque of the new "
+                                     "account." % (held[-4:], client.company_name or "the office"))
+        if not held:
+            party.bank_account, party.bank_ifsc = account, ifsc
+            party.bank_name = (body.bank_name or "").strip()[:80]
+            said.append("bank account ending %s, IFSC %s" % (account[-4:], ifsc))
+    if not said:
+        return dict(_details(party), ok=True, message="Nothing has changed.")
+    log_audit(db, u.client_id, "portal_details", u.party_type, party.id, name, "; ".join(said), request,
+              user_type="partner", user_name=u.email)
+    db.commit()
+    notify(db, u.client_id, "portal_details", "%s gave their details on the partner portal" % name,
+           "%s. Check them against their certificate%s before paying." % (
+               "; ".join(said).capitalize(), " and a cancelled cheque" if any(s.startswith("bank") for s in said) else ""),
+           view="subcontractors/vendors" if u.party_type == "contractor" else "money/ledgers",
+           ref_type=u.party_type, ref_id=party.id)
+    return dict(_details(party), ok=True, message="Thank you. %s has your details." % (client.company_name or "The office"))
 
 
 @router.get("/api/portal/summary")

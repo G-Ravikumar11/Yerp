@@ -196,6 +196,8 @@ STORE_OUTWARD_COLUMNS = (
     ("rfqs", "quotes_due", "VARCHAR DEFAULT ''"), ("rfqs", "link_base", "VARCHAR DEFAULT ''"), ("rfqs", "l1_sent_at", "VARCHAR DEFAULT ''"),
     ("rfqs", "created_by_id", "INTEGER"), ("rfq_invites", "emailed_at", "VARCHAR DEFAULT ''"), ("rfq_invites", "reminded_on", "VARCHAR DEFAULT ''"),
     ("rfq_invites", "reminders", "INTEGER DEFAULT 0"),
+    # MSME status as the supplier gave it on the enquiry reply form.
+    ("rfq_invites", "msme_type", "VARCHAR DEFAULT ''"), ("rfq_invites", "udyam_no", "VARCHAR DEFAULT ''"),
 )
 
 SUBCONTRACT_CONTROL_COLUMNS = (

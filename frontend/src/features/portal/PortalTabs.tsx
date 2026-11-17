@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Field, Input, Stat, StatGrid } from '@/components/ui'
+import { Badge, Button, Field, Input, Select, Stat, StatGrid } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
-import { portalAcceptBill, portalSendInvoice, usePortal, type BillLineMatch, type PortalBill, type PortalOrder, type PortalOrderDetail, type PortalPayment, type PortalStatement, type PortalSummary } from '@/api/portal'
+import { portalAcceptBill, portalSaveDetails, portalSendInvoice, usePortal, type BillLineMatch, type PortalDetails, type PortalBill, type PortalOrder, type PortalOrderDetail, type PortalPayment, type PortalStatement, type PortalSummary } from '@/api/portal'
 
 const th = 'px-2 py-2 text-left text-xs font-semibold uppercase text-muted-foreground'
 const td = 'px-2 py-2 align-top'
@@ -21,11 +21,19 @@ function Table({ label, head, empty, children, right = [] }: { label: string; he
   )
 }
 
-export function Overview() {
+export function Overview({ onDetails }: { onDetails?: () => void }) {
   const q = usePortal<PortalSummary>('summary', '/api/portal/summary')
+  const details = usePortal<PortalDetails>('details', '/api/portal/details')
   const s = q.data
+  const noBank = details.data?.bank.on_file === false
   return (
     <div className="grid gap-5">
+      {noBank && (
+        <p role="status" className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+          We do not have your bank account yet, so we cannot pay you by bank transfer.{' '}
+          {onDetails && <button type="button" className="font-medium text-primary underline underline-offset-2" onClick={onDetails}>Add it under Your details</button>}
+        </p>
+      )}
       <h2 className="text-lg font-semibold">Where things stand</h2>
       <StatGrid>
         <Stat label={(s?.balance ?? 0) >= 0 ? 'Due to you' : 'Due from you'} value={formatINR(Math.abs(s?.balance ?? 0))} sub="on your statement today" loading={q.isPending} />
@@ -262,6 +270,88 @@ export function SendInvoice() {
       <Field label="Note" htmlFor="si-note"><Input id="si-note" placeholder="Delivery challan numbers, anything the office should know" value={f.note} onChange={set('note')} /></Field>
       <Button type="submit" loading={busy} disabled={!byLine || lineValue <= 0}>Send it</Button>
       {msg && <p role={msg.ok ? 'status' : 'alert'} className={msg.ok ? 'text-sm text-success' : 'text-sm text-danger'}>{msg.text}</p>}
+    </form>
+  )
+}
+
+const MSME_CHOICES = [
+  { value: 'none', label: 'Not registered' }, { value: 'micro', label: 'Micro enterprise' },
+  { value: 'small', label: 'Small enterprise' }, { value: 'medium', label: 'Medium enterprise' },
+]
+
+/** Their MSME (Udyam) status and the bank account payments go to. Bank details already on file are only shown, never
+ * changed here: a changed account goes to the office in writing, with a cancelled cheque. */
+export function Details() {
+  const qc = useQueryClient()
+  const q = usePortal<PortalDetails>('details', '/api/portal/details')
+  const d = q.data
+  const [msme, setMsme] = useState<string | null>(null)
+  const [udyam, setUdyam] = useState<string | null>(null)
+  const [bank, setBank] = useState({ bank_name: '', bank_account: '', again: '', bank_ifsc: '' })
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  if (!d) return null
+  // '' in the master is 'not said': the question stays open until they choose, so a skipped answer is never a 'no'.
+  const kind = msme ?? d.msme_type
+  const number = udyam ?? d.udyam_no
+  const addingBank = !d.bank.on_file && !!bank.bank_account.trim()
+  const setB = (k: keyof typeof bank) => (e: React.ChangeEvent<HTMLInputElement>) => setBank((b) => ({ ...b, [k]: e.target.value }))
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setMsg(null)
+    if (addingBank && bank.bank_account.replace(/\s/g, '') !== bank.again.replace(/\s/g, ''))
+      return setMsg({ ok: false, text: 'The two account numbers are not the same.' })
+    setBusy(true)
+    try {
+      const r = await portalSaveDetails({
+        ...(kind ? { msme_type: kind, udyam_no: kind === 'none' ? '' : number } : {}),
+        ...(addingBank ? { bank_name: bank.bank_name, bank_account: bank.bank_account, bank_ifsc: bank.bank_ifsc } : {}),
+      })
+      setMsg({ ok: true, text: r.message })
+      setMsme(null)
+      setUdyam(null)
+      setBank({ bank_name: '', bank_account: '', again: '', bank_ifsc: '' })
+      await qc.invalidateQueries({ queryKey: ['portal', 'details'] })
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof ApiError ? err.message : 'Not saved.' })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <form onSubmit={submit} className="grid max-w-xl gap-6">
+      <section className="grid gap-4">
+        <div><h2 className="text-lg font-semibold">MSME (Udyam) registration</h2><p className="text-sm text-muted-foreground">If you are a registered micro or small enterprise, your bills are paid within 45 days. Tell us as your Udyam certificate says.</p></div>
+        <Field label="Are you registered under MSME (Udyam)?" htmlFor="pd-msme">
+          <Select id="pd-msme" value={kind} onChange={(e) => setMsme(e.target.value)} options={[{ value: '', label: 'Choose' }, ...MSME_CHOICES]} />
+        </Field>
+        {kind && kind !== 'none' && (
+          <Field label="Udyam registration number" htmlFor="pd-udyam"><Input id="pd-udyam" required className="font-mono uppercase" placeholder="UDYAM-TS-02-0012345" value={number} onChange={(e) => setUdyam(e.target.value)} /></Field>
+        )}
+      </section>
+      <section className="grid gap-4">
+        <h2 className="text-lg font-semibold">Bank account for payments</h2>
+        {d.bank.on_file ? (
+          <div className="rounded-lg border border-border p-3 text-sm">
+            <p>{d.bank.bank_name || 'Account'} ending <strong className="font-mono">{d.bank.account_ending}</strong>{d.bank.ifsc && <> · IFSC <span className="font-mono">{d.bank.ifsc}</span></>}</p>
+            <p className="mt-1 text-xs text-muted-foreground">To change it, send the office a letter on your letterhead with a cancelled cheque of the new account. It is not changed here, so nobody who gets into this login can redirect your payments.</p>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">We have no bank account for you yet, so we cannot pay you by bank transfer. Add it here; the office checks it against a cancelled cheque.</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Bank name" htmlFor="pd-bank" className="sm:col-span-2"><Input id="pd-bank" value={bank.bank_name} onChange={setB('bank_name')} /></Field>
+              <Field label="Account number" htmlFor="pd-acc"><Input id="pd-acc" inputMode="numeric" autoComplete="off" className="font-mono" value={bank.bank_account} onChange={setB('bank_account')} /></Field>
+              <Field label="Account number again" htmlFor="pd-acc2"><Input id="pd-acc2" inputMode="numeric" autoComplete="off" className="font-mono" required={addingBank} value={bank.again} onChange={setB('again')} onPaste={(e) => e.preventDefault()} /></Field>
+              <Field label="IFSC" htmlFor="pd-ifsc"><Input id="pd-ifsc" className="font-mono uppercase" placeholder="HDFC0001234" required={addingBank} value={bank.bank_ifsc} onChange={setB('bank_ifsc')} /></Field>
+            </div>
+          </>
+        )}
+      </section>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit" loading={busy} disabled={!kind && !addingBank}>Save my details</Button>
+        {msg && <p role={msg.ok ? 'status' : 'alert'} className={msg.ok ? 'text-sm text-success' : 'text-sm text-danger'}>{msg.text}</p>}
+      </div>
     </form>
   )
 }

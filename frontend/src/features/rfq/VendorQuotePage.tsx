@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { CheckCircle2, FileUp, Loader2, ScanText, X } from 'lucide-react'
-import { Badge, Button, Field, Input, Textarea } from '@/components/ui'
+import { Badge, Button, Field, Input, Select, Textarea } from '@/components/ui'
 import { QUOTE_FILES, vendorQuotePage, vendorReadQuote, vendorSendQuote, type VendorQuotePage as Page } from '@/api/rfq'
 import { ApiError } from '@/lib/api'
 import { formatDate } from '@/lib/format'
@@ -18,6 +18,8 @@ export default function VendorQuotePage() {
   const [fatal, setFatal] = useState(token ? '' : 'This link is not complete. Ask the company to send it again.')
   const [rows, setRows] = useState<Row[]>([])
   const [terms, setTerms] = useState({ quote_ref: '', valid_until: '', delivery_days: '', freight: '', payment_terms: '', message: '' })
+  // Asked every time, so it is never left to somebody in the office to remember: micro and small are paid within 45 days.
+  const [msme, setMsme] = useState({ type: '', udyam_no: '' })
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [reading, setReading] = useState(false)
@@ -31,6 +33,7 @@ export default function VendorQuotePage() {
     vendorQuotePage(token)
       .then((p) => {
         setPage(p)
+        setMsme({ type: p.msme?.type ?? '', udyam_no: p.msme?.udyam_no ?? '' })
         setRows(p.lines.map((l) => ({ rate: l.rate ? String(l.rate) : '', tax: l.tax_percent != null ? String(l.tax_percent) : '18', remarks: l.remarks || '' })))
         if (p.answer) setTerms({ quote_ref: p.answer.quote_ref, valid_until: p.answer.valid_until, delivery_days: p.answer.delivery_days ? String(p.answer.delivery_days) : '',
           freight: p.answer.freight ? String(p.answer.freight) : '', payment_terms: p.answer.payment_terms, message: '' })
@@ -71,6 +74,7 @@ export default function VendorQuotePage() {
     try {
       const out = await vendorSendQuote(token, {
         ...terms, delivery_days: Number(terms.delivery_days) || 0, freight: Number(terms.freight) || 0,
+        msme_type: msme.type, udyam_no: msme.type === 'none' ? '' : msme.udyam_no,
         lines: page.lines.map((l, i) => ({ rfq_line_id: l.rfq_line_id, rate: Number(rows[i].rate) || 0, tax_percent: rows[i].tax === '' ? null : Number(rows[i].tax), remarks: rows[i].remarks })),
       }, file)
       setSent(out.message)
@@ -86,6 +90,7 @@ export default function VendorQuotePage() {
   if (!page) return <Shell><p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Opening the enquiry...</p></Shell>
 
   const priced = rows.filter((r) => Number(r.rate) > 0).length
+  const msmeAnswered = msme.type === 'none' || (!!msme.type && !!msme.udyam_no.trim())
   return (
     <Shell company={page.company}>
       <header className="mb-5">
@@ -151,11 +156,24 @@ export default function VendorQuotePage() {
               <Field label="Message to the company (optional)" htmlFor="vq-msg" className="sm:col-span-2"><Textarea id="vq-msg" rows={2} value={terms.message} onChange={setTerm('message')} /></Field>
             </div>
           </section>
+          <section className="mb-5">
+            <h2 className="mb-1 text-sm font-semibold">4. MSME (Udyam) registration</h2>
+            <p className="mb-2 text-xs text-muted-foreground">A registered micro or small enterprise is paid within 45 days of its bill. Answer as your Udyam certificate says.</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Are you registered under MSME?" htmlFor="vq-msme">
+                <Select id="vq-msme" value={msme.type} onChange={(e) => setMsme((m) => ({ ...m, type: e.target.value }))}
+                  options={[{ value: '', label: 'Choose' }, { value: 'none', label: 'No, not registered' }, { value: 'micro', label: 'Yes, micro enterprise' }, { value: 'small', label: 'Yes, small enterprise' }, { value: 'medium', label: 'Yes, medium enterprise' }]} />
+              </Field>
+              {msme.type && msme.type !== 'none' && (
+                <Field label="Udyam registration number" htmlFor="vq-udyam"><Input id="vq-udyam" className="font-mono uppercase" placeholder="UDYAM-TS-02-0012345" value={msme.udyam_no} onChange={(e) => setMsme((m) => ({ ...m, udyam_no: e.target.value }))} /></Field>
+              )}
+            </div>
+          </section>
           <div className="sticky bottom-0 -mx-4 border-t border-border bg-card/95 px-4 py-3 sm:static sm:mx-0 sm:border-0 sm:bg-transparent sm:px-0">
             {error && <p role="alert" className="mb-2 text-sm text-danger">{error}</p>}
             <div className="flex flex-wrap items-center gap-3">
-              <Button size="lg" loading={busy} disabled={reading || (priced === 0 && !file)} onClick={() => void send()}>{page.submitted_at ? 'Send my revised quote' : 'Send my quote'}</Button>
-              <span className="text-xs text-muted-foreground">{priced} of {page.lines.length} rates filled{priced === 0 && file ? ' · your file will be sent for them to read' : ''}</span>
+              <Button size="lg" loading={busy} disabled={reading || (priced === 0 && !file) || !msmeAnswered} onClick={() => void send()}>{page.submitted_at ? 'Send my revised quote' : 'Send my quote'}</Button>
+              <span className="text-xs text-muted-foreground">{priced} of {page.lines.length} rates filled{priced === 0 && file ? ' · your file will be sent for them to read' : ''}{!msmeAnswered && ' · answer the MSME question'}</span>
             </div>
           </div>
         </>

@@ -72,7 +72,10 @@ def list_purchase_orders(request: Request, job_id: int = 0, status: str = "",
         query = query.filter(models.DBPurchaseOrder.status == status)
     orders = query.order_by(models.DBPurchaseOrder.id.desc()).limit(300).all()
     pre = OrderPrefetch(db, orders)
-    return {"orders": [purchase_order_to_dict(db, o, pre=pre) for o in orders]}
+    from app.services.payouts import msme_badge, msme_parties
+    parties = msme_parties(db, client.id)
+    return {"orders": [dict(purchase_order_to_dict(db, o, pre=pre), msme=msme_badge(parties, "supplier", o.supplier_name))
+                       for o in orders]}
 
 
 @router.get("/api/purchase-orders/{order_id}")

@@ -13,7 +13,7 @@ For the buyer (signed in):
 For the supplier (the link's token is the only key):
     GET  /api/vendor-quote/{token}                       what is asked, and his answer so far
     POST /api/vendor-quote/{token}/read                  his quotation file read into rates (AI), nothing saved
-    POST /api/vendor-quote/{token}                       his answer: rates, his file, or both
+    POST /api/vendor-quote/{token}                       his answer: rates, his file, or both, and his MSME status
 
 A link shows nothing but this enquiry's items and quantities, and takes nothing but this supplier's answer. It stops
 taking answers once the enquiry is awarded or cancelled.
@@ -184,6 +184,36 @@ def _invite(db, token, request, action, limit):
     return inv, rfq, client
 
 
+def _master(db, inv):
+    """The supplier master row his link was sent to, by name, or None."""
+    want = norm_name(inv.supplier_name)
+    return next((s for s in db.query(models.DBSupplier).filter(models.DBSupplier.client_id == inv.client_id).all()
+                 if norm_name(s.name) == want), None) if want else None
+
+
+def _his_msme(db, inv, body, request):
+    """His MSME status from the reply form: none, or micro / small / medium with the Udyam number. Kept on the link;
+    copied to the supplier master only where the master says nothing yet, so a reply never overwrites the office."""
+    if "msme_type" not in body:
+        return
+    from app.services.payouts import clean_msme
+    kind = str(body.get("msme_type") or "").strip().lower()
+    if kind not in ("none", "micro", "small", "medium"):
+        raise HTTPException(400, "Say whether you are registered under MSME (Udyam): no, micro, small or medium.")
+    udyam = ""
+    if kind != "none":
+        kind, udyam = clean_msme(kind, body.get("udyam_no"))
+        if not udyam:
+            raise HTTPException(400, "Give your Udyam registration number, as on your certificate (UDYAM-TS-02-0012345).")
+    inv.msme_type, inv.udyam_no = kind, udyam
+    master = _master(db, inv)
+    if kind != "none" and master is not None and not master.msme_type:
+        master.msme_type, master.udyam_no = kind, udyam
+        log_audit(db, inv.client_id, "supplier_msme_declared", "supplier", master.id, master.name,
+                  "%s enterprise, %s - given on the reply to an enquiry" % (kind, udyam), request,
+                  user_type="supplier", user_name=inv.supplier_name)
+
+
 def _closed(rfq):
     if rfq.status != "OPEN":
         raise HTTPException(409, "This enquiry is closed (%s). Thank you - no more quotes are being taken." % rfq.status.lower())
@@ -219,7 +249,18 @@ def vendor_quote_page(token: str, request: Request, db: Session = Depends(get_db
             models.DBFile.attached_type == "rfq_quote", models.DBFile.attached_id == quote.id).first()),
         "can_read": ai_config.enabled() and ai_config.configured(),
         "accept": inputs.ACCEPT,
+        "msme": _msme_answer(db, inv),
     }
+
+
+def _msme_answer(db, inv):
+    """What the form starts from: his own answer from before, else what the company's master already says."""
+    if inv.msme_type:
+        return {"type": inv.msme_type, "udyam_no": inv.udyam_no or ""}
+    master = _master(db, inv)
+    if master is not None and master.msme_type:
+        return {"type": master.msme_type, "udyam_no": master.udyam_no or ""}
+    return {"type": "", "udyam_no": ""}
 
 
 @router.post("/api/vendor-quote/{token}/read")
@@ -262,6 +303,7 @@ def vendor_quote_send(token: str, request: Request, quote: str = Form("{}"), fil
         # the file must be one that can be read, so the buyer is never sent something he cannot open
         inputs.read_bytes(data, file.filename, file.content_type or "", "", "quotation")
     inv.message = (body.get("message") or "").strip()[:1000]
+    _his_msme(db, inv, body, request)
     what = []
     if has_rates:
         q, revised = save_quote(db, rfq, body, source="vendor")
@@ -276,7 +318,8 @@ def vendor_quote_send(token: str, request: Request, quote: str = Form("{}"), fil
     inv.submitted_at = _now()
     db.commit()
     notify(db, inv.client_id, "quote_received", "%s sent a %s for %s" % (inv.supplier_name, what[0], rfq.number),
-           "%s - %s%s" % (rfq.number, rfq.title or "", (". Message: " + inv.message) if inv.message else ""),
+           "%s - %s%s%s" % (rfq.number, rfq.title or "", (". MSME: %s enterprise, %s" % (inv.msme_type, inv.udyam_no))
+                            if inv.msme_type not in ("", "none") else "", (". Message: " + inv.message) if inv.message else ""),
            view="store/enquiries/%d" % rfq.id, ref_type="rfq", ref_id=rfq.id)
     return {"ok": True, "message": "Thank you. Your %s has reached %s. You can change it here until they decide." % (
         what[0], (client.company_name if client else "") or "the company")}

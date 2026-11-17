@@ -65,6 +65,23 @@ def clean_msme(kind, udyam):
     return kind, udyam
 
 
+def msme_badge(parties, party_type, name):
+    """{"type", "udyam"} for a party marked MSME (micro, small or medium) in the master, else None."""
+    hit = parties.get((party_type, norm(name)))
+    return {"type": hit[0], "udyam": hit[1]} if hit else None
+
+
+def clean_bank(account, ifsc):
+    """(account, ifsc) as the bank's file needs them, or a 400 saying what is wrong."""
+    account = re.sub(r"[\s-]", "", account or "")
+    ifsc = re.sub(r"\s", "", ifsc or "").upper()
+    if not re.match(r"^\d{9,18}$", account):
+        raise HTTPException(400, "A bank account number is 9 to 18 digits.")
+    if not IFSC_RE.match(ifsc):
+        raise HTTPException(400, "An IFSC is 11 characters, like HDFC0001234: four letters, a zero, then six letters or digits.")
+    return account, ifsc
+
+
 def msme_parties(db, client_id):
     """{(party_type, normalised name): (kind, udyam, payment days)} for every supplier and contractor marked MSME."""
     out = {}
