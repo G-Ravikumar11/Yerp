@@ -5,6 +5,7 @@ import { Button, Skeleton } from '@/components/ui'
 import { CompanyNotice } from '@/components/company/CompanyNotice'
 import { PageErrorBoundary } from '@/components/layout/PageErrorBoundary'
 import { SyncIndicator } from '@/components/layout/SyncIndicator'
+import { attachNavigator } from '@/lib/deepLink'
 import { markScreensGood, registerPush } from '@/lib/mobile'
 import { trailFor } from '@/lib/nav'
 import { appUrl } from '@/lib/paths'
@@ -52,6 +53,8 @@ export default function MobileShell() {
     const t = window.setTimeout(markScreensGood, 1500)
     return () => window.clearTimeout(t)
   }, [isLoading, isAnonymous, error])
+  // A tapped notification opens its screen from here, by moving inside the app (lib/deepLink.ts).
+  useEffect(() => attachNavigator((to) => go(to)), [go])
   useEffect(() => {
     window.scrollTo({ top: 0 })
     setAdding(false)

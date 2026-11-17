@@ -6,6 +6,7 @@ import { CapacitorUpdater } from '@capgo/capacitor-updater'
 import { StatusBar, Style } from '@capacitor/status-bar'
 import { SplashScreen } from '@capacitor/splash-screen'
 import { PushNotifications } from '@capacitor/push-notifications'
+import { linkTarget, openLink } from '@/lib/deepLink'
 import { api, get, post } from '@/lib/api'
 import { installDownloads } from '@/lib/download'
 import { queryClient } from '@/lib/query'
@@ -233,13 +234,11 @@ export async function registerPush() {
       const text = [notification.title, notification.body].filter(Boolean).join(': ')
       const link = notification.data?.link
       if (!text) return
-      if (typeof link === 'string' && link.startsWith('/')) toast.withAction(text, 'Open', () => window.location.assign(link.replace(/^\/next/, '') || '/'))
+      if (linkTarget(link)) toast.withAction(text, 'Open', () => openLink(link))
       else toast.info(text)
     })
-    await PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => {
-      const link = notification.data?.link
-      if (typeof link === 'string' && link.startsWith('/')) window.location.assign(link.replace(/^\/next/, '') || '/')
-    })
+    // Tapped: the screen the notice is about. A tap that started the app is kept until the shell is up (lib/deepLink.ts).
+    await PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => openLink(notification.data?.link))
     let status = await PushNotifications.checkPermissions()
     if (status.receive === 'prompt') status = await PushNotifications.requestPermissions()
     if (status.receive === 'granted') await PushNotifications.register()
