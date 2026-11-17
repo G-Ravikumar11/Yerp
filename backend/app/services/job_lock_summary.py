@@ -104,7 +104,7 @@ def tell_hr(db, client_id, s):
     title = "Site Lock this week: %d refused clock-in%s" % (s["refused"], "" if s["refused"] == 1 else "s")
     body = message(s)
     notify(db, client_id, "job_lock_weekly", title, body, view="attendance", severity="action" if s["repeat_people"] else "info")
-    tell_approvers(db, client_id, title, body, rights=("people.manage",), link="/next/attendance", owner=False)
+    tell_approvers(db, client_id, title, body, rights=("people.manage",), link="/next/people/attendance", owner=False)
     db.commit()
 
 

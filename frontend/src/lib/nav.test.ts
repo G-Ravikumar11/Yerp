@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { matchRoutes } from 'react-router-dom'
+import { TILES } from '@/app-mobile/AddSheet'
+import { TABS, TAB_TITLES } from '@/app-mobile/tabs'
+import { SCREENS } from '@/routes'
+import { linkTarget } from './deepLink'
 import { trailFor, visibleNav } from './nav'
+import { infoFor } from './pageInfo'
 
 const canWith = (...held: string[]) => (perm: string) => perm.split('|').some((p) => held.includes(p))
 // Everybody on staff has their own work in the menu, so it is left out of what is compared.
@@ -48,5 +54,44 @@ describe('the menu follows the portals a person holds', () => {
     expect(has(visibleNav(canWith(), true))).toBe(true)                    // staff with no rights at all
     expect(has(visibleNav(canWith('ho.view_all'), true, true))).toBe(true) // head office
     expect(has(visibleNav(() => true, false))).toBe(true)                  // the Master
+  })
+})
+
+// ---- the phone layout: its tabs, its + sheet and the links notices carry must all lead to a screen that exists -------------
+describe('the phone layout agrees with the menu, the routes and the page info', () => {
+  const screens = [...SCREENS.map((s) => ({ path: s.path })), { path: '/more' }] // /more is the phone's own (app-mobile/entry.tsx)
+  const routed = (path: string) => path === '/' || !!matchRoutes(screens, path.split(/[?#]/)[0])
+
+  it('has a screen, a title and a line of page info for each tab, and titles exactly the tabs', () => {
+    expect([...TABS].sort()).toEqual(Object.keys(TAB_TITLES).sort())
+    for (const tab of TABS) expect([tab, routed(tab), !!infoFor(tab)]).toEqual([tab, true, true])
+  })
+
+  it('sends every + sheet tile, on a site or on none, to a screen that exists and says what it is for', () => {
+    expect(TILES.length).toBeGreaterThan(0)
+    for (const tile of TILES) {
+      for (const site of [0, 7]) {
+        const target = tile.to(site)
+        expect([tile.label, target, routed(target), !!infoFor(target.split(/[?#]/)[0])]).toEqual([tile.label, target, true, true])
+      }
+    }
+    expect(new Set(TILES.map((t) => t.label)).size).toBe(TILES.length)
+  })
+
+  it('opens the site the person is on, for each tile that is about one', () => {
+    for (const tile of TILES) {
+      const url = tile.to(7)
+      if (url.includes('?')) expect([tile.label, /(^|[?&])(job|site|project)=7(&|$)/.test(url)]).toEqual([tile.label, true])
+    }
+  })
+
+  it('has each link the server puts on a notice open a screen of the app', () => {
+    // Every "/next/..." link the backend gives notify_employee, tell_approvers and push (with an id where it has one).
+    const sent = [
+      '/next/approvals', '/next/store/enquiries/12', '/next/store/purchase-orders', '/next/projects/documents', '/next/projects/quality?ncr=3',
+      '/next/projects/safety', '/next/projects/drawings', '/next/projects/diary', '/next/projects/chart', '/next/subcontractors/work-orders',
+      '/next/subcontractors/vendors', '/next/money/dashboard', '/next/people/attendance', '/next/people/employees',
+    ]
+    for (const link of sent) expect([link, routed(linkTarget(link))]).toEqual([link, true])
   })
 })

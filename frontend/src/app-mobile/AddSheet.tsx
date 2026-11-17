@@ -10,7 +10,7 @@ import { useCurrentSite } from './site'
  * (and, for the diary, the measurement book, the goods receipt and the cash box, on today's form). A tile appears only for
  * someone who may do it.
  */
-const TILES: { label: string; hint: string; to: (site: number) => string; perm?: string; icon: LucideIcon; from: string; to2: string; needsBox?: boolean; staffOnly?: boolean }[] = [
+export const TILES: { label: string; hint: string; to: (site: number) => string; perm?: string; icon: LucideIcon; from: string; to2: string; needsBox?: boolean; staffOnly?: boolean }[] = [
   { label: 'Site diary', hint: 'Labour, weather, photos', to: (s) => `/projects/diary?job=${s}&today=1`, perm: 'site.record', icon: BookOpen, from: '#8b5cf6', to2: '#a78bfa' },
   { label: 'Tasks', hint: 'Tick what got done', to: (s) => `/projects/programme?job=${s}`, icon: ListChecks, from: '#10b981', to2: '#34d399' },
   { label: 'Measurement', hint: 'No × L × B × D', to: (s) => `/subcontractors/measurement-book?site=${s}&add=1`, perm: 'site.record', icon: Ruler, from: '#0ea5e9', to2: '#38bdf8' },

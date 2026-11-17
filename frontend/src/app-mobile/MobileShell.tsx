@@ -14,11 +14,8 @@ import { cn } from '@/lib/utils'
 import { useOffline } from '@/stores/offline'
 import { AddSheet } from './AddSheet'
 import { TabBar } from './TabBar'
+import { TAB_TITLES, TABS } from './tabs'
 import './app-theme.css'
-
-/** The four places the tab bar goes to: these screens are tabs. Every other screen gets a back bar and a title. */
-const TABS = new Set(['/', '/projects', '/approvals', '/more'])
-const TAB_TITLES: Record<string, string> = { '/': 'Home', '/projects': 'Projects', '/approvals': 'Approvals', '/more': 'Menu' }
 
 /**
  * The frame of the phone app, in place of the website's sidebar and top bar: the screen, a bottom tab bar, and the
