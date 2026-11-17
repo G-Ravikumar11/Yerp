@@ -291,6 +291,7 @@ export const deleteEmployee = (id: number) => del<{ message: string }>(`/api/emp
 /** The Master gives somebody a password to sign in with (nothing is emailed). */
 export const setEmployeePassword = (id: number, password: string) => put<{ message?: string }>(`/api/employees/${id}/set-password`, { password })
 /** Their login email again, to the organization email, with a one-time link to set a password. */
+export const sendCredentialsEmail = (id: number, password: string) => post<{ ok: boolean; message: string }>(`/api/employees/${id}/credentials-email`, { password })
 export const sendLoginEmail = (id: number) => post<{ ok: boolean; message: string; credentials_email_status: string; credentials_email_at: string }>(`/api/employees/${id}/login-email`, {})
 export const setEmployeeStatus = (id: number, to: 'onboard' | 'offboard' | 'terminate') => post<{ message: string; status: string; end_date?: string }>(`/api/employees/${id}/${to}`)
 

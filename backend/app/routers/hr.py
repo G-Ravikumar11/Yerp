@@ -34,7 +34,7 @@ from app.core.permissions import (
     permissions_for,
 )
 from app.core.security import rate_limiter, validate_password_strength
-from app.services.login_email import deliver_login_email, resend_login_email, welcome_email
+from app.services.login_email import deliver_login_email, resend_login_email, send_credentials_email, welcome_email
 from app.schemas.hr import DepartmentCreate, DepartmentMembersIn, DocumentRequirementIn, EmployeeCreate, RequirementTemplateIn
 from app.services.store_staff import release_on_leaving
 from app.services.employee_portal import attendance_settings_for, is_late, late_rule_for_reports, leave_balance_for
@@ -1535,6 +1535,30 @@ def send_employee_login_email(emp_id: int, request: Request, db: Session = Depen
     ok = resend_login_email(request, db, client.company_name or "Our office", emp)
     return {"ok": ok, "credentials_email_status": emp.credentials_email_status, "credentials_email_at": emp.credentials_email_at,
             "message": ("Login email sent to %s." % to) if ok else "The login email could not be sent. Check the Gmail connection and try again."}
+
+
+@router.post("/api/employees/{emp_id}/credentials-email")
+def email_employee_credentials(emp_id: int, request: Request, body: dict = None, db: Session = Depends(get_db)):
+    """Send a new starter their Employee ID, sign-in email and password, from the HR department. The password is the
+    one HR has just set and still has on screen; it must match the saved one, so nothing else can be mailed as it."""
+    client = require_items_access(request, db, "people.manage")
+    require_people_admin(request, db)
+    emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == emp_id, models.DBEmployee.client_id == client.id).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    _guard_the_master(request, emp)
+    to = emp.email or emp.org_email
+    if not to:
+        raise HTTPException(status_code=400, detail="This employee has no email address to send to")
+    password = str((body or {}).get("password") or "")
+    if not password or not emp.password_hash or not passwords.verify_password(password, emp.password_hash):
+        raise HTTPException(status_code=400, detail="That is not this employee's current password")
+    if rate_limiter.is_rate_limited("credentials-email:%d" % emp.id, max_requests=5, window=600):
+        raise HTTPException(status_code=429, detail="Too many emails for this person. Try again in a few minutes.")
+    log_audit(db, client.id, "employee_credentials_emailed", "employee", emp.id, to, "", request)
+    ok = send_credentials_email(request, db, client.company_name or "Our office", emp, password)
+    return {"ok": ok, "message": ("Login details sent to %s." % to) if ok
+            else "The email could not be sent. Check the Gmail connection in Settings and try again."}
 
 
 @router.get("/api/onboarding/requirements")

@@ -25,7 +25,7 @@ def login_url(request):
     return _base_url(request) + "/next/login"
 
 
-def login_email(company, name, employee_code, org_email, url, password="", set_password_link=""):
+def login_email(company, name, employee_code, org_email, url, password="", set_password_link="", signed="Administration Team"):
     """Subject, plain text and HTML of the welcome: with the password, or with the link to set one."""
     subject = f"Welcome to {company} – Your Login Credentials"
     rows = [("Employee ID", employee_code), ("Organisation Email", org_email)]
@@ -40,12 +40,12 @@ def login_email(company, name, employee_code, org_email, url, password="", set_p
     credentials = "\n\n".join(f"{label}: {value}" for label, value in rows)
     text_body = (f"Hello {name},\n\nWelcome to {company}!\n\nYour employee account has been successfully created.\n\n"
                  f"Your login credentials are:\n\n{credentials}\n\n{closing}\n\n"
-                 f"Regards,\n{company} Administration Team\n")
+                 f"Regards,\n{company} {signed}\n")
     html_rows = "".join(f'<p style="margin:0 0 12px;"><strong>{esc(label)}:</strong> {esc(value)}</p>' for label, value in rows)
     html_body = (f'<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;font-size:15px;">'
                  f"<p>Hello {esc(name)},</p><p>Welcome to {esc(company)}!</p>"
                  f"<p>Your employee account has been successfully created.</p><p>Your login credentials are:</p>"
-                 f"{html_rows}<p>{esc(closing)}</p><p>Regards,<br>{esc(company)} Administration Team</p></body></html>")
+                 f"{html_rows}<p>{esc(closing)}</p><p>Regards,<br>{esc(company)} {esc(signed)}</p></body></html>")
     return subject, text_body, html_body
 
 
@@ -55,11 +55,11 @@ def delivery(ok):
             "credentials_email_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 
-def _send(client_id, emp_id, company, to, mail):
+def _send(client_id, emp_id, company, to, mail, sender=""):
     """Whether it went. The reason it did not is in the mail log; the message itself is never logged."""
     subject, text_body, html_body = mail
     try:
-        ok, _ = send_email_background(to, subject, text_body, f"{company} <{default_from_email()}>", html_body,
+        ok, _ = send_email_background(to, subject, text_body, f"{sender or company} <{default_from_email()}>", html_body,
                                       None, "", "", client_id=client_id)
         return bool(ok)
     except Exception as exc:
@@ -93,6 +93,20 @@ def resend_login_email(request, db, company, emp):
     db.commit()         # the mail server is not waited on inside a transaction
     link = f"{_base_url(request)}/next/reset-password?token={token}&portal=employee"
     ok = _send(client_id, emp_id, company, to, login_email(company, name, code, to, login_url(request), set_password_link=link))
+    for key, value in delivery(ok).items():
+        setattr(emp, key, value)
+    db.commit()
+    return ok
+
+
+def send_credentials_email(request, db, company, emp, password):
+    """HR's Send email on the details shown after an employee is created: the Employee ID, sign-in email and the
+    password just set, to the employee's own email, from the company's HR department. Whether it went."""
+    to = emp.email or emp.org_email
+    name = f"{emp.first_name} {emp.last_name}".strip()
+    mail = login_email(company, name, emp.employee_id, emp.org_email or emp.email, login_url(request),
+                       password=password, signed="HR Department")
+    ok = _send(emp.client_id, emp.id, company, to, mail, sender=f"{company} HR Department")
     for key, value in delivery(ok).items():
         setattr(emp, key, value)
     db.commit()

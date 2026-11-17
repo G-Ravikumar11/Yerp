@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button, Field, Input, Modal, NumField, Select, Textarea } from '@/components/ui'
-import { ID_DOCUMENTS, createEmployee, saveDepartment, peopleKeys, uploadEmployeeDocument, useDepartments, useEmployees, useHrCatalogue, useSuggestedEmail, type EmployeeInput, type IdDocumentKey } from '@/api/people'
+import { ID_DOCUMENTS, createEmployee, sendCredentialsEmail, saveDepartment, peopleKeys, uploadEmployeeDocument, useDepartments, useEmployees, useHrCatalogue, useSuggestedEmail, type EmployeeInput, type IdDocumentKey } from '@/api/people'
 import { useJobOptions } from '@/api/clientOrders'
 import { useAction } from '@/lib/mutate'
 import { today } from '@/lib/format'
@@ -38,7 +38,7 @@ function Form({ onClose }: { onClose: () => void }) {
   const [shown, setShown] = useState<Partial<Record<IdDocumentKey, boolean>>>({})
   const reveal = (key: IdDocumentKey) => () => setShown((s) => (s[key] ? s : { ...s, [key]: true }))
   const pickFile = (key: IdDocumentKey) => (file: File | null) => setFiles((s) => { const { [key]: _gone, ...rest } = s; return file ? { ...rest, [key]: file } : rest })
-  const [given, setGiven] = useState<{ id: string; email: string; password: string; sites: string; notKept: string[] } | null>(null)
+  const [given, setGiven] = useState<{ dbId: number; id: string; email: string; password: string; sites: string; notKept: string[] } | null>(null)
   const cat = useHrCatalogue()
   const { can, isHrOrMaster: hrOnly } = useSession()
   const canManage = can('people.manage')
@@ -113,7 +113,7 @@ function Form({ onClose }: { onClose: () => void }) {
   }, {
     success: (r) => r.message || 'Employee created',
     onSuccess: (r) => {
-      setGiven({ id: r.employee_id, email: f.permission_role === 'attendance' ? '' : f.email, password: f.permission_role === 'attendance' ? '' : f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site', notKept: r.notKept })
+      setGiven({ dbId: r.id, id: r.employee_id, email: f.permission_role === 'attendance' ? '' : f.email, password: f.permission_role === 'attendance' ? '' : f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site', notKept: r.notKept })
       void qc.invalidateQueries({ queryKey: peopleKeys.all })
     },
   })
@@ -125,6 +125,14 @@ function Form({ onClose }: { onClose: () => void }) {
   const emergencyOk = f.emergency_contact.trim() !== '' && f.emergency_phone.replace(/\D/g, '').length >= 7
   const digitsBad = (v: string | null | undefined, n: number) => !!v && !(/^\d+$/.test(v.replace(/\s/g, '')) && v.replace(/\s/g, '').length === n)
   const ready = f.first_name.trim() && f.last_name.trim() && !!f.gender && emergencyOk && (!pass || (f.email.trim() && !passError && !confirmError))
+
+  const mailTo = f.email.trim() || (f.org_email ?? '').trim()
+  // Send email: the details below go to the employee's own email, from the company's HR department.
+  const mailDetails = useAction(async () => {
+    const r = await sendCredentialsEmail(given!.dbId, given!.password)
+    if (!r.ok) throw new Error(r.message)
+    return r
+  }, { success: (r) => r.message })
 
   if (given)
     return (
@@ -138,7 +146,7 @@ function Form({ onClose }: { onClose: () => void }) {
         </dl>
         {given.notKept.length > 0 && <p role="alert" className="mt-3 text-sm text-danger">The employee was created, but these could not be attached: {given.notKept.join(', ')}. Add them from the employee's page.</p>}
         <p className="mt-3 text-xs text-muted-foreground">The password is stored hashed and cannot be shown again. If it is lost, set a new one from their record (Set password).</p>
-        <div className="mt-4 flex justify-end"><Button onClick={onClose}>Done</Button></div>
+        <div className="mt-4 flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Done</Button>{given.password && mailTo && <Button loading={mailDetails.isPending} disabled={mailDetails.isSuccess} onClick={() => mailDetails.mutate()} title={`Send these details to ${mailTo} from HR`}>{mailDetails.isSuccess ? 'Email sent' : 'Send email'}</Button>}</div>
       </div>
     )
 
