@@ -104,7 +104,7 @@ function PhotoButton({ id }: { id: number }) {
   )
 }
 
-function ClaimModal({ forSomeone, job = 0, onClose }: { forSomeone: boolean; job?: number; onClose: () => void }) {
+export function ClaimModal({ forSomeone, job = 0, onClose }: { forSomeone: boolean; job?: number; onClose: () => void }) {
   const heads = useMoneyHeads()
   const projects = useProjects()
   const people = useEmployees('active')
