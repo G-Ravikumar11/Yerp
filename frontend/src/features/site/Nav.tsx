@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { asset, reduceMotion } from './lib'
-import { appUrl } from '@/lib/paths'
 
-const LINKS: [string, string][] = [['capabilities', 'Capabilities'], ['work', 'Projects'], ['clients', 'Clients'], ['company', 'Company'], ['credentials', 'Credentials'], ['safety', 'Safety'], ['contact', 'Contact']]
-const WATCHED = ['capabilities', 'work', 'sites', 'projects', 'clients', 'company', 'credentials', 'safety', 'quote', 'contact']
+const LINKS: [string, string][] = [['about', 'About'], ['build', 'What We Build'], ['projects', 'Projects'], ['credentials', 'Credentials'], ['safety', 'Safety'], ['careers', 'Careers'], ['contact', 'Contact']]
+const WATCHED = ['about', 'build', 'process', 'projects', 'story', 'credentials', 'safety', 'quote', 'careers', 'contact']
 
 /** Scroll to a section and keep the address bar in step, as the page's own links do. */
 export function goTo(id: string) {
@@ -15,7 +14,8 @@ export function goTo(id: string) {
   return true
 }
 
-/** The top bar: clear over the photographs, solid once scrolled, hidden while reading downwards. */
+/** The top bar: clear over the photographs, solid once scrolled, hidden while reading downwards. Staff sign in from the
+ *  footer, not from here. */
 export function Nav() {
   const [open, setOpen] = useState(false)
   const [solid, setSolid] = useState(false)
@@ -64,21 +64,17 @@ export function Nav() {
 
   return (
     <header className={`nav${solid ? ' solid' : ''}${hide && !open ? ' hide' : ''}${open ? ' open' : ''}`} id="nav" style={{ ['--p' as string]: progress.toFixed(4) }}>
-      <a href="#top" className="brand" aria-label="Yalavarti Projects, home" onClick={(e) => click(e, '#top')}>
+      <a href="#top" className="brand" aria-label="Yalavarti Infra Projects, home" onClick={(e) => click(e, '#top')}>
         <img src={asset('site/img/mark.png')} alt="" width="36" height="36" />
-        <span translate="no">Yalavarti</span>
+        <span translate="no">Yalavarti <small>Infra</small></span>
       </a>
       <nav className="nav__links" id="navlinks" aria-label="Primary">
         {LINKS.map(([id, label]) => (
           <a key={id} href={`#${id}`} className={active === id ? 'active' : undefined} aria-current={active === id ? 'true' : undefined} onClick={(e) => click(e, `#${id}`)}>{label}</a>
         ))}
-        <a href="#quote" className="nav__m nav__m--quote" onClick={(e) => click(e, '#quote')}>Request a Quote</a>
+        <a href="#quote" className="nav__m nav__m--quote" onClick={(e) => click(e, '#quote')}>Start a Project</a>
       </nav>
-      <a href={appUrl('login')} className="btn btn--login btn--sm nav__login" title="Sign in to YERP, the Yalavarti ERP">
-        <svg className="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="1.5" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
-        Staff Login
-      </a>
-      <a href="#quote" className="btn btn--primary btn--sm nav__cta" onClick={(e) => click(e, '#quote')}>Request a Quote</a>
+      <a href="#quote" className="btn btn--primary btn--sm nav__cta" onClick={(e) => click(e, '#quote')}>Start a Project</a>
       <button className="nav__burger" id="burger" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} aria-controls="navlinks" onClick={() => setOpen((o) => !o)}><span /><span /></button>
     </header>
   )

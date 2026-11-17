@@ -56,16 +56,17 @@ def _forward(target: str):
 for _page, _target in LEGACY_PAGES.items():
     app.add_api_route("/" + _page, _forward(_target), methods=["GET"], include_in_schema=False)
 
-HOME_TITLE = "Yalavarti Projects | Electrical, Fire &amp; PHE Contractors, Hyderabad"
-HOME_DESCRIPTION = ("Yalavarti Projects Pvt. Ltd. - electrical works up to 33 kV, fire protection, plumbing and panels for "
-                    "India's landmarks. Hyderabad, since 1998.")
+HOME_TITLE = "Yalavarti Infra Projects | Homes, Townships &amp; Civil Infrastructure"
+HOME_DESCRIPTION = ("Yalavarti Infra Projects - civil engineering and construction: houses and villas, apartments, gated "
+                    "townships, roads, drainage, water supply and sewerage, from the land and its approvals to handover.")
 HOME_HEAD = (
     '<meta name="description" content="%s">'
     '<meta property="og:type" content="website">'
-    '<meta property="og:title" content="Yalavarti Projects | Powering India&#39;s landmarks">'
-    '<meta property="og:description" content="Electrical works up to 33 kV, fire protection, plumbing and panels for '
-    'India&#39;s leading developers. Hyderabad, since 1998.">'
-    '<meta property="og:image" content="/next/site/img/banner1.jpg">'
+    '<meta property="og:site_name" content="Yalavarti Infra Projects">'
+    '<meta property="og:title" content="Yalavarti Infra Projects | Building homes, townships and the infrastructure around them">'
+    '<meta property="og:description" content="Houses and villas, apartments, gated townships, roads, drainage and water '
+    'works - one civil builder from the plot to the keys.">'
+    '<meta property="og:image" content="/next/site/img/cat3.jpg">'
     '<meta name="theme-color" content="#000000">' % HOME_DESCRIPTION.replace("'", "&#39;"))
 
 

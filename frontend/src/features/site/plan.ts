@@ -1,40 +1,20 @@
-import { PLAN_TYPES, SITE } from './data/content'
-import { PROJECTS, type Project } from './data/projects'
-import { inr } from './lib'
+import { COMPANY, SITE } from './data/content'
 
-/** What the visitor has said about their project so far. The capabilities, the 3D building and the planner all feed it. */
+/** What the visitor has told the enquiry form so far. A "What we build" card can fill in the type of work. */
 export interface Plan {
   type: string | null
-  scopes: string[]
-  size: number
   city: string
-  stage: string | null
+  area: string
+  unit: string
+  start: string | null
 }
 
-export const EMPTY_PLAN: Plan = { type: null, scopes: [], size: 40, city: '', stage: null }
+export const EMPTY_PLAN: Plan = { type: null, city: '', area: '', unit: SITE.plan.units[0], start: null }
 
-/** 10,000 to 50 lakh sq ft on a log scale. */
-export const sizeOf = (p: number) => Math.round((10000 * Math.pow(500, p / 100)) / 5000) * 5000
+export const typeLabel = (id: string | null) => SITE.plan.types.find((t) => t.id === id)?.label ?? ''
 
-export const scopeLabel = (id: string) => SITE.plan.scopes.find((s) => s.id === id)?.label ?? id
+export const areaText = (plan: Plan) => (plan.area.trim() ? `${plan.area.trim()} ${plan.unit}` : '')
 
 export function briefText(plan: Plan) {
-  const T = PLAN_TYPES.find((t) => t.id === plan.type)
-  const sc = SITE.plan.scopes.filter((s) => plan.scopes.includes(s.id))
-  return `Hello Yalavarti team,\n\nWe would like a quote for the following project.\n\nProject type: ${T ? T.label : '-'}\nScope: ${sc.map((s) => s.label).join(', ') || '-'}\nBuilt-up area: about ${inr(sizeOf(plan.size))} sq ft\nSite: ${plan.city || '-'}\nStage: ${plan.stage || '-'}\n\nName:\nCompany:\nPhone:\n`
-}
-
-/** Comparable finished work for the chosen kind of project, near the stated city when there is some. */
-export function similarProjects(plan: Plan): { total: number; local: boolean; list: Project[] } {
-  const T = PLAN_TYPES.find((t) => t.id === plan.type)
-  if (!T) return { total: 0, local: false, list: [] }
-  let list = PROJECTS.filter((p) => p.s === T.sector && (!T.match || T.match.test(p.n)))
-  let local = false
-  if (plan.city) {
-    const c = plan.city.toLowerCase()
-    const near = list.filter((p) => p.l.toLowerCase().includes(c))
-    if (near.length) { list = near; local = true }
-  }
-  const total = list.length
-  return { total, local, list: list.slice().sort((a, b) => (b.y || '').localeCompare(a.y || '')).slice(0, 3) }
+  return `Hello ${COMPANY.name},\n\nWe would like to talk to you about the following work.\n\nType of work: ${typeLabel(plan.type) || '-'}\nLocation: ${plan.city || '-'}\nPlot or built-up area: ${areaText(plan) || '-'}\nExpected start: ${plan.start || '-'}\n\nName:\nCompany:\nPhone:\n`
 }

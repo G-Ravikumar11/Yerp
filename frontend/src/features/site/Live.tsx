@@ -4,14 +4,13 @@ import { goTo } from './Nav'
 import { asset, inr } from './lib'
 import { apiPath, sendEnquiry, type Live, type LiveProject } from './siteApi'
 
-/** The projects ticked "show on website" in the ERP, with their own photos. Not shown at all until there is one. */
+/** The projects ticked "show on website" in our records, with their own photos. Until there is one, a line saying so. */
 export function LiveProjects({ live }: { live: Live | null }) {
   const [sector, setSector] = useState('')
   const [city, setCity] = useState('')
   const all = useMemo(() => live?.projects ?? [], [live])
   const sectors = useMemo(() => [...new Set(all.map((p) => p.sector).filter(Boolean))].sort(), [all])
   const cities = useMemo(() => [...new Set(all.map((p) => p.location).filter(Boolean))].sort(), [all])
-  if (!all.length) return null
   const shown = all.filter((p) => (!sector || p.sector === sector) && (!city || p.location === city))
   const chips = (label: string, list: string[], value: string, set: (v: string) => void) => list.length > 1 && (
     <div className="chips" role="group" aria-label={label}>
@@ -20,15 +19,16 @@ export function LiveProjects({ live }: { live: Live | null }) {
     </div>
   )
   return (
-    <section className="band" id="sites" aria-label="Projects from our sites">
+    <section className="band" id="projects" aria-label="Projects">
       <div className="wrap">
         <div className="sechead sechead--split">
-          <div><p className="eyebrow">From Our Sites</p><h2 className="h2">Recent &amp; ongoing projects</h2></div>
-          <p className="lede">Straight from our project records, with photos from site. Filter by sector or city.</p>
+          <div><p className="eyebrow">Projects</p><h2 className="h2">Recent &amp; ongoing projects</h2></div>
+          <p className="lede">{all.length ? 'Straight from our project records, with photos from site. Filter by type of work or city.' : 'Our projects, with photos from site, are being added here.'}</p>
         </div>
-        <div className="live__filters">{chips('Sector', sectors, sector, setSector)}{chips('City', cities, city, setCity)}</div>
-        <ul className="live__grid">{shown.map((p) => <ProjectCard key={p.id} p={p} />)}</ul>
-        {!shown.length && <p className="lede">Nothing matches that filter.</p>}
+        {all.length > 0 && <div className="live__filters">{chips('Type of work', sectors, sector, setSector)}{chips('City', cities, city, setCity)}</div>}
+        {all.length > 0 && <ul className="live__grid">{shown.map((p) => <ProjectCard key={p.id} p={p} />)}</ul>}
+        {all.length > 0 && !shown.length && <p className="lede">Nothing matches that filter.</p>}
+        {!all.length && <a href="#enquire" className="btn btn--ghost" onClick={(e) => goTo('#enquire') && e.preventDefault()}>Ask Us for References</a>}
       </div>
     </section>
   )
@@ -60,7 +60,7 @@ export function Credentials() {
     <section className="band band--light" id="credentials" aria-label="Credentials">
       <div className="wrap">
         <div className="sechead sechead--split">
-          <div><p className="eyebrow">Credentials</p><h2 className="h2">Registered, certified, solvent</h2></div>
+          <div><p className="eyebrow">Credentials</p><h2 className="h2">Registered and accountable</h2></div>
           <p className="lede">The papers a tender asks for. Copies go to evaluators on request.</p>
         </div>
         <dl className="creds">

@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { SITE } from './data/content'
+import { COMPANY, SITE, typeFor } from './data/content'
 import { goTo } from './Nav'
 import { asset, inr, reduceMotion } from './lib'
 import { appUrl } from '@/lib/paths'
 import { EnquiryForm } from './Live'
 import type { Live } from './siteApi'
 
-const SCOPE_OF: Record<string, string> = { electrical: 'electrical', fire: 'fire', panels: 'panels', phe: 'phe', testing: 'testing' }
 const DURATION = 7000
+const YEAR = new Date().getFullYear()
 
-/** The opening photograph, changing every few seconds, with the featured projects as its chapters. */
+/** The opening photograph, changing every few seconds, with the kinds of work as its chapters. */
 export function Hero() {
   const [cur, setCur] = useState(0)
   const chapters = useRef<(HTMLButtonElement | null)[]>([])
@@ -51,19 +51,19 @@ export function Hero() {
     <section className="hero" id="top" aria-label="Introduction">
       <div className="hero__slides" id="slides" ref={boxRef}>
         {SITE.slides.map((s, i) => (
-          <div key={s.t} className={`slide${i === cur ? ' on' : ''}`}><img src={asset(s.img)} alt={s.t} {...(i ? { loading: 'lazy' as const } : { fetchPriority: 'high' as const })} /></div>
+          <div key={s.t} className={`slide${i === cur ? ' on' : ''}`}><img src={asset(s.img)} alt="" {...(i ? { loading: 'lazy' as const } : { fetchPriority: 'high' as const })} /></div>
         ))}
       </div>
       <div className="hero__shade" aria-hidden="true" />
       <div className="wrap hero__inner">
-        <h1 className="hero__title">Powering India&apos;s landmarks</h1>
-        <p className="hero__sub">Electrical, fire protection and plumbing contractors to India&apos;s leading developers since&nbsp;1998.</p>
+        <h1 className="hero__title">{SITE.hero.title}</h1>
+        <p className="hero__sub">{SITE.hero.sub}</p>
         <div className="hero__cta">
-          <a href="#quote" className="btn btn--primary" onClick={(e) => goTo('#quote') && e.preventDefault()}>Request a Quote</a>
-          <a href="#work" className="btn btn--ghost" onClick={(e) => goTo('#work') && e.preventDefault()}>Explore Projects</a>
+          <a href="#quote" className="btn btn--primary" onClick={(e) => goTo('#quote') && e.preventDefault()}>Start a Project</a>
+          <a href="#projects" className="btn btn--ghost" onClick={(e) => goTo('#projects') && e.preventDefault()}>See Our Projects</a>
         </div>
       </div>
-      <div className="wrap hero__chapters" id="chapters" role="tablist" aria-label="Featured projects">
+      <div className="wrap hero__chapters" id="chapters" role="tablist" aria-label="What we build">
         {SITE.slides.map((s, i) => (
           <button key={s.t} ref={(el) => { chapters.current[i] = el }} className="chap" role="tab" aria-selected={i === cur} onClick={() => go(i)}><b>{s.t}</b><small>{s.l}</small></button>
         ))}
@@ -96,63 +96,53 @@ function Count({ to, prefix = '', suffix = '' }: { to: number; prefix?: string; 
   return <dd ref={ref as React.RefObject<HTMLElement>}>{text}</dd>
 }
 
+/** The company at a glance: only figures we can stand behind - the confirmed ones from content.ts and the live ones from
+ *  our own project records. A figure not yet known is left out rather than guessed. */
 export function Proof({ live }: { live: Live | null }) {
   const n = live?.numbers
+  const stats: [string, number, string?][] = []
+  if (COMPANY.founded) stats.push(['Years building', YEAR - COMPANY.founded])
+  if (n?.projects_delivered) stats.push(['Projects delivered', n.projects_delivered])
+  if (n?.ongoing_sites) stats.push(['Sites running now', n.ongoing_sites])
+  if (COMPANY.staff) stats.push(['Engineers & crew', COMPANY.staff, '+'])
+  if (n?.safe_man_hours) stats.push(['Safe man-hours', n.safe_man_hours])
   return (
     <section className="proof" aria-label="Company at a glance">
       <div className="wrap proof__grid">
-        <p className="proof__lead">Twenty-eight years. One promise: the people who quote your job are the people who build it.</p>
-        <dl className="proof__stats">
-          <div><dt>Years on site</dt><Count to={28} /></div>
-          <div><dt>Projects delivered</dt><Count to={1300} suffix="+" /></div>
-          <div><dt>Orders in 2019–20</dt><Count to={200} prefix="₹" suffix=" Cr" /></div>
-          <div><dt>Engineers &amp; crew</dt><Count to={1550} suffix="+" /></div>
-        </dl>
-        {n && (n.ongoing_sites > 0 || n.safe_man_hours > 0) && (
-          <p className="proof__live" aria-label="Live from our project records">
-            <span className="proof__dot" aria-hidden="true" />Live from our sites:
-            {n.ongoing_sites > 0 && <span><b className="num">{inr(n.ongoing_sites)}</b> site{n.ongoing_sites === 1 ? '' : 's'} running now</span>}
-            {n.safe_man_hours > 0 && <span><b className="num">{inr(n.safe_man_hours)}</b> safe man-hours</span>}
-          </p>
+        <p className="proof__lead">{SITE.lead}</p>
+        {stats.length > 0 && (
+          <dl className="proof__stats">
+            {stats.slice(0, 4).map(([label, to, suffix]) => <div key={label}><dt>{label}</dt><Count to={to} suffix={suffix} /></div>)}
+          </dl>
         )}
       </div>
     </section>
   )
 }
 
-// White, background-free versions made from the original logo files (img/clients-mono).
-const CLIENTS: [string, string][] = [['c27', 'L&T'], ['c46', 'Shapoorji Pallonji'], ['c31', 'NCC'], ['c18', 'My Home Group'], ['c19', 'Hyderabad Metro Rail'], ['c17', 'Punj Lloyd'],
-  ['c28', 'IL&FS'], ['c32', 'Lanco'], ['c26', 'PVR Cinemas'], ['c33', 'APCRDA'], ['c34', 'APTIDCO'], ['c16', 'L&T Infotech'],
-  ['c22', 'L&T Infocity'], ['c29', 'Vestian'], ['c20', 'Cybercity Builders'], ['c37', 'Indu Projects'], ['c44', 'Preston Developers'], ['c42', 'Navayuga'],
-  ['c39', 'Marina Skies'], ['c41', 'Myscape'], ['c35', 'Garden City Realty'], ['c25', 'Safeway Symphony'], ['c49', 'Western Constructions'], ['c48', 'True Build Products']]
-
-export function Clients() {
+/** Who we are, and the group company that does the building services. */
+export function About() {
   return (
-    <section className="band clients" id="clients">
+    <section className="band about" id="about">
       <div className="wrap">
         <div className="sechead sechead--split">
-          <div><p className="eyebrow">Clients</p><h2 className="h2">Trusted by India&apos;s leading developers &amp; EPC majors</h2></div>
-          <p className="lede">From metro rail and hospitals to IT parks and townships, the same names return to us project after project.</p>
+          <div><p className="eyebrow">About Us</p><h2 className="h2">Civil works, start to finish</h2></div>
+          <div className="about__text">{SITE.about.map((p) => <p key={p} className="lede">{p}</p>)}</div>
         </div>
-        <ul className="logos" id="logos" aria-label="Client logos">
-          {CLIENTS.map(([f, n]) => <li key={f}><img src={asset(`site/img/clients-mono/${f}.png`)} alt={n} loading="lazy" decoding="async" /></li>)}
-        </ul>
-        <p className="logos__note">Selected clients from 1,300+ projects since 1998</p>
         <div className="group" id="company-group">
           <p className="eyebrow">The Yalavarti Group</p>
-          <div className="group__row">
-            <a href="https://www.yalavartiengineering.com/" target="_blank" rel="noopener noreferrer" className="group__item"><img src={asset('site/img/clients-mono/group-YEPL.png')} alt="Yalavarti Engineering" width="442" height="404" loading="lazy" /><span>LT Panels &amp; Cable Trays ↗</span></a>
-            <a href="https://ycity.in/" target="_blank" rel="noopener noreferrer" className="group__item"><img src={asset('site/img/clients-mono/group-Ycity.png')} alt="Ycity Tech" width="836" height="282" loading="lazy" /><span>Smart Building Tech ↗</span></a>
-            <div className="group__item"><img src={asset('site/img/clients-mono/group-2E.png')} alt="2e Smart Solutions" width="608" height="314" loading="lazy" /><span>Energy Efficiency</span></div>
-          </div>
+          <p className="group__text">
+            {COMPANY.group.does} on our projects and others are done by our group company,{' '}
+            <a href={COMPANY.group.url} target="_blank" rel="noopener noreferrer">{COMPANY.group.name} ↗</a>
+          </p>
         </div>
       </div>
     </section>
   )
 }
 
-/** The services: a sticky photograph that follows whichever one is in the middle of the screen. */
-export function Capabilities({ scopes, toggle }: { scopes: string[]; toggle: (id: string) => void }) {
+/** What we build: a sticky photograph that follows whichever kind of work is in the middle of the screen. */
+export function Capabilities({ choose }: { choose: (type: string) => void }) {
   const [active, setActive] = useState(0)
   const items = useRef<(HTMLLIElement | null)[]>([])
   useEffect(() => {
@@ -161,34 +151,28 @@ export function Capabilities({ scopes, toggle }: { scopes: string[]; toggle: (id
     return () => io.disconnect()
   }, [])
   return (
-    <section className="band" id="capabilities">
+    <section className="band" id="build">
       <div className="wrap">
         <div className="sechead sechead--split">
-          <div><p className="eyebrow">Capabilities</p><h2 className="h2">Every system behind the walls, from one contractor</h2></div>
-          <p className="lede">Electrical, fire protection, plumbing, panels and testing, designed, installed and handed over by our own crews.</p>
+          <div><p className="eyebrow">What We Build</p><h2 className="h2">Homes, townships and the works around them</h2></div>
+          <p className="lede">From a single house on your plot to a gated township with its roads, drains and water lines.</p>
         </div>
         <div className="caps">
           <div className="caps__media" aria-hidden="true">
-            <div className="caps__frame" id="capsframe">{SITE.services.map((s, i) => <img key={s.id} src={asset(s.img)} alt="" loading="lazy" className={i === active ? 'on' : undefined} />)}</div>
+            <div className="caps__frame" id="capsframe">{SITE.capabilities.map((s, i) => <img key={s.id} src={asset(s.img)} alt="" loading="lazy" className={i === active ? 'on' : undefined} />)}</div>
           </div>
           <ol className="caps__list" id="caps">
-            {SITE.services.map((s, i) => {
-              const scope = SCOPE_OF[s.id]
-              const added = scope ? scopes.includes(scope) : false
-              return (
-                <li key={s.id} ref={(el) => { items.current[i] = el }} data-i={i} className={`cap${i === active ? ' on' : ''}`}>
-                  <div className="cap__head"><span className="cap__n">0{i + 1}</span><h3>{s.title}</h3><span className="cap__tag">{s.tag}</span></div>
-                  <img className="cap__img" src={asset(s.img)} alt="" loading="lazy" />
-                  <div className="cap__body">
-                    <p>{s.intro}</p>
-                    <ul>{s.list.slice(0, 8).map((x) => <li key={x}>{x}</li>)}</ul>
-                    {scope
-                      ? <button className="cap__add" type="button" aria-pressed={added} onClick={() => toggle(scope)}>{added ? 'Added to Quote ✓' : 'Add to Quote +'}</button>
-                      : <a className="cap__add" href="#quote" onClick={(e) => goTo('#quote') && e.preventDefault()}>Start a Quote →</a>}
-                  </div>
-                </li>
-              )
-            })}
+            {SITE.capabilities.map((s, i) => (
+              <li key={s.id} ref={(el) => { items.current[i] = el }} data-i={i} className={`cap${i === active ? ' on' : ''}`}>
+                <div className="cap__head"><span className="cap__n">0{i + 1}</span><h3>{s.title}</h3><span className="cap__tag">{s.tag}</span></div>
+                <img className="cap__img" src={asset(s.img)} alt="" loading="lazy" />
+                <div className="cap__body">
+                  <p>{s.intro}</p>
+                  <ul>{s.list.map((x) => <li key={x}>{x}</li>)}</ul>
+                  <a className="cap__add" href="#quote" onClick={(e) => { e.preventDefault(); choose(typeFor(s.id)) }}>Enquire About This →</a>
+                </div>
+              </li>
+            ))}
           </ol>
         </div>
       </div>
@@ -196,23 +180,20 @@ export function Capabilities({ scopes, toggle }: { scopes: string[]; toggle: (id
   )
 }
 
-export function Work() {
+/** How a job runs, from the land to the keys. */
+export function HowWeBuild() {
   return (
-    <section id="work" aria-label="Selected projects">
-      <div className="wrap sechead sechead--pad sechead--split">
-        <div><p className="eyebrow">Selected Work</p><h2 className="h2">Landmarks we&apos;ve powered</h2></div>
-        <p className="lede">A few of the buildings, stations and townships that run on Yalavarti electrical, fire and plumbing works.</p>
-      </div>
-      <div id="cases">
-        {SITE.featured.map((c, i) => (
-          <article className="case" key={c.t}>
-            <img src={asset(c.img)} alt={c.t} loading="lazy" />
-            <div className="wrap case__body">
-              <div><p className="case__n">0{i + 1} / 0{SITE.featured.length}</p><h3>{c.t}</h3><p>{c.d}</p></div>
-              <div className="case__meta">{c.meta.map((m) => <span key={m}>{m}</span>)}</div>
-            </div>
-          </article>
-        ))}
+    <section className="band band--light" id="process" aria-label="How we build">
+      <div className="wrap">
+        <div className="sechead sechead--split">
+          <div><p className="eyebrow">How We Build</p><h2 className="h2">From the land to the keys</h2></div>
+          <p className="lede">Six stages, one team. You know who is answerable at every step.</p>
+        </div>
+        <ol className="steps">
+          {SITE.steps.map((s, i) => (
+            <li key={s.t} className="step"><span className="step__n num">0{i + 1}</span><h3>{s.t}</h3><p>{s.d}</p></li>
+          ))}
+        </ol>
       </div>
     </section>
   )
@@ -220,37 +201,38 @@ export function Work() {
 
 export function Careers({ companyId }: { companyId?: number }) {
   return (
-    <section className="careers" aria-label="Careers">
-      <img src={asset('site/img/gallery/g105.jpg')} alt="" loading="lazy" width="728" height="487" />
+    <section className="careers" id="careers" aria-label="Careers">
+      <img src={asset('site/img/cat2.jpg')} alt="" loading="lazy" width="822" height="622" />
       <div className="wrap careers__inner">
         <p className="eyebrow">Careers</p>
-        <h2 className="h2">Build the infrastructure of a growing India</h2>
-        {/* Our own openings, from the ERP's recruitment page; the old site's list until the company is known. */}
+        <h2 className="h2">Build homes and townships with us</h2>
+        {/* Our own openings, from the recruitment page. Without the company's reference, a CV by email. */}
         {companyId
           ? <a className="btn btn--ghost" href={appUrl(`jobs?c=${companyId}`)}>View Openings</a>
-          : <a className="btn btn--ghost" href="https://www.yalavarti.com/current-openings.php" target="_blank" rel="noopener noreferrer">View Openings ↗</a>}
+          : <a className="btn btn--ghost" href={`mailto:${COMPANY.email}?subject=${encodeURIComponent('Job application')}`}>Send Your CV</a>}
       </div>
     </section>
   )
 }
 
 export function Contact({ toast }: { toast: (m: string) => void }) {
+  const map = encodeURIComponent(COMPANY.address)
   return (
     <section className="band" id="contact">
       <div className="wrap">
         <p className="eyebrow">Contact</p>
         <h2 className="contact__title">Let&apos;s build together</h2>
         <div className="contact__grid">
-          <a href="tel:+914040059348" className="contact__item"><span className="eyebrow">Call</span><span className="num">040 4005 9348</span></a>
-          <a href="mailto:info@yalavarti.com" className="contact__item"><span className="eyebrow">Email</span>info@yalavarti.com</a>
-          <a href="https://www.google.com/maps?q=Yalavarti+Projects+Kondapur+Hyderabad" target="_blank" rel="noopener noreferrer" className="contact__item"><span className="eyebrow">Corporate Office</span>Plot 1-109/21, Near RTA Office, Kondapur, Hyderabad 500084</a>
+          <a href={`tel:${COMPANY.phone.tel}`} className="contact__item"><span className="eyebrow">Call</span><span className="num">{COMPANY.phone.show}</span></a>
+          <a href={`mailto:${COMPANY.email}`} className="contact__item"><span className="eyebrow">Email</span>{COMPANY.email}</a>
+          <a href={`https://www.google.com/maps?q=${map}`} target="_blank" rel="noopener noreferrer" className="contact__item"><span className="eyebrow">Office</span>{COMPANY.address}</a>
         </div>
         <div className="contact__enq" id="enquire">
           <p className="eyebrow">Send an Enquiry</p>
           <EnquiryForm toast={toast} />
         </div>
-        <iframe className="contact__map" title="Map: Yalavarti Projects corporate office, Kondapur, Hyderabad" loading="lazy" referrerPolicy="no-referrer-when-downgrade"
-          src="https://www.google.com/maps?q=Yalavarti+Projects+Kondapur+Hyderabad&output=embed" />
+        <iframe className="contact__map" title={`Map: ${COMPANY.name} office`} loading="lazy" referrerPolicy="no-referrer-when-downgrade"
+          src={`https://www.google.com/maps?q=${map}&output=embed`} />
       </div>
     </section>
   )
@@ -260,20 +242,16 @@ export function Footer() {
   return (
     <footer className="footer">
       <div className="wrap footer__top">
-        <a href="#top" className="brand brand--lg" aria-label="Back to top" onClick={(e) => goTo('#top') && e.preventDefault()}><img src={asset('site/img/mark.png')} alt="" width="54" height="54" /><span translate="no">Yalavarti</span></a>
+        <a href="#top" className="brand brand--lg" aria-label="Back to top" onClick={(e) => goTo('#top') && e.preventDefault()}><img src={asset('site/img/mark.png')} alt="" width="54" height="54" /><span translate="no">Yalavarti Infra</span></a>
         <nav className="footer__links" aria-label="Footer">
-          <a href={appUrl('login')}>Staff Login</a>
           <a href={appUrl('terms')}>Terms of Service</a>
           <a href={appUrl('privacy')}>Privacy Policy</a>
-          <a href="https://www.yalavarti.com/images/pages/YPPL_PROFILE_2023.pdf" target="_blank" rel="noopener noreferrer">Company Profile (PDF)</a>
-          <a href="https://www.yalavarti.com/post-your-cv.php" target="_blank" rel="noopener noreferrer">Send Your CV</a>
-          <a href="https://www.linkedin.com/in/yalavartiprojects" target="_blank" rel="noopener noreferrer">LinkedIn</a>
-          <a href="https://www.facebook.com/YalavartiProjectsPvtLtd" target="_blank" rel="noopener noreferrer">Facebook</a>
+          <a href={COMPANY.group.url} target="_blank" rel="noopener noreferrer">{COMPANY.group.name} ↗</a>
         </nav>
       </div>
       <div className="wrap footer__bottom">
-        <p>© {new Date().getFullYear()} Yalavarti Projects Pvt. Ltd. · Engineering Consultants &amp; Contractors</p>
-        <p>Hyderabad · Chennai · Bengaluru · Bhubaneswar · Noida · Nagpur · Jammu</p>
+        <p>© {YEAR} {COMPANY.name} · Civil Engineering &amp; Construction</p>
+        <a className="footer__staff" href={appUrl('login')}>Staff login</a>
       </div>
     </footer>
   )
