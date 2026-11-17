@@ -137,13 +137,21 @@ def employee_login(request: Request, body: dict = None, db: Session = Depends(ge
     if rate_limiter.is_rate_limited(f"emp_login:{ip}", max_requests=LOGIN_PER_MINUTE, window=60):
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
     if not body or not body.get("email") or not body.get("password"):
-        raise HTTPException(status_code=400, detail="Email and password required")
-    email = body["email"].strip().lower()
+        raise HTTPException(status_code=400, detail="Email or employee ID, and password, required")
+    email = str(body["email"]).strip().lower()           # an email address, or - with no @ in it - an employee ID
     login_guard.guard(request, email, body)
-    emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.email) == email).first()
-    if not emp and email:
-        # The organisation's address is the one on their login email, so it signs them in as well.
-        emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.org_email) == email).first()
+    if "@" in email:
+        emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.email) == email).first()
+        if not emp and email:
+            # The organisation's address is the one on their login email, so it signs them in as well.
+            emp = db.query(models.DBEmployee).filter(sqlfunc.lower(models.DBEmployee.org_email) == email).first()
+    else:
+        # An employee ID (EMP-0002). Only when exactly one person has it: an ID shared by two people - or by two companies
+        # on one server - signs nobody in, rather than the wrong one. The wrong-password rules count these tries the
+        # same as an email's.
+        found = db.query(models.DBEmployee).filter(
+            sqlfunc.lower(sqlfunc.trim(models.DBEmployee.employee_id)) == email).limit(2).all()
+        emp = found[0] if len(found) == 1 and email else None
     request.state.error_who = email                  # for the error log, if this sign-in fails
     request.state.error_client_id = emp.client_id if emp else None
     if not emp:

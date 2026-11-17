@@ -80,7 +80,7 @@ export default function LoginPage() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (busy) return
-    if (!email.trim() || !password) return setError('Enter your email and password.')
+    if (!email.trim() || !password) return setError('Enter your email or employee ID, and your password.')
     if (askCheck && !check) return setError('Complete the check below, then sign in.')
     setBusy(true)
     setError('')
@@ -96,7 +96,10 @@ export default function LoginPage() {
       }
       // The check, once the server has asked for it, goes with both doors: one solved check covers one sign-in.
       const extra = check ?? {}
-      const owner = await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', ...extra }, quiet: true }).catch(none)
+      // The Master and their colleagues sign in by email; an employee ID (no @) is staff's alone, so it never goes to their door.
+      const owner = email.includes('@')
+        ? await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', ...extra }, quiet: true }).catch(none)
+        : null
       if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
       const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', device_info: navigator.userAgent.slice(0, 200), ...extra }, quiet: true }).catch(none)
       if (staff) return go(nextTarget(appUrl()))
@@ -110,7 +113,7 @@ export default function LoginPage() {
         unreachable ? `Could not reach the server. Check the connection and try again. (${codeLine('YE-NET')})`
           : refusal && refusal.status >= 500 ? `The server had a problem. Please try again in a moment. (${codeLine(refusal.code, refusal.ref)})`
           : refusal ? refusal.message
-          : `That email and password did not match an account. (${codeLine('YE-AUTH-01')})`)
+          : `That email or employee ID and password did not match an account. (${codeLine('YE-AUTH-01')})`)
     } finally {
       setBusy(false)
     }
@@ -141,7 +144,7 @@ export default function LoginPage() {
       {params.get('reset') && !error && <Notice tone="success">Your password has been updated. Sign in with the new one.</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       <form onSubmit={submit} className="grid gap-4">
-        <Field label="Email address" htmlFor="email"><Input id="email" type="email" autoComplete="username" autoFocus required placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+        <Field label="Email or employee ID" htmlFor="email"><Input id="email" type="text" inputMode="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="username" autoFocus required placeholder="you@company.com or EMP-0002" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
         <Field label="Password" htmlFor="password"><Input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)}
           trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-6 place-items-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <Eye className="size-4" /> : <EyeOff className="size-4" />}</button>} /></Field>
         {askCheck && <CaptchaBox round={round} onChange={setCheck} />}

@@ -371,9 +371,10 @@ def assert_employee_code_free(db, client_id, code, exclude_id=None):
     code = (code or "").strip()
     if not code:
         return ""
+    # Compared without regard to capitals or stray spaces: "emp-0002" and "EMP-0002" are one ID, and an ID can sign somebody in.
     query = db.query(models.DBEmployee).filter(
         models.DBEmployee.client_id == client_id,
-        models.DBEmployee.employee_id == code,
+        sqlfunc.lower(sqlfunc.trim(models.DBEmployee.employee_id)) == code.lower(),
     )
     if exclude_id:
         query = query.filter(models.DBEmployee.id != exclude_id)
