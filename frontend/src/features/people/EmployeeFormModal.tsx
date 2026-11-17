@@ -101,7 +101,7 @@ function Form({ onClose }: { onClose: () => void }) {
         await depts.refetch()   // so a retry after a failed save finds it instead of making it twice
       }
     }
-    const r = await createEmployee({ ...f, department_id, password: f.password?.trim(), ...(canManage ? { permissions: granted } : {}) })
+    const r = await createEmployee({ ...f, department_id, password: f.permission_role === 'attendance' ? '' : f.password?.trim(), ...(canManage ? { permissions: granted } : {}) })
     // The employee exists now, so the cards can be kept on their record. One that cannot be does not undo the rest.
     const notKept: string[] = []
     for (const d of ID_DOCUMENTS) {
@@ -113,7 +113,7 @@ function Form({ onClose }: { onClose: () => void }) {
   }, {
     success: (r) => r.message || 'Employee created',
     onSuccess: (r) => {
-      setGiven({ id: r.employee_id, email: f.email, password: f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site', notKept: r.notKept })
+      setGiven({ id: r.employee_id, email: f.permission_role === 'attendance' ? '' : f.email, password: f.permission_role === 'attendance' ? '' : f.password ?? '', sites: (r.site_names ?? []).join(', ') || 'Every site', notKept: r.notKept })
       void qc.invalidateQueries({ queryKey: peopleKeys.all })
     },
   })
@@ -196,7 +196,7 @@ function Form({ onClose }: { onClose: () => void }) {
             </div>
           </Field>
         </div>
-      {canManage && cat.data && <div className="mt-5"><AccessPicker catalogue={cat.data} role={f.permission_role} granted={granted} onRole={(code, rights) => { setF((s) => ({ ...s, permission_role: code })); setGranted(rights) }} onGranted={setGranted} /></div>}
+      {canManage && cat.data && <div className="mt-5"><AccessPicker catalogue={cat.data} role={f.permission_role} granted={granted} onRole={(code, rights) => { setF((s) => ({ ...s, permission_role: code, ...(code === 'attendance' ? { password: '' } : {}) })); if (code === 'attendance') setConfirm(''); setGranted(rights) }} onGranted={setGranted} />{f.permission_role === 'attendance' && <p className="mt-2 text-[13px] text-muted-foreground">Attendance only: no sign-in and no access. Their attendance and salary are still kept.</p>}</div>}
       </div>
       <div className="mt-5 flex items-center justify-end gap-2 border-t border-border pt-4">
         {step === 2 && save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}

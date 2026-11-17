@@ -14,7 +14,7 @@ from app.db import SessionLocal
 
 from app.core import app_limits
 from app.core.config import ADMIN_PANEL_MIN_LENGTH, logger
-from app.core.permissions import (HO_FOLLOW_UP_ONLY_ROLES, HO_QS_ONLY, HO_QS_ONLY_REFUSAL, HR_ONLY, PORTAL_PERMISSIONS,
+from app.core.permissions import (is_no_access, HO_FOLLOW_UP_ONLY_ROLES, HO_QS_ONLY, HO_QS_ONLY_REFUSAL, HR_ONLY, PORTAL_PERMISSIONS,
                                   employee_can, permissions_for)
 from app.core.security import admin_panel_password, hash_password, verify_password
 
@@ -292,6 +292,8 @@ def get_employee_user(request: Request, db: Session):
         raise HTTPException(status_code=401, detail="Not signed in")
     if emp.status in ("terminated",):
         raise HTTPException(status_code=403, detail="Account deactivated")
+    if is_no_access(emp):
+        raise HTTPException(status_code=403, detail="This person is kept for attendance only and cannot sign in.")
     client = db.query(models.DBClient).filter(models.DBClient.id == emp.client_id).first()
     if not client or not client.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
