@@ -7,14 +7,21 @@ Two sources, kept apart because they are not worth the same:
   a picture or PDF  an estimate. The 3D trace (app/ai/drawing_3d.py) gives walls and rooms as positions on the sheet, and
                     the real width of the plan turns them into metres. Good for an early idea, never for ordering.
 
-A DWG cannot be read here: the format is closed and needs Autodesk's or the Open Design Alliance's own library. AutoCAD
-saves the same drawing as DXF in one step, with nothing lost.
+A DWG is turned into a DXF on the server when a converter is installed there - LibreDWG's dwg2dxf, or the Open Design
+Alliance's File Converter (DWG_CONVERTER may name either's path). Without one it is refused: AutoCAD saves the same
+drawing as DXF in one step, with nothing lost.
 
 Materials are the quantities times rules of thumb, each of them on the form to change. Columns, beams and footings are
 left out: their sizes are in the structural schedules, not on a plan.
 """
+import glob
 import io
 import math
+import os
+import shutil
+import subprocess
+import tempfile
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -40,6 +47,58 @@ DEFAULTS: Dict[str, float] = {
     "slab_thickness_m": 0.15, "concrete_bags_per_cum": 7.5, "concrete_sand_cum": 0.42, "concrete_aggregate_cum": 0.84,
     "steel_kg_per_cum": 90, "wastage_percent": 5,
 }
+
+
+NO_DWG = ("A DWG cannot be read on this server. In AutoCAD use Save As, choose DXF, and add that file as a new revision "
+          "of this drawing.")
+DWG_SECONDS = 90
+_converted: "OrderedDict[Any, bytes]" = OrderedDict()   # the last few DWGs turned into DXF, by file: the take-off asks again
+
+
+def dwg_converter():
+    """("libredwg" | "oda", path) for the converter installed on this server, or None."""
+    named = (os.environ.get("DWG_CONVERTER") or "").strip()
+    for path in ([named] if named else []) + [shutil.which("dwg2dxf"), shutil.which("ODAFileConverter")]:
+        if path and os.path.isfile(path):
+            return ("oda" if "odafileconverter" in os.path.basename(path).lower() else "libredwg"), path
+    return None
+
+
+def dwg_to_dxf(data: bytes, key=None) -> bytes:
+    """The DWG as DXF, through the converter on this server. The file is the user's: it is written to a folder of its
+    own, the converter gets no shell and a time limit, and only the DXF it writes is read back."""
+    if key is not None and key in _converted:
+        _converted.move_to_end(key)
+        return _converted[key]
+    tool = dwg_converter()
+    if tool is None:
+        raise HTTPException(400, NO_DWG)
+    kind, path = tool
+    with tempfile.TemporaryDirectory(prefix="dwg-") as work:
+        src, out = os.path.join(work, "in"), os.path.join(work, "out")
+        os.makedirs(src)
+        os.makedirs(out)
+        with open(os.path.join(src, "drawing.dwg"), "wb") as fh:
+            fh.write(data)
+        if kind == "oda":
+            cmd = [path, src, out, "ACAD2018", "DXF", "0", "1", "*.DWG"]
+        else:
+            cmd = [path, "-y", "-o", os.path.join(out, "drawing.dxf"), os.path.join(src, "drawing.dwg")]
+        try:
+            subprocess.run(cmd, cwd=work, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=DWG_SECONDS, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            raise HTTPException(400, "The DWG could not be turned into a DXF here. " + NO_DWG.split(". ", 1)[1])
+        made = sorted(glob.glob(os.path.join(out, "*.dxf")) + glob.glob(os.path.join(out, "*.DXF")))
+        if not made or os.path.getsize(made[0]) == 0:
+            raise HTTPException(400, "The DWG could not be turned into a DXF here. " + NO_DWG.split(". ", 1)[1])
+        with open(made[0], "rb") as fh:
+            dxf = fh.read()
+    if key is not None:
+        _converted[key] = dxf
+        while len(_converted) > 8:
+            _converted.popitem(last=False)
+    return dxf
 
 
 def layer_kind(name: str) -> str:
