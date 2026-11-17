@@ -66,13 +66,23 @@ HOME_HEAD = (
     '<meta property="og:title" content="Yalavarti Infra Projects | Building homes, townships and the infrastructure around them">'
     '<meta property="og:description" content="Houses and villas, apartments, gated townships, roads, drainage and water '
     'works - one civil builder from the plot to the keys.">'
-    '<meta property="og:image" content="/next/site/img/cat3.jpg">'
+    '<meta property="og:image" content="%%s/next/site/img/cat3.jpg">'
     '<meta name="theme-color" content="#000000">' % HOME_DESCRIPTION.replace("'", "&#39;"))
 
 
-async def home():
+def _public_base(request: Request):
+    """https://yalavartiinfra.com as the visitor typed it. Behind Railway's proxy the app itself is reached over http, so
+    the scheme the visitor used comes from the proxy's header."""
+    base = str(request.base_url).rstrip("/")
+    if request.headers.get("x-forwarded-proto", "") == "https" and base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    return base
+
+
+async def home(request: Request):
     """The company's front page is a page of the React app. Its title and description are put into the HTML here, so a
-    search engine or a link preview sees them without running the app."""
+    search engine or a link preview sees them without running the app. The preview picture is a full address: WhatsApp
+    and Facebook skip one given as a path."""
     index = os.path.join(FRONTEND_DIST, "index.html")
     if not os.path.exists(index):
         return Response("Front page not built", status_code=404)
@@ -80,7 +90,7 @@ async def home():
         html = f.read()
     html = re.sub(r"<title>.*?</title>", "<title>%s</title>" % HOME_TITLE, html, count=1, flags=re.S)
     html = re.sub(r'<meta name="(description|theme-color)"[^>]*>', "", html)
-    html = html.replace("</head>", HOME_HEAD + "</head>", 1)
+    html = html.replace("</head>", HOME_HEAD % _public_base(request) + "</head>", 1)
     return HTMLResponse(html)
 
 

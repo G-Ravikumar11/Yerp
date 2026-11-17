@@ -24,7 +24,9 @@ describe('Company front page', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toMatch(/homes, townships/i)
     expect(await screen.findByText('Projects delivered')).toBeTruthy()
     const text = document.body.textContent ?? ''
-    for (const word of [/electrical/i, /33\s*kV/i, /YERP/, /\bERP\b/]) expect(text).not.toMatch(word)
+    for (const word of [/electrical/i, /33\s*kV/i, /\bpanels?\b/i, /YERP/, /\bERP\b/]) expect(text).not.toMatch(word)
+    // Nor in the alt text of any picture.
+    for (const img of document.querySelectorAll('img')) expect(img.alt).not.toMatch(/electrical|33\s*kV|panel|YERP/i)
     expect(document.title).toMatch(/^Yalavarti Infra Projects/)
   })
 
