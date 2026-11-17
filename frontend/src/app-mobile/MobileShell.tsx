@@ -6,6 +6,7 @@ import { CompanyNotice } from '@/components/company/CompanyNotice'
 import { PageErrorBoundary } from '@/components/layout/PageErrorBoundary'
 import { SyncIndicator } from '@/components/layout/SyncIndicator'
 import { attachNavigator } from '@/lib/deepLink'
+import { ShellTitle } from '@/lib/shellTitle'
 import { markScreensGood, registerPush } from '@/lib/mobile'
 import { trailFor } from '@/lib/nav'
 import { appUrl } from '@/lib/paths'
@@ -87,7 +88,7 @@ export default function MobileShell() {
         ) : (
           <PageErrorBoundary resetKey={pathname}>
             <Suspense fallback={<div className="space-y-4" role="status" aria-label="Loading"><Skeleton className="h-9 w-48" /><Skeleton className="h-64 w-full rounded-lg" /></div>}>
-              <Outlet />
+              <ShellTitle.Provider value={isTab ? '' : title}><Outlet /></ShellTitle.Provider>
             </Suspense>
           </PageErrorBoundary>
         )}

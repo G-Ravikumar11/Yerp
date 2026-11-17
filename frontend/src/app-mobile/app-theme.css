@@ -109,3 +109,14 @@ html.app-ui body {
 html.app-ui {
   font-variant-numeric: tabular-nums;
 }
+
+/* A long site name in a list is cut with an ellipsis, not in the middle of a letter. */
+html.app-ui select {
+  text-overflow: ellipsis;
+}
+
+/* Messages come in under the top bar, so they never cover what was just saved or the sign of what is kept on the phone. */
+html.app-ui [aria-live='polite'] {
+  top: calc(env(safe-area-inset-top) + 56px);
+  bottom: auto;
+}

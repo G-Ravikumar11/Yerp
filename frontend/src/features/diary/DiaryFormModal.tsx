@@ -98,7 +98,7 @@ function Form({ job, day, onClose, onOpen }: { job: number; day: DiaryDetail | n
         { method: day ? 'PUT' : 'POST', url: day ? `/api/diary/${day.id}` : '/api/diary', body: body(), label: `Site diary ${date}` },
         { base: day ? day.updated_at || '-' : undefined, files: photos.length ? { items: photos, via: 'attached', type: 'diary', id: day?.id, idFrom: 'diary.id' } : undefined },
       )
-      if (sent.queued) return { message: 'No signal. The day and its photos are kept on this device and go up by themselves when you are back online.' + (signOff ? ' Sign it off once it has gone up.' : '') }
+      if (sent.queued) return { message: 'No signal. Kept on this phone; it goes up when you are back online.' + (signOff ? ' Sign it off once it has gone up.' : '') }
       const id = sent.result.diary.id
       if (photos.length) {
         const { failed } = await uploadFiles(photos, 'diary', id)

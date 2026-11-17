@@ -9,6 +9,8 @@ import { Badge, Button, Skeleton, Stat, StatGrid } from '@/components/ui'
 import { useDiaries, useLabourHistory, type DiaryRow } from '@/api/diary'
 import { formatDate, today } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
+import { personKey } from '@/lib/session'
+import { isMine, useOffline } from '@/stores/offline'
 import { DiaryFormModal } from './DiaryFormModal'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 
@@ -31,6 +33,8 @@ export default function DiaryPage() {
     setParams({}, { replace: true })
   }, [job, q.data, setParams])
   const labour = useLabourHistory(job)
+  // Days entered here without signal are not on the server yet, so the counts above do not include them.
+  const kept = useOffline((s) => s.queue.filter((x) => x.method === 'POST' && x.url === '/api/diary' && isMine(x, personKey()) && (x.body as { job_id?: number } | undefined)?.job_id === job).length)
   const s = q.data?.summary
   const columns: TableColumn<DiaryRow>[] = [
     { id: 'date', header: 'Date', sort: (r) => r.diary_date, cell: (r) => <div><button type="button" className="font-semibold text-primary underline-offset-2 hover:underline" onClick={() => setOpen(r.id)}>{formatDate(r.diary_date)}</button>{r.lost_to_weather && <div className="text-xs text-warning">rained off</div>}</div> },
@@ -40,25 +44,27 @@ export default function DiaryPage() {
     { id: 'plant', header: 'Plant', hideBelow: 'lg', align: 'right', cell: (r) => formatINR(r.plant_cost) },
     { id: 'work', header: 'Work done', hideBelow: 'md', cell: (r) => <div className="max-w-64"><span className="line-clamp-2">{r.work_done}</span>{r.holdups && <div className="line-clamp-1 text-xs text-warning">held up: {r.holdups}</div>}</div> },
     { id: 'status', header: 'Status', cell: (r) => <Badge tone={r.status === 'SUBMITTED' ? 'success' : 'neutral'} dot>{r.status === 'SUBMITTED' ? 'Signed off' : 'Draft'}</Badge> },
+    { id: 'photos', header: '', align: 'right', cell: (r) => <Button size="sm" variant="outline" onClick={() => setPhotos(r)}><Image /> Photos</Button> },
     {
       id: 'act',
       header: '',
       align: 'right',
+      hideBelow: 'md',
       cell: (r) => (
         <div className="flex justify-end gap-1.5">
-          <Button size="sm" variant="outline" onClick={() => setPhotos(r)}><Image /> Photos</Button>
           <Button size="sm" variant="outline" asChild><a href={`/api/diary/${r.id}/export.xlsx`} title="The daily progress report as a workbook"><FileSpreadsheet /> DPR</a></Button>
           <Button size="sm" variant="outline" asChild><a href={`/api/diary/${r.id}/report.pdf`} target="_blank" rel="noreferrer" title="The daily progress report on the letterhead, with the plan against the day, hindrances and photos"><FileText /> PDF</a></Button>
         </div>
       ),
     },
-    { id: 'master-del', header: '', align: 'right', width: '3.5rem', cell: (r) => <MasterDelete kind="diary" id={r.id} label={String(r.diary_date)} noun="diary day" /> },
+    { id: 'master-del', header: '', align: 'right', hideBelow: 'md', width: '3.5rem', cell: (r) => <MasterDelete kind="diary" id={r.id} label={String(r.diary_date)} noun="diary day" /> },
   ]
   const top = Math.max(...(labour.data?.by_trade.map((t) => t.mandays) ?? [0]), 1)
   return (
     <>
       <PageHeader eyebrow="Projects" title="Site Diary" description="Who turned up, what the weather did, what got built and what stopped it." actions={<Button disabled={!job} onClick={() => setOpen('new')}><Plus /> Record a day</Button>} />
       <div className="mb-6"><ProjectPicker value={job} onChange={setJob} id="diary-job" /></div>
+      {kept > 0 && <p role="status" className="mb-3 rounded-lg bg-info-soft px-3 py-2 text-[13px] text-info">{kept === 1 ? '1 day is' : `${kept} days are`} kept on this phone and not counted below until {kept === 1 ? 'it has' : 'they have'} gone up.</p>}
       <StatGrid>
         <Stat label="Days recorded" value={s?.days_recorded ?? 0} loading={q.isPending && job > 0} />
         <Stat label="Mandays" value={s?.mandays ?? 0} loading={q.isPending && job > 0} />
