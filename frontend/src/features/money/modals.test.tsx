@@ -7,6 +7,7 @@ vi.setConfig({ testTimeout: 20_000 })
 const sent = vi.hoisted(() => ({ calls: [] as { req: Record<string, unknown>; options: Record<string, unknown> | undefined }[] }))
 
 vi.mock('@/stores/offline', () => ({
+  useOffline: { getState: () => ({ online: true }) },   // read by useAction after a change
   sendOrQueue: vi.fn(async (req: Record<string, unknown>, options?: Record<string, unknown>) => {
     sent.calls.push({ req, options })
     return { queued: true as const }
