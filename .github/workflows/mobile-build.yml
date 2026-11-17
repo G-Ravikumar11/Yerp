@@ -356,3 +356,48 @@ jobs:
           name: Yerp-iOS-Archive
           path: mobile/build/Yerp-iOS-Archive.zip
           retention-days: 14
+
+      # A build for the iPhone Simulator (no signing, no Apple account): the app to try the native glass bar in a simulator on a
+      # Mac, or one uploaded to a cloud simulator such as Appetize. The archive above is for real phones and cannot run in one.
+      - name: Build for the iOS Simulator
+        working-directory: mobile/ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath ../../build/sim \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          cd ../../build/sim/Build/Products/Debug-iphonesimulator
+          zip -qr "$GITHUB_WORKSPACE/mobile/build/Yerp-iOS-Simulator.zip" App.app
+
+      - name: Upload iOS Simulator build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yerp-iOS-Simulator
+          path: mobile/build/Yerp-iOS-Simulator.zip
+          retention-days: 14
+
+      # Starts the simulator build on the runner and takes a picture, so a crash on launch (a plugin that fails to load, say) shows
+      # up here. It only gets as far as the sign-in screen: the bottom bar is part of the signed-in app.
+      - name: Launch it in a simulator and take a picture
+        continue-on-error: true
+        run: |
+          UDID=$(xcrun simctl list devices available | grep -m1 "iPhone" | grep -oE '[0-9A-F]{8}-[0-9A-F-]{27}')
+          echo "Simulator: $UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" mobile/build/sim/Build/Products/Debug-iphonesimulator/App.app
+          xcrun simctl launch "$UDID" com.yerp.app
+          sleep 20
+          xcrun simctl io "$UDID" screenshot mobile/build/sim-launch.png
+          xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "App"' > mobile/build/sim-log.txt || true
+          grep -ciE "YerpGlass|crash|fatal" mobile/build/sim-log.txt || true
+
+      - name: Upload the launch picture and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yerp-iOS-Simulator-Launch
+          path: |
+            mobile/build/sim-launch.png
+            mobile/build/sim-log.txt
+          if-no-files-found: ignore
+          retention-days: 14
