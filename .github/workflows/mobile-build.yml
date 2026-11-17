@@ -175,10 +175,17 @@ jobs:
   # =========================================================================
   build-ios:
     name: Build iOS (Apple App Store / TestFlight Archive)
-    runs-on: macos-14
+    # macOS 15 and Xcode 26: the native Liquid Glass tab bar (mobile/plugins/yerp-glass) uses LiquidGlassKit, which draws
+    # SwiftUI's glass effect and so needs the iOS 26 SDK to compile. It still runs on iOS 17 and later (a Material fallback).
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Use Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26'
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v4
@@ -212,6 +219,14 @@ jobs:
             npx cap add ios
             cp "$RUNNER_TEMP/ios-README.md" ios/README.md 2>/dev/null || true
           fi
+          # The iPhone app's bottom bar as native Liquid Glass. Only this job has it: the website and the Android app are untouched.
+          # The plugin is installed from this repository, LiquidGlassKit is fetched at a pinned release into it, and the app's
+          # minimum iOS becomes 17 (the library's own floor).
+          bash plugins/yerp-glass/scripts/add-liquidglasskit.sh
+          npm install --save --no-audit --no-fund ./plugins/yerp-glass
+          sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '17.0'/" ios/App/Podfile
+          sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g" ios/App/App.xcodeproj/project.pbxproj
+          grep -n "platform :ios" ios/App/Podfile
           npx cap sync ios
 
       # The iOS project is generated here, with Capacitor's placeholder icon and splash. Every image in those two
