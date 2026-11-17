@@ -2,8 +2,13 @@ import { useEffect, useRef } from 'react'
 import { SITE } from './data/content'
 import { asset, reduceMotion } from './lib'
 
-/** The milestones: a pinned stage where scrolling down slides the cards sideways, each turning as it passes the middle. */
+/** Our story, once there is one to tell (SITE.timeline, from Uday). Left off the page while it is empty. */
 export function Timeline() {
+  return SITE.timeline.length ? <Milestones /> : null
+}
+
+/** The milestones: a pinned stage where scrolling down slides the cards sideways, each turning as it passes the middle. */
+function Milestones() {
   const sec = useRef<HTMLElement>(null)
   const pin = useRef<HTMLDivElement>(null)
   const track = useRef<HTMLDivElement>(null)
@@ -73,9 +78,9 @@ export function Timeline() {
   }, [])
 
   return (
-    <section className="timeline" id="company" aria-label="Milestones" ref={sec}>
+    <section className="timeline" id="story" aria-label="Our story" ref={sec}>
       <div className="timeline__pin" ref={pin}>
-        <div className="wrap sechead"><p className="eyebrow">Since 1998</p><h2 className="h2">Milestones</h2></div>
+        <div className="wrap sechead"><p className="eyebrow">Our Story</p><h2 className="h2">Milestones</h2></div>
         <div className="timeline__track" id="tltrack" ref={track}>
           {SITE.timeline.map((m) => (
             <article className="tl" key={m.y}>

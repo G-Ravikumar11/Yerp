@@ -53,13 +53,13 @@ def test_a_photo_is_served_only_for_a_project_on_the_website(tenant, client, our
 
 def test_an_enquiry_becomes_a_new_lead_in_the_tender_pipeline(tenant, client, ours):
     res = client.post("/api/public/enquiry", json={"name": "Ravi Kumar", "company": "Vanya Developers", "phone": "9800000000",
-                                                   "city": "Hyderabad", "project_type": "Residential", "scopes": ["Electrical", "Fire"],
-                                                   "message": "Two towers, G+14."})
+                                                   "city": "Hyderabad", "project_type": "Township or layout", "scopes": ["Roads", "Drainage"],
+                                                   "message": "Plotted layout, 12 acres."})
     assert res.status_code == 200, res.text
     with database.SessionLocal() as s:
         lead = s.query(models.DBLead).filter(models.DBLead.client_id == ours).order_by(models.DBLead.id.desc()).first()
         assert lead.source == "Website enquiry" and lead.status == "NEW" and lead.customer_name == "Vanya Developers"
-        assert lead.title == "Website enquiry: Residential, Hyderabad" and "Electrical, Fire" in lead.notes
+        assert lead.title == "Website enquiry: Township or layout, Hyderabad" and "Roads, Drainage" in lead.notes
         assert s.query(models.DBAlert).filter(models.DBAlert.client_id == ours, models.DBAlert.kind == "website_enquiry").count() == 1
 
 
@@ -77,3 +77,26 @@ def test_search_engines_are_shown_the_front_page_and_not_the_erp(client):
     robots = client.get("/robots.txt").text
     assert "Disallow: /next/" in robots and "Disallow: /api/" in robots and "Sitemap:" in robots
     assert "<loc>http://testserver/</loc>" in client.get("/sitemap.xml").text
+
+
+def test_the_front_page_is_described_as_the_civil_company():
+    """What Google and a WhatsApp link preview show: Yalavarti Infra Projects, never the electrical contractor."""
+    from app.core import static
+    head = static.HOME_TITLE + static.HOME_DESCRIPTION + static.HOME_HEAD
+    assert static.HOME_TITLE.startswith("Yalavarti Infra Projects")
+    for word in ("Electrical", "33 kV", "PHE", "panels", "YERP"):
+        assert word.lower() not in head.lower(), word
+
+
+def test_the_link_preview_picture_is_a_full_address(client, monkeypatch, tmp_path):
+    """WhatsApp shows the picture only when og:image is a full https address, as the visitor reached the site."""
+    from app.core import static
+    (tmp_path / "index.html").write_text('<html><head><title>Y ERP</title><meta name="description" content="Y ERP - billing">'
+                                         '</head><body><noscript><p>Y ERP needs JavaScript to run.</p></noscript></body></html>',
+                                         encoding="utf8")
+    monkeypatch.setattr(static, "FRONTEND_DIST", str(tmp_path))
+    html = client.get("/", headers={"x-forwarded-proto": "https"}).text
+    assert "<title>Yalavarti Infra Projects | Homes, Townships &amp; Civil Infrastructure</title>" in html
+    assert '<meta property="og:image" content="https://testserver/next/site/img/cat3.jpg">' in html
+    # No ERP wording anywhere a visitor or a search engine can see it.
+    assert "ERP" not in html and "info@yalavartiinfra.com" in html

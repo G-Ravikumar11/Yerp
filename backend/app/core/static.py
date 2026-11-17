@@ -56,22 +56,39 @@ def _forward(target: str):
 for _page, _target in LEGACY_PAGES.items():
     app.add_api_route("/" + _page, _forward(_target), methods=["GET"], include_in_schema=False)
 
-HOME_TITLE = "Yalavarti Projects | Electrical, Fire &amp; PHE Contractors, Hyderabad"
-HOME_DESCRIPTION = ("Yalavarti Projects Pvt. Ltd. - electrical works up to 33 kV, fire protection, plumbing and panels for "
-                    "India's landmarks. Hyderabad, since 1998.")
+HOME_TITLE = "Yalavarti Infra Projects | Homes, Townships &amp; Civil Infrastructure"
+HOME_DESCRIPTION = ("Yalavarti Infra Projects - civil engineering and construction: houses and villas, apartments, gated "
+                    "townships, roads, drainage, water supply and sewerage, from the land and its approvals to handover.")
 HOME_HEAD = (
     '<meta name="description" content="%s">'
     '<meta property="og:type" content="website">'
-    '<meta property="og:title" content="Yalavarti Projects | Powering India&#39;s landmarks">'
-    '<meta property="og:description" content="Electrical works up to 33 kV, fire protection, plumbing and panels for '
-    'India&#39;s leading developers. Hyderabad, since 1998.">'
-    '<meta property="og:image" content="/next/site/img/banner1.jpg">'
+    '<meta property="og:site_name" content="Yalavarti Infra Projects">'
+    '<meta property="og:title" content="Yalavarti Infra Projects | Building homes, townships and the infrastructure around them">'
+    '<meta property="og:description" content="Houses and villas, apartments, gated townships, roads, drainage and water '
+    'works - one civil builder from the plot to the keys.">'
+    '<meta property="og:image" content="%%s/next/site/img/cat3.jpg">'
     '<meta name="theme-color" content="#000000">' % HOME_DESCRIPTION.replace("'", "&#39;"))
 
 
-async def home():
+HOME_NOSCRIPT = ('<noscript><p style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center">'
+                 'Yalavarti Infra Projects - homes, townships and civil infrastructure. This page needs JavaScript; '
+                 'please turn it on, or write to us at <a href="mailto:info@yalavartiinfra.com">info@yalavartiinfra.com</a>.'
+                 '</p></noscript>')
+
+
+def _public_base(request: Request):
+    """https://yalavartiinfra.com as the visitor typed it. Behind Railway's proxy the app itself is reached over http, so
+    the scheme the visitor used comes from the proxy's header."""
+    base = str(request.base_url).rstrip("/")
+    if request.headers.get("x-forwarded-proto", "") == "https" and base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    return base
+
+
+async def home(request: Request):
     """The company's front page is a page of the React app. Its title and description are put into the HTML here, so a
-    search engine or a link preview sees them without running the app."""
+    search engine or a link preview sees them without running the app. The preview picture is a full address: WhatsApp
+    and Facebook skip one given as a path."""
     index = os.path.join(FRONTEND_DIST, "index.html")
     if not os.path.exists(index):
         return Response("Front page not built", status_code=404)
@@ -79,7 +96,9 @@ async def home():
         html = f.read()
     html = re.sub(r"<title>.*?</title>", "<title>%s</title>" % HOME_TITLE, html, count=1, flags=re.S)
     html = re.sub(r'<meta name="(description|theme-color)"[^>]*>', "", html)
-    html = html.replace("</head>", HOME_HEAD + "</head>", 1)
+    # The ERP's own words stay on the ERP: a visitor without JavaScript, and a search engine, see the company's.
+    html = re.sub(r"<noscript>.*?</noscript>", HOME_NOSCRIPT, html, count=1, flags=re.S)
+    html = html.replace("</head>", HOME_HEAD % _public_base(request) + "</head>", 1)
     return HTMLResponse(html)
 
 
