@@ -97,6 +97,13 @@ export const SITE = {
     { t: 'Handover', d: 'A walk-through with you, any snags put right, and the keys.' },
   ],
 
+  // Where we are building, as Hemanth listed them (18 Nov 2026). Names and places only: no status, size or year until confirmed.
+  sites: [
+    { group: 'APTIDCO sites', where: 'Andhra Pradesh', names: ['Nuzividu', 'Tiruvuru', 'Ongole', 'Addanki'] },
+    { group: 'High rise', where: 'Andhra Pradesh', names: ['Visakhapatnam'] },
+    { group: 'Hyderabad', where: 'Telangana', names: ['Vision Anmaya', 'Vision Arusha', 'Steel Alpha'] },
+  ],
+
   // TODO(Uday): our own milestones, in this shape: { y: '2012', t: 'First township', d: 'One line.', img: 'site/img/...' }.
   // The section is left off the page while this is empty.
   timeline: [] as { y: string; t: string; d: string; img: string }[],

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { CREDENTIALS, QUALITY } from './data/credentials'
+import { SITE } from './data/content'
 import { goTo } from './Nav'
 import { asset, inr } from './lib'
 import { apiPath, sendEnquiry, type Live, type LiveProject } from './siteApi'
@@ -23,7 +24,15 @@ export function LiveProjects({ live }: { live: Live | null }) {
       <div className="wrap">
         <div className="sechead sechead--split">
           <div><p className="eyebrow">Projects</p><h2 className="h2">Recent &amp; ongoing projects</h2></div>
-          <p className="lede">{all.length ? 'Straight from our project records, with photos from site. Filter by type of work or city.' : 'Our projects, with photos from site, are being added here.'}</p>
+          <p className="lede">{all.length ? 'Where we are building, and our projects with photos from site. Filter by type of work or city.' : 'Where we are building. Photos from site are being added here.'}</p>
+        </div>
+        <div className="sites" aria-label="Our sites">
+          {SITE.sites.map((g) => (
+            <div key={g.group} className="sites__group">
+              <p className="eyebrow">{g.group} · {g.where}</p>
+              <ul>{g.names.map((n) => <li key={n}>{n}</li>)}</ul>
+            </div>
+          ))}
         </div>
         {all.length > 0 && <div className="live__filters">{chips('Type of work', sectors, sector, setSector)}{chips('City', cities, city, setCity)}</div>}
         {all.length > 0 && <ul className="live__grid">{shown.map((p) => <ProjectCard key={p.id} p={p} />)}</ul>}
