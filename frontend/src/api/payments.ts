@@ -23,6 +23,13 @@ export type RequestStatus = 'PENDING' | 'AWAITING_MD' | 'APPROVED' | 'PAID' | 'R
 export interface PaymentRequest {
   id: number
   number: string
+  tax?: string
+  supply?: string
+  supply_state?: string
+  gst_rate?: number
+  payee_bank?: string
+  payee_account?: string
+  payee_ifsc?: string
   doc_type: string
   doc_id: number | null
   doc_number: string
@@ -71,6 +78,17 @@ export interface RequestInput {
   party_type?: string
   party_name?: string
   head?: string
+  /** An expense: taxable or non_taxable, and for a taxable one local or non_local. */
+  tax?: string
+  supply?: string
+  /** A non local supply: the GST code of the state it comes from. */
+  supply_state?: string
+  /** The GST rate in percent the taxable amount carries. */
+  gst_rate?: number
+  /** A bank transfer: where the money went. */
+  payee_bank?: string
+  payee_account?: string
+  payee_ifsc?: string
   job_id?: number | null
 }
 export const raisePaymentRequest = (b: RequestInput) => post<{ request: PaymentRequest; message: string }>('/api/payment-requests', b)

@@ -354,7 +354,8 @@ class Books:
                 continue
             if e.doc_type in ("expense", "income"):
                 ledger = self.head(e.head, income=e.doc_type == "income")
-                say = "%s - %s%s%s" % (e.head, e.party_name or "", ref, (". " + e.note) if e.note else "")
+                to = (" To %s A/c %s IFSC %s." % (e.payee_bank or "bank", e.payee_account or "-", e.payee_ifsc or "-")) if (e.payee_account or e.payee_ifsc or e.payee_bank) else ""
+                say = "%s - %s%s%s%s" % (e.head, e.party_name or "", ref, to, (". " + e.note) if e.note else "")
             else:
                 # A mobilisation advance goes to its own ledger: that is the one the RA bills take it back from.
                 ledger = self.std("contractor_advance") if e.doc_type == "sub_advance" else self.party(e.party_name, e.party_type)

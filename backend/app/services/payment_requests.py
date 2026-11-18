@@ -184,12 +184,20 @@ def raise_request(db, client, emp, actor_name, body, member=None):
         raise HTTPException(400, "How much?")
     doc_type = (body.doc_type or "on_account").strip()
     head, doc, doc_number, party_id = "", None, "", None
+    tax, supply, supply_state, gst_rate = "", "", "", 0.0
+    payee = ("", "", "")
     if doc_type == "expense":
         head = next((h for h in EXPENSE_HEADS if h.lower() == (body.head or "").strip().lower()), "")
         if not head:
             raise HTTPException(400, "Book it under one of: %s." % ", ".join(EXPENSE_HEADS))
         party_type, party_name = "other", (body.party_name or "").strip()
         job_id = body.job_id or None
+        from app.services.money import expense_tax
+        tax, supply, supply_state = expense_tax(body.tax, body.supply, body.supply_state)
+        from app.services.money import expense_gst
+        gst_rate = expense_gst(tax, body.gst_rate)
+        from app.services.money import payee_bank_details
+        payee = payee_bank_details(body.mode or 'Bank transfer', body.payee_bank, body.payee_account, body.payee_ifsc)
     elif doc_type == "on_account":
         party_type = body.party_type if body.party_type in PARTY_TYPES else "other"
         party_name, job_id = (body.party_name or "").strip(), body.job_id or None
@@ -212,7 +220,7 @@ def raise_request(db, client, emp, actor_name, body, member=None):
     r = models.DBPaymentRequest(
         client_id=client.id, number=next_request_number(db, client.id), doc_type=doc_type,
         doc_id=doc.id if doc else None, doc_number=doc_number, party_type=party_type, party_name=party_name,
-        party_id=party_id, job_id=job_id, head=head, amount=amount, account_id=body.account_id or None,
+        party_id=party_id, job_id=job_id, head=head, tax=tax, supply=supply, supply_state=supply_state, gst_rate=gst_rate, payee_bank=payee[0], payee_account=payee[1], payee_ifsc=payee[2], amount=amount, account_id=body.account_id or None,
         mode=(body.mode or "").strip()[:30], note=(body.note or "").strip()[:300],
         requested_by=emp.id if emp is not None else None, requested_by_member=member.id if member is not None else None,
         requested_by_name=actor_name)
@@ -300,6 +308,8 @@ def lock_to_request(db, client_id, body):
         raise HTTPException(409, "%s was approved to pay %s%s. The %s cannot be changed when it is paid - raise a new request for that."
                                  % (r.number, r.party_name or "the payee", (" under " + r.head) if r.head else "", what))
     body.party_name, body.party_type, body.job_id, body.head, body.direction = r.party_name, r.party_type or "other", r.job_id, r.head, "OUT"
+    body.tax, body.supply, body.supply_state, body.gst_rate = r.tax or "", r.supply or "", r.supply_state or "", r.gst_rate or None
+    body.payee_bank, body.payee_account, body.payee_ifsc = r.payee_bank or "", r.payee_account or "", r.payee_ifsc or ""
     return r
 
 
@@ -334,7 +344,7 @@ def request_dict(r, accounts=None, jobs=None, days=None):
     return {"id": r.id, "number": r.number or "", "doc_type": r.doc_type or "", "doc_id": r.doc_id,
             "doc_number": r.doc_number or "", "party_type": r.party_type or "", "party_name": r.party_name or "",
             "job_id": r.job_id, "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",
-            "head": r.head or "", "amount": money(r.amount), "account_id": r.account_id,
+            "head": r.head or "", "tax": r.tax or "", "supply": r.supply or "", "supply_state": r.supply_state or "", "gst_rate": r.gst_rate or 0.0, "payee_bank": r.payee_bank or "", "payee_account": r.payee_account or "", "payee_ifsc": r.payee_ifsc or "", "amount": money(r.amount), "account_id": r.account_id,
             "account": acc.name if acc else "", "mode": r.mode or "", "note": r.note or "",
             "status": r.status, "status_label": "Approved - expired" if expired else STATUS_LABEL.get(r.status, r.status),
             "expired": expired,

@@ -14,14 +14,16 @@ import { ExpenseModal, TransferModal } from './VoucherModals'
 
 /** Every receipt, payment, expense and transfer, newest first, each with its voucher. A wrong one is voided - kept, struck
     through, and the bill goes back to owing. */
-export function EntriesTab() {
+export function EntriesTab({ job = 0 }: { job?: number }) {
   const { can } = useSession()
   const q = useEntries()
   const [voiding, setVoiding] = useState<Entry | null>(null)
   const [voucher, setVoucher] = useState<'expense' | 'income' | null>(null)
   const [transferring, setTransferring] = useState(false)
   const act = useAction((a: { e: Entry; reason: string }) => voidEntry(a.e.id, a.reason), { invalidate: [ledgerKeys.all, ['owed']], onSuccess: () => setVoiding(null) })
-  const rows = q.data?.entries ?? []
+  // One project's: only the entries charged to it.
+  const all = useMemo(() => q.data?.entries ?? [], [q.data])
+  const rows = useMemo(() => (job ? all.filter((e) => e.job_id === job) : all), [all, job])
   const projects = useProjects()
   const jobName = useMemo(() => Object.fromEntries((projects.data ?? []).map((p) => [p.id, projectLabel(p)])), [projects.data])
   const filters = useListFilters(rows, {
@@ -29,7 +31,11 @@ export function EntriesTab() {
     // Site-wise: what came in and went out for one project.
     facets: { project: { label: 'Project', get: (e) => (e.job_id ? jobName[e.job_id] ?? '' : 'Head office') } },
   })
-  const s = q.data?.summary
+  const live = rows.filter((e) => !e.voided && e.doc_type !== 'contra')
+  const s = job
+    ? { received: live.filter((e) => e.direction === 'IN').reduce((n, e) => n + e.amount, 0), paid: live.filter((e) => e.direction === 'OUT').reduce((n, e) => n + e.amount, 0),
+        expenses: live.filter((e) => e.doc_type === 'expense').reduce((n, e) => n + e.amount, 0), transferred: 0, entries: live.length }
+    : q.data?.summary
   const strike = (e: Entry) => cn(e.voided && 'line-through opacity-55')
 
   const columns: TableColumn<Entry>[] = [
@@ -37,7 +43,7 @@ export function EntriesTab() {
     { id: 'no', header: 'No.', cell: (e) => <span className={cn('font-mono text-[13px]', strike(e))}>{e.number}</span> },
     { id: 'party', header: 'Party', cell: (e) => <div className={strike(e)}>{e.party_name}<div className="text-xs text-muted-foreground">{e.doc_type === 'contra' ? (e.direction === 'IN' ? 'From our account' : 'To our account') : e.doc_type === 'expense' ? 'Expense' : e.doc_type === 'income' ? 'Other receipt' : PARTY_LABEL[e.party_type] ?? ''}</div></div> },
     { id: 'against', header: 'Against', hideBelow: 'md', cell: (e) => <div>{entryAgainst(e)}{e.note && (e.head || e.doc_type === 'contra') && <div className="max-w-56 truncate text-xs text-muted-foreground" title={e.note}>{e.note}</div>}</div> },
-    { id: 'mode', header: 'Mode', hideBelow: 'lg', cell: (e) => <div className="text-[13px]">{e.mode}{e.reference && <div className="text-xs text-muted-foreground">{e.reference}</div>}{e.account && <div className="text-xs text-muted-foreground">{e.account}</div>}</div> },
+    { id: 'mode', header: 'Mode', hideBelow: 'lg', cell: (e) => <div className="text-[13px]">{e.mode}{e.reference && <div className="text-xs text-muted-foreground">{e.reference}</div>}{e.account && <div className="text-xs text-muted-foreground">{e.account}</div>}{e.payee_account && <div className="text-xs text-muted-foreground" title="The payee's bank">to {e.payee_bank || 'bank'} - {e.payee_account}{e.payee_ifsc ? ` - ${e.payee_ifsc}` : ''}</div>}</div> },
     { id: 'in', header: 'In', align: 'right', cell: (e) => (e.direction === 'IN' ? <span className={strike(e)}>{formatINR(e.amount)}</span> : '') },
     { id: 'out', header: 'Out', align: 'right', cell: (e) => (e.direction === 'OUT' ? <span className={strike(e)}>{formatINR(e.amount)}</span> : '') },
     { id: 'voucher', header: '', align: 'right', width: '3rem', cell: (e) => <Button size="icon-sm" variant="ghost" asChild><a href={voucherUrl(e.id)} target="_blank" rel="noreferrer" aria-label={`Voucher ${e.number}`} title="Print the voucher"><FileText /></a></Button> },

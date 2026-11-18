@@ -21,10 +21,23 @@ export interface PartyList {
   summary: { owed_to_us: number; we_owe: number; advances_out: number; advances_in: number; parties: number }
 }
 
-export const useParties = (type: string) => useQuery({ queryKey: k('parties', type), queryFn: () => get<PartyList>(`/api/ledger/parties${type ? `?party_type=${type}` : ''}`) })
+/** Every party's ledger, or, with a project, only what was billed or moved for that project. */
+export const useParties = (type: string, job = 0) =>
+  useQuery({ queryKey: k('parties', type, job), queryFn: () => get<PartyList>(`/api/ledger/parties?${new URLSearchParams({ ...(type ? { party_type: type } : {}), ...(job ? { job_id: String(job) } : {}) })}`) })
 
 export interface Entry {
   id: number
+  /** An expense: taxable or non_taxable, and for a taxable one local or non_local. */
+  tax?: string
+  supply?: string
+  supply_state?: string
+  /** The rate in percent, and the tax worked out inside the amount. */
+  gst_rate?: number
+  gst?: { base: number; tax: number; igst: number; cgst: number; sgst: number } | null
+  /** A bank transfer on an expense: the bank, account number and IFSC the money went to. */
+  payee_bank?: string
+  payee_account?: string
+  payee_ifsc?: string
   number: string
   direction: 'IN' | 'OUT'
   party_type: PartyType
@@ -56,10 +69,10 @@ export const entryAgainst = (e: Pick<Entry, 'doc_type' | 'doc_number' | 'head'>)
   e.doc_type === 'contra' ? 'Transfer' : e.head || e.doc_number || 'on account'
 
 /** The heads an expense voucher or a sundry receipt is booked under. */
-export const useMoneyHeads = () => useQuery({ queryKey: k('heads'), staleTime: 60 * 60_000, queryFn: () => get<{ expense: string[]; income: string[] }>('/api/money/heads') })
+export const useMoneyHeads = () => useQuery({ queryKey: k('heads', 'v2'), staleTime: 60 * 60_000, queryFn: () => get<{ expense: string[]; income: string[]; states?: { value: string; label: string }[] }>('/api/money/heads') })
 
 /** Money out with no bill behind it (diesel, transport, site sundries), or in (scrap sold, interest). */
-export const recordVoucher = (b: { doc_type: 'expense' | 'income'; head: string; party_name: string; amount: number; paid_on: string; mode: string; reference: string; note: string; account_id: number | null; job_id: number | null }) =>
+export const recordVoucher = (b: { doc_type: 'expense' | 'income'; head: string; tax?: string; supply?: string; supply_state?: string; gst_rate?: number; payee_bank?: string; payee_account?: string; payee_ifsc?: string; party_name: string; amount: number; paid_on: string; mode: string; reference: string; note: string; account_id: number | null; job_id: number | null }) =>
   post<{ message: string; entry: Entry }>('/api/money/entries', { ...b, doc_id: null })
 
 /** Cash drawn from the bank for a site, paid back in, or moved between banks: one contra voucher, both books. */

@@ -233,6 +233,53 @@ def costs_for_project(job_id: int, request: Request, db: Session = Depends(get_d
     return row
 
 
+@router.get("/api/money/project-accounts/{job_id}")
+def project_accounts(job_id: int, request: Request, db: Session = Depends(get_db)):
+    """One project's accounts on a single screen: what it was sold for, billed and received, what it has cost and what
+    is still to pay, with the bills, payments and receipts behind each figure. Everything here is read from the same
+    places as the company-wide screens, only narrowed to this project."""
+    client = require_items_access(request, db, "bills.view_all")
+    from app.services.journals import debit_notes_by_job, journal_costs_by_job
+    detail = costs_for_project(job_id, request, db)
+    to_receive = [r for r in receivables_payload(db, client)["invoices"] if r.get("job_id") == job_id]
+    to_pay = [r for r in payables_payload(db, client)["bills"] if r.get("job_id") == job_id]
+    entries = list_money(request, "", "", job_id, "", "", db)["entries"]
+    live = [e for e in entries if not e["voided"] and e["doc_type"] != "contra"]
+    adv = advances(request, job_id, db)
+    # The payment requests raised on this project, whatever their state: what is with the accounts head or the MD, what is
+    # approved and waiting to be paid, and what was refused. The same requests Payment Approvals lists, narrowed to this project.
+    accounts = {a.id: a for a in db.query(models.DBBankAccount).filter(models.DBBankAccount.client_id == client.id).all()}
+    job = job_or_404(db, client.id, job_id)
+    days = preq.valid_days(db, client.id)
+    asked = [preq.request_dict(r, accounts, {job.id: job}, days) for r in db.query(models.DBPaymentRequest).filter(
+        models.DBPaymentRequest.client_id == client.id, models.DBPaymentRequest.job_id == job_id).order_by(models.DBPaymentRequest.id.desc()).limit(60).all()]
+    by = lambda *st: money(sum(r["amount"] for r in asked if r["status"] in st and not r["expired"]))
+    # Money in and out month by month, from this project's entries.
+    months = {}
+    for e in live:
+        m = months.setdefault((e["paid_on"] or "")[:7], {"month": (e["paid_on"] or "")[:7], "received": 0.0, "paid": 0.0})
+        m["received" if e["direction"] == "IN" else "paid"] = money(m["received" if e["direction"] == "IN" else "paid"] + e["amount"])
+    return {
+        "payment_requests": asked,
+        "request_summary": {"with_accounts": by("PENDING"), "with_md": by("AWAITING_MD"), "to_pay": by("APPROVED"),
+                            "open": len([r for r in asked if r["status"] in preq.OPEN])},
+        "monthly": sorted((m for m in months.values() if m["month"]), key=lambda m: m["month"]),
+        "project": detail,
+        "to_receive": to_receive, "to_pay": to_pay,
+        "receive_total": money(sum(r["outstanding"] for r in to_receive)), "pay_total": money(sum(r["outstanding"] for r in to_pay)),
+        "overdue_receive": money(sum(r["outstanding"] for r in to_receive if r["bucket"] != "Not due")),
+        "overdue_pay": money(sum(r["outstanding"] for r in to_pay if r["bucket"] != "Not due")),
+        "entries": entries[:40],
+        # Money in and out of this project: the entries tagged with it, or what its own bills say was settled where older
+        # bills carry a paid amount with no entry behind it. The larger of the two, so neither side hides money the other shows.
+        "received": money(max(sum(e["amount"] for e in live if e["direction"] == "IN"), detail.get("received") or 0.0)),
+        "paid": money(max(sum(e["amount"] for e in live if e["direction"] == "OUT"), detail.get("paid") or 0.0)),
+        "advances": adv["summary"], "mobilisation": adv["mobilisation"], "on_account": adv["on_account"], "site_cash": adv["site_cash"],
+        "journal_cost": money(journal_costs_by_job(db, client.id, [job_id]).get(job_id, 0.0)),
+        "debit_notes": money(debit_notes_by_job(db, client.id, [job_id]).get(job_id, 0.0)),
+    }
+
+
 @router.get("/api/costs/by-project.xlsx")
 def costs_by_project_xlsx(request: Request, db: Session = Depends(get_db)):
     client = require_items_access(request, db, "reports.view")
@@ -394,7 +441,7 @@ def payables_payload(db, client):
         buckets[bucket] = money(buckets[bucket] + outstanding)
         job = jobs.get(b.job_id)
         rows.append({
-            "kind": "Supplier bill", "doc_type": "supplier_bill", "id": b.id, "number": b.number or "",
+            "kind": "Supplier bill", "doc_type": "supplier_bill", "job_id": b.job_id, "id": b.id, "number": b.number or "",
             "party": b.vendor_name or "", "project": job.name if job else "",
             "due_date": b.due_date or "", "outstanding": outstanding,
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
@@ -438,7 +485,7 @@ def payables_payload(db, client):
         job = jobs.get(r.job_id)
         con = contractors.get(r.contractor_id)
         rows.append({
-            "kind": "Subcontractor bill", "doc_type": "sub_bill", "id": r.id, "number": r.number or "",
+            "kind": "Subcontractor bill", "doc_type": "sub_bill", "job_id": r.job_id, "id": r.id, "number": r.number or "",
             "party": con.company_name if con else "", "project": job.name if job else "",
             "due_date": due or (r.certified_at or "")[:10], "outstanding": outstanding,
             "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
@@ -461,7 +508,7 @@ def payables_payload(db, client):
         job = jobs.get(rel.job_id)
         con = contractors.get(rel.contractor_id)
         rows.append({
-            "kind": "Retention release", "doc_type": "retention_release", "id": rel.id,
+            "kind": "Retention release", "doc_type": "retention_release", "job_id": rel.job_id, "id": rel.id,
             "number": rel.number or "", "party": con.company_name if con else "",
             "project": job.name if job else "", "due_date": due or rel.release_on or "",
             "outstanding": outstanding, "bucket": bucket,
@@ -478,7 +525,7 @@ def payables_payload(db, client):
         bucket, days = ageing_bucket(c.decided_at[:10] if c.decided_at else c.spent_on, today)
         buckets[bucket] = money(buckets[bucket] + outstanding)
         job = jobs.get(c.job_id)
-        rows.append({"kind": "Expense claim", "doc_type": "expense_claim", "id": c.id, "number": c.number,
+        rows.append({"kind": "Expense claim", "doc_type": "expense_claim", "job_id": c.job_id, "id": c.id, "number": c.number,
                      "party": c.employee_name, "project": job.name if job else "", "due_date": (c.decided_at or c.spent_on or "")[:10],
                      "outstanding": outstanding, "bucket": bucket, "days_overdue": days if (days or 0) > 0 else 0,
                      "status": c.status, "approved": True, "msme": None})
@@ -775,7 +822,8 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
 
     doc_type = (body.doc_type or "on_account").strip()
     doc = None
-    head = ""
+    head, tax, supply, supply_state, gst_rate = "", "", "", "", 0.0
+    payee = ("", "", "")
     if doc_type in ("expense", "income"):
         # An expense voucher (diesel, rent, site expenses) or a sundry receipt (scrap sold, interest): no bill behind
         # it, booked under a head, charged to the project it was for. Nobody's ledger carries it.
@@ -789,6 +837,13 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
             raise HTTPException(400, "Paid to whom?" if doc_type == "expense" else "Received from whom?")
         party_type, party_id, doc_number = "other", None, ""
         job_id = owned_or_404(db, models.DBJob, client.id, body.job_id, "Project")
+        if doc_type == "expense":
+            from app.services.money import expense_tax
+            tax, supply, supply_state = expense_tax(body.tax, body.supply, body.supply_state)
+            from app.services.money import expense_gst
+            gst_rate = expense_gst(tax, body.gst_rate)
+            from app.services.money import payee_bank_details
+            payee = payee_bank_details(mode, body.payee_bank, body.payee_account, body.payee_ifsc)
     elif doc_type != "on_account":
         if not body.doc_id:
             raise HTTPException(400, "Which bill is this against?")
@@ -861,7 +916,8 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
         party_id=party_id, doc_type=doc_type, doc_id=(doc.id if doc else None),
         doc_number=doc_number, job_id=job_id, account_id=(account.id if account else None),
         amount=amount, paid_on=on, mode=mode, reference=(body.reference or "").strip()[:80],
-        note=(body.note or "").strip()[:300], recorded_by_name=actor_name, head=head)
+        note=(body.note or "").strip()[:300], recorded_by_name=actor_name, head=head, tax=tax, supply=supply, supply_state=supply_state, gst_rate=gst_rate,
+        payee_bank=payee[0], payee_account=payee[1], payee_ifsc=payee[2])
     db.add(e)
     db.flush()
     if approved is not None:
@@ -1016,7 +1072,7 @@ def pay_payment_request(request_id: int, body: RequestPayIn, request: Request, d
         doc_type=r.doc_type, doc_id=r.doc_id, amount=body.amount or r.amount, paid_on=body.paid_on or "",
         mode=body.mode or r.mode or "Bank transfer", reference=body.reference or "",
         account_id=body.account_id or r.account_id, note=r.note or "", direction="OUT", party_type=r.party_type,
-        party_name=r.party_name, job_id=r.job_id, head=r.head, request_id=r.id,
+        party_name=r.party_name, job_id=r.job_id, head=r.head, tax=r.tax or "", supply=r.supply or "", supply_state=r.supply_state or "", gst_rate=r.gst_rate or None, payee_bank=r.payee_bank or "", payee_account=r.payee_account or "", payee_ifsc=r.payee_ifsc or "", request_id=r.id,
         override_reason=body.override_reason or "")
     return record_money(money_body, request, db)
 
@@ -1458,7 +1514,9 @@ def tally_vouchers(request: Request, date_from: str = "", date_to: str = "", db:
 def money_heads(request: Request, db: Session = Depends(get_read_db)):
     """The heads an expense voucher or a sundry receipt is booked under."""
     require_items_access(request, db, "bills.view_all")
-    return {"expense": list(EXPENSE_HEADS), "income": list(INCOME_HEADS)}
+    from app.core.gst import GST_STATES
+    return {"expense": list(EXPENSE_HEADS), "income": list(INCOME_HEADS),
+            "states": sorted(({"value": code, "label": name} for code, name in GST_STATES.items()), key=lambda s: s["label"])}
 
 
 @router.post("/api/money/transfer")
@@ -1609,7 +1667,7 @@ def list_money(request: Request, direction: str = "", party: str = "", job_id: i
 
 
 @router.get("/api/ledger/parties")
-def ledger_parties(request: Request, party_type: str = "", db: Session = Depends(get_read_db)):
+def ledger_parties(request: Request, party_type: str = "", job_id: int = 0, db: Session = Depends(get_read_db)):
     """Every party, what has been billed with them, what has moved, and the
     balance - owed to us for a client, owed by us for everybody else."""
     client = require_items_access(request, db, "bills.view_all")
@@ -1619,6 +1677,8 @@ def ledger_parties(request: Request, party_type: str = "", db: Session = Depends
             continue
         if not r["party"]:
             continue
+        if job_id and r.get("job_id") != job_id:
+            continue                                  # one project's ledgers: only what was billed or moved for it
         key = (r["party_type"], norm_name(r["party"]))
         p = parties.setdefault(key, {"party_type": r["party_type"], "party": r["party"],
                                      "billed": 0.0, "moved": 0.0, "last": ""})

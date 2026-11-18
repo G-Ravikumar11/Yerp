@@ -45,6 +45,17 @@ class MoneyIn(BaseModel):
     job_id: Optional[int] = None
     # An expense voucher or a sundry receipt (doc_type "expense" / "income"): the head it is booked under.
     head: Optional[str] = ""
+    # An expense voucher's tax selection: taxable or non_taxable, and for a taxable one whether the supply is local or non_local.
+    tax: Optional[str] = ""
+    supply: Optional[str] = ""
+    # A non local supply: the state it comes from, as its GST state code ("29" is Karnataka).
+    supply_state: Optional[str] = ""
+    # The GST rate in percent the taxable amount carries (the amount paid includes it).
+    gst_rate: Optional[float] = None
+    # A bank transfer paid out on an expense voucher: the bank the money went to, its account number and IFSC.
+    payee_bank: Optional[str] = ""
+    payee_account: Optional[str] = ""
+    payee_ifsc: Optional[str] = ""
     # The approved payment request this payment settles, where payments need approval.
     request_id: Optional[int] = None
     # Why a supplier bill billed ahead of the goods received is paid anyway. Refused without one.
