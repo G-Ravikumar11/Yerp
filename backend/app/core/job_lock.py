@@ -60,6 +60,12 @@ def _table_of(name):
     return Base.metadata.tables.get(name)
 
 
+def _trail_columns(table):
+    """The columns that lead to a project: the row's id, its project columns and its links to parent rows. Nothing else
+    is read, so a file's bytes or picture copy (deferred, up to 15 MB) are never fetched just to check a lock."""
+    return [c for c in table.c if c.name == "id" or c.name in JOB_COLUMNS or c.foreign_keys]
+
+
 def _jobs_of_row(session, table, values, steps):
     """The projects a row belongs to: its own project columns, then its parents', step by step."""
     found = set()
@@ -76,7 +82,7 @@ def _jobs_of_row(session, table, values, steps):
         parent = list(c.foreign_keys)[0].column.table
         if parent.name in ("clients", "employees", "erp_items", "contractors", "suppliers", "users", "team_members"):
             continue
-        row = session.execute(select(parent).where(parent.c.id == values[c.name])).mappings().first()
+        row = session.execute(select(*_trail_columns(parent)).where(parent.c.id == values[c.name])).mappings().first()
         if row is not None:
             found |= _jobs_of_row(session, parent, dict(row), steps + 1)
     return found
@@ -93,7 +99,7 @@ def _jobs_of(session, obj, deleted):
             return set()
         if table.name == "jobs" and changed <= LOCK_FIELDS | QUIET_FIELDS:
             return set()                               # locking or unlocking it is the one thing allowed
-    values = {c.name: getattr(obj, state.mapper.get_property_by_column(c).key, None) for c in table.c
+    values = {c.name: getattr(obj, state.mapper.get_property_by_column(c).key, None) for c in _trail_columns(table)
               if state.mapper.get_property_by_column(c) is not None}
     # Old values too: a record moved off a locked project is still a change on it.
     if state.persistent:
