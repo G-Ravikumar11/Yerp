@@ -233,7 +233,7 @@ def get_hr_levels(request: Request, db: Session = Depends(get_read_db)):
     return {
         "levels": EMPLOYEE_LEVELS,
         "roles": ASSIGNABLE_ROLES,
-        "permission_roles": PERMISSION_ROLES,
+        "permission_roles": _roles_for(request),
         "permissions": PORTAL_PERMISSIONS,
         "portals": PORTALS,
     }
@@ -446,7 +446,16 @@ def get_employees(request: Request, q: str = "", status: str = "", db: Session =
 
 
 # Rights no access level carries but the Master's: HR may run the People portal, but cannot hand these out.
-MASTER_ONLY_RIGHTS = PERMISSION_KEYS - set().union(*(r for code, r in ROLE_PERMISSIONS.items() if code != "owner"))
+# The Master, MD and HOD access levels are given by the Master alone: HR neither sees them nor can give them.
+MASTER_ONLY_ROLES = frozenset({"owner", "md", "hod"})
+MASTER_ONLY_RIGHTS = PERMISSION_KEYS - set().union(*(r for code, r in ROLE_PERMISSIONS.items() if code not in MASTER_ONLY_ROLES))
+
+
+def _roles_for(request):
+    """The access levels this session may see in the picker."""
+    if is_master_session(request):
+        return PERMISSION_ROLES
+    return [r for r in PERMISSION_ROLES if r["code"] not in MASTER_ONLY_ROLES]
 
 
 def _guard_the_master(request, emp=None, role=None, rights=None):
@@ -454,8 +463,12 @@ def _guard_the_master(request, emp=None, role=None, rights=None):
     the Master holds stay out of its reach, so nobody can promote themselves past it."""
     if is_master_session(request):
         return
-    if (emp is not None and (emp.permission_role or "").lower() == "owner") or (role or "").lower() == "owner":
+    held = (getattr(emp, "permission_role", "") or "").lower()
+    if held == "owner" or (role or "").lower() == "owner":
         raise HTTPException(status_code=403, detail="Only the Master can change the Master's own record or give the Master's access")
+    if ((role or "").lower() in MASTER_ONLY_ROLES and (role or "").lower() != held) or \
+            (held in MASTER_ONLY_ROLES and role is not None and role.lower() != held):
+        raise HTTPException(status_code=403, detail="Only the Master can give or change MD and HOD access")
     if MASTER_ONLY_RIGHTS & set(rights or []):
         raise HTTPException(status_code=403, detail="Some of those rights are the Master's alone to give")
 
@@ -1006,7 +1019,7 @@ def master_access_overview(request: Request, db: Session = Depends(get_read_db))
     ).order_by(models.DBEmployee.first_name, models.DBEmployee.last_name).all()
     return {
         "permissions": PORTAL_PERMISSIONS,
-        "permission_roles": PERMISSION_ROLES,
+        "permission_roles": _roles_for(request),
         "employees": [{
             "id": e.id, "employee_id": e.employee_id,
             "full_name": f"{e.first_name} {e.last_name}".strip(),

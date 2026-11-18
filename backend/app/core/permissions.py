@@ -580,6 +580,21 @@ PERMISSION_ROLES = [
     },
 ]
 
+# Level roles that turned out to carry exactly the rights of another: kept for whoever holds one (retired), but no
+# longer offered. Surveyor, GET and Jr. Safety Officer = Site staff; Sr. Engineer = Construction management team;
+# Junior Engineer, Steel Foreman and P&M Technician = Engineer / Assistant.
+_DUPLICATES = {"surveyor", "get", "jr_safety_officer", "sr_engineer", "junior_engineer", "steel_foreman", "pm_technician"}
+for _r in PERMISSION_ROLES:
+    if _r["code"] in _DUPLICATES:
+        _r["retired"] = True
+# The order the picker shows them in: from the top of the business down, then the older ones nobody new is given.
+_PICKER_ORDER = ["owner", "md", "hod", "head_projects", "ho_qs", "construction_manager", "project_manager",
+                 "ho_coordinator", "deputy_manager_qs", "planning_billing", "jr_qs", "site_director", "construction",
+                 "site_engineer", "civil_supervisor", "engineer", "staff", "store_incharge", "stores", "store_keeper",
+                 "accounts_store", "purchase", "accounts", "hr", "attendance"]
+PERMISSION_ROLES.sort(key=lambda r: (r.get("retired", False),
+                                     _PICKER_ORDER.index(r["code"]) if r["code"] in _PICKER_ORDER else len(_PICKER_ORDER)))
+
 # The base role for people kept only for attendance and pay: they hold nothing and may not sign in.
 NO_ACCESS_ROLE = "attendance"
 
