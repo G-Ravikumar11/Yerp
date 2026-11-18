@@ -366,3 +366,9 @@ body{counter-reset:sec}
 .footer__staff:hover{color:var(--white);border-color:currentColor}
 @media (max-width:900px){.steps{grid-template-columns:1fr 1fr}}
 @media (max-width:600px){.steps{grid-template-columns:1fr}.step{padding-right:0}}
+
+/* Where we are building: the site list, grouped by client or region */
+.sites{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 32px;margin:0 0 48px;border-top:1px solid var(--line2)}
+.sites__group{padding:24px 0;border-bottom:1px solid var(--line2)}
+.sites__group ul{list-style:none;margin:12px 0 0;padding:0}
+.sites__group li{font-size:1.25rem;font-weight:600;line-height:1.6}
