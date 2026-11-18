@@ -318,7 +318,7 @@ PERMISSION_ROLES = [
         "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE,
     },
     {
-        "code": "construction", "label": "Construction management team", "rank": 2,
+        "code": "construction", "label": "Sr. Engineer", "rank": 2,
         "description": "Site engineers and supervisors running the work: the site's "
                        "record and its sign-offs, material received at the gate, and "
                        "their crew's costs, leave and attendance.",
@@ -581,7 +581,7 @@ PERMISSION_ROLES = [
 ]
 
 # Level roles that turned out to carry exactly the rights of another: kept for whoever holds one (retired), but no
-# longer offered. Surveyor, GET and Jr. Safety Officer = Site staff; Sr. Engineer = Construction management team;
+# longer offered. Surveyor, GET and Jr. Safety Officer = Site staff; Sr. Engineer (old) = construction (now named Sr. Engineer);
 # Junior Engineer, Steel Foreman and P&M Technician = Engineer / Assistant.
 _DUPLICATES = {"surveyor", "get", "jr_safety_officer", "sr_engineer", "junior_engineer", "steel_foreman", "pm_technician"}
 for _r in PERMISSION_ROLES:
