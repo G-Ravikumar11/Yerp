@@ -422,6 +422,126 @@ PERMISSION_ROLES = [
                        "orders, BOQs, projects, tenders, bills or variations.",
         "permissions": list(_HEAD_OFFICE),
     },
+    # ONE FOR EACH LEVEL (L1 - L19) that had no access level of its own. Project manager (L5) and HO Coordinator
+    # (L3) already exist and are left as they are. Ranks keep the ladder rules: from rank 3 up every portal, and
+    # nobody at rank 1 sees a portal a rank-2 role lacks.
+    {
+        "code": "hod", "label": "HOD", "rank": 5,
+        "description": "L1 - Head of department. Over every project: a project manager's rights on all of them, "
+                       "purchase and stores, checks payments, finalises site prices and sees the money.",
+        "permissions": _PROJECT_MANAGER + ["purchase.manage", "stores.manage", "payments.approve",
+                                           "siteprices.finalize", "invoices.manage", "recruitment.manage"],
+    },
+    {
+        "code": "md", "label": "MD", "rank": 5,
+        "description": "L2 - Managing director. Sees and approves across the whole business and releases "
+                       "payments over the limit. Final work order approval stays with the Master.",
+        "permissions": sorted(PERMISSION_KEYS - HO_QS_ONLY - HR_ONLY - {"workorders.approve", "store.admin"}),
+    },
+    {
+        "code": "construction_manager", "label": "Construction Manager", "rank": 3,
+        "description": "L4 - Runs construction across sites: every site's record and sign-offs, the crews' costs, "
+                       "leave and attendance, and approves what site raises.",
+        "permissions": [k for k in _PROJECT_MANAGER if k != "customers.manage"],
+    },
+    {
+        "code": "deputy_manager_qs", "label": "Deputy Manager Q.S.", "rank": 2,
+        "description": "L6 - Leads planning & billing: tenders, budgets, client bills and subcontractor bills, and "
+                       "checks the Jr. QS's work.",
+        "permissions": ["self.service", "bills.submit", "bills.approve", "billing.manage", "workorders.manage",
+                        "items.manage", "customers.manage", "subcontracts.approve", "siteprices.view",
+                        "siteprices.edit", "reports.view", "attendance.view_team", "leave.approve",
+                        "projects.view", "clients.view", "subcontractors.view", "store.view",
+                        "store.enquiry.view", "store.reports.view"] + _SITE,
+    },
+    {
+        "code": "site_director", "label": "Site Director", "rank": 2,
+        "description": "L7 - Runs a site: its record and sign-offs, material at the gate, the crew's costs, leave "
+                       "and attendance, and the site's bills and reports.",
+        "permissions": ["self.service", "bills.submit", "bills.approve", "bills.view_all", "reports.view",
+                        "attendance.view_team", "leave.approve", "stores.receive", "site.record", "site.signoff",
+                        "siteprices.view", "projects.view", "subcontractors.view", "store.view"]
+                       + _STORE_REQUEST + ["store.outward.approve"],
+    },
+    {
+        "code": "sr_engineer", "label": "Sr. Engineer", "rank": 2,
+        "description": "L7 - Senior engineer on site: the site's record and sign-offs, material at the gate, and "
+                       "the crew's costs, leave and attendance.",
+        "permissions": ["self.service", "bills.submit", "bills.approve", "attendance.view_team", "leave.approve",
+                        "stores.receive", "site.record", "site.signoff",
+                        "projects.view", "subcontractors.view", "store.view"] + _STORE_REQUEST,
+    },
+    {
+        "code": "site_engineer", "label": "Site Engineer", "rank": 2,
+        "description": "L8 - Records and signs off site work, receives material, asks for material and checks "
+                       "the crew's costs and attendance.",
+        "permissions": ["self.service", "bills.submit", "bills.approve", "attendance.view_team",
+                        "stores.receive", "site.record", "site.signoff",
+                        "projects.view", "subcontractors.view", "store.view"] + _STORE_REQUEST,
+    },
+    {
+        "code": "accounts_store", "label": "Accounts & Store", "rank": 2,
+        "description": "L9 - Keeps a site's store and its books: receives, issues and counts stock, and sees the "
+                       "site's bills and reports. Pays nothing and approves nothing.",
+        "permissions": ["self.service", "bills.submit", "bills.view_all", "reports.view", "stores.receive",
+                        "stores.manage", "items.manage", "projects.view", "store.view", "money.view"]
+                       + _SITE + _STORE_KEEPER,
+    },
+    {
+        "code": "jr_qs", "label": "Jr. QS", "rank": 2,
+        "description": "L12 - Measures and prepares bills and variations; sends them for approval.",
+        "permissions": ["self.service", "bills.submit", "billing.manage", "siteprices.view",
+                        "projects.view", "clients.view", "subcontractors.view", "store.view",
+                        "store.enquiry.view"] + _SITE,
+    },
+    {
+        "code": "store_keeper", "label": "Store Keeper", "rank": 2,
+        "description": "L19 - Keeps a store: receives, issues, returns, moves and counts stock. Approves nothing.",
+        "permissions": ["self.service", "bills.submit", "stores.receive", "projects.view", "store.view"]
+                       + _SITE + _STORE_KEEPER,
+    },
+    {
+        "code": "civil_supervisor", "label": "Civil Supervisor", "rank": 1,
+        "description": "L10 - Runs a crew on site: records the work, receives material, asks for material and "
+                       "sees the crew's attendance.",
+        "permissions": ["self.service", "bills.submit", "attendance.view_team", "stores.receive",
+                        "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "surveyor", "label": "Surveyor", "rank": 1,
+        "description": "L11 - Records levels and measurements on site; own timesheet, leave and payslips.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE,
+    },
+    {
+        "code": "engineer", "label": "Engineer / Assistant", "rank": 1,
+        "description": "L13 - Records site work and asks for material; sends costs up for approval.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "junior_engineer", "label": "Junior Engineer", "rank": 1,
+        "description": "L14 - Records site work and asks for material; sends costs up for approval.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "get", "label": "GET", "rank": 1,
+        "description": "L15 - Graduate engineer trainee: records site work; own timesheet, leave and payslips.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE,
+    },
+    {
+        "code": "steel_foreman", "label": "Steel Foreman", "rank": 1,
+        "description": "L16 - Records the steel work and asks for material.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "pm_technician", "label": "P&M Technician", "rank": 1,
+        "description": "L17 - Plant & machinery: records work on site and asks for parts.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "jr_safety_officer", "label": "Jr. Safety Officer", "rank": 1,
+        "description": "L18 - Records safety on site; own timesheet, leave and payslips.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE,
+    },
     # The first presets, before the list followed the departments. Still
     # honoured for whoever holds one, and offered only to them.
     {
