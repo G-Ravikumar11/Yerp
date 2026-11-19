@@ -280,6 +280,10 @@ ACCOUNTS_COLUMNS = (
     ("payment_requests", "tax", "VARCHAR DEFAULT ''"), ("payment_requests", "supply", "VARCHAR DEFAULT ''"),
     ("money_entries", "supply_state", "VARCHAR DEFAULT ''"), ("payment_requests", "supply_state", "VARCHAR DEFAULT ''"),
     ("money_entries", "gst_rate", "FLOAT DEFAULT 0"), ("payment_requests", "gst_rate", "FLOAT DEFAULT 0"),
+    ("recurring_payments", "tax", "VARCHAR DEFAULT ''"), ("recurring_payments", "supply", "VARCHAR DEFAULT ''"),
+    ("recurring_payments", "supply_state", "VARCHAR DEFAULT ''"), ("recurring_payments", "gst_rate", "FLOAT DEFAULT 0"),
+    ("recurring_payments", "payee_bank", "VARCHAR DEFAULT ''"), ("recurring_payments", "payee_account", "VARCHAR DEFAULT ''"),
+    ("recurring_payments", "payee_ifsc", "VARCHAR DEFAULT ''"),
     ("money_entries", "payee_bank", "VARCHAR DEFAULT ''"), ("money_entries", "payee_account", "VARCHAR DEFAULT ''"), ("money_entries", "payee_ifsc", "VARCHAR DEFAULT ''"),
     ("payment_requests", "payee_bank", "VARCHAR DEFAULT ''"), ("payment_requests", "payee_account", "VARCHAR DEFAULT ''"), ("payment_requests", "payee_ifsc", "VARCHAR DEFAULT ''"),
     # A site expense entered by the Master or a colleague of theirs, who may not then approve it.

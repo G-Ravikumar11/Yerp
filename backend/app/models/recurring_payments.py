@@ -29,6 +29,15 @@ class DBRecurringPayment(Base):
     is_active = Column(Boolean, default=True, index=True)           # false: paused, or ended
     account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=True)      # the account it is usually paid from
     mode = Column(String, default="")
+    # The same marking an expense voucher carries: taxable or not, local or non local (and from which state), the GST rate the amount
+    # includes, and for a bank transfer where the money goes. Each month's payment request is raised with them.
+    tax = Column(String, default="")
+    supply = Column(String, default="")
+    supply_state = Column(String, default="")
+    gst_rate = Column(Float, default=0.0)
+    payee_bank = Column(String, default="")
+    payee_account = Column(String, default="")
+    payee_ifsc = Column(String, default="")
     note = Column(String, default="")
     raised_count = Column(Integer, default=0)
     last_raised_on = Column(String, default="")

@@ -15,3 +15,12 @@ class RecurringPaymentIn(BaseModel):
     account_id: Optional[int] = None
     mode: Optional[str] = None
     note: Optional[str] = None
+    # As on an expense voucher: taxable or non_taxable; a taxable one local or non_local (from a GST state code); the GST rate in
+    # percent the amount includes; and for a bank transfer the payee's bank, account number and IFSC.
+    tax: Optional[str] = None
+    supply: Optional[str] = None
+    supply_state: Optional[str] = None
+    gst_rate: Optional[float] = None
+    payee_bank: Optional[str] = None
+    payee_account: Optional[str] = None
+    payee_ifsc: Optional[str] = None
