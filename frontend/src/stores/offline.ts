@@ -64,6 +64,8 @@ interface OfflineState {
   /** After a conflict: keep what this person entered over what is there now. */
   keepMine: (id: string) => void
   flush: () => Promise<void>
+  /** The Send now button: finds out whether the server can be reached (the phone may be wrong about being offline), then sends. */
+  sendNow: () => Promise<void>
 }
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -71,6 +73,20 @@ const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice
 /** A failure that means "no connection" rather than "the server said no". */
 function isNetworkFailure(e: unknown) {
   return !(e instanceof ApiError) || e.status >= 500 || e.status === 408 || e.status === 429
+}
+
+/** Whether the server answers at all (a bare GET, so nothing about the request itself can be what blocks it). */
+async function serverReachable(): Promise<boolean> {
+  const stop = new AbortController()
+  const timer = window.setTimeout(() => stop.abort(), 6000)
+  try {
+    const res = await fetch(apiUrl('/api/health'), { cache: 'no-store', signal: stop.signal })
+    return res.ok
+  } catch {
+    return false
+  } finally {
+    window.clearTimeout(timer)
+  }
 }
 
 /* --- Pictures kept on the phone ---------------------------------------------------------------------------------- */
@@ -158,6 +174,18 @@ export const useOffline = create<OfflineState>()(
        * earlier one. Somebody else's items stay where they are until that person signs in. Stops at the first sign the
        * connection is gone; a request the server refuses is marked, kept and skipped so one bad entry does not hold the rest.
        */
+      sendNow: async () => {
+        if (get().syncing) return
+        if (!get().online) {
+          if (!(await serverReachable())) {
+            toast.error('Still no connection to the server.')
+            return
+          }
+          set({ online: true })
+        }
+        await get().flush()
+      },
+
       flush: async () => {
         if (get().syncing || !get().online) return
         const me = personKey()
@@ -194,7 +222,16 @@ export const useOffline = create<OfflineState>()(
               sent++
             } catch (e) {
               if (isNetworkFailure(e)) {
-                set({ online: false })
+                // Three troubles look alike from here, and only the last is "no connection". The server answering with a fault, and
+                // the server being reachable while this one request cannot get through, leave the phone online and say what happened
+                // on the item, so a day kept on the phone is never put down to "no signal" when the signal is fine.
+                const why = e instanceof ApiError
+                  ? `The server had a problem (${e.status}${e.ref ? `, ref ${e.ref}` : ''}). It is tried again shortly.`
+                  : (await serverReachable())
+                    ? 'The phone is online, but this could not be sent (the connection dropped part way, or it is too large). It is tried again shortly.'
+                    : ''
+                if (why) set((s) => ({ queue: s.queue.map((q) => (q.id === item.id ? { ...q, error: why } : q)) }))
+                else set({ online: false })
                 break
               }
               if (e instanceof ApiError && e.status === 401) break
