@@ -34,6 +34,10 @@ export interface Journal {
   decided_at: string
   decision_note: string
   total: number
+  debit_total?: number
+  credit_total?: number
+  /** Debit less credit: not nil when the voucher is out, and then Tally gets the difference in Suspense A/c. */
+  difference?: number
   lines: JournalLine[]
 }
 

@@ -93,9 +93,8 @@ def clean_lines(db, client_id, rows):
         out.append(line)
     if len(out) < 2:
         raise HTTPException(400, "A journal has at least two lines: what is debited and what is credited.")
-    dr, cr = money(sum(l["debit"] for l in out)), money(sum(l["credit"] for l in out))
-    if abs(dr - cr) >= 0.01:
-        raise HTTPException(400, "The debits (%s) and the credits (%s) have to be equal." % ("{:,.2f}".format(dr), "{:,.2f}".format(cr)))
+    # Debit and credit need not be equal: a voucher that is out is still kept. Tally takes only vouchers that balance, so there the
+    # difference is posted to Suspense A/c and the voucher says so (see tally._journals).
     return out
 
 
@@ -149,7 +148,8 @@ def line_label(l, accounts=None, jobs=None):
 def journal_dict(db, j, lines=None, accounts=None, jobs=None):
     lines = lines if lines is not None else lines_of(db, [j.id]).get(j.id, [])
     total = money(sum(l.debit or 0 for l in lines))
-    return {"id": j.id, "number": j.number, "voucher_date": j.voucher_date, "narration": j.narration, "status": j.status,
+    credit_total = money(sum(l.credit or 0 for l in lines))
+    return {"debit_total": total, "credit_total": credit_total, "difference": money(total - credit_total), "id": j.id, "number": j.number, "voucher_date": j.voucher_date, "narration": j.narration, "status": j.status,
             "raised_by_name": j.raised_by_name, "raised_at": j.raised_at, "decided_by_name": j.decided_by_name,
             "decided_at": j.decided_at, "decision_note": j.decision_note, "total": total,
             "lines": [{"kind": l.kind, "party_type": l.party_type, "party_name": l.party_name, "head": l.head,

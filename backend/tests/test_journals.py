@@ -42,10 +42,12 @@ def _client_of(db, j):
 
 def test_a_journal_must_balance_and_say_what_it_is_for(tenant):
     j = job(tenant)
-    unequal = tenant.post("/api/journals", json={"narration": "Wrong", "lines": [
+    # Out by ten: still kept - it is the difference that is posted to Suspense A/c in Tally.
+    unequal = tenant.post("/api/journals", json={"narration": "Out by ten", "lines": [
         {"kind": "party", "party_type": "supplier", "party_name": "ACC Ltd", "debit": 100},
         {"kind": "head", "head": "Site expenses", "credit": 90, "job_id": j["id"]}]})
-    assert unequal.status_code == 400 and "equal" in unequal.json()["detail"]
+    assert unequal.status_code == 200, unequal.text
+    assert (unequal.json()["debit_total"], unequal.json()["credit_total"], unequal.json()["difference"]) == (100.0, 90.0, 10.0)
     one = tenant.post("/api/journals", json={"narration": "One line", "lines": [{"kind": "head", "head": "Site expenses", "debit": 5}]})
     assert one.status_code == 400
     both = tenant.post("/api/journals", json={"narration": "Both", "lines": [
@@ -161,3 +163,26 @@ def test_journals_and_debit_notes_go_to_tally_balanced(tenant):
     assert dn.findtext("VOUCHERTYPENAME") == "Debit Note" and jv.findtext("VOUCHERTYPENAME") == "Journal"
     centres = {c.findtext("NAME") for c in jv.iter("COSTCENTREALLOCATIONS.LIST")}
     assert len(centres) == 2 and any("Site A" in c for c in centres) and any("Site B" in c for c in centres)
+
+
+def test_a_journal_that_is_out_still_goes_to_tally_with_the_difference_in_suspense(tenant):
+    a = job(tenant, "Site A")
+    jid = tenant.post("/api/journals", json={"narration": "Hire moved, out by 250", "lines": [
+        {"kind": "head", "head": "Machinery hire", "debit": 3250, "job_id": a["id"]},
+        {"kind": "party", "party_type": "supplier", "party_name": "ACC Ltd", "credit": 3000}]}).json()["id"]
+    assert tenant.post("/api/journals/%d/approve" % jid, json={}).status_code == 200
+    res = tenant.get("/api/tally/vouchers.xml")
+    assert res.status_code == 200, res.text
+    root = ET.fromstring(res.content)
+    jv = next(v for v in root.iter("VOUCHER") if (v.findtext("VOUCHERNUMBER") or "").startswith("JV-"))
+    entries = {e.findtext("LEDGERNAME"): float(e.findtext("AMOUNT")) for e in jv.findall("ALLLEDGERENTRIES.LIST")}
+    # Tally gets a voucher that balances: the 250 by which the debit exceeds the credit is credited to Suspense A/c.
+    assert abs(sum(entries.values())) < 0.01
+    assert any("Suspense" in name for name in entries)
+    assert "Suspense A/c" in (jv.findtext("NARRATION") or "")
+    # And the export says so, so the office knows there is something to clear.
+    summary = tenant.get("/api/tally/summary").json()
+    assert any("differ by 250.00" in w for w in summary.get("warnings", []))
+    # The trial balance still balances, with the difference in the suspense ledger.
+    tb = tenant.get("/api/reports/trial-balance", params={"date_from": "2000-01-01", "date_to": "2099-12-31"}).json()
+    assert abs(tb["totals"]["debit"] - tb["totals"]["credit"]) < 0.01

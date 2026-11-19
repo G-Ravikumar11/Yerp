@@ -6,6 +6,8 @@ import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, NumField, Select, Stat, StatGrid } from '@/components/ui'
 import { deleteRecurring, pauseRecurring, recurringKeys, resumeRecurring, saveRecurring, useRecurring, type Recurring, type RecurringStatus } from '@/api/recurring'
 import { useAccounts, useMoneyHeads } from '@/api/ledger'
+import { PayeeBankFields, TaxSelection } from '@/features/ledger/TaxFields'
+import { bankFrom, bankPayload, bankReady, NO_BANK, NO_TAX, taxFrom, taxPayload, taxReady, type BankValue, type TaxValue } from '@/features/ledger/taxValues'
 import { PAY_MODES } from '@/api/money'
 import { paymentKeys } from '@/api/payments'
 import { projectLabel, useProjects } from '@/api/projects'
@@ -94,9 +96,15 @@ function RecurringModal({ target, onClose }: { target: Recurring | 'new'; onClos
   const [account, setAccount] = useState(r?.account_id ? String(r.account_id) : '')
   const [mode, setMode] = useState(r?.mode ?? '')
   const [note, setNote] = useState(r?.note ?? '')
+  // The same tax selection and bank transfer details as an expense voucher: each month's request is raised with them.
+  const [taxv, setTaxv] = useState<TaxValue>(r ? taxFrom(r) : NO_TAX)
+  const [bankv, setBankv] = useState<BankValue>(r ? bankFrom(r) : NO_BANK)
+  const bankTransfer = mode === 'Bank transfer'
+  // One set up before the tax selection existed may be saved without choosing it; a new one, or one that has it, needs it complete.
+  const taxOk = (r && !r.tax && !taxv.tax) || taxReady(taxv)
   const list = heads.data?.expense ?? []
   const save = useAction(
-    () => saveRecurring(r?.id ?? null, { payee: payee.trim(), head: head || list[0] || '', amount, day_of_month: day, start_date: from, end_date: until, job_id: Number(job) || null, account_id: Number(account) || null, mode, note }),
+    () => saveRecurring(r?.id ?? null, { payee: payee.trim(), head: head || list[0] || '', amount, day_of_month: day, start_date: from, end_date: until, job_id: Number(job) || null, account_id: Number(account) || null, mode, note, ...(taxv.tax ? taxPayload(taxv) : {}), ...(bankTransfer ? bankPayload(bankv) : { payee_bank: '', payee_account: '', payee_ifsc: '' }) }),
     { invalidate: REFRESH, onSuccess: onClose },
   )
   return (
@@ -105,6 +113,7 @@ function RecurringModal({ target, onClose }: { target: Recurring | 'new'; onClos
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Paid to" htmlFor="rp-payee"><Input id="rp-payee" value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="Sri Lakshmi Estates" autoFocus /></Field>
         <Field label="Expense head" htmlFor="rp-head"><Select id="rp-head" value={head || list[0] || ''} onChange={(e) => setHead(e.target.value)} options={list.map((h) => ({ value: h, label: h }))} /></Field>
+        <div className="sm:col-span-2"><TaxSelection id="rp" value={taxv} onChange={setTaxv} amount={amount} /></div>
         <Field label="Amount each month" htmlFor="rp-amount"><NumField id="rp-amount" value={amount} onValue={setAmount} /></Field>
         <Field label="Day of the month" htmlFor="rp-day" hint="In a month with fewer days, the last day.">
           <Select id="rp-day" value={String(day)} onChange={(e) => setDay(Number(e.target.value))} options={Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: ordinal(i + 1) }))} />
@@ -114,13 +123,14 @@ function RecurringModal({ target, onClose }: { target: Recurring | 'new'; onClos
         <Field label="Project" htmlFor="rp-job" hint="Charged to its cost. Blank: head office."><Select id="rp-job" value={job} onChange={(e) => setJob(e.target.value)} placeholder="Head office" options={(projects.data ?? []).map((p) => ({ value: p.id, label: projectLabel(p) }))} /></Field>
         <Field label="Usually paid from" htmlFor="rp-account"><Select id="rp-account" value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Chosen when it is paid" options={(accounts.data ?? []).map((a) => ({ value: a.id, label: `${a.name} (${a.kind})` }))} /></Field>
         <Field label="Mode" htmlFor="rp-mode"><Select id="rp-mode" value={mode} onChange={(e) => setMode(e.target.value)} placeholder="Chosen when it is paid" options={PAY_MODES.filter((m) => m !== 'Adjustment').map((m) => ({ value: m, label: m }))} /></Field>
+        {bankTransfer && <div className="sm:col-span-2"><PayeeBankFields id="rp" value={bankv} onChange={setBankv} legend="Bank transfer: where the money goes each month" /></div>}
         <Field label="Note" htmlFor="rp-note"><Input id="rp-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Site office, Vizag" /></Field>
       </div>
       {payee.trim() && amount > 0 && <p className="mt-4 rounded-lg bg-muted/50 p-3 text-sm"><strong>{formatINR(amount)}</strong> to <strong>{payee.trim()}</strong> on the <strong>{ordinal(day)}</strong> of every month{until ? `, until ${formatDate(until)}` : ''}.</p>}
       <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
         {save.error && <p role="alert" className="mr-auto text-[13px] text-danger">{save.error.message}</p>}
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button loading={save.isPending} disabled={!payee.trim() || amount <= 0} onClick={() => save.mutate()}>{r ? 'Save' : 'Set it up'}</Button>
+        <Button loading={save.isPending} disabled={!payee.trim() || amount <= 0 || !taxOk || (bankTransfer && !bankReady(bankv))} onClick={() => save.mutate()}>{r ? 'Save' : 'Set it up'}</Button>
       </div>
     </Modal>
   )

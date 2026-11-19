@@ -10,7 +10,7 @@ import { formatINR } from '@/lib/utils'
 
 const blank = (kind: LineKind, job: number): JournalLine => ({ kind, party_type: 'supplier', party_name: '', head: '', account_id: null, ledger_key: '', job_id: job || null, debit: 0, credit: 0, note: '' })
 
-/** A journal voucher: lines of debit and credit, equal to the paisa, raised for the Master to approve. */
+/** A journal voucher: lines of debit and credit, raised for the Master to approve. One that is out is still kept: Tally gets the difference in Suspense A/c. */
 export function JournalModal({ ledgers, defaultJob, onClose }: { ledgers: { key: string; label: string }[]; defaultJob: number; onClose: () => void }) {
   const [on, setOn] = useState(today())
   const [narration, setNarration] = useState('')
@@ -28,11 +28,11 @@ export function JournalModal({ ledgers, defaultJob, onClose }: { ledgers: { key:
 
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title="New journal voucher" size="xl"
-      description="Debits on one side, credits on the other, equal to the paisa. Put the project on each line it concerns."
+      description="Debits on one side, credits on the other. If they are not equal the voucher is still saved, and in Tally the difference is posted to Suspense A/c. Put the project on each line it concerns."
       footer={<>
-        <span className={`mr-auto text-sm tabular-nums ${off ? 'text-danger' : 'text-muted-foreground'}`}>Debit {formatINR(dr)} / Credit {formatINR(cr)}{off ? ` - out by ${formatINR(Math.abs(off))}` : ''}</span>
+        <span className={`mr-auto text-sm tabular-nums ${off ? 'text-warning' : 'text-muted-foreground'}`} role="status">Debit {formatINR(dr)} / Credit {formatINR(cr)}{off ? ` - out by ${formatINR(Math.abs(off))}: saved as it is, and in Tally the difference goes to Suspense A/c` : ''}</span>
         <Button variant="ghost" onClick={onClose}>Not now</Button>
-        <Button loading={save.isPending} disabled={!!off || dr <= 0 || narration.trim().length < 3} onClick={() => save.mutate()}>Send to the Master</Button>
+        <Button loading={save.isPending} disabled={(dr <= 0 && cr <= 0) || narration.trim().length < 3} onClick={() => save.mutate()}>Send to the Master</Button>
       </>}>
       <div className="mb-4 grid gap-3 sm:grid-cols-[10rem_1fr]">
         <Field label="Date"><Input type="date" value={on} onChange={(e) => setOn(e.target.value)} /></Field>

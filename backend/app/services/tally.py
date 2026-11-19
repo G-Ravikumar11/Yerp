@@ -81,6 +81,7 @@ LEDGERS = {
     "cash": ("Cash", "Cash-in-Hand", False),
     "inter_site_material": ("Material Transferred Between Sites", "Direct Expenses", True),
     "opening_balances": ("Opening Balance Adjustment", "Suspense A/c", False),
+    "suspense": ("Suspense A/c", "Suspense A/c", False),
 }
 LABELS = {
     "sales": "Work billed to clients (RA bills)", "output_cgst": "Output CGST", "output_sgst": "Output SGST",
@@ -98,6 +99,7 @@ LABELS = {
     "salary_deductions": "Other deductions from salaries",
     "inter_site_material": "Material moved from one site to another",
     "opening_balances": "The other side of parties' opening balances",
+    "suspense": "The difference of a journal whose debit and credit are not equal",
 }
 # GST ledgers carry their duty head in Tally, so its GST reports pick them up.
 GST_HEADS = {"output_cgst": "Central Tax", "output_sgst": "State Tax", "output_igst": "Integrated Tax",
@@ -522,7 +524,16 @@ class Books:
                 else:
                     ledger = self.std(l.ledger_key)
                 out.append((ledger, money((l.debit or 0) - (l.credit or 0)), "", "", self.centre(l.job_id)))
-            self.add("Journal", j.number, j.voucher_date, j.narration, out, "yerp-%d-journal-%d" % (self.client.id, j.id))
+            # Tally refuses a voucher that does not balance, and a journal that is out is not left out of the export for that: the
+            # difference goes to Suspense A/c, so the voucher is sent whole and the books stay balanced until someone clears it.
+            narration = j.narration
+            off = money(sum(a for _, a, *_ in out))
+            if abs(off) >= 0.005:
+                out.append((self.std("suspense"), -off, "", "", ""))
+                narration = "%s [Debit and credit differ by %s; the difference is posted to Suspense A/c]" % (j.narration, "{:,.2f}".format(abs(off)))
+                self.warnings.append("%s: debit and credit differ by %s. The difference is posted to Suspense A/c in Tally; clear it there once the journal is put right." % (
+                    j.number, "{:,.2f}".format(abs(off))))
+            self.add("Journal", j.number, j.voucher_date, narration, out, "yerp-%d-journal-%d" % (self.client.id, j.id))
 
     def _debit_notes(self):
         """Debit notes to suppliers: what we owe them comes down, and so do the purchases and the input GST."""
