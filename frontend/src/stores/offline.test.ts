@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
   me: 'staff:ravi@site.test',
@@ -192,5 +192,60 @@ describe('somebody else changed it meanwhile', () => {
     h.api.mockRejectedValue(new ApiError(409, 'This day has been signed off.'))
     await useOffline.getState().flush()
     expect(waiting()).toEqual(['e1:failed'])
+  })
+})
+
+describe('a change that could not go is not put down to "no connection" unless that is what it was', () => {
+  const diary = () => put({ id: 'day', url: '/api/diary', label: 'Site diary 2026-11-15' })
+  const health = (ok: boolean) => vi.stubGlobal('fetch', vi.fn(async () => { if (!ok) throw new TypeError('Failed to fetch'); return { ok: true } }))
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('stays online when the server itself answers with a fault, and says so on the change', async () => {
+    diary()
+    h.api.mockRejectedValue(new ApiError(500, 'Something went wrong.', undefined, 'ab12'))
+    await useOffline.getState().flush()
+    expect(useOffline.getState().online).toBe(true)
+    const [item] = useOffline.getState().queue
+    expect(item.status).toBe('waiting')
+    expect(item.error).toContain('500')
+    expect(item.error).toContain('ab12')
+  })
+
+  it('stays online when the server can be reached but this one request cannot get through', async () => {
+    diary()
+    health(true)
+    h.api.mockRejectedValue(new TypeError('Failed to fetch'))
+    await useOffline.getState().flush()
+    expect(useOffline.getState().online).toBe(true)
+    expect(useOffline.getState().queue[0].error).toContain('phone is online')
+    expect(useOffline.getState().queue[0].status).toBe('waiting')
+  })
+
+  it('goes offline only when the server cannot be reached at all', async () => {
+    diary()
+    health(false)
+    h.api.mockRejectedValue(new TypeError('Failed to fetch'))
+    await useOffline.getState().flush()
+    expect(useOffline.getState().online).toBe(false)
+    expect(useOffline.getState().queue[0].error).toBeUndefined()
+  })
+
+  it('Send now believes the server, not the phone: it sends when the server answers although the app thought it was offline', async () => {
+    diary()
+    useOffline.setState({ online: false })
+    health(true)
+    h.api.mockResolvedValue({})
+    await useOffline.getState().sendNow()
+    expect(useOffline.getState().online).toBe(true)
+    expect(useOffline.getState().queue).toEqual([])
+  })
+
+  it('Send now says so, and sends nothing, while the server cannot be reached', async () => {
+    diary()
+    useOffline.setState({ online: false })
+    health(false)
+    await useOffline.getState().sendNow()
+    expect(h.api).not.toHaveBeenCalled()
+    expect(useOffline.getState().queue).toHaveLength(1)
   })
 })
