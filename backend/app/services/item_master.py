@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 from sqlalchemy import func, or_
+from sqlalchemy.orm import object_session
 
 from app import models
 from app.constants.boq import BOQ_PRICED
@@ -14,6 +15,7 @@ from app.core.serials import encode_serial
 from app.core.units import BOQ_ITEM_TYPES, CATEGORY_BY_KIND, ITEM_KINDS, UNITS_OF_MEASURE, canonical_unit
 from app.services.boq import BOQ_ITEM_CODE
 from app.services.items import issue_item_code
+from app.services.store_levels import item_reorder_levels, set_item_reorder_level
 
 # What an item can be missing, and how to find the items missing it. A work item is not bought, so it is never
 # counted as missing a purchase rate or a make.
@@ -169,8 +171,7 @@ def _fields(db, client_id, body, current=None):
     tax = gst_text(body.gst_percent)
     if tax is not None:
         out["item_tax_type"] = tax
-    if body.reorder_level is not None:
-        out["reorder_level"] = max(0.0, money(body.reorder_level))
+    # The reorder level is not a field of the item here: it is the Store Hub's, written after the item (set_item_reorder_level).
     return out
 
 
@@ -270,6 +271,8 @@ def create_master_item(db, client_id, body, who, taken=None):
                          **fields)
     db.add(item)
     db.flush()
+    if body.reorder_level is not None:
+        set_item_reorder_level(db, item, body.reorder_level)
     return item
 
 
@@ -298,6 +301,8 @@ def update_master_item(db, item, body, who):
         setattr(item, key, value)
     if turning:
         set_kind(item, body.kind)
+    if body.reorder_level is not None:
+        set_item_reorder_level(db, item, body.reorder_level)
     item.updated_by_name, item.updated_at = who, now()
     return item
 
@@ -403,7 +408,13 @@ def weight_fields(item):
             "weight_status": "NA" if not counted else ("OK" if w is not None else "MISSING")}
 
 
-def item_dict(item, site_count=0, stock=None):
+def item_dict(item, site_count=0, stock=None, level=None):
+    """`level` is (reorder level, unit) from store_levels.item_reorder_levels; a list passes them in for all its rows at once,
+    and a single item has its own looked up."""
+    if level is None:
+        session = object_session(item)
+        level = item_reorder_levels(session, [item]).get(item.id) if session is not None and item.id else None
+    level = level or (0, item.units_of_measure or "")
     return {"id": item.id, "kind": item.kind, "item_code": item.item_code, "item_name": item.item_name,
             "description": item.description or "", "item_category": item.item_category or "",
             "item_subcategory": item.item_subcategory or "", "item_type": item.item_type or "",
@@ -411,7 +422,7 @@ def item_dict(item, site_count=0, stock=None):
             "purchase_rate": unit_rate(item.purchase_rate), "selling_rate": unit_rate(item.selling_rate),
             "last_rate": unit_rate(item.last_rate),            # what it was last bought or sold at, from before rates were kept here
             "default_rate": default_rate(item), "hsn_code": item.hsn_code or "", "item_tax_type": item.item_tax_type or "",
-            "preferred_supplier": item.preferred_supplier or "", "reorder_level": money(item.reorder_level),
+            "preferred_supplier": item.preferred_supplier or "", "reorder_level": float(level[0]), "reorder_unit": level[1],
             "remarks": item.remarks or "", "is_active": item.is_active is not False, "sites": site_count,
             "make": item.make or "", "segment": item.segment or "", **weight_fields(item),
             "shelf_life_applicable": bool(item.shelf_life_applicable), "shelf_life_days": item.shelf_life_days, "expiry_tracking": bool(item.expiry_tracking),

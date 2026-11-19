@@ -41,6 +41,7 @@ from app.validators.common import check_item_row, validate_bom_sheet, validate_i
 
 
 from app.services.item_master import dup_key, refuse_duplicate  # noqa: E402
+from app.services.store_levels import item_reorder_levels, set_item_reorder_level
 
 router = APIRouter()
 
@@ -354,11 +355,7 @@ def erp_update_item(item_id: int, body: ItemIn, request: Request,
                                      % (body.units_of_measure, ", ".join(UNITS_OF_MEASURE)))
         item.units_of_measure = unit
     if body.reorder_level is not None:
-        item.reorder_level = max(0.0, money(body.reorder_level))
-        # One level for one item: the Store Hub's, where the item has one there.
-        hub = db.query(models.DBStoreItemSettings).filter(models.DBStoreItemSettings.item_id == item.id).first()
-        if hub is not None:
-            hub.reorder_level = item.reorder_level
+        set_item_reorder_level(db, item, body.reorder_level)       # one level for one item: the Store Hub's
     db.commit()
     return {"ok": True, "message": item.item_code + " updated."}
 
@@ -448,6 +445,7 @@ def erp_list_items(request: Request, kind: str = "", q: str = "",
         query = query.filter(or_(models.DBItem.item_code.ilike(f"%{q}%"),
                                  models.DBItem.item_name.ilike(f"%{q}%")))
     items = query.order_by(models.DBItem.id.desc()).limit(500).all()
+    levels = item_reorder_levels(db, items)
     return {
         "items": [{"id": i.id, "kind": i.kind, "item_code": i.item_code,
                    "item_name": i.item_name, "description": i.description,
@@ -455,7 +453,7 @@ def erp_list_items(request: Request, kind: str = "", q: str = "",
                    "units_of_measure": i.units_of_measure, "hsn_code": i.hsn_code,
                    "item_tax_type": i.item_tax_type,
                    "last_rate": unit_rate(i.last_rate),
-                   "reorder_level": money(i.reorder_level)} for i in items],
+                   "reorder_level": float(levels[i.id][0])} for i in items],
         "counts": _kind_counts(db, client.id),
     }
 

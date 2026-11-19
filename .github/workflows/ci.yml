@@ -43,6 +43,24 @@ jobs:
           COOKIE_SECURE: 'false'
           SECRET_KEY: ci-only-secret-key
 
+  # The biometric office program is C# that the office computer compiles with the .NET Framework's own compiler, so it is
+  # built and tested the same way here, on Windows: if it compiles here it compiles on any office PC from Windows 7 up.
+  biometric:
+    name: Biometric office program (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: cmd
+        working-directory: tools/biometric_sync
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build it as SETUP.bat does
+        run: call build.bat force
+      - name: Run its tests
+        run: |
+          "%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /main:YerpBiometric.SelfTest /out:test\selftest.exe /r:System.Web.Extensions.dll YerpBiometric.cs test\SelfTest.cs || exit /b 1
+          test\selftest.exe
+
   frontend:
     name: Frontend lint, types, tests, build
     runs-on: ubuntu-latest

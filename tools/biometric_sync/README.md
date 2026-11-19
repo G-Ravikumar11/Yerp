@@ -3,38 +3,60 @@
 Sends punches from the office's eSSL eTimeTrackLite attendance system to Y ERP, so attendance shows there within a
 minute or two. It runs on the office computer that holds the attendance database and only **reads** it.
 
-## Set up (once, about 15 minutes)
+## Set up (about a minute)
 
-1. **In Y ERP** (signed in as the Master): People > Attendance > **Biometric** > **Make the key**. Copy the key.
-2. **On the office computer**, copy this whole `biometric_sync` folder to `C:\YERP\biometric_sync`.
-3. **Install Python 3** from python.org if it is not there. Tick **"Add python.exe to PATH"** in the installer.
-4. Open Command Prompt in that folder and run: `pip install pyodbc`
-5. **Make a read-only database login:** open `make_reader_login.sql` in SQL Server Management Studio, change the
-   password in it, and press Execute.
-6. Copy `config.example.ini` to `config.ini`. Put in the key from step 1 and the password from step 5. If SQL Server is
-   a named instance, set `server` (for example `localhost\SQLEXPRESS`).
-7. Double-click **`run_check.bat`**. It should say the key is accepted, list the tables it found and show a few of
-   today's punches. It sends nothing.
-8. Double-click **`run_now.bat`** to send today's punches. Look at People > Attendance > Biometric in Y ERP.
-9. Right-click **`install_task.bat`** > **Run as administrator**. From now on it sends every minute by itself, also
-   after the computer restarts.
+1. **On the office computer** (over AnyDesk is fine), open Y ERP in its browser, sign in as the Master, and go to
+   People > Attendance > **Biometric** > **Download set-up package**.
+2. **Unzip it** and double-click **`SETUP.bat`**. Click **Yes** when Windows asks for permission.
 
-To bring in earlier days once: `python sync.py --backfill 30` (up to 120 days).
+That is all. `SETUP.bat`:
+- makes the program (`YerpBiometric.exe`) on the spot with the C# compiler that comes with Windows' .NET Framework -
+  **nothing is downloaded and nothing is installed**;
+- finds the SQL Server and the attendance database by itself, signing in with this Windows account, or asking for
+  the SQL login you use in Management Studio if that does not work;
+- gives the sync **read-only** access: a read-only SQL login, or - when SQL Server allows Windows sign-in only, as SQL
+  Express does out of the box - read access for the computer's own SYSTEM account, so no password is kept at all;
+- sends the last 7 days' punches, starts an every-minute Windows task that keeps going with nobody signed in, and runs
+  it once to prove it works.
+
+### Which Windows
+
+Any Windows from **Windows 7 SP1 / Server 2008 R2 to Windows 11 / Server 2025, 32- or 64-bit**. It needs the
+Microsoft .NET Framework 4.5 or newer, which Windows 8, 10 and 11 already have. On Windows 7, if `SETUP.bat` says .NET
+is missing, install ".NET Framework 4.8" (the offline installer from microsoft.com) and run it again. It talks to SQL
+Server 2005 or newer through .NET's own client, so no ODBC driver is needed, and to Y ERP over TLS 1.2.
+
+Internet is needed only for reaching Y ERP itself.
+
+To bring in more history later: `YerpBiometric.exe --backfill 30` (in this folder).
 
 ## In Y ERP afterwards
 
-- **Machines:** each machine appears the first time it sends a punch. Give it a name and the site it stands at.
-- **Punches belonging to nobody:** a number from the machine that matches no employee code. Put the number against the
-  person in the list below it; their waiting punches are counted at once.
+The Biometric tab says **Working** when punches are arriving.
+
+- **Machines:** each appears the first time it sends a punch. Give it a name and the site it stands at.
+- **Punches belonging to nobody:** a number from the machines that matches no employee code. Where the machine's name
+  for the person plainly matches an employee, a **"Looks like ... - match"** button is shown; press it. Otherwise put the
+  number against the person in the list below.
 
 ## If something is wrong
 
-- `sync.log` in this folder says what happened each minute.
-- "key is not in use": a new key was made in Y ERP; put it in `config.ini`.
-- "Login failed": the user or password in `config.ini`, or SQL Server does not allow SQL logins (Server properties >
-  Security > "SQL Server and Windows Authentication mode").
-- Nothing new although people punched: eTimeTrackLite has not downloaded from the machines yet. Its own download
+- `sync.log` in this folder says what happened each minute (kept to about 2 MB; the one before is `sync.log.1`).
+- **".NET Framework 4.5 or newer"**: see *Which Windows* above.
+- **"key is not in use"** or **401**: a new package or key was made in Y ERP. Download the package again and run
+  `SETUP.bat`.
+- **Login failed** in `sync.log`: run `SETUP.bat` again; it gives the access afresh.
+- **Nothing new although people punched:** eTimeTrackLite has not downloaded from the machines yet; its own download
   interval decides how "live" attendance can be.
-- To stop it: run `remove_task.bat` as administrator.
 
-`config.ini` holds a password and the key. Keep the folder where only administrators can open it.
+## Other files
+
+| File | What it does |
+|---|---|
+| `YerpBiometric.cs` | The program, as readable source. `build.bat` turns it into `YerpBiometric.exe`. |
+| `run_check.bat` | Looks at the database and the key, shows what it found, sends nothing. |
+| `run_now.bat` | Sends once. |
+| `install_task.bat` / `remove_task.bat` | Starts / stops the every-minute task (as administrator). |
+| `make_reader_login.sql` | The read-only access, to give by hand in Management Studio if the set-up could not. |
+| `config.ini` | The settings. Holds a key (and a password if a SQL login is used): keep the folder where only administrators can open it. |
+| `test\SelfTest.cs` | Tests, run by the Y ERP test suite on Windows; not part of the package. |

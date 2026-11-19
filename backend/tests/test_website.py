@@ -79,6 +79,33 @@ def test_search_engines_are_shown_the_front_page_and_not_the_erp(client):
     assert "<loc>http://testserver/</loc>" in client.get("/sitemap.xml").text
 
 
+def allowed(robots, path):
+    """robots.txt as Google reads it: the longest rule that matches the path wins, Allow on a tie; '$' ends a rule."""
+    best = (-1, True)
+    for line in robots.splitlines():
+        kind, _, rule = line.partition(": ")
+        if kind not in ("Allow", "Disallow"):
+            continue
+        exact = rule.endswith("$")
+        stem = rule.rstrip("$")
+        if (path == stem) if exact else path.startswith(stem):
+            if len(rule) > best[0] or (len(rule) == best[0] and kind == "Allow"):
+                best = (len(rule), kind == "Allow")
+    return best[1]
+
+
+def test_google_can_fetch_everything_the_front_page_is_drawn_with(client):
+    """The front page's words and pictures come from the app's script: blocked, Google sees an empty page and keeps
+    showing an old copy. The ERP's own screens and the rest of the API stay closed."""
+    robots = client.get("/robots.txt").text
+    for path in ("/", "/next/assets/index-CCb_YzMP.js", "/next/assets/index-x.css", "/next/site/img/cat3.jpg",
+                 "/next/favicon.svg", "/next/favicon-32.png", "/next/icons/apple-touch-icon.png", "/next/manifest.webmanifest",
+                 "/next/jobs", "/api/public/site"):
+        assert allowed(robots, path), path
+    for path in ("/next/", "/next/projects", "/next/login.html", "/api/jobs", "/api/public/enquiry"):
+        assert not allowed(robots, path), path
+
+
 def test_the_front_page_is_described_as_the_civil_company():
     """What Google and a WhatsApp link preview show: Yalavarti Infra Projects, never the electrical contractor."""
     from app.core import static

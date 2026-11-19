@@ -38,6 +38,9 @@ function AutoPayroll() {
   )
 }
 
+// The period as numbers, day-month-year (26-09-2026), not the month's name.
+const numericDate = (d?: string | null) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d ?? ''); return m ? `${m[3]}-${m[2]}-${m[1]}` : (d || '-') }
+
 export default function PayrollPage() {
   const q = usePayslips()
   const [open, setOpen] = useState<number | null>(null)
@@ -50,7 +53,7 @@ export default function PayrollPage() {
   const columns: TableColumn<PayslipRow>[] = [
     { id: 'no', header: 'Number', sort: (p) => p.number, cell: (p) => <button type="button" className="font-mono text-[13px] font-semibold text-primary underline-offset-2 hover:underline" onClick={() => setOpen(p.id)}>{p.number}</button> },
     { id: 'who', header: 'Employee', sort: (p) => p.employee_name, cell: (p) => p.employee_name || '-' },
-    { id: 'period', header: 'Period', hideBelow: 'lg', cell: (p) => `${formatDate(p.period_start)} to ${formatDate(p.period_end)}` },
+    { id: 'period', header: 'Period', hideBelow: 'lg', cell: (p) => `${numericDate(p.period_start)} to ${numericDate(p.period_end)}` },
     { id: 'paid', header: 'Pay date', hideBelow: 'xl', sort: (p) => p.pay_date, cell: (p) => formatDate(p.pay_date) || '-' },
     { id: 'gross', header: 'Gross', hideBelow: 'md', align: 'right', sort: (p) => p.gross_pay, cell: (p) => formatINR(p.gross_pay) },
     { id: 'ded', header: 'Deductions', hideBelow: 'lg', align: 'right', cell: (p) => formatINR(p.total_deductions) },

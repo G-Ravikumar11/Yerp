@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
-import { Coffee, LogIn, LogOut, MapPin } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Camera, Coffee, LogIn, LogOut, MapPin } from 'lucide-react'
 import { breakFor, clock, staffKeys, useClock, useToday } from '@/api/staff'
 import { Skeleton } from '@/components/ui'
 import { useAction } from '@/lib/mutate'
+import { selfieDataUrl } from '@/lib/selfie'
 import { cn } from '@/lib/utils'
 import { Sheet } from './ui'
 
@@ -23,7 +24,16 @@ export function ClockPanel() {
   const q = useClock()
   const today = useToday()
   const refresh = { invalidate: [staffKeys.clock, staffKeys.today, staffKeys.dashboard] }
-  const go = useAction((which: 'in' | 'out') => clock(which), { ...refresh, success: (r, w) => r.message || (w === 'in' ? 'Clocked in' : 'Clocked out') })
+  const go = useAction((a: { which: 'in' | 'out'; selfie?: string | null }) => clock(a.which, a.selfie), { ...refresh, success: (r, a) => r.message || (a.which === 'in' ? 'Clocked in' : 'Clocked out') })
+  // The optional selfie with the clock-in: switched on here, it opens the front camera when Clock in is pressed. A person
+  // who backs out of the camera has not clocked in, and can switch it off to clock in without.
+  const [selfieOn, setSelfieOn] = useState(() => { try { return localStorage.getItem('yerp.selfie') === '1' } catch { return false } })
+  const camera = useRef<HTMLInputElement>(null)
+  const toggleSelfie = (on: boolean) => {
+    setSelfieOn(on)
+    try { localStorage.setItem('yerp.selfie', on ? '1' : '0') } catch { /* the choice just is not remembered */ }
+  }
+  const clockIn = () => (selfieOn ? camera.current?.click() : go.mutate({ which: 'in' }))
   const rest = useAction((which: 'start' | 'stop') => breakFor(which), { invalidate: [staffKeys.clock], success: (r, w) => r.message || (w === 'start' ? 'Break started' : 'Break over') })
 
   // The count moves a little at a time while somebody is working.
@@ -65,17 +75,31 @@ export function ClockPanel() {
       {(site || !done) && (
         <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"><MapPin className="size-3.5 shrink-0" /><span className="truncate">{site || 'Your position is saved with the clock-in'}</span></p>
       )}
+      {!done && !c?.clocked_in && (
+        <>
+          <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" checked={selfieOn} onChange={(e) => toggleSelfie(e.target.checked)} className="size-4 accent-[var(--primary)]" />
+            <Camera className="size-3.5 shrink-0" /> Take a selfie with the clock-in
+          </label>
+          <input ref={camera} type="file" accept="image/*" capture="user" hidden aria-label="Selfie for the clock-in"
+            onChange={async (e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (f) go.mutate({ which: 'in', selfie: await selfieDataUrl(f) })
+            }} />
+        </>
+      )}
       {!done && (
         <div className="mt-3 flex gap-2">
           {!c?.clocked_in && (
-            <button type="button" disabled={go.isPending} onClick={() => go.mutate('in')} className="h-12 flex-1 rounded-full bg-[image:var(--app-grad)] text-[15px] font-semibold text-white active:opacity-90 disabled:opacity-60">
+            <button type="button" disabled={go.isPending} onClick={clockIn} className="h-12 flex-1 rounded-full bg-[image:var(--app-grad)] text-[15px] font-semibold text-white active:opacity-90 disabled:opacity-60">
               {go.isPending ? 'Clocking in…' : 'Clock in'}
             </button>
           )}
           {working && (
             <>
               <button type="button" disabled={rest.isPending} onClick={() => rest.mutate(onBreak ? 'stop' : 'start')} className={cn(ghost, 'border-warning/60 text-warning')}><Coffee className="mr-1.5 inline size-4" />{onBreak ? 'End break' : 'Break'}</button>
-              <button type="button" disabled={go.isPending} onClick={() => go.mutate('out')} className={cn(ghost, 'border-danger/60 text-danger')}><LogOut className="mr-1.5 inline size-4" />Clock out</button>
+              <button type="button" disabled={go.isPending} onClick={() => go.mutate({ which: 'out' })} className={cn(ghost, 'border-danger/60 text-danger')}><LogOut className="mr-1.5 inline size-4" />Clock out</button>
             </>
           )}
         </div>

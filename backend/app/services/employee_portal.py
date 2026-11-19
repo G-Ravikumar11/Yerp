@@ -559,7 +559,7 @@ def job_lock_refuse(db, client_id, emp, why, lat=0.0, lng=0.0, accuracy=0.0, dis
     raise HTTPException(status_code=403, detail=why)
 
 
-def job_lock_check(db, client_id, emp, settings, lat, lng, accuracy=None, ip="", device=""):
+def job_lock_check(db, client_id, emp, settings, lat, lng, accuracy=None, ip="", device="", mock=False):
     """Job Lock, on the server where a phone cannot talk its way past it. Returns (the site they are on, or None; anything
     worth a second look). Refuses a clock-in with no position, with a position too unsure to trust, or outside every place
     this person may clock in. Nobody is locked out by a set-up not finished: with no fence to check against the clock-in
@@ -568,6 +568,15 @@ def job_lock_check(db, client_id, emp, settings, lat, lng, accuracy=None, ip="",
         return None, ""
     if getattr(emp, "job_lock_exempt", False):
         return None, ""
+    if mock:
+        # The phone itself says its position is being supplied by a mock-location app. Refused and written down, like
+        # any other turned-away clock-in, so HR sees it was tried.
+        try:
+            at = (float(lat or 0.0), float(lng or 0.0))
+        except (TypeError, ValueError):
+            at = (0.0, 0.0)
+        job_lock_refuse(db, client_id, emp, "Your phone says its location is being faked by a mock-location app. Turn that off and try again.",
+                        at[0], at[1], accuracy if isinstance(accuracy, (int, float)) else 0.0, ip=ip, device=device)
     places, unfenced = job_lock_places(db, client_id, emp, settings)
     if not places:
         return None, "No site location set to check against"

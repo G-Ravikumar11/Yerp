@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Camera, Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Badge, Button, ConfirmDialog, Field, Input, Modal, NumField, Select } from '@/components/ui'
-import { attachClaimPhoto, cancelClaim, claimAgainstAdvance, claimPayWithSalary, decideClaim, payoutKeys, submitClaim, useClaims, type Claim } from '@/api/payouts'
+import { attachClaimPhoto, cancelClaim, claimAgainstAdvance, claimPayWithSalary, decideClaim, payoutKeys, useClaims, type Claim } from '@/api/payouts'
 import { useMoneyHeads } from '@/api/ledger'
 import { owedKeys } from '@/api/owed'
 import { projectLabel, useProjects } from '@/api/projects'
@@ -12,6 +13,8 @@ import { PayModal } from '@/features/money/PayModal'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate, today } from '@/lib/format'
+import { sendOrQueue } from '@/stores/offline'
+import { toast } from '@/stores/toast'
 import { formatINR } from '@/lib/utils'
 
 const TONE = { SUBMITTED: 'warning', APPROVED: 'info', SETTLED: 'success', REJECTED: 'danger', CANCELLED: 'neutral' } as const
@@ -33,7 +36,10 @@ export default function MyClaimsPage() {
 export function ClaimsPanel({ mine = false }: { mine?: boolean }) {
   const { can } = useSession()
   const q = useClaims(mine)
-  const [making, setMaking] = useState(false)
+  // The phone's + sheet opens the form on the site it is on (?job=&add=1); the website just opens the list.
+  const [params, setParams] = useSearchParams()
+  const [making, setMaking] = useState(mine && params.get('add') === '1')
+  const startJob = Number(params.get('job')) || 0
   const [rejecting, setRejecting] = useState<Claim | null>(null)
   const [paying, setPaying] = useState<Claim | null>(null)
   const decide = useAction((v: { id: number; decision: 'approve' | 'reject'; note?: string }) => decideClaim(v.id, v.decision, v.note), { invalidate: INVALIDATE, onSuccess: () => setRejecting(null) })
@@ -76,7 +82,10 @@ export function ClaimsPanel({ mine = false }: { mine?: boolean }) {
       </div>
       <DataTable label="Expense claims" rows={q.data?.claims ?? []} columns={cols} rowKey={(r) => r.id} loading={q.isPending}
         empty={mine ? 'No claims yet. Spent your own money for the company? Claim it here with the bill.' : 'No expense claims.'} />
-      {making && <ClaimModal forSomeone={!mine} onClose={() => setMaking(false)} />}
+      {making && <ClaimModal forSomeone={!mine} job={startJob} onClose={() => {
+        setMaking(false)
+        if (params.has('add')) setParams((p) => { p.delete('add'); p.delete('job'); return p }, { replace: true })
+      }} />}
       <ConfirmDialog open={!!rejecting} onOpenChange={(o) => !o && setRejecting(null)} title={`Send ${rejecting?.number ?? ''} back`} confirmLabel="Send back" tone="danger"
         reason={{ label: 'Why', required: true }} loading={decide.isPending} onConfirm={(note) => { if (rejecting) decide.mutate({ id: rejecting.id, decision: 'reject', note }) }} />
       {paying && <PayModal docType="expense_claim" docId={paying.id} title={`${paying.number} - ${paying.employee_name}`} open onOpenChange={(o) => !o && setPaying(null)} invalidate={INVALIDATE} />}
@@ -95,17 +104,25 @@ function PhotoButton({ id }: { id: number }) {
   )
 }
 
-function ClaimModal({ forSomeone, onClose }: { forSomeone: boolean; onClose: () => void }) {
+export function ClaimModal({ forSomeone, job = 0, onClose }: { forSomeone: boolean; job?: number; onClose: () => void }) {
   const heads = useMoneyHeads()
   const projects = useProjects()
   const people = useEmployees('active')
-  const [f, setF] = useState({ spent_on: today(), head: 'Travel & conveyance', job_id: 0, amount: 0, description: '', bill_no: '', employee_id: 0 })
+  const [f, setF] = useState({ spent_on: today(), head: 'Travel & conveyance', job_id: job, amount: 0, description: '', bill_no: '', employee_id: 0 })
   const [file, setFile] = useState<File | null>(null)
   const save = useAction(async () => {
-    const c = await submitClaim({ ...f, job_id: f.job_id || null, employee_id: forSomeone ? f.employee_id : undefined })
-    if (file) await attachClaimPhoto(c.id, file)
-    return c
-  }, { invalidate: INVALIDATE, onSuccess: onClose })
+    // With no signal the claim is kept on this phone with the photo of its bill, and both go up when the signal returns.
+    const body = { ...f, job_id: f.job_id || null, employee_id: forSomeone ? f.employee_id : undefined }
+    const sent = await sendOrQueue<Claim & { message: string }>(
+      { method: 'POST', url: '/api/expense-claims', body, label: `Expense claim ${formatINR(f.amount)}, ${f.head}` },
+      { files: file ? { items: [file], via: 'claim', idFrom: 'id' } : undefined },
+    )
+    if (sent.queued) return { queued: true as const }
+    if (file) {
+      try { await attachClaimPhoto(sent.result.id, file) } catch { toast.error('Claimed, but the photo did not go up. Add it again from the list.') }
+    }
+    return { queued: false as const }
+  }, { invalidate: INVALIDATE, onSuccess: (r) => { if (r.queued) toast.info('No signal. The claim and its bill are kept on this phone and go up by themselves when you are back online.'); onClose() } })
   const sites = useMemo(() => (projects.data ?? []).map((p) => ({ value: p.id, label: projectLabel(p) })), [projects.data])
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title="New expense claim" size="md"
@@ -120,7 +137,7 @@ function ClaimModal({ forSomeone, onClose }: { forSomeone: boolean; onClose: () 
         <Field label="Project"><Select value={f.job_id || ''} onChange={(e) => setF((s) => ({ ...s, job_id: Number(e.target.value) }))} placeholder="Head office" options={sites} /></Field>
         <Field label="What was it" className="sm:col-span-2"><Input value={f.description} onChange={(e) => setF((s) => ({ ...s, description: e.target.value }))} placeholder="Bus from Vizag to site and back" /></Field>
         <Field label="Bill no."><Input value={f.bill_no} onChange={(e) => setF((s) => ({ ...s, bill_no: e.target.value }))} /></Field>
-        <Field label="Photo of the bill"><Input type="file" accept="image/*,application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
+        <Field label="Photo of the bill"><Input type="file" accept="image/*,application/pdf" capture="environment" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></Field>
       </div>
     </Modal>
   )

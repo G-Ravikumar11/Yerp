@@ -91,7 +91,7 @@ export function ItemDetailModal({ item, manage, onClose, onEdit, onCopy, onToggl
           <section aria-labelledby="d-stock">
             <h3 id="d-stock" className="mb-2 border-b pb-1 text-sm font-semibold">In stock</h3>
             {i.kind === 'RM' || i.stock !== null ? (
-              <p className="text-sm"><strong>{stockLabel(i.kind, i.stock, i.units_of_measure)}</strong> <span className="text-muted-foreground">in the store in total{i.reorder_level ? ` · warn below ${i.reorder_level} ${i.units_of_measure}` : ''}</span></p>
+              <p className="text-sm"><strong>{stockLabel(i.kind, i.stock, i.units_of_measure)}</strong> <span className="text-muted-foreground">in the store in total{i.reorder_level ? ` · reorder level ${i.reorder_level} ${i.reorder_unit || i.units_of_measure}` : ''}</span></p>
             ) : (
               <p className="text-sm text-muted-foreground">A work item is not kept in stock.</p>
             )}

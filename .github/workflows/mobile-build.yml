@@ -175,10 +175,17 @@ jobs:
   # =========================================================================
   build-ios:
     name: Build iOS (Apple App Store / TestFlight Archive)
-    runs-on: macos-14
+    # macOS 15 and Xcode 26: the native Liquid Glass tab bar (mobile/plugins/yerp-glass) uses LiquidGlassKit, which draws
+    # SwiftUI's glass effect and so needs the iOS 26 SDK to compile. It still runs on iOS 17 and later (a Material fallback).
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Use Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26'
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v4
@@ -212,6 +219,14 @@ jobs:
             npx cap add ios
             cp "$RUNNER_TEMP/ios-README.md" ios/README.md 2>/dev/null || true
           fi
+          # The iPhone app's bottom bar as native Liquid Glass. Only this job has it: the website and the Android app are untouched.
+          # The plugin is installed from this repository, LiquidGlassKit is fetched at a pinned release into it, and the app's
+          # minimum iOS becomes 17 (the library's own floor).
+          bash plugins/yerp-glass/scripts/add-liquidglasskit.sh
+          npm install --save --no-audit --no-fund ./plugins/yerp-glass
+          sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '17.0'/" ios/App/Podfile
+          sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 17.0;/g" ios/App/App.xcodeproj/project.pbxproj
+          grep -n "platform :ios" ios/App/Podfile
           npx cap sync ios
 
       # The iOS project is generated here, with Capacitor's placeholder icon and splash. Every image in those two
@@ -340,4 +355,49 @@ jobs:
         with:
           name: Yerp-iOS-Archive
           path: mobile/build/Yerp-iOS-Archive.zip
+          retention-days: 14
+
+      # A build for the iPhone Simulator (no signing, no Apple account): the app to try the native glass bar in a simulator on a
+      # Mac, or one uploaded to a cloud simulator such as Appetize. The archive above is for real phones and cannot run in one.
+      - name: Build for the iOS Simulator
+        working-directory: mobile/ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath ../../build/sim \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          cd ../../build/sim/Build/Products/Debug-iphonesimulator
+          zip -qr "$GITHUB_WORKSPACE/mobile/build/Yerp-iOS-Simulator.zip" App.app
+
+      - name: Upload iOS Simulator build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yerp-iOS-Simulator
+          path: mobile/build/Yerp-iOS-Simulator.zip
+          retention-days: 14
+
+      # Starts the simulator build on the runner and takes a picture, so a crash on launch (a plugin that fails to load, say) shows
+      # up here. It only gets as far as the sign-in screen: the bottom bar is part of the signed-in app.
+      - name: Launch it in a simulator and take a picture
+        continue-on-error: true
+        run: |
+          UDID=$(xcrun simctl list devices available | grep -m1 "iPhone" | grep -oE '[0-9A-F]{8}-[0-9A-F-]{27}')
+          echo "Simulator: $UDID"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" mobile/build/sim/Build/Products/Debug-iphonesimulator/App.app
+          xcrun simctl launch "$UDID" com.yerp.app
+          sleep 20
+          xcrun simctl io "$UDID" screenshot mobile/build/sim-launch.png
+          xcrun simctl spawn "$UDID" log show --last 2m --style compact --predicate 'process == "App"' > mobile/build/sim-log.txt || true
+          grep -ciE "YerpGlass|crash|fatal" mobile/build/sim-log.txt || true
+
+      - name: Upload the launch picture and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Yerp-iOS-Simulator-Launch
+          path: |
+            mobile/build/sim-launch.png
+            mobile/build/sim-log.txt
+          if-no-files-found: ignore
           retention-days: 14

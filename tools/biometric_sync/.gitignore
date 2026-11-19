@@ -2,3 +2,7 @@ config.ini
 state.json
 state.json.tmp
 sync.log
+sync.log.1
+build.log
+YerpBiometric.exe
+test/*.exe

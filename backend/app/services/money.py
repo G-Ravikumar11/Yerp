@@ -479,6 +479,73 @@ def next_money_number(db, client_id, direction, stem=None):
     return "%s%04d" % (stem, top + 1)
 
 
+TAX_CHOICES = ("taxable", "non_taxable")
+SUPPLY_CHOICES = ("local", "non_local")
+
+
+def expense_tax(tax, supply, state=""):
+    """(tax, supply, state) for an expense voucher. Non taxable is complete on its own; taxable needs local or non local, and a
+    non local supply needs the state it comes from (a GST state code). Left blank, all stay blank (a recurring payment is set up
+    without them)."""
+    from app.core.gst import GST_STATES
+    tax, supply, state = (tax or "").strip().lower(), (supply or "").strip().lower(), (state or "").strip()
+    if not tax:
+        return "", "", ""
+    if tax not in TAX_CHOICES:
+        raise HTTPException(400, "Is the expense taxable or non taxable?")
+    if tax == "non_taxable":
+        return tax, "", ""
+    if supply not in SUPPLY_CHOICES:
+        raise HTTPException(400, "A taxable expense is local or non local: choose which.")
+    if supply == "local":
+        return tax, supply, ""
+    if state not in GST_STATES:
+        raise HTTPException(400, "A non local supply needs the state it comes from.")
+    return tax, supply, state
+
+
+GST_RATES = (0.0, 3.0, 5.0, 12.0, 18.0, 28.0)
+
+
+def payee_bank_details(mode, bank, account, ifsc):
+    """(bank, account, ifsc) of the party a bank transfer was sent to. Kept only for a bank transfer, and checked when given: an
+    account number is digits and an IFSC is four letters, a zero and six letters or digits."""
+    from app.services.payouts import IFSC_RE
+    if (mode or "").strip() != "Bank transfer":
+        return "", "", ""
+    bank, account, ifsc = " ".join((bank or "").split())[:100], "".join((account or "").split()), (ifsc or "").strip().upper()
+    if account and not (account.isdigit() and 6 <= len(account) <= 20):
+        raise HTTPException(400, "The payee's account number is 6 to 20 digits.")
+    if ifsc and not IFSC_RE.match(ifsc):
+        raise HTTPException(400, "The IFSC is four letters, a zero, then six letters or digits (SBIN0001234).")
+    return bank, account, ifsc
+
+
+def expense_gst(tax, rate):
+    """The GST rate (percent) a taxable expense carries; none for anything else, or when it was left blank."""
+    if (tax or "").strip().lower() != "taxable" or rate in (None, ""):
+        return 0.0
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "The GST rate has to be a number.")
+    if rate not in GST_RATES:
+        raise HTTPException(400, "The GST rate is one of %s percent." % ", ".join("%g" % r for r in GST_RATES))
+    return rate
+
+
+def gst_split(amount, rate, supply):
+    """What the tax is inside an amount that already includes it. Another state's supply is IGST at the full rate; a local one is
+    half CGST and half SGST."""
+    amount, rate = money(amount or 0), float(rate or 0)
+    base = money(amount / (1 + rate / 100.0)) if rate else money(amount)
+    tax = money(amount - base)
+    if (supply or "") == "non_local":
+        return {"base": base, "tax": tax, "igst": tax, "cgst": 0.0, "sgst": 0.0}
+    cgst = money(tax / 2)
+    return {"base": base, "tax": tax, "igst": 0.0, "cgst": cgst, "sgst": money(tax - cgst)}
+
+
 def money_entry_dict(e, accounts=None):
     acc = (accounts or {}).get(e.account_id)
     return {"id": e.id, "number": e.number or "", "direction": e.direction,
@@ -489,7 +556,10 @@ def money_entry_dict(e, accounts=None):
             "paid_on": e.paid_on or "", "mode": e.mode or "", "reference": e.reference or "",
             "note": e.note or "", "voided": bool(e.voided), "void_reason": e.void_reason or "",
             "recorded_by_name": e.recorded_by_name or "", "created_at": e.created_at or "",
-            "head": e.head or "", "pair_id": e.pair_id, "cleared_on": e.cleared_on or ""}
+            "head": e.head or "", "pair_id": e.pair_id, "cleared_on": e.cleared_on or "",
+            "tax": e.tax or "", "supply": e.supply or "", "supply_state": e.supply_state or "", "gst_rate": e.gst_rate or 0.0,
+            "payee_bank": e.payee_bank or "", "payee_account": e.payee_account or "", "payee_ifsc": e.payee_ifsc or "",
+            "gst": gst_split(e.amount, e.gst_rate, e.supply) if (e.gst_rate and e.tax == "taxable") else None}
 
 
 def _doc_for_any(db, client_id, doc_type, doc_id):

@@ -1,0 +1,10 @@
+{
+  "name": "yerp-glass",
+  "version": "0.1.0",
+  "description": "iOS only: the phone app's bottom tab bar drawn as native Liquid Glass (LiquidGlassKit).",
+  "license": "UNLICENSED",
+  "private": true,
+  "files": ["ios", "YerpGlass.podspec"],
+  "capacitor": { "ios": { "src": "ios" } },
+  "peerDependencies": { "@capacitor/core": "^7.0.0" }
+}

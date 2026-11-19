@@ -468,7 +468,7 @@ def wo_list_work_types(request: Request, department: str = "",
     return {
         "work_types": [work_type_dict(w) for w in active],
         "requested": [work_type_dict(w) for w in rows if w.status == "requested"],
-        "may_administer": may_administer(request, db),
+        "may_administer": may_administer(request, db, "worktypes.approve"),
     }
 
 
@@ -489,7 +489,7 @@ def wo_create_work_type(body: WorkTypeIn, request: Request,
                  (name, " and waiting to be approved"
                   if clash.status == "requested" else ""))
 
-    administers = may_administer(request, db)
+    administers = may_administer(request, db, "worktypes.approve")
     _, actor_id, actor_name = wo_actor(request, db)
     work_type = models.DBWorkType(
         client_id=client.id, name=name, code=(body.code or "").strip().upper(),
@@ -511,8 +511,8 @@ def wo_create_work_type(body: WorkTypeIn, request: Request,
 @router.post("/api/wo/work-types/{type_id}/decide")
 def wo_decide_work_type(type_id: int, request: Request, approve: bool = True,
                         db: Session = Depends(get_db)):
-    client = require_items_access(request, db, "people.manage")
-    _, actor_id, actor_name = wo_actor(request, db, "people.manage")
+    client = require_items_access(request, db, "worktypes.approve")
+    _, actor_id, actor_name = wo_actor(request, db, "worktypes.approve")
     work_type = db.query(models.DBWorkType).filter(
         models.DBWorkType.id == type_id,
         models.DBWorkType.client_id == client.id).first()
@@ -670,7 +670,7 @@ def wo_vocabulary(request: Request, db: Session = Depends(get_db)):
             {"rate": 20, "label": "20% - Section 206AA, no PAN given"},
             {"rate": 0, "label": "Nil - exempt or lower-deduction certificate held"},
         ],
-        "may_administer": may_administer(request, db),
+        "may_administer": may_administer(request, db, "worktypes.approve"),
         "next_number_year": financial_year_label(),
     }
 
@@ -1515,7 +1515,7 @@ def wo_update_business_unit(unit_id: int, body: BusinessUnitIn, request: Request
 def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
                          db: Session = Depends(get_db)):
     """The contractor's particulars as the order, the bill and the TDS return need them."""
-    client = require_items_access(request, db, ("workorders.manage", "billing.manage"))
+    client = require_items_access(request, db, "contractors.edit")
     con = db.query(models.DBContractor).filter(models.DBContractor.id == con_id,
                                                models.DBContractor.client_id == client.id).first()
     if not con:

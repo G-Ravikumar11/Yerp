@@ -165,6 +165,7 @@ HR_PAYROLL_COLUMNS = (
     ("contractors", "msme_type", "VARCHAR DEFAULT ''"), ("contractors", "udyam_no", "VARCHAR DEFAULT ''"),
     # Attendance from the biometric machines.
     ("employees", "biometric_id", "VARCHAR DEFAULT ''"),
+    ("biometric_punches", "employee_name", "VARCHAR DEFAULT ''"),
 )
 
 # One overtime entry per person per day. Run after any duplicates are removed, or the index cannot be built.
@@ -274,6 +275,13 @@ ACCOUNTS_COLUMNS = (
     ("bank_accounts", "imprest_amount", "FLOAT DEFAULT 0"),
     # Bank reconciliation: when the bank moved it, and the statement line it was matched to.
     ("money_entries", "cleared_on", "VARCHAR DEFAULT ''"), ("money_entries", "statement_line_id", "INTEGER"),
+    # An expense voucher's tax selection (taxable / non_taxable) and, for a taxable one, local / non_local.
+    ("money_entries", "tax", "VARCHAR DEFAULT ''"), ("money_entries", "supply", "VARCHAR DEFAULT ''"),
+    ("payment_requests", "tax", "VARCHAR DEFAULT ''"), ("payment_requests", "supply", "VARCHAR DEFAULT ''"),
+    ("money_entries", "supply_state", "VARCHAR DEFAULT ''"), ("payment_requests", "supply_state", "VARCHAR DEFAULT ''"),
+    ("money_entries", "gst_rate", "FLOAT DEFAULT 0"), ("payment_requests", "gst_rate", "FLOAT DEFAULT 0"),
+    ("money_entries", "payee_bank", "VARCHAR DEFAULT ''"), ("money_entries", "payee_account", "VARCHAR DEFAULT ''"), ("money_entries", "payee_ifsc", "VARCHAR DEFAULT ''"),
+    ("payment_requests", "payee_bank", "VARCHAR DEFAULT ''"), ("payment_requests", "payee_account", "VARCHAR DEFAULT ''"), ("payment_requests", "payee_ifsc", "VARCHAR DEFAULT ''"),
     # A site expense entered by the Master or a colleague of theirs, who may not then approve it.
     ("site_cash_expenses", "submitted_by_master", "BOOLEAN DEFAULT FALSE"),
     ("site_cash_expenses", "submitted_by_member", "INTEGER"),

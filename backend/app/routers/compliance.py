@@ -51,7 +51,7 @@ def contractor_status(contractor_id: int, request: Request, db: Session = Depend
 
 @router.post("/api/compliance/documents")
 def add_document(body: ComplianceDocIn, request: Request, db: Session = Depends(get_db)):
-    client, _, name = wo_actor(request, db, "billing.manage")
+    client, _, name = wo_actor(request, db, "compliance.manage")
     con = _contractor_or_404(db, client.id, body.contractor_id)
     if body.kind not in DOC_KINDS:
         raise HTTPException(400, "Unknown document kind.")
@@ -70,7 +70,7 @@ def add_document(body: ComplianceDocIn, request: Request, db: Session = Depends(
 
 @router.delete("/api/compliance/documents/{doc_id}")
 def delete_document(doc_id: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, "billing.manage")
+    client, _, _ = wo_actor(request, db, "compliance.manage")
     row = db.query(models.DBComplianceDocument).filter(models.DBComplianceDocument.id == doc_id,
                                                        models.DBComplianceDocument.client_id == client.id).first()
     if not row:
@@ -94,7 +94,7 @@ def list_back_charges(request: Request, contractor_id: int = 0, status: str = ""
 
 @router.post("/api/back-charges")
 def create_back_charge(body: BackChargeIn, request: Request, db: Session = Depends(get_db)):
-    client, _, name = wo_actor(request, db, "billing.manage")
+    client, _, name = wo_actor(request, db, "backcharges.manage")
     row = raise_back_charge(db, client.id, body, name)
     log_audit(db, client.id, "back_charge_raised", "back_charge", row.id, row.number, row.reason[:100], request)
     db.commit()
@@ -104,7 +104,7 @@ def create_back_charge(body: BackChargeIn, request: Request, db: Session = Depen
 
 @router.post("/api/back-charges/{charge_id}/cancel")
 def cancel_back_charge(charge_id: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, "billing.manage")
+    client, _, _ = wo_actor(request, db, "backcharges.manage")
     row = db.query(models.DBBackCharge).filter(models.DBBackCharge.id == charge_id,
                                                models.DBBackCharge.client_id == client.id).first()
     if not row:
@@ -119,7 +119,7 @@ def cancel_back_charge(charge_id: int, request: Request, db: Session = Depends(g
 
 @router.post("/api/sub-bills/{bill_id}/back-charges")
 def put_back_charges_on_bill(bill_id: int, body: ApplyBackChargesIn, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, "billing.manage")
+    client, _, _ = wo_actor(request, db, "backcharges.manage")
     bill = sub_bill_or_404(db, client.id, bill_id)
     apply_back_charges(db, client.id, bill, body.ids, recost_sub_bill)
     log_audit(db, client.id, "back_charges_applied", "sub_bill", bill.id, bill.number or "", ",".join(map(str, body.ids)), request)
@@ -130,7 +130,7 @@ def put_back_charges_on_bill(bill_id: int, body: ApplyBackChargesIn, request: Re
 
 @router.delete("/api/sub-bills/{bill_id}/back-charges/{charge_id}")
 def take_back_charge_off_bill(bill_id: int, charge_id: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, "billing.manage")
+    client, _, _ = wo_actor(request, db, "backcharges.manage")
     bill = sub_bill_or_404(db, client.id, bill_id)
     charge = db.query(models.DBBackCharge).filter(models.DBBackCharge.id == charge_id,
                                                   models.DBBackCharge.client_id == client.id,
@@ -145,7 +145,7 @@ def take_back_charge_off_bill(bill_id: int, charge_id: int, request: Request, db
 
 @router.post("/api/compliance/ratings")
 def rate_contractor(body: RatingIn, request: Request, db: Session = Depends(get_db)):
-    client, _, name = wo_actor(request, db, "billing.manage")
+    client, _, name = wo_actor(request, db, "compliance.manage")
     row = add_rating(db, client.id, body, name)
     db.commit()
     return {"ok": True, "score": scorecard(db, client.id, row.contractor_id), "message": "Rating saved."}

@@ -18,6 +18,7 @@ from app.core.lifecycle import (
     DB_READY,
     _boot_step,
     backfill_entry_codes,
+    carry_reorder_levels_into_hub,
     convert_legacy_holds_all,
     fill_document_names,
 )
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
     if ok:
         convert_legacy_holds_all()
         _boot_step("number the entries of the measurement book", backfill_entry_codes)
+        _boot_step("one reorder level per item, the Store Hub's", carry_reorder_levels_into_hub)
         from app.services.hr import apply_india_onboarding_all
         _boot_step("onboarding documents", apply_india_onboarding_all)
     DB_READY["ok"] = ok

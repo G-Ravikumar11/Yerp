@@ -55,6 +55,43 @@ def fill_document_names():
         db.close()
 
 
+def carry_reorder_levels_into_hub():
+    """An item once had two reorder levels: "Tell me when stock falls below" on the item master, and the Store Hub's,
+    which is what raises the low-stock alerts. There is one now, the Hub's. A level kept only on the item master is
+    carried into the Hub once - where the Hub has none for the item - and the old figure cleared, so it is never carried
+    again over a level somebody has since changed. Where the Hub already has a level, the Hub's stands. A level in a unit
+    the Hub cannot convert from is left where it is (and tried again at the next start) rather than guessed at."""
+    from decimal import Decimal
+    from app.models.store_core import DBStoreItemSettings, DBStoreUomConversion
+    with SessionLocal() as db:
+        items = db.query(models.DBItem).filter(models.DBItem.kind == "RM", models.DBItem.reorder_level > 0).all()
+        if not items:
+            return
+        ids = [i.id for i in items]
+        settings = {s.item_id: s for s in db.query(DBStoreItemSettings).filter(DBStoreItemSettings.item_id.in_(ids)).all()}
+        factors = {(c.item_id, (c.from_uom or "").strip().lower()): Decimal(str(c.to_base_factor))
+                   for c in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id.in_(ids)).all()}
+        carried = 0
+        for item in items:
+            old = Decimal(str(item.reorder_level))
+            unit = (item.units_of_measure or "Nos").strip()
+            s = settings.get(item.id)
+            if s is None:
+                db.add(DBStoreItemSettings(item_id=item.id, base_uom=unit, reorder_level=old.quantize(Decimal("0.001"))))
+                carried += 1
+            elif not s.reorder_level:
+                base = (s.base_uom or unit).strip()
+                factor = Decimal(1) if base.lower() == unit.lower() else factors.get((item.id, unit.lower()))
+                if factor is None:
+                    continue
+                s.reorder_level = (old * factor).quantize(Decimal("0.001"))
+                carried += 1
+            item.reorder_level = 0
+        db.commit()
+        if carried:
+            logger.info("Reorder levels: %d carried from the item master into the Store Hub", carried)
+
+
 def backfill_entry_codes():
     """Entries recorded before they had codes are numbered, oldest first, after any that already have one."""
     with SessionLocal() as db:

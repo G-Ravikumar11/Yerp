@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, ArrowUpRight, CheckCheck, FileText } from 'lucide-react'
 import { approvalKeys, decide, hrefFor, useInbox, type ApprovalItem } from '@/api/approvals'
+import { payoutKeys } from '@/api/payouts'
 import { ConfirmDialog, Skeleton } from '@/components/ui'
 import { formatDate } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
@@ -28,7 +29,8 @@ export default function ApprovalsCards() {
   }, [inbox.data])
 
   const send = useAction((d: Parameters<typeof decide>[0]) => decide(d), {
-    invalidate: [approvalKeys.inbox, ['orders'], ['subbills'], ['vendors']],
+    // Claims and store issues are decided here too, so their own lists are asked afresh as well.
+    invalidate: [approvalKeys.inbox, ['orders'], ['subbills'], ['vendors'], payoutKeys.all, ['store']],
     onSuccess: () => {
       setPending(null)
       setOverride(false)

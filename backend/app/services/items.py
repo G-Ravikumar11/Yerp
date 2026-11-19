@@ -264,7 +264,15 @@ def item_row(item):
             "item_type": item.item_type, "units_of_measure": item.units_of_measure,
             "hsn_code": item.hsn_code, "item_tax_type": item.item_tax_type,
             "last_rate": unit_rate(item.last_rate),
-            "reorder_level": money(item.reorder_level)}
+            "reorder_level": float(_reorder_level(item))}
+
+
+def _reorder_level(item):
+    """The item's one reorder level, the Store Hub's (store_levels)."""
+    from sqlalchemy.orm import object_session
+    from app.services.store_levels import item_reorder_levels
+    session = object_session(item)
+    return item_reorder_levels(session, [item])[item.id][0] if session is not None and item.id else 0
 
 
 # Names this module only needs once it is running. They come from modules that in turn need this one,

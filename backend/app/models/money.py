@@ -59,6 +59,14 @@ class DBMoneyEntry(Base):
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     # An expense or sundry receipt: the head it is booked under (EXPENSE_HEADS / INCOME_HEADS).
     head = Column(String, default="")
+    # An expense's tax selection: taxable or non_taxable, and for a taxable one local or non_local.
+    tax = Column(String, default="")
+    supply = Column(String, default="")
+    supply_state = Column(String, default="")
+    gst_rate = Column(Float, default=0.0)
+    payee_bank = Column(String, default="")
+    payee_account = Column(String, default="")
+    payee_ifsc = Column(String, default="")
     # A transfer between our own accounts is two entries, one out of each side and one into the other; each names the other.
     pair_id = Column(Integer, nullable=True, index=True)
     # The day the bank actually moved the money (a cheque clears days after it is written), and the statement line
@@ -195,6 +203,13 @@ class DBPaymentRequest(Base):
     party_id = Column(Integer, nullable=True)
     job_id = Column(Integer, ForeignKey("jobs.id"), nullable=True, index=True)
     head = Column(String, default="")                             # an expense's head
+    tax = Column(String, default="")
+    supply = Column(String, default="")
+    supply_state = Column(String, default="")
+    gst_rate = Column(Float, default=0.0)
+    payee_bank = Column(String, default="")
+    payee_account = Column(String, default="")
+    payee_ifsc = Column(String, default="")
     amount = Column(Float, default=0.0)
     account_id = Column(Integer, ForeignKey("bank_accounts.id"), nullable=True)
     mode = Column(String, default="")

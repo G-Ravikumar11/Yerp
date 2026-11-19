@@ -2,7 +2,7 @@
 from datetime import datetime
 import uuid
 
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.db.session import Base
@@ -523,6 +523,18 @@ class DBCustomHoliday(Base):
     name = Column(String, nullable=False)
     created_by = Column(String, default="")
     created_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+class DBClockSelfie(Base):
+    """The optional selfie a phone sends with a clock-in, kept for HR and the Master alone: it is not in the file store, so
+    it never turns up in a site's photos or a file list. One per day's attendance record."""
+    __tablename__ = "clock_selfies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    attendance_id = Column(Integer, ForeignKey("attendance.id"), nullable=False, unique=True, index=True)
+    data = Column(LargeBinary, nullable=False)
+    taken_at = Column(String, default=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
 
 class DBClockRefusal(Base):

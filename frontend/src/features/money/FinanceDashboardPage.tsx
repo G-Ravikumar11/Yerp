@@ -1,10 +1,11 @@
 import { lazy, Suspense } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, ArrowUpRight, Plus, Sparkles, TrendingUp } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton, Stat, StatGrid } from '@/components/ui'
-import { attentionHref, useAttention, useBalanceSheet, useCashFlow, usePayables, useProfitLoss, useReceivables, type AttentionItem } from '@/api/dashboard'
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Select, Skeleton, Stat, StatGrid } from '@/components/ui'
+import { attentionHref, useAttention, useBalanceSheet, useCashFlow, usePayables, useProfitLoss, useProjectPnl, useReceivables, type AttentionItem } from '@/api/dashboard'
 import { Figure } from '@/features/dashboard/Figure'
+import { ProjectAccounts } from './ProjectAccounts'
 import { monthLabel } from '@/lib/cashflow'
 import { useSession } from '@/lib/session'
 import { canPassVouchers } from '@/lib/voucher'
@@ -51,6 +52,17 @@ export default function FinanceDashboardPage() {
   const balance = useBalanceSheet(reports)
   const cash = useCashFlow(money)
   const attention = useAttention()
+  // The accountant picks a project and the whole page becomes that project's accounts.
+  const projects = useProjectPnl(reports)
+  const [params, setParams] = useSearchParams()
+  const projectId = Number(params.get('project')) || 0
+  const pick = (id: string) => setParams(id ? { project: id } : {}, { replace: true })
+  const picker = reports && (
+    <div className="mb-4 max-w-md">
+      <Select aria-label="Project" value={projectId ? String(projectId) : ''} onChange={(e) => pick(e.target.value)} placeholder="All projects (the whole company)"
+        options={(projects.data?.projects ?? []).map((j) => ({ value: String(j.job_id), label: `${j.number} ${j.name}`.trim() }))} />
+    </div>
+  )
 
   const overdueCount = (rows: { bucket: string }[] | undefined) => (rows ?? []).filter((r) => r.bucket !== 'Not due').length
   const overdueEntries = overdueCount(receivables.data?.invoices) + overdueCount(payables.data?.bills)
@@ -66,8 +78,11 @@ export default function FinanceDashboardPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Accounts" title="Finance Dashboard" description="Receivables, payables, expenses and cash position across every project." actions={<>{canPassVouchers(can) && <Button onClick={showVoucher}><Plus /> New voucher</Button>}<Button variant="outline" asChild><Link to="/money/cash-flow"><TrendingUp /> Cash flow by month</Link></Button></>} />
+      <PageHeader eyebrow="Accounts" title="Finance Dashboard" description={projectId ? 'The accounts of one project: what it was sold for, billed, received, what it has cost and what is still to pay.' : 'Receivables, payables, expenses and cash position across every project. Choose a project to see only its accounts.'} actions={<>{canPassVouchers(can) && <Button onClick={showVoucher}><Plus /> New voucher</Button>}<Button variant="outline" asChild><Link to="/money/cash-flow"><TrendingUp /> Cash flow by month</Link></Button></>} />
 
+      {picker}
+      {projectId ? <ProjectAccounts id={projectId} /> : (
+      <>
       <StatGrid>
         {money && (
           <>
@@ -211,6 +226,8 @@ export default function FinanceDashboardPage() {
           </CardContent>
         </Card>
       </div>
+      </>
+      )}
     </>
   )
 }

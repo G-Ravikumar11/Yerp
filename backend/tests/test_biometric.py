@@ -128,3 +128,55 @@ def test_one_company_s_key_reaches_only_its_own_people(tenant, second_tenant):
     res = send(tenant, key, [{"employee_code": "X1", "time": at("09:00")}]).json()
     assert res["unmatched"] == ["X1"]
     assert day_of(second_tenant, theirs["id"]) is None
+
+
+# --- easier set-up ----------------------------------------------------------------------------------------------------------
+
+def test_the_master_downloads_a_set_up_package_with_the_key_already_in_it(tenant):
+    import io
+    import zipfile
+    hr = person(tenant, role="hr")
+    try:
+        assert hr.post("/api/biometric/setup-package").status_code == 403
+    finally:
+        hr.__exit__(None, None, None)
+    res = tenant.post("/api/biometric/setup-package")
+    assert res.status_code == 200 and res.headers["content-type"] == "application/zip"
+    z = zipfile.ZipFile(io.BytesIO(res.content))
+    names = set(z.namelist())
+    assert {"biometric_sync/YerpBiometric.cs", "biometric_sync/build.bat", "biometric_sync/SETUP.bat", "biometric_sync/config.ini",
+            "biometric_sync/START HERE.txt"} <= names
+    assert not any(n.endswith((".py", ".ps1", ".exe")) for n in names), "nothing to download or trust beyond the source and batch files"
+    config = z.read("biometric_sync/config.ini").decode()
+    key = [l.split("=", 1)[1].strip() for l in config.splitlines() if l.startswith("api_key")][0]
+    assert key.startswith("ybio_") and "url = http" in config
+    assert tenant.get("/api/biometric/ping", headers={"X-Biometric-Key": key}).json()["ok"] is True      # the key in it works
+    assert b"\r\n" in z.read("biometric_sync/SETUP.bat")                                                   # Windows line ends
+    assert key_for(tenant) != key and tenant.get("/api/biometric/ping", headers={"X-Biometric-Key": key}).status_code == 401
+
+
+def test_a_machine_s_name_for_somebody_suggests_who_a_number_is(tenant):
+    key = key_for(tenant)
+    ravi = make_employee(tenant, first_name="Ravi", last_name="Kumar")
+    sita = make_employee(tenant, first_name="Sita", last_name="Rao")
+    make_employee(tenant, first_name="Anil", last_name="Kumar")
+    send(tenant, key, [{"employee_code": "701", "employee_name": "RAVI KUMAR", "time": at("09:00"), "device": "A"},
+                       {"employee_code": "702", "employee_name": "Rao Sita", "time": at("09:01"), "device": "A"},
+                       {"employee_code": "703", "employee_name": "Kumar", "time": at("09:02"), "device": "A"},       # too little to go on
+                       {"employee_code": "704", "employee_name": "Nobody Here", "time": at("09:03"), "device": "A"}])
+    st = {u["biometric_id"]: u for u in tenant.get("/api/biometric/status").json()["unmatched"]}
+    assert st["701"]["name"] == "RAVI KUMAR" and st["701"]["suggestion"]["id"] == ravi["id"]
+    assert st["702"]["suggestion"]["id"] == sita["id"]                                                           # any order of words
+    assert st["703"]["suggestion"] is None and st["704"]["suggestion"] is None
+    done = tenant.put("/api/biometric/employees/%d" % ravi["id"], json={"biometric_id": "701"})          # one click on "Match"
+    assert done.status_code == 200 and done.json()["matched"] == 1
+    assert "701" not in {u["biometric_id"] for u in tenant.get("/api/biometric/status").json()["unmatched"]}
+
+
+def test_two_people_who_could_be_the_one_get_no_suggestion():
+    from app.services.biometric import suggest_person
+    people = [(1, "Ravi Kumar Reddy"), (2, "Ravi Kumar Naidu"), (3, "Sita Rao")]
+    assert suggest_person(people, "Ravi Kumar") is None
+    assert suggest_person(people, "Ravi Kumar Naidu")["id"] == 2
+    assert suggest_person(people, "sita rao")["id"] == 3
+    assert suggest_person(people, "") is None and suggest_person([], "Sita Rao") is None

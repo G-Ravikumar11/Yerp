@@ -1,0 +1,269 @@
+/* The sign-in page's architectural scene. Everything is scoped under .login-scene, so no other screen changes.
+   The page is warm ivory paper in both themes: the colour tokens are pinned here so labels and messages stay readable
+   when the app itself is dark. */
+
+.login-scene {
+  --background: #f1eadd;
+  --foreground: #1f2a3d;
+  --card: #ffffff;
+  --card-foreground: #1f2a3d;
+  --muted: #e8e1d3;
+  --muted-foreground: #5a6267;
+  --subtle: #8a8f94;
+  --border: #d4cec1;
+  --input: #2f3846;
+  --ring: #2563eb;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --accent: #e8e1d3;
+  --accent-foreground: #1f2a3d;
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --danger: #b91c1c;
+  --danger-soft: #fee2e2;
+  /* The app resolves its colour names once at the top of the page; they are pinned again here. */
+  --color-background: #f1eadd;
+  --color-foreground: #1f2a3d;
+  --color-card: #ffffff;
+  --color-card-foreground: #1f2a3d;
+  --color-muted: #e8e1d3;
+  --color-muted-foreground: #5a6267;
+  --color-subtle: #8a8f94;
+  --color-border: #d4cec1;
+  --color-input: #2f3846;
+  --color-ring: #2563eb;
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-primary-soft: #dbe7fd;
+  --color-accent: #e8e1d3;
+  --color-accent-foreground: #1f2a3d;
+  --color-success: #15803d;
+  --color-success-soft: #dcfce7;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fee2e2;
+  color-scheme: light;
+  position: relative;
+  min-height: 100dvh;
+  overflow: hidden;
+  background-color: #f1eadd;
+  color: var(--foreground);
+}
+
+/* Paper: a faint grain over the background and the picture alike, so there is no seam between them. */
+.login-scene::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: var(--login-grain);
+  background-size: 160px 160px;
+  opacity: 0.14;
+  z-index: 1;
+  mix-blend-mode: multiply;
+}
+
+.login-scene .ls-brand {
+  position: absolute;
+  z-index: 3;
+  top: clamp(16px, 3vh, 32px);
+  left: clamp(16px, 3vw, 44px);
+  height: clamp(44px, 6vh, 60px);
+  width: auto;
+}
+
+/* The building, its crane and clouds: anchored to the bottom left as in the reference. */
+.login-scene {
+  --ls-art-w: min(62vw, calc(100dvh * 1250 / 1170));
+}
+.login-scene .ls-art {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  bottom: 0;
+  height: 100%;
+  width: var(--ls-art-w);
+  pointer-events: none;
+  user-select: none;
+}
+.login-scene .ls-art img {
+  display: block;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+  object-position: left bottom;
+  animation: ls-reveal 2.2s cubic-bezier(0.22, 1, 0.36, 1) both, ls-ink 2.8s ease-out both;
+}
+
+/* Clouds on their own layer, drifting slowly: above the paper and the picture's empty sky, below the form. */
+.login-scene .ls-cloud {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  user-select: none;
+  width: clamp(260px, 28vw, 520px);
+  height: auto;
+  animation: ls-drift 70s ease-in-out infinite alternate;
+}
+.login-scene .ls-cloud-a {
+  right: -4vw;
+  bottom: -6vh;
+  opacity: 0.55;
+}
+.login-scene .ls-cloud-b {
+  right: 10vw;
+  bottom: 2vh;
+  opacity: 0.4;
+  transform: scaleX(-1);
+  animation-name: ls-drift-flip;
+  animation-duration: 90s;
+}
+.login-scene .ls-cloud-c {
+  left: -9vw;
+  top: 20vh;
+  width: clamp(200px, 22vw, 400px);
+  opacity: 0.3;
+  animation-duration: 80s;
+}
+
+/* The form is centred in the space to the right of the building, at most 440px wide. */
+.login-scene .ls-panel {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  min-height: 100dvh;
+  align-items: center;
+  justify-content: center;
+  padding: 96px 32px 48px calc(var(--ls-art-w) - 2vw);
+}
+.login-scene .ls-form {
+  width: 100%;
+  max-width: 440px;
+  animation: ls-fade 0.8s 0.35s ease-out both;
+}
+
+/* Controls in the Y ERP blue and dark. */
+.login-scene .ls-input {
+  height: 3rem;
+  border-radius: 0.6rem;
+  border-color: #2f3846;
+  background: #222a35;
+  color: #ffffff;
+  font-size: 15px;
+  padding-left: 1rem;
+}
+.login-scene .ls-input::placeholder {
+  color: #8d95a3;
+}
+.login-scene .ls-input:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.3);
+}
+.login-scene .ls-input:-webkit-autofill {
+  -webkit-text-fill-color: #ffffff;
+  box-shadow: 0 0 0 1000px #222a35 inset;
+  caret-color: #ffffff;
+}
+.login-scene label {
+  font-weight: 600;
+}
+
+/* Tablet: the building a little smaller, the form keeps its room. */
+@media (max-width: 1100px) {
+  .login-scene {
+    --ls-art-w: min(50vw, calc(100dvh * 1250 / 1170));
+  }
+  /* The building, not the empty sky on its left, is what stays in view. */
+  .login-scene .ls-art img {
+    object-position: 36% bottom;
+    -webkit-mask-image: linear-gradient(to right, #000 88%, transparent);
+    mask-image: linear-gradient(to right, #000 88%, transparent);
+  }
+  .login-scene .ls-panel {
+    padding-right: 24px;
+    padding-left: calc(var(--ls-art-w) + 8px);
+  }
+  .login-scene .ls-form {
+    max-width: 380px;
+  }
+}
+
+/* Phone: a smaller picture above the form, nothing sideways. */
+@media (max-width: 767px) {
+  .login-scene .ls-art {
+    position: relative;
+    height: 34vh;
+    width: 100%;
+    margin-top: 72px;
+  }
+  .login-scene .ls-art img {
+    object-fit: cover;
+    object-position: 55% 0;
+    -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+    mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  }
+  .login-scene .ls-panel {
+    min-height: 0;
+    justify-content: center;
+    padding: 8px 20px 40px;
+  }
+  .login-scene .ls-form {
+    max-width: 440px;
+  }
+  .login-scene .ls-cloud-b,
+  .login-scene .ls-cloud-c {
+    display: none;
+  }
+}
+
+@keyframes ls-reveal {
+  from {
+    clip-path: inset(100% 0 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes ls-ink {
+  from {
+    filter: contrast(0.35) brightness(1.3);
+    opacity: 0.4;
+  }
+  to {
+    filter: none;
+    opacity: 1;
+  }
+}
+@keyframes ls-drift {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: -6vw 0;
+  }
+}
+@keyframes ls-drift-flip {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: 5vw 0;
+  }
+}
+@keyframes ls-fade {
+  from {
+    opacity: 0;
+    translate: 0 12px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-scene .ls-art img,
+  .login-scene .ls-cloud,
+  .login-scene .ls-form {
+    animation: none;
+  }
+}

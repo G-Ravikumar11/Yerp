@@ -66,7 +66,7 @@ function ContractorModal({ contractor, kinds, onClose }: { contractor: Contracto
   const [number, setNumber] = useState('')
   const [until, setUntil] = useState('')
   const [score, setScore] = useState({ quality: 3, speed: 3, safety: 3, discipline: 3 })
-  const manage = can('billing.manage')
+  const manage = can('compliance.manage')
   const [brief, setBrief] = useState<ContractorBrief | null>(null)
   const [paperFile, setPaperFile] = useState<File | null>(null)
   const [paperRead, setPaperRead] = useState<ReadPaper | null>(null)
@@ -167,13 +167,13 @@ function ChargesTab() {
     { id: 'k', header: 'For', hideBelow: 'md', cell: (r) => <div><div>{r.kind}</div><div className="text-xs text-muted-foreground">{r.reason}</div></div> },
     { id: 'a', header: 'Amount', align: 'right', sort: (r) => r.amount, cell: (r) => formatINR(r.amount) },
     { id: 's', header: 'Status', cell: (r) => <div><Badge tone={CHARGE_TONE[r.status]}>{r.status === 'APPLIED' ? `on ${r.applied_bill}` : r.status.toLowerCase()}</Badge></div> },
-    { id: 'x', header: '', align: 'right', cell: (r) => (r.status === 'OPEN' && can('billing.manage') ? <Button size="sm" variant="ghost" onClick={() => cancel.mutate(r.id)}>Cancel</Button> : null) },
+    { id: 'x', header: '', align: 'right', cell: (r) => (r.status === 'OPEN' && can('backcharges.manage') ? <Button size="sm" variant="ghost" onClick={() => cancel.mutate(r.id)}>Cancel</Button> : null) },
   ]
   return (
     <>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="w-48"><Select aria-label="Show" value={status} onChange={(e) => setStatus(e.target.value)} options={[{ value: '', label: 'All' }, { value: 'OPEN', label: 'Open' }, { value: 'APPLIED', label: 'On a bill' }, { value: 'CANCELLED', label: 'Cancelled' }]} /></div>
-        {can('billing.manage') && <Button onClick={() => setRaising(true)}><Plus /> Raise back-charge</Button>}
+        {can('backcharges.manage') && <Button onClick={() => setRaising(true)}><Plus /> Raise back-charge</Button>}
       </div>
       <DataTable label="Back-charges" rows={rows} columns={columns} rowKey={(r) => r.id} loading={charges.isPending} empty="Nothing has been charged back. A back-charge is taken off the contractor's next bill." />
       {raising && <RaiseModal onClose={() => setRaising(false)} />}

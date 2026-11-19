@@ -65,6 +65,11 @@ _APPROVE = re.compile(r"^/api/approvals(/|$)|/(approve|reject|certify|decide|sig
 # only write under /api/stories that is open.
 _STORY_SEEN = re.compile(r"^/api/stories/\d+/seen$")
 
+# A member of staff's own expense claim made from the phone, and the photo of its bill: their own money, claimed for
+# themselves (the server takes the claimant from the sign-in, and the photo only from the claimant or accounts). Deciding,
+# paying or setting off a claim is not here: those stay with the approval rule and the website.
+_CLAIM_OWN = re.compile(r"^/api/expense-claims(/\d+/photo)?$")
+
 # Asking for a link to a stored file (how the app hands a PDF to the phone's browser): a download, not an edit.
 _FILE_LINK = re.compile(r"^/api/files/\d+/link$")
 
@@ -103,7 +108,7 @@ def refusal(method, path, held):
         if low.endswith(_DOWNLOAD_EXCEL) and APP_EXCEL not in held:
             return _refuse(APP_EXCEL)
         return None
-    if _OWN.match(path) or (method == "POST" and _STORY_SEEN.match(path)):
+    if _OWN.match(path) or (method == "POST" and (_STORY_SEEN.match(path) or _CLAIM_OWN.match(path))):
         return None
     if _FILE_LINK.match(path):
         return None if APP_PDF in held else _refuse(APP_PDF)

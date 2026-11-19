@@ -19,6 +19,7 @@ from app.schemas.item_master import BulkCategoryIn, BulkStatusIn, BulkUpdateIn, 
 from app.services import item_master as im
 from app.services import item_import, item_merge, item_usage
 from app.services.site_rates import current_lines_of_item
+from app.services.store_levels import item_reorder_levels
 
 router = APIRouter()
 
@@ -86,7 +87,8 @@ def items_list(request: Request, q: str = "", category: str = "", subcategory: s
     rows = query.order_by(order, models.DBItem.id).offset((max(1, page) - 1) * page_size).limit(page_size).all()
     codes = [r.item_code for r in rows]
     used, stock = im.sites_using(db, client.id, codes), im.stock_of(db, client.id, codes)
-    return {"items": [im.item_dict(r, len(used.get(r.item_code, ())), stock.get(r.item_code)) for r in rows], "total": total,
+    levels = item_reorder_levels(db, rows)
+    return {"items": [im.item_dict(r, len(used.get(r.item_code, ())), stock.get(r.item_code), levels.get(r.id)) for r in rows], "total": total,
             "page": max(1, page), "page_size": page_size, "counts": {"RM": counts.get("RM", 0), "FG": counts.get("FG", 0)}}
 
 

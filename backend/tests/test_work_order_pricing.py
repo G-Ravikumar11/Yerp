@@ -102,13 +102,17 @@ def test_a_rate_carries_four_decimals(tenant):
 
 
 def test_a_reorder_level_survives_an_edit_that_omits_it(tenant):
-    """None means leave it alone, so a form that does not send it is safe."""
-    code = fg(tenant)
+    """None means leave it alone, so a form that does not send it is safe. Only a material is kept in stock, so the level
+    is a material's."""
+    res = tenant.post("/api/erp/items/bulk", json={"items": [
+        {"kind": "RM", "item_name": "CABLE %s" % uuid.uuid4().hex[:6], "units_of_measure": "Meters"}]})
+    assert res.status_code == 200, res.text
+    code = res.json()["codes"][0]
     item = item_named(tenant, code)
     tenant.put("/api/erp/items/%d" % item["id"], json={
-        "kind": "FG", "item_name": item["item_name"],
+        "kind": "RM", "item_name": item["item_name"],
         "units_of_measure": "Meters", "reorder_level": 25})
     assert item_named(tenant, code)["reorder_level"] == 25
     tenant.put("/api/erp/items/%d" % item["id"], json={
-        "kind": "FG", "item_name": "Renamed", "units_of_measure": "Meters"})
+        "kind": "RM", "item_name": "Renamed", "units_of_measure": "Meters"})
     assert item_named(tenant, code)["reorder_level"] == 25

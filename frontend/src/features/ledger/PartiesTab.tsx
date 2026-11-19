@@ -13,10 +13,10 @@ import { OpeningModal } from './OpeningModal'
 import { StatementModal } from './StatementModal'
 
 /** Every party we deal with, what has been billed, what has moved, and who owes whom. */
-export function PartiesTab() {
+export function PartiesTab({ job = 0 }: { job?: number }) {
   const { can } = useSession()
   const [type, setType] = useState('')
-  const q = useParties(type)
+  const q = useParties(type, job)
   const [onAccount, setOnAccount] = useState<'IN' | 'OUT' | null>(null)
   const [statement, setStatement] = useState<Party | null>(null)
   const [opening, setOpening] = useState<Opening | 'new' | null>(null)
@@ -67,7 +67,7 @@ export function PartiesTab() {
         {can('accounts.manage') && <Button variant="outline" size="sm" onClick={() => setOpening('new')}><Plus /> Opening balance</Button>}
       </div>
       <DataTable label="Parties" rows={q.data?.parties ?? []} columns={columns} rowKey={(p) => `${p.party_type}-${p.party}`} loading={q.isPending} empty="No bills and no money moved yet." />
-      <OpeningBalances onEdit={setOpening} />
+      <OpeningBalances onEdit={setOpening} job={job} />
       <OpeningModal target={opening} onClose={() => setOpening(null)} />
       <OnAccountModal direction={onAccount} onClose={() => setOnAccount(null)} />
       <StatementModal target={statement ? { type: statement.party_type, party: statement.party } : null} onClose={() => setStatement(null)} />
@@ -76,12 +76,14 @@ export function PartiesTab() {
 }
 
 /** The opening balances entered, so a wrong one is found and changed, not entered a second time. */
-function OpeningBalances({ onEdit }: { onEdit: (o: Opening) => void }) {
+function OpeningBalances({ onEdit, job = 0 }: { onEdit: (o: Opening) => void; job?: number }) {
   const { can } = useSession()
   const q = useOpenings()
   const [removing, setRemoving] = useState<Opening | null>(null)
   const remove = useAction((id: number) => deleteOpening(id), { invalidate: [ledgerKeys.all, bookKeys.all, ['dashboard']], onSuccess: () => setRemoving(null) })
-  const rows = q.data?.openings ?? []
+  // One project's: only the balances entered for it.
+  const all = q.data?.openings ?? []
+  const rows = job ? all.filter((o) => o.job_id === job) : all
   const edit = can('accounts.manage')
   const columns: TableColumn<Opening>[] = [
     { id: 'no', header: 'No.', cell: (o) => <span className="font-mono text-[13px]">{o.number}</span> },
