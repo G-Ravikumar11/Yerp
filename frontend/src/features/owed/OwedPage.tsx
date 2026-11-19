@@ -117,7 +117,7 @@ export default function OwedPage() {
     },
     // Owing a contractor money is a decision, as certifying their bill is.
     // The same rights the server asks for: a contractor's needs subcontracts.approve, a claim on the client billing or accounts.
-    { id: 'act', header: '', align: 'right', cell: (p) => (p.over_released ? <Badge tone="danger">{formatINR(p.over_released)} over-released</Badge> : p.balance > 0 && (contractor ? can('subcontracts.approve') : can('billing.manage') || can('accounts.manage')) ? <Button size="sm" variant="outline" onClick={() => setReleasing(p)}>Release</Button> : null) },
+    { id: 'act', header: '', align: 'right', cell: (p) => (p.over_released ? <Badge tone="danger">{formatINR(p.over_released)} over-released</Badge> : p.balance > 0 && (contractor ? can('retention.prepare') : can('billing.manage') || can('accounts.manage')) ? <Button size="sm" variant="outline" onClick={() => setReleasing(p)}>Release</Button> : null) },
   ]
 
   const relCols: TableColumn<Release>[] = [
@@ -145,8 +145,8 @@ export default function OwedPage() {
           {r.status === 'CERTIFIED' && r.outstanding > 0 && canPay && <Button size="sm" variant="outline" onClick={() => setSettle({ type: 'retention_release', id: r.id, title: r.number, verb: r.side === 'client' ? 'Receive' : 'Pay' })}>{r.side === 'client' ? 'Receive' : 'Pay'}</Button>}
           <Button size="sm" variant="outline" asChild><a href={`/api/retention/releases/${r.id}/export.xlsx`}>Sheet</a></Button>
           {r.side === 'client' && r.status !== 'CANCELLED' && can('accounts.manage') && <Button size="sm" variant="outline" onClick={() => setEinvoice(r.id)}>e-Invoice</Button>}
-          {r.status === 'SUBMITTED' && can('subcontracts.approve') && <Button size="sm" onClick={() => setCertifying(r)}>Certify</Button>}
-          {((r.status === 'CERTIFIED' && !r.settled && canPay) || (r.status === 'SUBMITTED' && can('subcontracts.approve'))) && <Button size="sm" variant="outline" onClick={() => setCancelling(r)}>Cancel</Button>}
+          {r.status === 'SUBMITTED' && can('retention.certify') && <Button size="sm" onClick={() => setCertifying(r)}>Certify</Button>}
+          {((r.status === 'CERTIFIED' && !r.settled && canPay) || (r.status === 'SUBMITTED' && (can('retention.prepare') || can('billing.manage') || can('accounts.manage')))) && <Button size="sm" variant="outline" onClick={() => setCancelling(r)}>Cancel</Button>}
         </div>
       ),
     },

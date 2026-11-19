@@ -136,6 +136,8 @@ export default function MeasurementBookPage() {
   }
   const [removing, setRemoving] = useState<MbEntry | null>(null)
   const record = can('site.record') && measurable
+  // Taking an entry back is its own right: whoever signs site work off, not everybody who writes it.
+  const canDelete = can('mb.delete') && measurable
   // From the phone's + sheet: put the cursor in the entry box once the book is up.
   const focusEntry = useRef(params.get('add') === '1')
   useEffect(() => {
@@ -301,7 +303,7 @@ export default function MeasurementBookPage() {
               <LockOpen />
             </Button>
           )}
-          {record && !e.billed ? (
+          {canDelete && !e.billed ? (
           <Button variant="ghost" size="icon-sm" aria-label="Remove this entry" onClick={(ev) => { ev.stopPropagation(); setRemoving(e) }}>
             <Trash2 />
           </Button>
@@ -446,7 +448,7 @@ export default function MeasurementBookPage() {
             </p>
           )}
           <FilterBar filters={filters} placeholder="Search entries..." />
-          {record && view === 'list' && <BulkBar count={picked.size} noun="entry" shown={filters.filtered.filter((e) => !e.billed).length} onClear={() => setPicked(new Set())} onDelete={() => setClearing(true)} actions={can('billing.manage') && measurable ? <Button size="sm" loading={billThese.isPending} onClick={() => billThese.mutate()}><Receipt /> Bill {picked.size}</Button> : undefined} />}
+          {record && view === 'list' && <BulkBar count={picked.size} noun="entry" shown={filters.filtered.filter((e) => !e.billed).length} onClear={() => setPicked(new Set())} onDelete={canDelete ? () => setClearing(true) : undefined} actions={can('billing.manage') && measurable ? <Button size="sm" loading={billThese.isPending} onClick={() => billThese.mutate()}><Receipt /> Bill {picked.size}</Button> : undefined} />}
           {view === 'sheet' ? <SheetView entries={filters.filtered} byItem={byItem} /> : <DataTable
             label="Measurement entries"
             rows={filters.filtered}
