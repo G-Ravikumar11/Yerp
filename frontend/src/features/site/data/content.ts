@@ -99,9 +99,21 @@ export const SITE = {
 
   // Where we are building, as Hemanth listed them (18 Nov 2026). Names and places only: no status, size or year until confirmed.
   sites: [
-    { group: 'APTIDCO sites', where: 'Andhra Pradesh', names: ['Nuzividu', 'Tiruvuru', 'Ongole', 'Addanki'] },
+    { group: 'APTIDCO sites', where: 'Andhra Pradesh', names: ['Nuzividu', 'Tiruvuru', 'Ongole', 'Addanki', 'Giddaluru'] },
     { group: 'High rise', where: 'Andhra Pradesh', names: ['Visakhapatnam'] },
     { group: 'Hyderabad', where: 'Telangana', names: ['Vision Anmaya', 'Vision Arusha', 'Steel Alpha'] },
+  ],
+
+  // Photographs from our own sites, with what they show in the site team's words.
+  sitePhotos: [
+    {
+      img: 'site/img/sites/giddaluru-c2.jpg', site: 'APTIDCO, Giddaluru',
+      text: 'C-2 block: staircase and kicker aluminium formwork being fixed.',
+    },
+    {
+      img: 'site/img/sites/nuzividu-a05.jpg', site: 'APTIDCO, Nuzividu',
+      text: 'A-05 block: rebar fixing and Mivan formwork in progress.',
+    },
   ],
 
   // TODO(Uday): our own milestones, in this shape: { y: '2012', t: 'First township', d: 'One line.', img: 'site/img/...' }.

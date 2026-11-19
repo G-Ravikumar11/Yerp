@@ -34,6 +34,18 @@ export function LiveProjects({ live }: { live: Live | null }) {
             </div>
           ))}
         </div>
+        {SITE.sitePhotos.length > 0 && (
+          <ul className="sites__photos" aria-label="From our sites">
+            {SITE.sitePhotos.map((ph) => (
+              <li key={ph.img}>
+                <figure>
+                  <img src={asset(ph.img)} alt={`${ph.site}: ${ph.text}`} loading="lazy" decoding="async" />
+                  <figcaption><p className="eyebrow">{ph.site}</p><p>{ph.text}</p></figcaption>
+                </figure>
+              </li>
+            ))}
+          </ul>
+        )}
         {all.length > 0 && <div className="live__filters">{chips('Type of work', sectors, sector, setSector)}{chips('City', cities, city, setCity)}</div>}
         {all.length > 0 && <ul className="live__grid">{shown.map((p) => <ProjectCard key={p.id} p={p} />)}</ul>}
         {all.length > 0 && !shown.length && <p className="lede">Nothing matches that filter.</p>}

@@ -372,3 +372,8 @@ body{counter-reset:sec}
 .sites__group{padding:24px 0;border-bottom:1px solid var(--line2)}
 .sites__group ul{list-style:none;margin:12px 0 0;padding:0}
 .sites__group li{font-size:1.25rem;font-weight:600;line-height:1.6}
+.sites__photos{list-style:none;margin:0 0 48px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,520px),1fr));gap:24px}
+.sites__photos figure{margin:0}
+.sites__photos img{display:block;width:100%;aspect-ratio:1600/992;object-fit:cover;border:1px solid var(--line2)}
+.sites__photos figcaption{padding:14px 0 0}
+.sites__photos figcaption p:last-child{margin:6px 0 0;color:var(--mute)}
