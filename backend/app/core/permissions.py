@@ -169,6 +169,23 @@ PORTAL_PERMISSIONS = [
     # arrives with a job title is one nobody remembers deciding to give.
     {"key": "workorders.approve", "group": "Contracts",
      "label": "Final work order approval (MD)"},
+    # THE SUBCONTRACTORS PORTAL, job by job. Each was carried by a broader right that also did something else.
+    {"key": "contractors.edit", "group": "Subcontractors",
+     "label": "Edit contractor details (bank, GST, contacts)"},
+    {"key": "contractors.portal", "group": "Subcontractors",
+     "label": "Give contractors portal access"},
+    {"key": "worktypes.approve", "group": "Subcontractors",
+     "label": "Approve new work types"},
+    {"key": "compliance.manage", "group": "Subcontractors",
+     "label": "Contractor compliance documents and ratings"},
+    {"key": "backcharges.manage", "group": "Subcontractors",
+     "label": "Back charges and recoveries"},
+    {"key": "retention.prepare", "group": "Subcontractors",
+     "label": "Prepare and cancel retention releases"},
+    {"key": "retention.certify", "group": "Subcontractors",
+     "label": "Certify a contractor's retention release"},
+    {"key": "mb.delete", "group": "Subcontractors",
+     "label": "Delete measurement book entries"},
     # Receiving is its own job, done by whoever is at the gate when the lorry
     # arrives - usually not the person who raised the order and never the one
     # who pays the bill. Kept separate so those three signatures stay apart.
@@ -244,6 +261,7 @@ STORE_KEYS = [f"store.{sl}.{act}" for sl in STORE_SLICES for act in STORE_ACTION
 PORTAL_PERMISSIONS += [{"key": k, "group": "Store module", "label": "Store %s: %s" % (k.split(".")[1], k.split(".")[2])}
                        for k in STORE_KEYS] + STORE_EXTRAS
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
+SUBCONTRACTOR_KEYS = [p["key"] for p in PORTAL_PERMISSIONS if p["group"] == "Subcontractors"]
 
 # The rights only HO QS (and the Master) can hold, whatever else is ticked.
 HO_QS_ONLY = frozenset(p["key"] for p in PORTAL_PERMISSIONS if p.get("only_role") == "ho_qs")
@@ -580,6 +598,30 @@ PERMISSION_ROLES = [
     },
 ]
 
+# WHO HOLDS THE SUBCONTRACTOR RIGHTS: whoever already did that job under the broader right, up the ladder.
+# MD and the Master hold every one of them already (they hold every right); HOD is given them here.
+_SUB_PREPARE = {"planning_billing", "deputy_manager_qs", "project_manager", "construction_manager",
+                "head_projects", "hod", "ho_qs", "ho_coordinator"}
+_SUB_DECIDE = {"deputy_manager_qs", "project_manager", "construction_manager", "head_projects", "hod", "ho_qs",
+               "manager", "finance"}
+SUBCONTRACTOR_RIGHTS = {
+    # The bank account a contractor is paid into: those who keep the contractor's record, not every billing clerk.
+    "contractors.edit": _SUB_PREPARE - {"planning_billing"} | {"manager", "finance"},
+    "contractors.portal": _SUB_DECIDE,
+    "worktypes.approve": _SUB_DECIDE - {"manager", "finance"},   # the old presets never decided these
+    "compliance.manage": _SUB_PREPARE | {"jr_qs", "manager", "finance"},
+    "backcharges.manage": _SUB_PREPARE | {"manager", "finance"},
+    "retention.prepare": _SUB_PREPARE | {"manager", "finance"},
+    "retention.certify": _SUB_DECIDE,
+    # Taking a measurement back: the one who signs site work off, not everybody who writes it.
+    "mb.delete": {"site_director", "construction", "site_engineer", "deputy_manager_qs", "project_manager",
+                  "construction_manager", "head_projects", "hod", "ho_qs", "supervisor", "manager"},
+}
+for _r in PERMISSION_ROLES:
+    for _key, _holders in SUBCONTRACTOR_RIGHTS.items():
+        if _r["code"] in _holders and _key not in _r["permissions"]:
+            _r["permissions"] = list(_r["permissions"]) + [_key]
+
 # Level roles that turned out to carry exactly the rights of another: kept for whoever holds one (retired), but no
 # longer offered. Surveyor, GET and Jr. Safety Officer = Site staff; Sr. Engineer (old) = construction (now named Sr. Engineer);
 # Junior Engineer, Steel Foreman and P&M Technician = Engineer / Assistant.
@@ -638,7 +680,7 @@ PORTALS = [
      "read": ["clients.view"], "write": ["billing.manage", "customers.manage"]},
     {"code": "subcontractors", "label": "Subcontractors Portal",
      "blurb": "Contractors, work orders, the measurement book and RA bills.",
-     "read": ["subcontractors.view"], "write": ["workorders.manage", "subcontracts.approve"]},
+     "read": ["subcontractors.view"], "write": ["workorders.manage", "subcontracts.approve"] + SUBCONTRACTOR_KEYS},
     {"code": "store", "label": "Store & Supplies",
      "blurb": "Items, enquiries, purchase orders, goods received and stock.",
      "read": ["store.view"] + [k for k in STORE_KEYS if k.endswith(".view")],
