@@ -648,11 +648,43 @@ namespace YerpBiometric
 
         public static List<string> ServerCandidates(string extra)
         {
+            return ServerCandidates(extra, InstalledInstances());
+        }
+
+        /// <summary>Every SQL Server to try on this computer: the one given, the usual names, and each instance Windows says is
+        /// installed (".\SQLEXPRESS", ".\ETIME" ...), so a second SQL Server beside the first is never missed.</summary>
+        public static List<string> ServerCandidates(string extra, IEnumerable<string> instances)
+        {
             var host = Environment.MachineName;
+            var names = new List<string> { extra, ".", "localhost", "(local)", ".\\SQLEXPRESS" };
+            foreach (var i in instances ?? new string[0])
+                names.Add(string.IsNullOrEmpty(i) || i.Equals("MSSQLSERVER", StringComparison.OrdinalIgnoreCase) ? "." : ".\\" + i);
+            names.AddRange(new[] { host, host + "\\SQLEXPRESS", "127.0.0.1" });
             var output = new List<string>();
-            foreach (var s in new[] { extra, ".", "localhost", "(local)", ".\\SQLEXPRESS", host, host + "\\SQLEXPRESS", "127.0.0.1" })
-                if (!string.IsNullOrEmpty(s) && !output.Contains(s)) output.Add(s);
+            foreach (var s in names)
+                if (!string.IsNullOrEmpty(s) && !output.Any(o => o.Equals(s, StringComparison.OrdinalIgnoreCase))) output.Add(s);
             return output;
+        }
+
+        /// <summary>The SQL Server instances installed on this computer, from the registry (64- and 32-bit both).</summary>
+        static List<string> InstalledInstances()
+        {
+            var found = new List<string>();
+            foreach (var view in new[] { Microsoft.Win32.RegistryView.Registry64, Microsoft.Win32.RegistryView.Registry32 })
+            {
+                try
+                {
+                    using (var hive = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, view))
+                    using (var key = hive.OpenSubKey("SOFTWARE\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL"))
+                    {
+                        if (key == null) continue;
+                        foreach (var name in key.GetValueNames())
+                            if (!found.Contains(name)) found.Add(name);
+                    }
+                }
+                catch (Exception) { }
+            }
+            return found;
         }
 
         /// <summary>The user databases on this server that hold the attendance system's tables (usually just etimetracklite).</summary>
@@ -825,16 +857,36 @@ namespace YerpBiometric
             }
             if (db == null)
             {
+                // Every SQL Server on this computer is looked at, and the one holding the attendance tables is taken: an
+                // office computer often has more than one (another program's, and eTimeTrackLite's own).
+                SqlDb first = null;
+                string firstServer = "";
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var s in ServerCandidates(cfg.Get("database", "server")))
                 {
-                    try
+                    SqlDb candidate;
+                    try { candidate = new SqlDb(s, "master", "", "", 6); }   // this Windows account
+                    catch (SqlException) { continue; }
+                    string instance = "";
+                    try { instance = Attendance.Str(candidate.Query("SELECT @@SERVERNAME")[0][0]); } catch (SqlException) { }
+                    if (instance.Length > 0 && !seen.Add(instance)) { candidate.Dispose(); continue; }   // the same server by another name
+                    var dbs = AttendanceDatabases(candidate);
+                    Console.WriteLine(string.Format("   SQL Server at {0}: {1}", s, dbs.Count > 0 ? "attendance tables in " + string.Join(", ", dbs) : "no attendance tables"));
+                    if (dbs.Count > 0)
                     {
-                        db = new SqlDb(s, "master", "", "", 6);         // this Windows account
-                        server = s;
-                        Console.WriteLine("   found SQL Server at " + s + " (signed in with this Windows account)");
+                        if (first != null) first.Dispose();
+                        db = candidate; server = s;
+                        Console.WriteLine("   using " + s + " (signed in with this Windows account)");
                         break;
                     }
-                    catch (SqlException) { }
+                    if (first == null) { first = candidate; firstServer = s; } else candidate.Dispose();
+                }
+                if (db == null && first != null)
+                {
+                    db = first; server = firstServer;
+                    Console.WriteLine("   No SQL Server on this computer holds eTimeTrackLite's tables. They may be on another");
+                    Console.WriteLine("   computer, or in an Access file (.mdb), which this program cannot read. Type the database");
+                    Console.WriteLine("   name if you know it is on " + firstServer + "; otherwise close this window.");
                 }
             }
             for (int tries = 1; db == null && tries <= 3; tries++)

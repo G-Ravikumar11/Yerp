@@ -109,6 +109,9 @@ namespace YerpBiometric
             // Server names to try start with the one given and have no repeats.
             var servers = Setup.ServerCandidates("OFFICE-PC\\SQLEXPRESS");
             Check("server names start with the one given, no repeats", servers[0] == "OFFICE-PC\\SQLEXPRESS" && servers.Count == servers.Distinct().Count());
+            var withInstances = Setup.ServerCandidates("", new[] { "MSSQLSERVER", "SQLEXPRESS", "ETIME" });
+            Check("every installed SQL Server is tried", withInstances.Contains(".\\ETIME") && withInstances.Count(x => x == ".") == 1
+                  && withInstances.Count(x => x.Equals(".\\SQLEXPRESS", StringComparison.OrdinalIgnoreCase)) == 1, string.Join(",", withInstances));
 
             // config.ini is written and read back as it was.
             var path = Path.Combine(Path.GetTempPath(), "yerp-selftest-" + Guid.NewGuid().ToString("N") + ".ini");
