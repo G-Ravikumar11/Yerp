@@ -64,7 +64,7 @@ function Journals({ job }: { job: number }) {
   const cols: TableColumn<Journal>[] = [
     { id: 'n', header: 'Voucher', cell: (r) => <div><div className="font-mono text-xs font-medium">{r.number}</div><div className="text-xs text-muted-foreground">{formatDate(r.voucher_date)}</div></div> },
     { id: 'w', header: 'Narration', cell: (r) => <div className="max-w-md"><div className="truncate">{r.narration}</div><div className="truncate text-xs text-muted-foreground">{r.lines.map((l) => l.label).join(' / ')}</div></div> },
-    { id: 'a', header: 'Amount', align: 'right', cell: (r) => <span className="font-semibold tabular-nums">{formatINR(r.total)}</span> },
+    { id: 'a', header: 'Amount', align: 'right', cell: (r) => <div className="tabular-nums"><div className="font-semibold">{formatINR(r.total)}</div>{!!r.difference && <div className="text-xs text-warning" title="Debit and credit are not equal: in Tally the difference is posted to Suspense A/c">out by {formatINR(Math.abs(r.difference))} - Suspense A/c</div>}</div> },
     { id: 'b', header: 'Raised by', hideBelow: 'md', cell: (r) => r.raised_by_name || '-' },
     { id: 's', header: 'Status', cell: (r) => <Badge tone={TONE[r.status]} title={r.decision_note || undefined}>{r.status === 'PENDING' ? 'Waiting for the Master' : r.status.toLowerCase()}</Badge> },
     {
