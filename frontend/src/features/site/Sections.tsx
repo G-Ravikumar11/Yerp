@@ -103,7 +103,9 @@ export function Proof({ live }: { live: Live | null }) {
   const stats: [string, number, string?][] = []
   if (COMPANY.founded) stats.push(['Years building', YEAR - COMPANY.founded])
   if (n?.projects_delivered) stats.push(['Projects delivered', n.projects_delivered])
-  if (n?.ongoing_sites) stats.push(['Sites running now', n.ongoing_sites])
+  // The sites we list on the page are all running (Hemanth, 19 Nov 2026), so the count never shows fewer than them.
+  const running = Math.max(n?.ongoing_sites ?? 0, SITE.sites.reduce((k, g) => k + g.names.length, 0))
+  if (running) stats.push(['Sites running now', running])
   if (COMPANY.staff) stats.push(['Engineers & crew', COMPANY.staff, '+'])
   if (n?.safe_man_hours) stats.push(['Safe man-hours', n.safe_man_hours])
   return (
