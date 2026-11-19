@@ -106,6 +106,10 @@ namespace YerpBiometric
             var tables = Attendance.MonthTables(new DateTime(2025, 12, 20), new DateTime(2026, 1, 5));
             Check("month tables across a year's end", tables.SequenceEqual(new[] { "DeviceLogs_12_2025", "DeviceLogs_1_2026" }), string.Join(",", tables));
 
+            // Punch tables are put in order by month and year, not by name.
+            var ordered = new[] { "DeviceLogs_9_2019", "DeviceLogs_11_2026", "DeviceLogs_8_2017", "DeviceLogs_1_2026" }.OrderBy(Attendance.MonthOrder).ToArray();
+            Check("punch tables in order of month and year", ordered.SequenceEqual(new[] { "DeviceLogs_8_2017", "DeviceLogs_9_2019", "DeviceLogs_1_2026", "DeviceLogs_11_2026" }), string.Join(",", ordered));
+
             // Server names to try start with the one given and have no repeats.
             var servers = Setup.ServerCandidates("OFFICE-PC\\SQLEXPRESS");
             Check("server names start with the one given, no repeats", servers[0] == "OFFICE-PC\\SQLEXPRESS" && servers.Count == servers.Distinct().Count());

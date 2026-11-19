@@ -236,6 +236,15 @@ namespace YerpBiometric
             }
         }
 
+        /// <summary>A DeviceLogs_month_year table's place in time (year * 100 + month); 0 for a name not in that form.</summary>
+        public static int MonthOrder(string table)
+        {
+            var parts = (table ?? "").Split('_');
+            int month, year;
+            if (parts.Length == 3 && int.TryParse(parts[1], out month) && int.TryParse(parts[2], out year)) return year * 100 + month;
+            return 0;
+        }
+
         public static List<string> MonthTables(DateTime since, DateTime until)
         {
             var output = new List<string>();
@@ -545,13 +554,37 @@ namespace YerpBiometric
             Console.WriteLine("2. Attendance database ...");
             using (var db = Connect(cfg))
             {
-                var raw = Attendance.TablesLike(db, "DeviceLogs[_]%").OrderBy(t => t).ToList();
-                Console.WriteLine("   raw punch tables (DeviceLogs_*): " + (raw.Count > 0 ? string.Join(", ", raw.Skip(Math.Max(0, raw.Count - 6))) : "none found"));
+                // By month and year, not by name: DeviceLogs_9_2019 sorts after DeviceLogs_11_2026 as text.
+                var raw = Attendance.TablesLike(db, "DeviceLogs[_]%").OrderBy(t => Attendance.MonthOrder(t)).ToList();
+                Console.WriteLine(string.Format("   raw punch tables (DeviceLogs_*): {0}{1}", raw.Count, raw.Count > 0 ? ", newest: " + string.Join(", ", raw.Skip(Math.Max(0, raw.Count - 3)).Reverse()) : " - none found"));
                 var look = raw.Skip(Math.Max(0, raw.Count - 1)).Concat(new[] { "AttendanceLogs", "Employees" });
                 foreach (var t in look)
                 {
                     var cols = Attendance.Columns(db, t).Values.OrderBy(c => c).ToList();
                     Console.WriteLine(string.Format("   {0} columns: {1}", t, cols.Count > 0 ? string.Join(", ", cols) : "TABLE NOT FOUND"));
+                }
+                // When the machines' punches last reached this database: if that is long ago, nothing is downloading them.
+                DateTime? last = null;
+                foreach (var t in raw.AsEnumerable().Reverse().Take(3))
+                {
+                    var col = Attendance.Pick(Attendance.Columns(db, t), "LogDate", "PunchTime", "LogTime");
+                    if (col == null) continue;
+                    try
+                    {
+                        var v = db.Query("SELECT MAX([" + col + "]) FROM [" + t.Replace("]", "]]") + "]")[0][0];
+                        if (v != null && v != DBNull.Value) { last = Convert.ToDateTime(v, CultureInfo.InvariantCulture); break; }
+                    }
+                    catch (Exception) { }
+                }
+                if (last == null) Console.WriteLine("   last punch in the database: none found");
+                else
+                {
+                    var days = (int)(DateTime.Today - last.Value.Date).TotalDays;
+                    Console.WriteLine(string.Format("   last punch in the database: {0:dd MMM yyyy HH:mm} ({1})", last.Value,
+                        days <= 0 ? "today" : days == 1 ? "yesterday" : days + " days ago"));
+                    if (days > 1)
+                        Console.WriteLine("   NOTHING NEW IS ARRIVING: the attendance software that downloads from the machines (eTimeTrackLite)\n" +
+                                          "   has not saved a punch here since then. Get it downloading again; Y ERP then gets them within a minute.");
                 }
                 Dictionary<string, string> byId, byDevice, names;
                 Attendance.People(db, out byId, out byDevice, out names);
