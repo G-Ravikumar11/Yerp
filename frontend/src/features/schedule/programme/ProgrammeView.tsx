@@ -202,13 +202,13 @@ export function ProgrammeView({ job }: { job: number }) {
     if (!r) return
     const sibs = siblings(r.parent_id)
     const prev = sibs[sibs.findIndex((s) => s.id === id) - 1]
-    if (!prev) return toast.info('There is no row above at the same level to go under.')
+    if (!prev) return toast.brief('There is no row above at the same level to go under.')
     setCollapsed((c) => { const n = new Set(c); n.delete(prev.id); return n })
     void change(() => moveRow(job, id, prev.id, null)).then((next) => focusRow(id, next))
   }
   const outdent = (id: number) => {
     const r = byId.get(id)
-    if (!r || r.parent_id === null) return toast.info('It is already at the top level.')
+    if (!r || r.parent_id === null) return toast.brief('It is already at the top level.')
     const parent = byId.get(r.parent_id)!
     const sibs = siblings(parent.parent_id)
     const after = sibs[sibs.findIndex((s) => s.id === parent.id) + 1]

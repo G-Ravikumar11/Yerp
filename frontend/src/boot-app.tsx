@@ -25,7 +25,7 @@ if (import.meta.env.PROD && !Capacitor.isNativePlatform()) {
       // Deliberately nothing: a reload here blinked the page, and lost whatever was half typed.
     },
     onOfflineReady() {
-      toast.info('Y ERP is saved on this device and opens with no signal.')
+      toast.brief('Y ERP is saved on this device and opens with no signal.')
     },
     onRegisteredSW(_url, registration) {
       if (!registration) return

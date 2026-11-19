@@ -71,7 +71,7 @@ export async function downloadAndShare(href: string, downloadAttr?: string | nul
   if (busy.has(href)) return
   busy.add(href)
   try {
-    toast.info('Getting the file...')
+    toast.brief('Getting the file...')
     const res = href.startsWith('blob:') ? await fetch(href) : await fetch(apiUrl(appPath(href, location.href) ?? href), { credentials: 'include' })
     if (!res.ok) {
       let why = ''
