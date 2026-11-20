@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({ platform: 'android', reachable: true }))
-vi.mock('@capacitor/core', () => ({ Capacitor: { getPlatform: () => h.platform } }))
+vi.mock('@capacitor/core', () => ({ Capacitor: { getPlatform: () => h.platform, isNativePlatform: () => h.platform !== 'web', isPluginAvailable: () => false } }))
 vi.mock('@/stores/offline', () => ({ serverReachable: async () => h.reachable }))
 
 import { ApiError } from './api'
