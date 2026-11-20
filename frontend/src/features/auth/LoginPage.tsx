@@ -1,3 +1,4 @@
+import { forgetLocalData } from '@/lib/query'
 import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
 import { Capacitor } from '@capacitor/core'
@@ -26,6 +27,9 @@ const ERRORS: Record<string, string> = {
 }
 
 const go = (to: string) => window.location.assign(to)
+// A fresh sign-in: whatever the last person left in this phone's saved copy (who is signed in, their screens) is dropped first,
+// so the next screens are read for the person who just signed in and never drawn from somebody else's.
+const goSignedIn = (to: string) => { void forgetLocalData().catch(() => undefined).finally(() => go(to)) }
 // Inside the native app there is no website to go back to, and Yahoo's sign-in page cannot hand its cookie back.
 const native = Capacitor.isNativePlatform()
 
@@ -93,9 +97,9 @@ export default function LoginPage() {
       const owner = email.includes('@')
         ? await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', ...extra }, quiet: true }).catch(none)
         : null
-      if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
+      if (owner) return goSignedIn(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
       const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', device_info: navigator.userAgent.slice(0, 200), ...extra }, quiet: true }).catch(none)
-      if (staff) return go(nextTarget(appUrl()))
+      if (staff) return goSignedIn(nextTarget(appUrl()))
       const refusal = other as ApiError | null
       // Too many wrong tries from here, or against this account: from now on every try needs the check.
       if (refusal?.status === 428 || askCheck) {
