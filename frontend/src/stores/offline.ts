@@ -76,7 +76,7 @@ function isNetworkFailure(e: unknown) {
 }
 
 /** Whether the server answers at all (a bare GET, so nothing about the request itself can be what blocks it). */
-async function serverReachable(): Promise<boolean> {
+export async function serverReachable(): Promise<boolean> {
   const stop = new AbortController()
   const timer = window.setTimeout(() => stop.abort(), 6000)
   try {
