@@ -25,3 +25,19 @@ def test_only_ho_qs_and_the_master_change_the_boq_lines(tenant, portal):
     qs = staff(tenant, "ho_qs")
     sign_in(portal, qs)
     assert portal.put("/api/boqs/%d/lines" % boq["id"], json=body).status_code == 200
+
+
+def test_the_order_builder_hides_the_clients_rate_from_those_who_do_not_see_budgets(tenant, portal):
+    from test_budgeting import put_line
+    jid, boq = make_boq(tenant)
+    key = next(l["key"] for l in saved(tenant, boq)["lines"] if l["kind"] == "item")
+    put_line(tenant, jid, key, [{"kind": "LABOUR", "description": "Gang", "uom": "cum", "coefficient": 1, "rate": 160}])
+    mine = tenant.get("/api/boqs/%d/available" % boq["id"]).json()
+    line = next(l for l in mine["lines"] if l.get("key") == key)
+    assert line["rate"] and line["budgeted"] and line["budget_rate"] == 160 and not mine["rates_hidden"]
+    planner = staff(tenant, "planning_billing")                 # builds work orders, does not see budgets
+    sign_in(portal, planner)
+    theirs = portal.get("/api/boqs/%d/available" % boq["id"]).json()
+    seen = {l["key"]: l for l in theirs["lines"] if l.get("key") and l["kind"] != "section"}
+    assert theirs["rates_hidden"] and all(l["rate"] is None for l in seen.values())
+    assert seen[key]["budget_rate"] == 160 and any(not l["budgeted"] for l in seen.values())

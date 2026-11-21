@@ -188,6 +188,11 @@ export function BoqPicker({
   const gvalue = gticked.reduce((n, g) => n + g.left * (Number(gpicks[g.id]) || 0), 0)
   const headings = mode === 'headings'
   const count = ticked.length + gticked.length
+  // Ticked lines with no budget: the order cannot be sent for approval until each is budgeted (labour + plant & other).
+  const unbudgeted = new Set([
+    ...ticked.map(([k]) => k).filter((k) => !lines.find((l) => l.key === k)?.budgeted),
+    ...gticked.flatMap((g) => g.lines.filter((l) => !l.budgeted).map((l) => l.key ?? '')),
+  ]).size
   const total = value + gvalue
   const add = useAction(
     () =>
@@ -266,6 +271,12 @@ export function BoqPicker({
                 <span className="font-medium text-foreground">{ticks}</span> ticked
                 {total > 0 && <> · <span className="tabular font-medium text-foreground">{formatINR(total)}</span> at contractor rates</>}
                 {(incomplete || gincomplete) && <span className="text-warning"> · give every ticked line a rate</span>}
+                {unbudgeted > 0 && (
+                  <span className="text-danger">
+                    {' '}· {unbudgeted === 1 ? '1 ticked line has' : `${unbudgeted} ticked lines have`} no budget - the order cannot be sent until{' '}
+                    <a href={`${import.meta.env.BASE_URL}projects/budgeting`} target="_blank" rel="noreferrer" className="underline">they are budgeted</a>
+                  </span>
+                )}
                 {over.length > 0 && <span className="text-danger"> · {over.length === 1 ? 'a line asks' : `${over.length} lines ask`} for more than the BOQ has left - raise an extra item or change on the BOQ first</span>}
               </>
             ) : headings ? (
@@ -434,6 +445,7 @@ export function BoqPicker({
                       <th className="px-2 py-2">Material</th>
                       <th className="px-2 py-2 text-right">BOQ qty</th>
                       <th className="px-2 py-2 text-right">BOQ rate</th>
+                      <th className="px-2 py-2 text-right">Budget</th>
                       <th className="px-2 py-2 text-right">Given</th>
                       <th className="px-2 py-2 text-right">Left</th>
                       <th className="w-28 px-2 py-2 text-right">Quantity</th>
@@ -443,7 +455,7 @@ export function BoqPicker({
                   <tbody>
                     {shown.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
+                        <td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">
                           No BOQ line matches those filters.
                         </td>
                       </tr>
@@ -457,7 +469,7 @@ export function BoqPicker({
                             <td className="px-3 py-1.5 align-top">
                               <input type="checkbox" aria-label={`Take everything under ${l.description}`} checked={all} disabled={!mine.length} onChange={(e) => toggleMany(mine, e.target.checked)} />
                             </td>
-                            <td colSpan={8} className="px-2 py-1.5" style={{ paddingLeft: `${0.5 + (l.level ?? 0) * 1.25}rem` }}>
+                            <td colSpan={9} className="px-2 py-1.5" style={{ paddingLeft: `${0.5 + (l.level ?? 0) * 1.25}rem` }}>
                               <span className={cn('font-semibold', (l.level ?? 0) > 0 && 'text-[12.5px]')}>{`${l.item_no || ''} ${l.description}`.trim()}</span>
                               {l.notes && (
                                 <span className="mt-0.5 line-clamp-2 block text-xs italic text-muted-foreground" title={l.notes}>
@@ -485,7 +497,8 @@ export function BoqPicker({
                           <td className="tabular px-2 py-1.5 text-right">
                             {formatQty(l.quantity ?? 0)} {l.uom}
                           </td>
-                          <td className="tabular px-2 py-1.5 text-right text-muted-foreground">{l.rate ? formatRate(l.rate) : '-'}</td>
+                          <td className="tabular px-2 py-1.5 text-right text-muted-foreground" title={l.rate === null ? 'Shown to those who see budgets and margins' : undefined}>{l.rate ? formatRate(l.rate) : '-'}</td>
+                          <td className="tabular px-2 py-1.5 text-right">{l.budgeted ? <span title="Labour + plant & other per unit, from the Budgeting tab">{formatRate(l.budget_rate ?? 0)}</span> : <Badge tone="danger">Not budgeted</Badge>}</td>
                           <td className="px-2 py-1.5 text-right">
                             {st === 'none' ? <span className="text-muted-foreground">-</span> : <Badge tone={st === 'full' ? 'success' : 'warning'}>{formatQty(l.given ?? 0)}</Badge>}
                           </td>
