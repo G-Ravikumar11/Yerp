@@ -40,13 +40,14 @@ export default function EquipmentPage() {
   // The tab is in the address, so a link (or a reload) opens the same one.
   const [params, setParams] = useSearchParams()
   const tab = (TABS.some((t) => t.value === params.get('tab')) ? params.get('tab') : 'dashboard') as Tab
-  const setTab = (t: Tab) => setParams(t === 'dashboard' ? {} : { tab: t }, { replace: true })
+  // A status can ride along (the dashboard's status chart opens the register filtered to it).
+  const setTab = (t: Tab, status?: string) => setParams(t === 'dashboard' ? {} : { tab: t, ...(status ? { status } : {}) }, { replace: true })
   return (
     <>
       <PageHeader eyebrow="Projects" title="Equipment & Plant" description="Where each machine is, who works it, what it did, what it burned and when it is due - and what it costs." />
       <div className="mb-5 overflow-x-auto"><Tabs label="Equipment & Plant" value={tab} onChange={setTab} items={TABS} /></div>
-      {tab === 'dashboard' && <PlantDashboard onGo={(t) => setTab(t as Tab)} />}
-      {tab === 'register' && <Register />}
+      {tab === 'dashboard' && <PlantDashboard onGo={(t, status) => setTab(t as Tab, status)} />}
+      {tab === 'register' && <Register initialStatus={params.get('status') ?? ''} />}
       {tab === 'allocation' && <Allocations />}
       {tab === 'logbook' && <Logbook />}
       {tab === 'fuel' && <Fuel />}
@@ -60,9 +61,9 @@ export default function EquipmentPage() {
   )
 }
 
-function Register() {
+function Register({ initialStatus = '' }: { initialStatus?: string }) {
   const { can } = useSession()
-  const [status, setStatus] = useState('')
+  const [status, setStatus] = useState(initialStatus)
   const [archived, setArchived] = useState(false)
   const q = useRegister(status, archived)
   const [editing, setEditing] = useState<Machine | 'new' | null>(null)
