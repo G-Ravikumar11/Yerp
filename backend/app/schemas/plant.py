@@ -147,6 +147,10 @@ class ExtendIn(BaseModel):
 
 class ReturnIn(BaseModel):
     returned_on: str = ""
+    final_meter: Optional[float] = None
+    condition: Optional[str] = ""
+    extra_charges: Optional[float] = 0
+    note: Optional[str] = ""
 
 
 class RentalInvoiceIn(BaseModel):

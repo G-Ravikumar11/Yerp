@@ -23,13 +23,19 @@ export interface Maint {
   next_service_on: string; next_service_meter: number | null; approval_status: string; approved_by: string; overdue: boolean
 }
 export interface Provider { id: number; name: string; contact_person: string; mobile: string; email: string; address: string; supplier_id: number | null }
-export interface RentalInvoice { id: number; invoice_no: string; invoice_date: string; period_from: string; period_to: string; billed_hours: number; amount: number; paid: number; outstanding: number; paid_on: string; payment_ref: string }
+export interface RentalInvoice {
+  id: number; invoice_no: string; invoice_date: string; period_from: string; period_to: string; billed_hours: number; amount: number; paid: number; outstanding: number; paid_on: string; payment_ref: string
+  /** The bill check (Matched / Mismatch / Duplicate), finance's decision and the payment state - three separate things. */
+  check: string; expected: number | null; verification_status: string; verified_by: string; verified_on: string; payment_status: string
+}
+export interface RentalReturn { meter: number | null; condition: string; charges: number; note: string; by: string }
 export interface Rental {
   id: number; number: string; asset_id: number; code: string; machine: string; category: string; reg_no: string; provider: Provider | null; agreement_no: string
   start_date: string; expected_return: string; actual_return: string; rate: number; billing: string; min_billable_hours: number; overtime_rate: number
   transport_charges: number; deposit: number; advance: number; fuel_included: boolean; operator_included: boolean; notes: string; status: string; days_left: number | null
   extensions: { from: string; to: string; reason: string; by: string; at: string }[]; invoices: RentalInvoice[]
   billed: number; paid: number; outstanding: number; used_hours: number; billed_hours: number; hours_gap: number
+  closing_gaps: string[]; return: RentalReturn | null; payment_status: string; expected_total: number; unbilled_days: number
 }
 export interface Expense {
   id: number; number: string; source: 'expense' | 'fuel' | 'maintenance' | 'rental'; asset_id: number; code: string; machine: string; project: string; category: string
@@ -68,6 +74,13 @@ export const useLogs = (r: Range) => useQuery({ queryKey: ['equipment', 'logs', 
 export const useFuel = (r: Range) => useQuery({ queryKey: ['equipment', 'fuel', r], queryFn: () => get<{ fuel: FuelRow[]; fuel_types: string[]; by_machine: { asset_id: number; code: string; name: string; litres: number; amount: number; operating_hours: number; litres_per_hour: number; cost_per_hour: number }[]; by_day: { day: string; litres: number; amount: number }[]; totals: { litres: number; amount: number } }>(`/api/plant/fuel${qs(r)}`) })
 export const useMaintenance = (r: Range) => useQuery({ queryKey: ['equipment', 'maintenance', r], queryFn: () => get<{ maintenance: Maint[]; kinds: string[]; priorities: string[] }>(`/api/plant/maintenance${qs(r)}`) })
 export const useProviders = () => useQuery({ queryKey: ['equipment', 'providers'], queryFn: () => get<{ providers: Provider[]; suppliers: { id: number; name: string }[] }>('/api/plant/rental-providers') })
+export interface ProviderRental { id: number; number: string; agreement_no: string; code: string; machine: string; start_date: string; expected_return: string; actual_return: string; status: string; billed: number; paid: number; outstanding: number; payment_status: string }
+export interface ProviderDetail {
+  provider: Provider; open: ProviderRental[]; completed: ProviderRental[]
+  totals: { agreements: number; billed: number; paid: number; outstanding: number; approved_outstanding: number }
+  payments: { invoice_no: string; rental: string; paid: number; paid_on: string; payment_ref: string }[]
+}
+export const useProvider = (id: number) => useQuery({ queryKey: ['equipment', 'provider', id], enabled: id > 0, queryFn: () => get<ProviderDetail>(`/api/plant/rental-providers/${id}`) })
 export const useRentals = (r: Range) => useQuery({ queryKey: ['equipment', 'rentals', r], queryFn: () => get<{ rentals: Rental[]; billing: string[]; summary: Record<string, number> }>(`/api/plant/rentals${qs(r)}`) })
 export const useExpenses = (r: Range) => useQuery({ queryKey: ['equipment', 'expenses', r], queryFn: () => get<{ expenses: Expense[]; categories: string[]; all_categories: string[]; by_category: Record<string, number>; total: number }>(`/api/plant/expenses${qs(r)}`) })
 
@@ -89,8 +102,9 @@ export interface RentalCheck {
   rental_id: number; number: string; agreement_no: string; code: string; machine: string; supplier: string; project: string; billing: string; rate: number; overtime_rate: number; min_billable_hours: number
   kind: 'invoice' | 'missing'; invoice_id: number | null; invoice_no: string; month: string; period_from: string; period_to: string; days_on_hire: number; minimum_hours: number; actual_hours: number; overtime_hours: number
   expected: number; actual: number | null; difference: number | null; status: string; detail: string; verification_status: string; verified_by: string; verification_note: string
+  invoice_date: string; difference_percent: number | null; billed_days: number; unbilled_days: number; billed_hours: number; return_charges: number
 }
-export interface AlertRow { id: number; kind: string; period: string; asset_id: number | null; code: string; machine: string; title: string; body: string; severity: string; status: string; delivery_status: string; sent_to: string; reviewed_by: string; review_note: string; created_at: string }
+export interface AlertRow { id: number; kind: string; period: string; asset_id: number | null; rental_id: number | null; code: string; machine: string; title: string; body: string; severity: string; status: string; delivery_status: string; sent_to: string; reviewed_by: string; review_note: string; created_at: string }
 export interface PlantCostLine { category: string; source: string; ref: string; date: string; code: string; machine: string; description: string; amount: number }
 export interface PlantCostRow { job_id: number; project: string; fuel: number; rental: number; hire: number; maintenance: number; expenses: number; total: number; duplicates_excluded: number; unbilled_hire_estimate: number; lines: PlantCostLine[] }
 export interface PlantSettings { regular_hours: number; document_alert_days: number; fuel_tolerance_percent: number; rental_tolerance_percent: number }
@@ -115,7 +129,8 @@ export const approveMaint = (id: number) => post<Msg>(`/api/plant/maintenance/${
 export const saveProvider = (id: number | null, b: Record<string, unknown>) => (id ? put<Msg>(`/api/plant/rental-providers/${id}`, b) : post<Msg>('/api/plant/rental-providers', b))
 export const createRental = (b: Record<string, unknown>) => post<Msg>('/api/plant/rentals', b)
 export const extendRental = (id: number, to_date: string, reason: string) => post<Msg>(`/api/plant/rentals/${id}/extend`, { to_date, reason })
-export const returnRental = (id: number, returned_on: string) => post<Msg>(`/api/plant/rentals/${id}/return`, { returned_on })
+export interface ReturnDetails { returned_on: string; final_meter?: number | null; condition?: string; extra_charges?: number; note?: string }
+export const returnRental = (id: number, b: ReturnDetails) => post<Msg>(`/api/plant/rentals/${id}/return`, b)
 export const addRentalInvoice = (id: number, b: Record<string, unknown>) => post<Msg>(`/api/plant/rentals/${id}/invoices`, b)
 export const payRentalInvoice = (id: number, amount: number, paid_on: string, payment_ref: string) => post<Msg>(`/api/plant/rental-invoices/${id}/payment`, { amount, paid_on, payment_ref })
 export const saveExpense = (id: number | null, b: Record<string, unknown>) => (id ? put<Msg>(`/api/plant/expenses/${id}`, b) : post<Msg>('/api/plant/expenses', b))

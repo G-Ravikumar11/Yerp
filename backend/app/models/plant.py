@@ -95,6 +95,12 @@ class DBPlantRental(Base):
     notes = Column(Text, default="")
     created_by = Column(String, default="")
     created_at = Column(String, default=_now)
+    # The return, as confirmed: the final reading, the machine's condition, extra or damage charges agreed, and who confirmed it.
+    return_meter = Column(Float, nullable=True)
+    return_condition = Column(String, default="")              # Good | Fair | Poor
+    return_charges = Column(Float, default=0.0)
+    return_note = Column(Text, default="")
+    returned_by = Column(String, default="")
 
 
 class DBPlantRentalExtension(Base):

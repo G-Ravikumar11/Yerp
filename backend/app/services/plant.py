@@ -134,6 +134,44 @@ def rental_status(r, extended):
     return "Extended" if extended else "Active"
 
 
+def closing_gaps(checks):
+    """What still stands between a returned rental and Closed, from its bill checks (plant_checks.rental_rows for it):
+    a bill for every day on hire, none a duplicate, and every bill approved by finance. Payment is not a condition -
+    what is unpaid stays outstanding on its own."""
+    bills = [x for x in checks if x["kind"] == "invoice"]
+    gaps = []
+    if not bills:
+        gaps.append("No bill recorded yet.")
+    unbilled = sum(x.get("unbilled_days") or 0 for x in checks if x["kind"] == "missing")
+    if unbilled:
+        gaps.append("%d day%s on hire with no bill." % (unbilled, "" if unbilled == 1 else "s"))
+    dups = [x["invoice_no"] for x in bills if x["status"] == "Duplicate"]
+    if dups:
+        gaps.append("Duplicate bill%s: %s." % ("" if len(dups) == 1 else "s", ", ".join(dups)))
+    waiting = [x["invoice_no"] for x in bills if x.get("verification_status") != "Approved"]
+    if waiting:
+        gaps.append("%d bill%s not yet approved by finance." % (len(waiting), "" if len(waiting) == 1 else "s"))
+    return gaps
+
+
+def rental_lifecycle(r, extended, checks):
+    """Upcoming, Active (or Extended), Overdue, Returned - from the dates, as before - and Closed once a returned rental's
+    bills are complete and approved. Never Returned or Closed on the dates alone: only a recorded return does that."""
+    status = rental_status(r, extended)
+    if status != "Returned":
+        return status, []
+    gaps = closing_gaps(checks)
+    return ("Returned" if gaps else "Closed"), gaps
+
+
+def payment_status(amount, paid):
+    if amount <= 0:
+        return "No bills"
+    if paid <= 0:
+        return "Unpaid"
+    return "Paid" if paid >= amount - 0.009 else "Partially paid"
+
+
 def in_range(day, date_from, date_to):
     d = (day or "")[:10]
     return (not date_from or d >= date_from) and (not date_to or d <= date_to)

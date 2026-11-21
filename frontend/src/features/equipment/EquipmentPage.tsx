@@ -52,10 +52,10 @@ export default function EquipmentPage() {
       {tab === 'logbook' && <Logbook />}
       {tab === 'fuel' && <Fuel />}
       {tab === 'maintenance' && <Maintenance />}
-      {tab === 'rentals' && <Rentals />}
+      {tab === 'rentals' && <Rentals initialOpen={Number(params.get('rental')) || null} />}
       {tab === 'expenses' && <Expenses />}
       {tab === 'formwork' && <FormworkHire />}
-      {tab === 'alerts' && <PlantAlerts />}
+      {tab === 'alerts' && <PlantAlerts onOpenRental={(id) => setParams({ tab: 'rentals', rental: String(id) }, { replace: true })} />}
       {tab === 'reports' && <PlantReports />}
     </>
   )

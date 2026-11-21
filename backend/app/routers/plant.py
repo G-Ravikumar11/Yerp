@@ -34,7 +34,7 @@ from app.services.assets import (asset_dict, asset_or_404, asset_service_state, 
 from app.services.plant import (
     BILLING, DERIVED_CATEGORIES, EXPENSE_CATEGORIES, FUEL_TYPES, IDLE_SHARE_ALERT, MAINT_KINDS, PRIORITIES, ROLES, SHIFTS,
     check_invoice_unique, clean_day, costs, employee_card, employee_or_400, in_range, machine_hours, month_bounds, now,
-    number_for, regular_hours, rental_status, shift_span, today,
+    number_for, payment_status, regular_hours, rental_lifecycle, rental_status, shift_span, today,
 )
 from app.services.plant_checks import (
     alert_settings, apply_correction, check_meter, following_is_approved, raise_breakdown_alert, record_replacement, resync_meter, tank_warning,
@@ -925,7 +925,7 @@ def update_provider(pid: int, body: ProviderIn, request: Request, db: Session = 
     return {"ok": True, "provider": provider_dict(p), "message": "%s saved." % p.name}
 
 
-def rental_dict(db, r, assets, providers):
+def rental_dict(db, r, assets, providers, checks=None):
     a = assets.get(r.asset_id)
     ext = db.query(models.DBPlantRentalExtension).filter(models.DBPlantRentalExtension.rental_id == r.id).order_by(models.DBPlantRentalExtension.id).all()
     inv = db.query(models.DBPlantRentalInvoice).filter(models.DBPlantRentalInvoice.rental_id == r.id).order_by(models.DBPlantRentalInvoice.invoice_date).all()
@@ -935,7 +935,9 @@ def rental_dict(db, r, assets, providers):
     used = round(sum(h["operating"] for h in machine_hours(logs)), 1)
     billed = round(sum(i.billed_hours or 0 for i in inv), 1)
     amount, paid = money(sum(i.amount or 0 for i in inv)), money(sum(i.paid or 0 for i in inv))
-    st = rental_status(r, bool(ext))
+    checks = checks if checks is not None else []
+    st, closing = rental_lifecycle(r, bool(ext), checks)
+    by_invoice = {x["invoice_id"]: x for x in checks if x["kind"] == "invoice"}
     p = providers.get(r.provider_id)
     days_left = (datetime.strptime(r.expected_return, "%Y-%m-%d").date() - date.today()).days if r.expected_return and not r.actual_return else None
     return {"id": r.id, "number": r.number, "asset_id": r.asset_id, "code": a.code if a else "", "machine": a.name if a else "",
@@ -944,11 +946,18 @@ def rental_dict(db, r, assets, providers):
             "rate": r.rate, "billing": r.billing, "min_billable_hours": r.min_billable_hours or 0, "overtime_rate": r.overtime_rate or 0,
             "transport_charges": r.transport_charges or 0, "deposit": r.deposit or 0, "advance": r.advance or 0,
             "fuel_included": bool(r.fuel_included), "operator_included": bool(r.operator_included), "notes": r.notes or "",
-            "status": st, "days_left": days_left,
+            "status": st, "days_left": days_left, "closing_gaps": closing,
+            "return": {"meter": r.return_meter, "condition": r.return_condition or "", "charges": r.return_charges or 0, "note": r.return_note or "",
+                       "by": r.returned_by or ""} if r.actual_return else None,
+            "payment_status": payment_status(amount, paid), "expected_total": money(sum(x["expected"] for x in checks)),
+            "unbilled_days": sum(x.get("unbilled_days") or 0 for x in checks if x["kind"] == "missing"),
             "extensions": [{"from": x.from_date, "to": x.to_date, "reason": x.reason or "", "by": x.by_name or "", "at": (x.created_at or "")[:10]} for x in ext],
             "invoices": [{"id": i.id, "invoice_no": i.invoice_no, "invoice_date": i.invoice_date, "period_from": i.period_from or "", "period_to": i.period_to or "",
                           "billed_hours": i.billed_hours or 0, "amount": i.amount, "paid": i.paid or 0, "outstanding": money((i.amount or 0) - (i.paid or 0)),
-                          "paid_on": i.paid_on or "", "payment_ref": i.payment_ref or ""} for i in inv],
+                          "paid_on": i.paid_on or "", "payment_ref": i.payment_ref or "",
+                          "check": (by_invoice.get(i.id) or {}).get("status", ""), "expected": (by_invoice.get(i.id) or {}).get("expected"),
+                          "verification_status": i.verification_status or "", "verified_by": i.verified_by or "", "verified_on": i.verified_on or "",
+                          "payment_status": payment_status(i.amount or 0, i.paid or 0)} for i in inv],
             "billed": amount, "paid": paid, "outstanding": money(amount - paid), "used_hours": used, "billed_hours": billed,
             "hours_gap": round(billed - used, 1)}
 
@@ -962,12 +971,48 @@ def list_rentals(request: Request, status: str = "", provider_id: int = 0, db: S
         q = q.filter(R.provider_id == provider_id)
     assets = {a.id: a for a in db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id).all()}
     providers = {p.id: p for p in db.query(models.DBPlantRentalProvider).filter(models.DBPlantRentalProvider.client_id == client.id).all()}
-    rows = [rental_dict(db, r, assets, providers) for r in q.order_by(R.id.desc()).limit(1000).all()]
+    # The bill checks for every rental at once, the same figures the Rental bill verification shows.
+    from app.services.plant_checks import rental_rows
+    checks = {}
+    for x in rental_rows(db, client.id)["rows"]:
+        checks.setdefault(x["rental_id"], []).append(x)
+    rows = [rental_dict(db, r, assets, providers, checks.get(r.id, [])) for r in q.order_by(R.id.desc()).limit(1000).all()]
     if status:
         rows = [r for r in rows if r["status"] == status]
     return {"rentals": rows, "billing": list(BILLING),
-            "summary": {k: len([r for r in rows if r["status"] == k]) for k in ("Upcoming", "Active", "Extended", "Overdue", "Returned")} | {
+            "summary": {k: len([r for r in rows if r["status"] == k]) for k in ("Upcoming", "Active", "Extended", "Overdue", "Returned", "Closed")} | {
                 "outstanding": money(sum(r["outstanding"] for r in rows))}}
+
+
+@router.get("/api/plant/rental-providers/{pid}")
+def provider_detail(pid: int, request: Request, db: Session = Depends(get_read_db)):
+    """One provider: their details, the agreements open and finished, what has been billed, paid and is still owed, and
+    the payments made - all from the rentals and their bills, nothing kept apart."""
+    client = require_erp_read(request, db)
+    p = db.query(models.DBPlantRentalProvider).filter(models.DBPlantRentalProvider.id == pid, models.DBPlantRentalProvider.client_id == client.id).first()
+    if not p:
+        raise HTTPException(404, "Provider not found")
+    R = models.DBPlantRental
+    mine = db.query(R).filter(R.client_id == client.id, R.provider_id == p.id).order_by(R.start_date.desc(), R.id.desc()).all()
+    assets = {a.id: a for a in db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id).all()}
+    from app.services.plant_checks import rental_rows
+    checks = {}
+    for x in rental_rows(db, client.id)["rows"]:
+        if x["rental_id"] in {r.id for r in mine}:
+            checks.setdefault(x["rental_id"], []).append(x)
+    rows = [rental_dict(db, r, assets, {p.id: p}, checks.get(r.id, [])) for r in mine]
+    bills = [i for r in rows for i in r["invoices"]]
+    approved_owed = money(sum(i["outstanding"] for i in bills if i["verification_status"] == "Approved"))
+    payments = sorted(({"invoice_no": i["invoice_no"], "rental": r["number"], "paid": i["paid"], "paid_on": i["paid_on"], "payment_ref": i["payment_ref"]}
+                       for r in rows for i in r["invoices"] if i["paid"] > 0), key=lambda x: x["paid_on"] or "", reverse=True)
+    pick = lambda x: {k: x[k] for k in ("id", "number", "agreement_no", "code", "machine", "start_date", "expected_return", "actual_return", "status",
+                                          "billed", "paid", "outstanding", "payment_status")}
+    return {"provider": provider_dict(p),
+            "open": [pick(r) for r in rows if r["status"] in ("Upcoming", "Active", "Extended", "Overdue")],
+            "completed": [pick(r) for r in rows if r["status"] in ("Returned", "Closed")],
+            "totals": {"agreements": len(rows), "billed": money(sum(r["billed"] for r in rows)), "paid": money(sum(r["paid"] for r in rows)),
+                       "outstanding": money(sum(r["outstanding"] for r in rows)), "approved_outstanding": approved_owed},
+            "payments": payments}
 
 
 def _rental_or_404(db, client_id, rid):
@@ -1058,6 +1103,22 @@ def return_rental(rid: int, body: ReturnIn, request: Request, db: Session = Depe
     if on > today():
         raise HTTPException(400, "Record the return on the day it goes back.")
     a = asset_or_404(db, client.id, r.asset_id)
+    # What the return records besides its date - all optional, so a plain return still works as it always has.
+    meter = body.final_meter
+    if meter is not None:
+        if meter < 0:
+            raise HTTPException(400, "The final meter reading cannot be negative.")
+        if a.meter_reading and meter < a.meter_reading:
+            raise HTTPException(400, "The final reading cannot be below the last reading on the register (%g %s)." % (a.meter_reading, (a.meter_unit or "hours").lower()))
+    condition = (body.condition or "").strip()
+    if condition and condition not in ("Good", "Fair", "Poor"):
+        raise HTTPException(400, "The condition is Good, Fair or Poor.")
+    extra = float(body.extra_charges or 0)
+    if extra < 0:
+        raise HTTPException(400, "Extra or damage charges cannot be negative.")
+    note = (body.note or "").strip()
+    if extra and not note:
+        raise HTTPException(400, "Say what the extra or damage charges are for.")
     ended = 0
     for al in db.query(models.DBPlantAllocation).filter(models.DBPlantAllocation.asset_id == a.id, models.DBPlantAllocation.status == "Active").all():
         al.status, al.end_date, al.ended_reason = "Ended", max(on, al.start_date), "Machine returned to its owner"
@@ -1066,8 +1127,13 @@ def return_rental(rid: int, body: ReturnIn, request: Request, db: Session = Depe
         db.add(models.DBAssetMove(client_id=client.id, asset_id=a.id, from_job_id=a.current_job_id, to_job_id=None, moved_on=on,
                                   note="Returned to %s" % (r.agreement_no or "owner"), by_name=actor))
     a.current_job_id, a.status = None, "Returned"
+    if meter is not None:
+        a.meter_reading = meter                        # the register's reading only ever moves forward (checked above)
     r.actual_return = on
-    audit(db, client, "plant.rental.returned", "plant_rental", r.id, r.number, "%s returned %s; %d allocation(s) ended" % (a.code, on, ended), actor, request)
+    r.return_meter, r.return_condition, r.return_charges, r.return_note, r.returned_by = meter, condition, money(extra), note[:1000], actor
+    said = "; ".join(x for x in ("final meter %g" % meter if meter is not None else "", "condition %s" % condition if condition else "",
+                                  "extra charges %s (%s)" % (money(extra), note[:120]) if extra else "") if x)
+    audit(db, client, "plant.rental.returned", "plant_rental", r.id, r.number, "%s returned %s; %d allocation(s) ended%s" % (a.code, on, ended, ("; " + said) if said else ""), actor, request)
     db.commit()
     return {"ok": True, "message": "%s returned on %s%s." % (a.code, on, ("; %d allocation%s ended" % (ended, "" if ended == 1 else "s")) if ended else "")}
 
