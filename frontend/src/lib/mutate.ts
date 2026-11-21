@@ -4,6 +4,7 @@ import { codeLine, newRef } from './errorCodes'
 import { useOffline } from '@/stores/offline'
 import { toast } from '@/stores/toast'
 import { pageFor, useErrorPage } from '@/stores/errorPage'
+import { REFUSED_TEXT, refusedNotOffline } from './blocked'
 
 interface Options<TVars, TRes> {
   /** Lists to refresh once it has worked. Prefix match: ['orders'] refreshes ['orders', 12] too. */
@@ -38,7 +39,13 @@ export function useAction<TVars = void, TRes extends object | void = { message?:
       }
       await onSuccess?.(r, vars)
     },
-    onError: (err, vars) => {
+    onError: async (err, vars) => {
+      // On the Android app a refusal the server's own headers do not cover looks like a dead signal: ask the server before saying so.
+      if (await refusedNotOffline(err)) {
+        toast.error(`${REFUSED_TEXT} (${codeLine('YE-BUSY-01')})`)
+        onError?.(err, vars)
+        return
+      }
       // A failure the person cannot fix by changing what they typed gets the whole error page; the screen and
       // whatever was typed stay underneath it. A mistake in the form keeps its short message.
       const page = pageFor(err)
