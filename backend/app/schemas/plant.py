@@ -147,6 +147,10 @@ class ExtendIn(BaseModel):
 
 class ReturnIn(BaseModel):
     returned_on: str = ""
+    final_meter: Optional[float] = None
+    condition: Optional[str] = ""
+    extra_charges: Optional[float] = 0
+    note: Optional[str] = ""
 
 
 class RentalInvoiceIn(BaseModel):
@@ -179,6 +183,12 @@ class ExpenseIn(BaseModel):
     invoice_no: Optional[str] = ""
     payment_status: Optional[str] = "Unpaid"
     payment_ref: Optional[str] = ""
+
+
+class ExpensePaymentIn(BaseModel):
+    amount: float
+    paid_on: str = ""
+    reference: Optional[str] = ""
 
 
 class GapResolveIn(BaseModel):

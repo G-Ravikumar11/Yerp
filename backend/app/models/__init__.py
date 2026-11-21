@@ -39,6 +39,7 @@ from app.models.plant import (
     DBPlantAlert,
     DBPlantAllocation,
     DBPlantExpense,
+    DBPlantExpensePayment,
     DBPlantFuel,
     DBPlantFuelReview,
     DBPlantMeterEvent,

@@ -767,6 +767,13 @@ def ensure_columns():
                 "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verified_by VARCHAR DEFAULT ''",
                 "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verified_on VARCHAR DEFAULT ''",
                 "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verification_note TEXT DEFAULT ''",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS return_meter DOUBLE PRECISION",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS return_condition VARCHAR DEFAULT ''",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS return_charges DOUBLE PRECISION DEFAULT 0",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS return_note TEXT DEFAULT ''",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS returned_by VARCHAR DEFAULT ''",
+                "ALTER TABLE plant_expenses ADD COLUMN IF NOT EXISTS approved_on VARCHAR DEFAULT ''",
+                "ALTER TABLE plant_expenses ADD COLUMN IF NOT EXISTS decision_note TEXT DEFAULT ''",
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_logs_day_key ON asset_logs (day_key)",
                 "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS dup_key VARCHAR",
                 "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS merged_into_id INTEGER",
@@ -2279,6 +2286,13 @@ def migrate_sqlite():
             add_col("plant_rental_invoices", "verified_by", "VARCHAR DEFAULT ''")
             add_col("plant_rental_invoices", "verified_on", "VARCHAR DEFAULT ''")
             add_col("plant_rental_invoices", "verification_note", "TEXT DEFAULT ''")
+            add_col("plant_rentals", "return_meter", "FLOAT")
+            add_col("plant_rentals", "return_condition", "VARCHAR DEFAULT ''")
+            add_col("plant_rentals", "return_charges", "FLOAT DEFAULT 0")
+            add_col("plant_rentals", "return_note", "TEXT DEFAULT ''")
+            add_col("plant_rentals", "returned_by", "VARCHAR DEFAULT ''")
+            add_col("plant_expenses", "approved_on", "VARCHAR DEFAULT ''")
+            add_col("plant_expenses", "decision_note", "TEXT DEFAULT ''")
             try:
                 conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_logs_day_key ON asset_logs (day_key)"))
             except Exception:
