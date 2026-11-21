@@ -158,7 +158,7 @@ def boq_get_summary(boq_id: int, request: Request, rev: Optional[int] = None, gs
 @router.put("/api/boqs/{boq_id}/lines")
 def boq_set_lines(boq_id: int, body: ProjectBoqLinesIn, request: Request, db: Session = Depends(get_db)):
     """Save the BOQ as it is on screen: the lines are replaced as a whole, as the grid holds them."""
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "boq.create")   # the client's order: HO QS and the Master only
     boq = boq_or_404(db, client.id, boq_id)
     rev = boq_revision_of(db, boq)
     if rev.status != "OPEN":
@@ -177,7 +177,7 @@ def boq_set_lines(boq_id: int, body: ProjectBoqLinesIn, request: Request, db: Se
 @router.post("/api/boqs/{boq_id}/revisions")
 def boq_new_revision(boq_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
     """Issue the revision being worked on (locking it) and open the next one as a copy."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "boq.create")   # the client's order: HO QS and the Master only
     boq = boq_or_404(db, client.id, boq_id)
     cur = boq_revision_of(db, boq)
     if cur.status == "OPEN":
@@ -233,7 +233,7 @@ async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...)
                      db: Session = Depends(get_db)):
     """Read the client's BOQ sheet as they sent it and hand it back as lines, without saving: they land in the grid to be
     read against the file, and the ordinary save commits them. The sheet's own amounts are checked against its lines."""
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "boq.create")   # the client's order: HO QS and the Master only
     boq = boq_or_404(db, client.id, boq_id)
     if boq_revision_of(db, boq).status != "OPEN":
         raise HTTPException(409, "Open a new revision first: the current one is issued.")

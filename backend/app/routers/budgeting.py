@@ -51,7 +51,7 @@ class BudgetSettingsIn(BaseModel):
 
 @router.get("/api/jobs/{job_id}/budget")
 def job_budget(job_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = require_items_access(request, db, "reports.view")
+    client = require_items_access(request, db, ("budget.view", "budget.edit"))
     return budget_view(db, client.id, job_or_404(db, client.id, job_id))
 
 
@@ -99,7 +99,7 @@ def job_budget_line(job_id: int, key: str, body: BudgetLineIn, request: Request,
 def job_budget_line_wastage(job_id: int, key: str, body: WastageAsksIn, request: Request, db: Session = Depends(get_read_db)):
     """Which wastage % each material of a line would be costed at as the editor holds it - the store's norm where one is set
     for the material on this BOQ line, else the figure typed - with the mismatch warning. Saves nothing."""
-    client = require_items_access(request, db, "reports.view")
+    client = require_items_access(request, db, ("budget.edit",))
     job = job_or_404(db, client.id, job_id)
     if len(body.items) > MAX_ITEMS_PER_LINE:
         raise HTTPException(400, "A line has at most %d items." % MAX_ITEMS_PER_LINE)
@@ -118,13 +118,13 @@ def budget_materials(request: Request, q: str = "", db: Session = Depends(get_re
 @router.get("/api/jobs/{job_id}/budget/earned-value")
 def job_earned_value(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     """Budget against actual by BOQ line and heading: planned value, earned value, actual cost, CPI and SPI."""
-    client = require_items_access(request, db, "reports.view")
+    client = require_items_access(request, db, ("budget.view", "budget.edit"))
     return earned_value(db, client.id, job_or_404(db, client.id, job_id))
 
 
 @router.get("/api/jobs/{job_id}/budget/earned-value.xlsx")
 def job_earned_value_export(job_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = require_items_access(request, db, "reports.view")
+    client = require_items_access(request, db, ("budget.view", "budget.edit"))
     job = job_or_404(db, client.id, job_id)
     ev = earned_value(db, client.id, job)
     t = ev["total"]
@@ -152,7 +152,7 @@ def job_earned_value_export(job_id: int, request: Request, db: Session = Depends
 
 @router.get("/api/jobs/{job_id}/budget.xlsx")
 def job_budget_export(job_id: int, request: Request, db: Session = Depends(get_read_db)):
-    client = require_items_access(request, db, "reports.view")
+    client = require_items_access(request, db, ("budget.view", "budget.edit"))
     job = job_or_404(db, client.id, job_id)
     b = budget_view(db, client.id, job)
     t = b["total"]

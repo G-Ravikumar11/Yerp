@@ -146,9 +146,9 @@ def test_another_business_cannot_see_or_change_a_budget(tenant, second_tenant):
     assert second_tenant.get("/api/jobs/%d/budget.xlsx" % jid).status_code == 404
 
 
-def test_only_staff_with_the_reports_right_see_the_budget_and_only_those_given_edit_change_it(tenant):
-    """Seeing the budget is the reports right; changing it is "Edit project budgets" (HO QS and the heads by default) -
-    not every manager or work order preparer, since a work order is checked against it."""
+def test_only_those_given_the_budget_rights_see_it_or_change_it(tenant):
+    """Seeing the budget and its margins is "See project budgets and margins", changing it "Edit project budgets" (HO QS
+    and the heads by default) - not every manager who reads reports, nor every work order preparer."""
     import main
     from fastapi.testclient import TestClient
     jid, k = keyed(tenant)
@@ -157,8 +157,9 @@ def test_only_staff_with_the_reports_right_see_the_budget_and_only_those_given_e
         sign_in(m, manager)
         sign_in(p, plain)
         sign_in(q, qs)
-        assert m.get("/api/jobs/%d/budget" % jid).status_code == 200
+        assert m.get("/api/jobs/%d/budget" % jid).status_code == 403
         assert put_line(m, jid, k["RCC"], RCC_ITEMS).status_code == 403
+        assert q.get("/api/jobs/%d/budget" % jid).status_code == 200
         assert put_line(q, jid, k["RCC"], RCC_ITEMS).status_code == 200
         assert p.get("/api/jobs/%d/budget" % jid).status_code == 403
         assert put_line(p, jid, k["RCC"], RCC_ITEMS).status_code == 403

@@ -173,6 +173,9 @@ PORTAL_PERMISSIONS = [
     # budget raised by the person about to send an order at that rate is no check at all.
     {"key": "budget.edit", "group": "Contracts",
      "label": "Edit project budgets"},
+    # What each line costs us and what it makes: the margins. Kept from everybody who merely reads reports.
+    {"key": "budget.view", "group": "Contracts",
+     "label": "See project budgets and margins"},
     # THE SUBCONTRACTORS PORTAL, job by job. Each was carried by a broader right that also did something else.
     {"key": "contractors.register", "group": "Subcontractors",
      "label": "Register subcontractors"},
@@ -626,6 +629,9 @@ SUBCONTRACTOR_RIGHTS = {
 }
 # Who sets the budget by default: the heads, not the people who prepare work orders. The Master gives it to others.
 SUBCONTRACTOR_RIGHTS["budget.edit"] = {"md", "hod", "head_projects", "ho_qs"}
+# Who sees the budget and its margins by default: those who set it and those who run the projects against it.
+SUBCONTRACTOR_RIGHTS["budget.view"] = {"md", "hod", "head_projects", "ho_qs", "ho_coordinator", "construction_manager",
+                                       "project_manager"}
 for _r in PERMISSION_ROLES:
     for _key, _holders in SUBCONTRACTOR_RIGHTS.items():
         if _r["code"] in _holders and _key not in _r["permissions"]:
