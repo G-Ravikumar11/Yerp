@@ -81,6 +81,8 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   const [terms, setTerms] = useState<OrderTerm[]>(() => (order.terms ?? []).map((t) => ({ clause_category: t.clause_category, clause_text: t.clause_text })))
   const [dialog, setDialog] = useState<'approve' | 'reject' | 'cancel' | 'amend' | 'execute' | 'self-approve' | 'close' | null>(null)
   const [finished, setFinished] = useState(() => daysAgo(1))
+  // Lines priced above the budget: the server's list, shown with a box for the reason before it is sent again.
+  const [overBudget, setOverBudget] = useState<string | null>(null)
   const [todayIso] = useState(today)
   const [override, setOverride] = useState(false)
   const [costCentre, setCostCentre] = useState(false)
@@ -125,13 +127,15 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
       invalidate: [orderKeys.all],
       onSuccess: (res, m) => {
         setDialog(null)
+        setOverBudget(null)
         setOverride(false)
         if (m.action === 'approve' || m.action === 'self-approve') setTab('next')
         if (m.action === 'amend') nav(`/subcontractors/work-orders/${res.order.id}`)
         else reseed()
       },
-      onError: () => {
-        // A refusal leaves the dialog open with the server's reason in the toast.
+      onError: (err, m) => {
+        // A refusal leaves the dialog open with the server's reason in the toast. Priced above the budget: ask for the reason.
+        if (m.action === 'submit' && !m.comments && err instanceof ApiError && err.status === 409 && /above the budget/.test(err.message)) setOverBudget(err.message)
       },
     },
   )
@@ -325,6 +329,16 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
           </label>
         )}
       </ConfirmDialog>
+      <ConfirmDialog
+        open={overBudget !== null}
+        onOpenChange={(o) => !o && setOverBudget(null)}
+        title="Priced above the budget"
+        description={overBudget ?? ''}
+        confirmLabel="Send for approval"
+        reason={{ label: 'Why above the budget? Your approvers and the Master read this; the contractor never sees it.', required: true }}
+        loading={move.isPending}
+        onConfirm={(comments) => move.mutate({ action: 'submit', comments })}
+      />
       <ConfirmDialog
         open={dialog === 'reject'}
         onOpenChange={(o) => !o && setDialog(null)}

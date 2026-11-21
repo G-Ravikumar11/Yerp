@@ -200,6 +200,9 @@ class DBSubcontractOrder(Base):
     copied_from_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=True)
 
     submitted_by = Column(Integer, nullable=True)
+    # Why lines are priced above the project budget, said when it was sent. Read by its approvers inside Y ERP only:
+    # never printed on the order or shown to the contractor.
+    over_budget_reason = Column(Text, default="")
     approved_by = Column(Integer, nullable=True)
     approved_at = Column(String, default="")
     executed_at = Column(String, default="")

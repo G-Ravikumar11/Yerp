@@ -158,6 +158,8 @@ export interface Order {
   advance_paid?: number
   pending_with?: string[]
   approval_route?: RouteStep[]
+  /** Why lines are priced above the project budget, said when it was sent; for its approvers, never the contractor. */
+  over_budget_reason?: string
   copied_from?: string
   budgets?: BudgetRow[]
   /** The project has a BOQ, so the order is held against its budget (the Budgeting tab) and asks for no cost centre. */

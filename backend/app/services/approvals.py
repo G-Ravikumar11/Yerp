@@ -704,6 +704,8 @@ def approval_inbox(db, client, emp):
                     notes.append("Amends %s - its %d measurement%s and %d RA bill%s move to this order on approval"
                                  % (prev.wo_number, n_mb, "" if n_mb == 1 else "s",
                                     n_bills, "" if n_bills == 1 else "s"))
+            if (o.over_budget_reason or "").strip():
+                notes.append("Priced above the budget - the Master signs it too. Reason given: " + o.over_budget_reason.strip())
             items.append(_row(
                 "subcontract_order", "Subcontract work order", o.id, o.wo_number, o.net_order_value or o.gross_amount,
                 party=(("%s (%s)" % (con.company_name, con.vendor_code) if con.vendor_code else con.company_name) if con else ""),
