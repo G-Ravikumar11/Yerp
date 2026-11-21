@@ -187,32 +187,3 @@ def job_budget_export(job_id: int, request: Request, db: Session = Depends(get_r
          "%s per unit" % KIND_LABEL["LABOUR"], "%s per unit" % KIND_LABEL["OTHER"], "Material", "Labour", "Plant & other",
          "Overheads and contingency", "Budget cost", "Profit", "Margin %", "Budgeted"),
         rows, "budget_%s.xlsx" % (job.number or "project"), preamble=preamble, closing=closing)
-
-
-class BudgetCopyIn(BaseModel):
-    from_job_id: int
-    overwrite: bool = False
-
-
-@router.post("/api/jobs/{job_id}/budget/copy")
-def job_budget_copy(job_id: int, body: BudgetCopyIn, request: Request, db: Session = Depends(get_db)):
-    """Fill this project's budget from another project's, line by matching line - the quick way to budget a new BOQ."""
-    from app.services.budgeting import copy_budget
-    client, _, who = wo_actor(request, db, "budget.edit")
-    job = job_or_404(db, client.id, job_id)
-    source = job_or_404(db, client.id, body.from_job_id)
-    if source.id == job.id:
-        raise HTTPException(400, "Choose another project to copy from.")
-    done = copy_budget(db, client.id, job.id, source.id, who, overwrite=body.overwrite)
-    log_audit(db, client.id, "budget_copied", "job", job.id, job.number or "",
-              "from %s: %d lines filled, %d no match, %d already budgeted by %s" % (
-                  source.number or source.name, done["filled"], done["unmatched"], done["already_budgeted"], who), request)
-    db.commit()
-    out = budget_view(db, client.id, job)
-    out["copied"] = done
-    out["message"] = "%d line%s budgeted from %s.%s%s" % (
-        done["filled"], "" if done["filled"] == 1 else "s", source.number or source.name,
-        (" %d had no matching line there - budget those by hand." % done["unmatched"]) if done["unmatched"] else "",
-        (" %d already budgeted were left as they were." % done["already_budgeted"]) if done["already_budgeted"] else "")
-    return out
-

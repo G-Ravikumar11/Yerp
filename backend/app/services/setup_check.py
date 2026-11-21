@@ -60,8 +60,7 @@ def setup_check(db, client):
             projects += 1
             lines_left += len(left)
     items.append(_item("budgets", "Every BOQ line is budgeted",
-                       ("%d BOQ line%s on %d project%s %s no budget - work orders for them cannot be sent. Copy a budget from "
-                        "another project to fill most at once." % (lines_left, "" if lines_left == 1 else "s", projects,
+                       ("%d BOQ line%s on %d project%s %s no budget - work orders for them cannot be sent." % (lines_left, "" if lines_left == 1 else "s", projects,
                                                                    "" if projects == 1 else "s", "has" if lines_left == 1 else "have"))
                        if lines_left else "Every live project's BOQ is budgeted.", lines_left, "/projects/budgeting", "Budget them"))
 

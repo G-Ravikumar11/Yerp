@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { AlertTriangle, ChevronDown, ChevronRight, Copy, Download, Pencil } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, Download, Pencil } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -11,7 +11,6 @@ import { useSession } from '@/lib/session'
 import { cn, compactINR, formatINR, formatRate } from '@/lib/utils'
 import { plural } from '@/lib/format'
 import { BudgetLineModal } from './BudgetLineModal'
-import { CopyBudgetDialog } from './CopyBudgetDialog'
 import { EarnedValueView } from './EarnedValue'
 
 type Show = 'all' | 'todo' | 'loss'
@@ -36,7 +35,6 @@ export default function BudgetingPage() {
   const b = q.data
   const t = b?.total
   const edit = can('budget.edit')
-  const [copying, setCopying] = useState(false)
 
   const lines = (b?.rows ?? []).filter((r) => (show === 'todo' ? !r.budgeted : show === 'loss' ? (r.profit ?? 0) < 0 && r.budgeted : true))
   // All lines are shown with the BOQ's headings in bold above their sections, each section folded or open; a filtered view shows
@@ -83,13 +81,7 @@ export default function BudgetingPage() {
   return (
     <div>
       <PageHeader eyebrow="Projects" title="Budgeting" description="Price each line of the client's BOQ with our own cost - material, labour and the rest - and see the profit before the work is bought."
-        actions={
-          <>
-            {edit && <Button variant="outline" disabled={!b?.boq} onClick={() => setCopying(true)}><Copy /> Copy from another project</Button>}
-            <Button variant="outline" disabled={!b?.boq} onClick={() => window.open(budgetFileUrl(job), '_blank')}><Download /> Excel</Button>
-          </>
-        } />
-      <CopyBudgetDialog job={job} open={copying} onClose={() => setCopying(false)} />
+        actions={<Button variant="outline" disabled={!b?.boq} onClick={() => window.open(budgetFileUrl(job), '_blank')}><Download /> Excel</Button>} />
       <div className="mb-4 flex flex-wrap items-end gap-4"><ProjectPicker value={job} onChange={setJob} id="bud-job" /></div>
       {job > 0 && b?.boq && <div className="mb-4 max-w-sm"><Tabs label="Budgeting views" value={view} onChange={setView} items={[{ value: 'budget', label: 'Budget' }, { value: 'actual', label: 'Against actual' }]} /></div>}
       {job > 0 && b?.boq && view === 'actual' && <EarnedValueView job={job} />}
