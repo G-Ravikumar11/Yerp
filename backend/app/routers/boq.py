@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db, get_read_db
 
-from app.constants.boq import BOQ_IMPORT_ALIASES, BOQ_PRICED, BOQ_RATE_ONLY_WORDS, BV_TRANSITIONS
+from app.constants.boq import BOQ_IMPORT_ALIASES, BOQ_PRICED, BOQ_RATE_ONLY_WORDS, BV_TRANSITIONS, boq_grade
 from app.core.audit import log_audit
 from app.core.auth import require_erp_read, require_items_access, wo_actor
 from app.core.currency import inr, money, qty3, sheet_number, unit_rate
@@ -285,7 +285,7 @@ async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...)
                       "uom": (row.get("uom") or "").strip() if kind in BOQ_PRICED else "", "quantity": qty if kind in BOQ_PRICED else 0,
                       "rate": rate if kind in BOQ_PRICED else 0, "amount": money(qty * rate) if kind in BOQ_PRICED else 0,
                       "item_code": (row.get("item_code") or "").strip().upper()[:40] if kind in BOQ_PRICED else "", "remarks": (row.get("remarks") or "").strip(),
-                      "material": (row.get("material") or "").strip()[:60] if kind in BOQ_PRICED else "", "rate_only": rate_only})
+                      "material": boq_grade(row.get("material")) if kind in BOQ_PRICED else "", "rate_only": rate_only})
     if not any(l["kind"] in BOQ_PRICED for l in lines):
         raise HTTPException(400, "Nothing on that sheet read as a priced line." + sheet_note())
     return {"lines": lines[:5000], "read_as": mapping_report(header, mapping), "ignored_columns": unmapped,
