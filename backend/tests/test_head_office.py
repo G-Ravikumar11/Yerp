@@ -357,3 +357,12 @@ def test_register_subcontractors_can_be_given_to_anybody_and_opens_the_vendor_co
     other = sign_in(portal.__class__(portal.app), person(tenant, "site_engineer"))
     refused = other.post("/api/wo/contractors", json=vendor_body())
     assert refused.status_code == 403 and refused.json()["detail"].startswith("Vendor codes are opened by HO QS")
+
+
+def test_the_master_changes_a_vendor_code(tenant):
+    con = tenant.post("/api/wo/contractors", json=vendor_body()).json()
+    body = vendor_body(company_name=con["company_name"], vendor_code="MASTER-7")
+    res = tenant.put("/api/wo/contractors/%d" % con["id"], json=body)
+    assert res.status_code == 200, res.text
+    listed = [c for c in tenant.get("/api/wo/contractors").json()["contractors"] if c["id"] == con["id"]]
+    assert listed and listed[0]["vendor_code"] == "MASTER-7"
