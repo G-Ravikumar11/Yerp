@@ -86,6 +86,7 @@ def test_every_plant_cost_lands_on_its_project_once(tenant):
     res = tenant.post("/api/plant/expenses", json={"asset_id": m["id"], "category": "Spare parts", "spent_on": day(-3), "description": "Filters", "amount": 700})
     assert res.status_code == 200, res.text
     rejected = tenant.post("/api/plant/expenses", json={"asset_id": m["id"], "category": "Other", "spent_on": day(-3), "description": "Doubtful", "amount": 999}).json()
+    assert tenant.post("/api/plant/expenses/%d/submit" % rejected["id"]).status_code == 200
     assert tenant.post("/api/plant/expenses/%d/decision" % rejected["id"], json={"decision": "reject", "remarks": "No voucher"}).status_code == 200
     raised = tenant.post("/api/plant/maintenance", json={"asset_id": m["id"], "kind": "Corrective", "description": "Hose"}).json()
     done = tenant.post("/api/plant/maintenance/%d/complete" % raised["id"], json={"work_performed": "Hose replaced", "parts_cost": 1200, "labour_cost": 300})
@@ -137,6 +138,7 @@ def test_an_approval_decision_or_a_new_bill_changes_the_project_at_once(tenant):
     assert pnl(tenant, j)["equipment"] == 45000
     spent = tenant.post("/api/plant/expenses", json={"asset_id": m["id"], "category": "Other", "spent_on": day(-1), "description": "Crane permit", "amount": 5000}).json()
     assert pnl(tenant, j)["equipment"] == 50000
+    assert tenant.post("/api/plant/expenses/%d/submit" % spent["id"]).status_code == 200
     assert tenant.post("/api/plant/expenses/%d/decision" % spent["id"], json={"decision": "reject", "remarks": "Not ours"}).status_code == 200
     assert pnl(tenant, j)["equipment"] == 45000
 

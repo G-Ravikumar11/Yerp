@@ -29,6 +29,7 @@ OWNED = {
     ("ra_bills", "work_order_id"), ("retention_releases", "work_order_id"),
     ("credit_notes", "ra_bill_id"), ("credit_notes", "sub_bill_id"), ("credit_notes", "work_order_id"),
     ("credit_notes", "sub_order_id"), ("credit_note_lines", "credit_note_id"),
+    ("plant_expense_payments", "expense_id"),
 }
 
 # What the Master can delete one at a time: kind -> (table, model, what it is called, the column that names it).
@@ -101,6 +102,7 @@ POLY = {
     "plant_rentals": {"files": ["plant_rental"]},
     "asset_services": {"files": ["plant_maintenance"]},
     "plant_expenses": {"files": ["plant_expense"]},
+    "plant_rental_invoices": {"files": ["plant_rental_invoice"]},
     "plant_fuel": {"files": ["plant_fuel"]},
     "worker_screenings": {"files": ["worker"]},
     "equipment_checks": {"files": ["equipment_check"]},

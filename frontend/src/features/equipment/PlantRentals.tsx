@@ -1,11 +1,11 @@
-import { useState } from 'react'
-import { Paperclip, Plus, Trash2, Users } from 'lucide-react'
+import { useDeferredValue, useState } from 'react'
+import { Download, Paperclip, Plus, Trash2, Users } from 'lucide-react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilesModal } from '@/components/data/FilesModal'
 import { Badge, Button, Card, ConfirmDialog, Field, Input, Modal, NumField, Select, Textarea } from '@/components/ui'
 import {
-  addRentalInvoice, createRental, decideExpense, extendRental, payRentalInvoice, plantKeys, removeExpense, returnRental, saveExpense, saveProvider,
-  useExpenses, useProvider, useProviders, useRentals, type Expense, type Provider, type Rental, type RentalInvoice, type ReturnDetails,
+  addRentalInvoice, createRental, decideExpense, expensesExport, extendRental, payExpense, payRentalInvoice, plantKeys, removeExpense, returnRental, saveExpense, saveProvider,
+  submitExpense, useExpenseHistory, useExpenses, useProvider, useProviders, useRentals, type Expense, type Provider, type Rental, type RentalInvoice, type ReturnDetails,
 } from '@/api/plant'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -296,29 +296,46 @@ const SOURCE: Record<string, string> = { expense: 'Entered here', fuel: 'Fuel re
 export function Expenses() {
   const { can } = useSession()
   const manage = can('stores.manage|workorders.manage')
+  const approver = can('site.signoff')
+  const payer = can('stores.manage|workorders.manage|accounts.manage|bills.pay')
   const [r, setR] = useState({ from: '', to: '', asset: 0, category: '' })
-  const q = useExpenses({ date_from: r.from, date_to: r.to, asset_id: r.asset, category: r.category })
+  const [search, setSearch] = useState('')
+  const q = useDeferredValue(search.trim())
+  const range = { date_from: r.from, date_to: r.to, asset_id: r.asset, category: r.category, q }
+  const badRange = !!(r.from && r.to && r.to < r.from)
+  const list = useExpenses(badRange ? { ...range, date_to: '' } : range)
   const [edit, setEdit] = useState<Expense | 'new' | null>(null)
   const [removing, setRemoving] = useState<Expense | null>(null)
   const [rejecting, setRejecting] = useState<Expense | null>(null)
+  const [paying, setPaying] = useState<Expense | null>(null)
+  const [history, setHistory] = useState<Expense | null>(null)
   const [files, setFiles] = useState<Expense | null>(null)
   const decide = useAction((v: { e: Expense; d: 'approve' | 'reject'; remarks: string }) => decideExpense(v.e.id, v.d, v.remarks), { invalidate: [plantKeys.all], success: (x) => x.message, onSuccess: () => setRejecting(null) })
+  const send = useAction((e: Expense) => submitExpense(e.id), { invalidate: [plantKeys.all], success: (x) => x.message })
   const del = useAction((e: Expense) => removeExpense(e.id), { invalidate: [plantKeys.all], success: (x) => x.message, onSuccess: () => setRemoving(null) })
-  const { shown, pager } = usePaged(q.data?.expenses)
+  const { shown, pager } = usePaged(list.data?.expenses)
+  const busy = (e: Expense) => (decide.isPending && decide.variables?.e.id === e.id) || (send.isPending && send.variables?.id === e.id)
   const cols: TableColumn<Expense>[] = [
-    { id: 'n', header: 'ID', cell: (e) => <div><span className="font-mono text-[13px]">{e.number}</span><div className="text-xs text-muted-foreground">{SOURCE[e.source]}</div></div> },
+    { id: 'n', header: 'ID', cell: (e) => <div>{e.source === 'expense' ? <button type="button" title="History" aria-label={`History of ${e.number}`} className="font-mono text-[13px] font-semibold text-primary hover:underline" onClick={() => setHistory(e)}>{e.number}</button> : <span className="font-mono text-[13px]">{e.number}</span>}<div className="text-xs text-muted-foreground">{SOURCE[e.source]}</div></div> },
     { id: 'd', header: 'Date', sort: (e) => e.spent_on, cell: (e) => formatDate(e.spent_on) },
     { id: 'm', header: 'Machine', cell: (e) => <div><span className="font-mono text-[13px]">{e.code}</span> {e.machine}</div> },
     { id: 'c', header: 'Category', cell: (e) => <div>{e.category}<div className="max-w-56 truncate text-xs text-muted-foreground" title={e.description}>{e.description}</div></div> },
     { id: 'a', header: 'Amount', align: 'right', sort: (e) => e.amount, cell: (e) => <div>{formatINR(e.amount)}{e.quantity > 0 && e.unit_rate > 0 && <div className="text-xs text-muted-foreground">{e.quantity} x {e.unit_rate}</div>}</div> },
     { id: 'v', header: 'Vendor / invoice', hideBelow: 'md', cell: (e) => <div>{e.vendor || '-'}<div className="text-xs text-muted-foreground">{e.invoice_no}</div></div> },
-    { id: 'p', header: 'Payment', hideBelow: 'lg', cell: (e) => e.payment_status || '-' },
-    { id: 's', header: 'Approval', cell: (e) => <Badge tone={e.approval_status === 'Approved' ? 'success' : e.approval_status === 'Rejected' ? 'danger' : e.approval_status === 'Pending' ? 'warning' : 'neutral'} dot>{e.approval_status}</Badge> },
+    {
+      id: 'p', header: 'Payment', hideBelow: 'lg',
+      cell: (e) => e.remaining === null ? <span className="text-xs text-muted-foreground">{e.payment_note || 'Not tracked'}</span> : e.approval_status === 'Rejected' ? <span className="text-muted-foreground">-</span> : (
+        <div>{e.payment_status || '-'}{e.remaining > 0 && e.payment_status !== 'Paid' && <div className="text-xs text-muted-foreground">{formatINR(e.remaining)} left{e.legacy_payment && ' (earlier payment not recorded)'}</div>}{e.source === 'rental' && e.payment_note && <div className="text-xs text-muted-foreground">{e.payment_note}</div>}</div>
+      ),
+    },
+    { id: 's', header: 'Approval', cell: (e) => <div><Badge tone={APPROVAL_TONE[e.approval_label] ?? 'neutral'} dot>{e.approval_label}</Badge>{e.approved_by && e.source === 'expense' && e.approval_status !== 'Pending' && e.approval_status !== 'Recorded' && <div className="text-xs text-muted-foreground">{e.approved_by}{e.approved_on && `, ${formatDate(e.approved_on.slice(0, 10))}`}</div>}{e.decision_note && <div className="max-w-48 truncate text-xs text-muted-foreground" title={e.decision_note}>{e.decision_note}</div>}</div> },
     {
       id: 'act', header: '', align: 'right',
       cell: (e) => e.source !== 'expense' ? null : (
-        <div className="flex justify-end gap-1">
-          {can('site.signoff') && e.approval_status === 'Pending' && <><Button size="sm" onClick={() => decide.mutate({ e, d: 'approve', remarks: '' })}>Approve</Button><Button size="sm" variant="ghost" className="text-danger" onClick={() => setRejecting(e)}>Reject</Button></>}
+        <div className="flex flex-wrap justify-end gap-1">
+          {manage && e.approval_status === 'Recorded' && <Button size="sm" loading={send.isPending && send.variables?.id === e.id} disabled={busy(e)} onClick={() => send.mutate(e)}>Submit</Button>}
+          {approver && e.approval_status === 'Pending' && <><Button size="sm" disabled={busy(e)} loading={decide.isPending && decide.variables?.e.id === e.id} onClick={() => decide.mutate({ e, d: 'approve', remarks: '' })}>Approve</Button><Button size="sm" variant="ghost" className="text-danger" onClick={() => setRejecting(e)}>Reject</Button></>}
+          {payer && e.approval_status === 'Approved' && (e.remaining ?? 0) > 0 && <Button size="sm" variant="outline" onClick={() => setPaying(e)}>Pay</Button>}
           {manage && e.approval_status !== 'Approved' && <Button size="sm" variant="outline" onClick={() => setEdit(e)}>Edit</Button>}
           <Button size="sm" variant="ghost" aria-label={`Attachments for ${e.number}`} onClick={() => setFiles(e)}><Paperclip /></Button>
           {manage && e.approval_status !== 'Approved' && <Button size="sm" variant="ghost" className="text-danger" aria-label={`Delete ${e.number}`} onClick={() => setRemoving(e)}><Trash2 /></Button>}
@@ -326,24 +343,86 @@ export function Expenses() {
       ),
     },
   ]
-  const d = q.data
+  const d = list.data
+  const pick = (category: string) => setR((x) => ({ ...x, category: x.category === category ? '' : category }))
   return (
     <div>
       <RangeBar from={r.from} to={r.to} onChange={(from, to) => setR((x) => ({ ...x, from, to }))}>
         <div className="w-52"><MachineSelect id="ex-fm" value={r.asset} onChange={(asset) => setR((x) => ({ ...x, asset }))} placeholder="Every machine" /></div>
         <div className="w-52"><Select aria-label="Category" value={r.category} placeholder="Every category" onChange={(e) => setR((x) => ({ ...x, category: e.target.value }))} options={(d?.all_categories ?? []).map((c) => ({ value: c, label: c }))} /></div>
-        {manage && <Button className="ml-auto" onClick={() => setEdit('new')}><Plus /> Expense</Button>}
+        <div className="w-56"><Input aria-label="Search expenses" placeholder="ID, vendor or invoice no." value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+        <span className="ml-auto flex gap-2">
+          <Button variant="outline" asChild><a href={expensesExport(range)} download><Download /> Excel</a></Button>
+          {manage && <Button onClick={() => setEdit('new')}><Plus /> Expense</Button>}
+        </span>
       </RangeBar>
-      {d && <div className="mb-3 flex flex-wrap gap-2 text-[13px]">{Object.entries(d.by_category).map(([k, v]) => <span key={k} className="rounded-md border border-border px-3 py-1">{k}: <strong>{formatINR(v)}</strong></span>)}<span className="rounded-md bg-primary-soft px-3 py-1 font-semibold">Total {formatINR(d.total)}</span></div>}
-      {q.isError ? <LoadError message={q.error.message} retry={() => q.refetch()} /> : (
-        <Card className="overflow-hidden"><DataTable label="Equipment expenses" className="rounded-none border-0 shadow-none" rows={shown} columns={cols} rowKey={(e) => `${e.source}-${e.id}`} loading={q.isPending} empty="No expenses for these filters." />{!q.isPending && pager}</Card>
+      {badRange && <p role="alert" className="mb-2 text-[13px] text-danger">The to date is before the from date.</p>}
+      {d && (
+        <div className="mb-3 flex flex-wrap gap-2 text-[13px]" aria-label="Expenses by category">
+          {Object.entries(d.by_category).map(([k, v]) => (
+            <button key={k} type="button" aria-pressed={r.category === k} onClick={() => pick(k)} className={`rounded-md border px-3 py-1 transition-colors hover:border-primary/50 ${r.category === k ? 'border-primary bg-primary-soft' : 'border-border'}`}>{k}: <strong>{formatINR(v)}</strong></button>
+          ))}
+          <button type="button" aria-pressed={!r.category} onClick={() => setR((x) => ({ ...x, category: '' }))} className={`rounded-md px-3 py-1 font-semibold ${!r.category ? 'bg-primary-soft ring-1 ring-primary/40' : 'bg-primary-soft'}`}>Total {formatINR(d.total_all)}</button>
+          {r.category && <span className="self-center text-muted-foreground">Showing {r.category}: {formatINR(d.total)}</span>}
+        </div>
       )}
-      <p className="mt-2 text-[11px] text-muted-foreground">Fuel, maintenance and rental bills come from their own registers and are shown here once. Spares, wages, transport, insurance and other costs are entered here. A rejected expense is not counted.</p>
+      {list.isError ? <LoadError message={list.error.message} retry={() => list.refetch()} /> : (
+        <Card className="overflow-hidden"><DataTable label="Equipment expenses" className="rounded-none border-0 shadow-none" rows={shown} columns={cols} rowKey={(e) => `${e.source}-${e.id}`} loading={list.isPending} empty={q ? `Nothing matches "${q}".` : 'No expenses for these filters.'} />{!list.isPending && pager}</Card>
+      )}
+      <p className="mt-2 text-[11px] text-muted-foreground">Fuel, maintenance and rental bills come from their own registers and are shown here once. Spares, wages, transport, insurance and other costs are entered here: recorded, submitted, approved, then paid. A rejected expense is not counted.</p>
       <ExpenseModal edit={edit} categories={d?.categories ?? []} onClose={() => setEdit(null)} />
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title={removing ? `Delete ${removing.number}?` : ''} description="Do you want to delete this? It cannot be undone." confirmLabel="Yes" cancelLabel="Cancel" tone="danger" loading={del.isPending} onConfirm={() => { if (removing) del.mutate(removing) }} />
-      <ConfirmDialog open={!!rejecting} onOpenChange={(o) => !o && setRejecting(null)} title="Reject this expense?" reason={{ label: 'Why', required: true }} confirmLabel="Reject" cancelLabel="Cancel" tone="danger" loading={decide.isPending} onConfirm={(remarks) => { if (rejecting) decide.mutate({ e: rejecting, d: 'reject', remarks }) }} />
+      <ConfirmDialog open={!!rejecting} onOpenChange={(o) => !o && setRejecting(null)} title={rejecting?.approval_status === 'Approved' ? `Reverse the approval of ${rejecting.number}?` : 'Reject this expense?'} reason={{ label: 'Why', required: true }} confirmLabel="Reject" cancelLabel="Cancel" tone="danger" loading={decide.isPending} onConfirm={(remarks) => { if (rejecting) decide.mutate({ e: rejecting, d: 'reject', remarks }) }} />
+      {paying && <PayExpenseModal expense={paying} onClose={() => setPaying(null)} />}
+      {history && <ExpenseHistoryModal expense={history} onClose={() => setHistory(null)} />}
       {files && <FilesModal type="plant_expense" id={files.id} title={`${files.number} invoice and documents`} onClose={() => setFiles(null)} />}
     </div>
+  )
+}
+
+const APPROVAL_TONE: Record<string, 'success' | 'danger' | 'warning' | 'neutral' | 'info'> = { Approved: 'success', Verified: 'success', Rejected: 'danger', Disputed: 'danger', Submitted: 'warning', Recorded: 'neutral' }
+
+/** One payment against an approved expense. Its key is made when the form opens, so it is recorded once however often it is sent. */
+export function PayExpenseModal({ expense: e, onClose }: { expense: Expense; onClose: () => void }) {
+  const left = e.remaining ?? 0
+  const [amount, setAmount] = useState(left)
+  const [on, setOn] = useState(today())
+  const [ref, setRef] = useState('')
+  const [key] = useState(() => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`))
+  const save = useAction(() => payExpense(e.id, { amount, paid_on: on, reference: ref }, key), { invalidate: [plantKeys.all], success: (x) => x.message, onSuccess: onClose })
+  const error = amount <= 0 ? 'The amount paid.' : amount > left + 0.009 ? `Only ${formatINR(left)} is left.` : on > today() ? 'Not in the future.' : on < e.spent_on ? 'Not before the expense.' : ''
+  return (
+    <Modal open onOpenChange={(o) => !o && onClose()} title={`Pay ${e.number}`} description={`${formatINR(e.amount)} approved, ${formatINR(e.paid ?? 0)} paid, ${formatINR(left)} left.`}>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Amount" htmlFor="xp-a" error={amount > left + 0.009 ? error : ''}><NumField id="xp-a" value={amount} onValue={setAmount} /></Field>
+        <Field label="Paid on" htmlFor="xp-d"><Input id="xp-d" type="date" min={e.spent_on} max={today()} value={on} onChange={(ev) => setOn(ev.target.value)} /></Field>
+        <Field label="Reference" htmlFor="xp-r" hint="UTR, cheque or voucher"><Input id="xp-r" value={ref} onChange={(ev) => setRef(ev.target.value)} /></Field>
+      </div>
+      <FormFoot error={save.error?.message || (error && amount > 0 && amount <= left ? error : '')} busy={save.isPending} label="Record payment" onClose={onClose} onSave={() => !error && !save.isPending && save.mutate()} />
+    </Modal>
+  )
+}
+
+const STEP: Record<string, string> = { recorded: 'Recorded', updated: 'Changed', submitted: 'Submitted', approved: 'Approved', rejected: 'Rejected', paid: 'Paid', removed: 'Removed' }
+
+function ExpenseHistoryModal({ expense: e, onClose }: { expense: Expense; onClose: () => void }) {
+  const h = useExpenseHistory(e.id)
+  return (
+    <Modal open onOpenChange={(o) => !o && onClose()} title={`${e.number} history`} description={`${e.category} - ${formatINR(e.amount)}`} size="lg">
+      {h.isError ? <LoadError message={h.error.message} retry={() => h.refetch()} /> : !h.data ? <p className="text-[13px] text-muted-foreground">Loading...</p> : (
+        <div className="grid gap-4 text-[13px]">
+          <section><h3 className="mb-2 text-sm font-semibold">Payments</h3>
+            {h.data.payments.length === 0 ? <p className="text-muted-foreground">{h.data.legacy_payment ? 'Marked paid before payments were recorded here.' : 'No payment yet.'}</p> : (
+              <ul className="grid gap-1">{h.data.payments.map((p, i) => <li key={i}>{formatDate(p.paid_on)} - <strong>{formatINR(p.amount)}</strong>{p.reference && ` - ${p.reference}`} <span className="text-muted-foreground">({p.by})</span></li>)}</ul>
+            )}
+            <p className="mt-1 text-muted-foreground">Paid {formatINR(h.data.paid)}, {formatINR(h.data.remaining)} left.</p>
+          </section>
+          <section><h3 className="mb-2 text-sm font-semibold">Steps</h3>
+            <ul className="grid gap-1">{h.data.history.map((x, i) => <li key={i}><span className="text-muted-foreground">{x.at}</span> <strong>{STEP[x.action] ?? x.action}</strong>{x.who && ` by ${x.who}`}{x.details && <span className="text-muted-foreground"> - {x.details}</span>}</li>)}</ul>
+          </section>
+        </div>
+      )}
+    </Modal>
   )
 }
 
@@ -353,7 +432,7 @@ function ExpenseModal({ edit, categories, onClose }: { edit: Expense | 'new' | n
 }
 
 function ExpenseForm({ e, categories, onClose }: { e: Expense | null; categories: string[]; onClose: () => void }) {
-  const [f, setF] = useState({ asset_id: e?.asset_id ?? 0, category: e?.category ?? categories[0] ?? 'Other', spent_on: e?.spent_on ?? today(), description: e?.description ?? '', vendor: e?.vendor ?? '', invoice_no: e?.invoice_no ?? '', payment_status: e?.payment_status ?? 'Unpaid', payment_ref: e?.payment_ref ?? '' })
+  const [f, setF] = useState({ asset_id: e?.asset_id ?? 0, category: e?.category ?? categories[0] ?? 'Other', spent_on: e?.spent_on ?? today(), description: e?.description ?? '', vendor: e?.vendor ?? '', invoice_no: e?.invoice_no ?? '' })
   const [n, setN] = useState({ quantity: e?.quantity ?? 0, unit_rate: e?.unit_rate ?? 0, amount: e?.amount ?? 0 })
   const [tried, setTried] = useState(false)
   const set = (k: keyof typeof f) => (ev: { target: { value: string } }) => setF((x) => ({ ...x, [k]: ev.target.value }))
@@ -373,10 +452,9 @@ function ExpenseForm({ e, categories, onClose }: { e: Expense | null; categories
         <Field label="Total amount" htmlFor="xe-a" error={tried ? errors.amount : ''} hint={n.quantity > 0 && n.unit_rate > 0 ? 'Quantity x rate' : undefined}><NumField id="xe-a" value={computed} disabled={n.quantity > 0 && n.unit_rate > 0} onValue={(v) => setN((x) => ({ ...x, amount: v }))} /></Field>
         <Field label="Vendor or payee" htmlFor="xe-v"><Input id="xe-v" value={f.vendor} onChange={set('vendor')} /></Field>
         <Field label="Invoice or voucher no." htmlFor="xe-i" hint="Each is recorded once"><Input id="xe-i" value={f.invoice_no} onChange={set('invoice_no')} /></Field>
-        <Field label="Payment" htmlFor="xe-p"><Select id="xe-p" value={f.payment_status} onChange={set('payment_status')} options={['Unpaid', 'Part paid', 'Paid'].map((x) => ({ value: x, label: x }))} /></Field>
-        <Field label="Payment reference" htmlFor="xe-pr" className="sm:col-span-2"><Input id="xe-pr" value={f.payment_ref} onChange={set('payment_ref')} /></Field>
       </div>
-      <FormFoot error={save.error?.message} busy={save.isPending} label={e ? 'Save' : 'Record the expense'} onClose={onClose} onSave={() => (bad ? setTried(true) : save.mutate())} />
+      <p className="mt-3 text-[11px] text-muted-foreground">Payments are recorded against it once it is approved. Attach the bill from the paperclip in the list.</p>
+      <FormFoot error={save.error?.message} busy={save.isPending} label={e ? 'Save' : 'Record the expense'} onClose={onClose} onSave={() => (bad ? setTried(true) : !save.isPending && save.mutate())} />
     </div>
   )
 }

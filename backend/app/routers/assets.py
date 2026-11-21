@@ -314,7 +314,8 @@ def complete_scheduled_service(asset_id: int, body: ServiceDoneIn, request: Requ
         s = S(client_id=client.id, asset_id=a.id, job_id=a.current_job_id, kind="Preventive", number=number_for(db, S, client.id, "MNT"),
               reported_on=on, description="Scheduled service", recorded_by_name=actor_name)
         db.add(s)
-    s.invoice_no = check_invoice_unique(db, client.id, body.invoice_no, ("maintenance", s.id) if s.id else None)
+    s.invoice_no = check_invoice_unique(db, client.id, body.invoice_no, ("maintenance", s.id) if s.id else None,
+                                        vendor=getattr(body, "vendor", None) or s.vendor or s.mechanic or "")
     s.status, s.service_on, s.completed_on = "Completed", on, on
     s.meter_at_service = body.meter_at_service
     s.work_performed = body.work_performed.strip()

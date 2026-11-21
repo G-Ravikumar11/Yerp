@@ -159,10 +159,26 @@ class DBPlantExpense(Base):
     amount = Column(Float, default=0.0)
     vendor = Column(String, default="")
     invoice_no = Column(String, default="", index=True)
-    payment_status = Column(String, default="Unpaid")      # Unpaid | Part paid | Paid
+    payment_status = Column(String, default="Unpaid")      # Unpaid | Part paid | Paid - from its payments once any are recorded
     payment_ref = Column(String, default="")
-    approval_status = Column(String, default="Pending")    # Pending | Approved | Rejected
+    approval_status = Column(String, default="Pending")    # Recorded | Pending (submitted) | Approved | Rejected
     approved_by = Column(String, default="")
+    recorded_by = Column(String, default="")
+    created_at = Column(String, default=_now)
+    approved_on = Column(String, default="")               # when it was approved or rejected
+    decision_note = Column(Text, default="")               # the reason given with the decision
+
+
+class DBPlantExpensePayment(Base):
+    """One payment against an approved expense. Several make up a part-paid or paid expense; none is ever overwritten."""
+    __tablename__ = "plant_expense_payments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    expense_id = Column(Integer, ForeignKey("plant_expenses.id"), nullable=False, index=True)
+    amount = Column(Float, default=0.0)
+    paid_on = Column(String, default="")
+    reference = Column(String, default="")
     recorded_by = Column(String, default="")
     created_at = Column(String, default=_now)
 

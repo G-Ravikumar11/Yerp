@@ -185,6 +185,12 @@ class ExpenseIn(BaseModel):
     payment_ref: Optional[str] = ""
 
 
+class ExpensePaymentIn(BaseModel):
+    amount: float
+    paid_on: str = ""
+    reference: Optional[str] = ""
+
+
 class GapResolveIn(BaseModel):
     asset_id: int
     from_date: str

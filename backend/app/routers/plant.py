@@ -26,7 +26,7 @@ from app.core.auth import require_erp_read, wo_actor
 from app.core.currency import money
 from app.core.sheets import sheet_response
 from app.schemas.plant import (
-    AllocationIn, DecisionIn, EndIn, ExpenseIn, ExtendIn, FuelIn, HoursRuleIn, LogbookIn, MaintenanceDoneIn, MaintenanceIn,
+    AllocationIn, DecisionIn, EndIn, ExpenseIn, ExpensePaymentIn, ExtendIn, FuelIn, HoursRuleIn, LogbookIn, MaintenanceDoneIn, MaintenanceIn,
     MaintenanceUpdateIn, PaymentIn, ProviderIn, ReassignIn, RentalIn, RentalInvoiceIn, ReturnIn,
 )
 from app.services.assets import (asset_dict, asset_or_404, asset_service_state, describe_changes, hire_cost_for,
@@ -623,7 +623,7 @@ def create_fuel(body: FuelIn, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(400, "%g litres at %g is %s, not %s." % (body.litres, body.rate, amount, body.amount))
     if body.meter_reading is not None and body.meter_reading < 0:
         raise HTTPException(400, "A meter reading cannot be negative.")
-    voucher = check_invoice_unique(db, client.id, body.voucher_no)
+    voucher = check_invoice_unique(db, client.id, body.voucher_no, vendor=body.supplier or "")
     F = models.DBPlantFuel
     f = F(client_id=client.id, number=number_for(db, F, client.id, "FUEL"), asset_id=a.id, job_id=a.current_job_id, filled_at="%s %s" % (day, tm),
           fuel_type=body.fuel_type, litres=round(body.litres, 2), rate=body.rate, amount=amount, supplier=(body.supplier or "").strip()[:120],
@@ -772,7 +772,7 @@ def update_maintenance(mid: int, body: MaintenanceUpdateIn, request: Request, db
     if body.downtime_start is not None:
         s.downtime_start = body.downtime_start.strip()[:16]
     if body.invoice_no is not None:
-        s.invoice_no = check_invoice_unique(db, client.id, body.invoice_no, ("maintenance", s.id))
+        s.invoice_no = check_invoice_unique(db, client.id, body.invoice_no, ("maintenance", s.id), vendor=s.vendor or s.mechanic or "")
     for f in ("parts_cost", "labour_cost"):
         val = getattr(body, f)
         if val is not None:
@@ -816,7 +816,7 @@ def complete_maintenance(mid: int, body: MaintenanceDoneIn, request: Request, db
     meter = body.meter_at_service if body.meter_at_service is not None else a.meter_reading
     if body.next_service_meter is not None and body.next_service_meter <= (meter or 0):
         raise HTTPException(400, "The next service reading is above the meter now (%g)." % (meter or 0))
-    s.invoice_no = check_invoice_unique(db, client.id, body.invoice_no, ("maintenance", s.id))
+    s.invoice_no = check_invoice_unique(db, client.id, body.invoice_no, ("maintenance", s.id), vendor=getattr(body, "mechanic", None) or s.vendor or s.mechanic or "")
     before = schedule_snapshot(a)
     if s.kind == "Preventive":
         # A preventive job is the scheduled service: the clock starts again from it, the interval unchanged.
@@ -1142,7 +1142,8 @@ def return_rental(rid: int, body: ReturnIn, request: Request, db: Session = Depe
 def add_rental_invoice(rid: int, body: RentalInvoiceIn, request: Request, db: Session = Depends(get_db)):
     client, _, actor = wo_actor(request, db, MANAGE)
     r = _rental_or_404(db, client.id, rid)
-    no = check_invoice_unique(db, client.id, body.invoice_no)
+    prov = db.query(models.DBPlantRentalProvider).filter(models.DBPlantRentalProvider.id == r.provider_id).first()
+    no = check_invoice_unique(db, client.id, body.invoice_no, vendor=prov.name if prov else "")
     if not no:
         raise HTTPException(400, "The invoice number.")
     on = clean_day(body.invoice_date, "invoice date") or today()
@@ -1185,25 +1186,72 @@ def pay_rental_invoice(iid: int, body: PaymentIn, request: Request, db: Session 
 
 
 # ---- expenses ----------------------------------------------------------------------------------------
+#
+# Expenses entered here run Recorded -> Submitted (stored as "Pending", as before) -> Approved or Rejected. Payment is
+# separate: payments are recorded against an approved expense, each kept, and the status (Unpaid, Part paid, Paid)
+# follows from them. Fuel, maintenance and rental bills are read live from their own registers - never copied here -
+# so each appears once, carries its own number, and follows any change made where it was recorded.
 
-def expense_dict(e, assets, jobs):
+APPROVAL_LABEL = {"Recorded": "Recorded", "Pending": "Submitted", "Approved": "Approved", "Rejected": "Rejected"}
+PAY = MANAGE + ("accounts.manage", "bills.pay")
+
+
+def _paid_of(e, payments):
+    """(paid, remaining, legacy). An expense marked paid by hand before payments were recorded keeps that word: with no
+    payment on record, Paid is taken as paid in full; Part paid as an amount not recorded."""
+    rows = payments.get(e.id, [])
+    if rows:
+        paid = money(sum(p.amount or 0 for p in rows))
+        return paid, money((e.amount or 0) - paid), False
+    if e.payment_status == "Paid":
+        return money(e.amount or 0), 0.0, True
+    return 0.0, money(e.amount or 0), e.payment_status == "Part paid"
+
+
+def _payment_status(amount, paid):
+    if paid <= 0:
+        return "Unpaid"
+    return "Paid" if paid >= (amount or 0) - 0.009 else "Part paid"
+
+
+def expense_dict(e, assets, jobs, payments=None):
     a = assets.get(e.asset_id)
+    paid, remaining, legacy = _paid_of(e, payments or {})
     return {"id": e.id, "number": e.number, "source": "expense", "asset_id": e.asset_id, "code": a.code if a else "", "machine": a.name if a else "",
             "project": job_label(jobs, e.job_id), "category": e.category, "spent_on": e.spent_on, "description": e.description or "",
             "quantity": e.quantity or 0, "unit_rate": e.unit_rate or 0, "amount": e.amount, "vendor": e.vendor or "", "invoice_no": e.invoice_no or "",
-            "payment_status": e.payment_status, "payment_ref": e.payment_ref or "", "approval_status": e.approval_status, "approved_by": e.approved_by or "",
-            "recorded_by": e.recorded_by or ""}
+            "payment_status": e.payment_status, "payment_ref": e.payment_ref or "", "approval_status": e.approval_status,
+            "approval_label": APPROVAL_LABEL.get(e.approval_status, e.approval_status), "approved_by": e.approved_by or "", "approved_on": e.approved_on or "",
+            "decision_note": e.decision_note or "", "recorded_by": e.recorded_by or "", "paid": paid, "remaining": remaining, "legacy_payment": legacy, "payment_note": "",
+            "payments": len((payments or {}).get(e.id, []))}
+
+
+def _payments_by_expense(db, client_id):
+    by = {}
+    P = models.DBPlantExpensePayment
+    for p in db.query(P).filter(P.client_id == client_id).order_by(P.paid_on, P.id).all():
+        by.setdefault(p.expense_id, []).append(p)
+    return by
+
+
+def _matches(row, q):
+    q = q.strip().lower()
+    return not q or any(q in (row.get(k) or "").lower() for k in ("number", "vendor", "invoice_no"))
 
 
 @router.get("/api/plant/expenses")
-def list_expenses(request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, category: str = "", db: Session = Depends(get_read_db)):
+def list_expenses(request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, category: str = "", q: str = "",
+                  db: Session = Depends(get_read_db)):
     """One register of every machine cost: what is entered here, and - read-only, from their own registers - fuel,
-    maintenance and rental bills, so each appears once."""
+    maintenance and rental bills, so each appears once. `q` finds an ID, a vendor or an invoice number."""
     client = require_erp_read(request, db)
-    df, dt = date_from[:10], date_to[:10]
+    df, dt = clean_day(date_from, "from date"), clean_day(date_to, "to date")
+    if df and dt and dt < df:
+        raise HTTPException(400, "The to date is before the from date.")
     assets = {a.id: a for a in db.query(models.DBAsset).filter(models.DBAsset.client_id == client.id).all()}
     jobs = jobs_of(db, client.id)
-    rows = [expense_dict(e, assets, jobs) for e in db.query(models.DBPlantExpense).filter(models.DBPlantExpense.client_id == client.id).order_by(
+    payments = _payments_by_expense(db, client.id)
+    rows = [expense_dict(e, assets, jobs, payments) for e in db.query(models.DBPlantExpense).filter(models.DBPlantExpense.client_id == client.id).order_by(
         models.DBPlantExpense.spent_on.desc()).all() if in_range(e.spent_on, df, dt) and (not asset_id or e.asset_id == asset_id)]
     code = lambda aid: (assets[aid].code, assets[aid].name) if aid in assets else ("", "")
     for f in db.query(models.DBPlantFuel).filter(models.DBPlantFuel.client_id == client.id).all():
@@ -1211,32 +1259,45 @@ def list_expenses(request: Request, date_from: str = "", date_to: str = "", asse
             rows.append({"id": f.id, "number": f.number, "source": "fuel", "asset_id": f.asset_id, "code": code(f.asset_id)[0], "machine": code(f.asset_id)[1],
                          "project": job_label(jobs, f.job_id), "category": "Fuel and diesel", "spent_on": f.filled_at[:10], "description": "%g L %s" % (f.litres, f.fuel_type),
                          "quantity": f.litres, "unit_rate": f.rate, "amount": f.amount, "vendor": f.supplier or "", "invoice_no": f.voucher_no or "",
-                         "payment_status": "", "payment_ref": "", "approval_status": "Recorded", "approved_by": "", "recorded_by": f.recorded_by or ""})
+                         # The Fuel register keeps no payment, so none is shown here - never "paid" for want of a record.
+                         "payment_status": "Not tracked", "payment_ref": "", "payment_note": "Payment is not recorded in the Fuel register", "approval_status": "Recorded", "approval_label": "Recorded", "approved_by": "", "approved_on": "",
+                         "decision_note": "", "recorded_by": f.recorded_by or "", "paid": None, "remaining": None, "legacy_payment": False, "payments": 0})
     for s in db.query(models.DBAssetService).filter(models.DBAssetService.client_id == client.id, models.DBAssetService.total_cost > 0).all():
         if in_range(s.completed_on or s.service_on, df, dt) and (not asset_id or s.asset_id == asset_id):
+            st = s.approval_status or "Recorded"
             rows.append({"id": s.id, "number": s.number or ("SVC-%d" % s.id), "source": "maintenance", "asset_id": s.asset_id, "code": code(s.asset_id)[0],
                          "machine": code(s.asset_id)[1], "project": job_label(jobs, s.job_id), "category": "Maintenance and repairs",
                          "spent_on": s.completed_on or s.service_on, "description": (s.work_performed or s.description or "")[:200], "quantity": 0, "unit_rate": 0,
-                         "amount": s.total_cost, "vendor": s.mechanic or s.vendor or "", "invoice_no": s.invoice_no or "", "payment_status": "", "payment_ref": "",
-                         "approval_status": s.approval_status or "Recorded", "approved_by": s.approved_by or "", "recorded_by": s.recorded_by_name or ""})
+                         "amount": s.total_cost, "vendor": s.mechanic or s.vendor or "", "invoice_no": s.invoice_no or "", "payment_status": "Not tracked", "payment_ref": "",
+                         "payment_note": "Payment is not recorded in Maintenance",
+                         "approval_status": st, "approval_label": APPROVAL_LABEL.get(st, st), "approved_by": s.approved_by or "", "approved_on": "", "decision_note": "",
+                         "recorded_by": s.recorded_by_name or "", "paid": None, "remaining": None, "legacy_payment": False, "payments": 0})
     rentals = {r.id: r for r in db.query(models.DBPlantRental).filter(models.DBPlantRental.client_id == client.id).all()}
     for i in db.query(models.DBPlantRentalInvoice).filter(models.DBPlantRentalInvoice.client_id == client.id).all():
         r = rentals.get(i.rental_id)
         if r and in_range(i.invoice_date, df, dt) and (not asset_id or r.asset_id == asset_id):
+            st = i.verification_status or "Recorded"
             rows.append({"id": i.id, "number": r.number, "source": "rental", "asset_id": r.asset_id, "code": code(r.asset_id)[0], "machine": code(r.asset_id)[1],
                          "project": "", "category": "Rental charges", "spent_on": i.invoice_date, "description": "Hire %s to %s" % (i.period_from or "", i.period_to or ""),
                          "quantity": i.billed_hours or 0, "unit_rate": 0, "amount": i.amount, "vendor": "", "invoice_no": i.invoice_no,
                          "payment_status": "Paid" if (i.paid or 0) >= (i.amount or 0) else ("Part paid" if i.paid else "Unpaid"),
-                         "payment_ref": i.payment_ref or "", "approval_status": "Recorded", "approved_by": "", "recorded_by": i.recorded_by or ""})
-    if category:
-        rows = [r for r in rows if r["category"] == category]
-    rows.sort(key=lambda r: r["spent_on"], reverse=True)
+                         "payment_ref": i.payment_ref or "", "payment_note": ("Paid %s on %s" % (money(i.paid or 0), i.paid_on)) if i.paid and i.paid_on else "",
+                         "approval_status": "Recorded", "approval_label": {"Approved": "Verified", "Disputed": "Disputed"}.get(st, "Recorded"),
+                         "approved_by": i.verified_by or "", "approved_on": i.verified_on or "", "decision_note": "", "recorded_by": i.recorded_by or "",
+                         "paid": money(i.paid or 0), "remaining": money((i.amount or 0) - (i.paid or 0)), "legacy_payment": False, "payments": 0})
+    rows = [r for r in rows if _matches(r, q)]
+    # The category cards: every category under the other filters, so any card can be chosen; the table then shows one.
     counted = [r for r in rows if r["approval_status"] != "Rejected"]
     by_cat = {}
     for r in counted:
         by_cat[r["category"]] = money(by_cat.get(r["category"], 0) + r["amount"])
+    total_all = money(sum(r["amount"] for r in counted))
+    if category:
+        rows = [r for r in rows if r["category"] == category]
+    rows.sort(key=lambda r: r["spent_on"], reverse=True)
+    shown = [r for r in rows if r["approval_status"] != "Rejected"]
     return {"expenses": rows, "categories": list(EXPENSE_CATEGORIES), "all_categories": list(EXPENSE_CATEGORIES) + list(DERIVED_CATEGORIES),
-            "by_category": by_cat, "total": money(sum(r["amount"] for r in counted))}
+            "by_category": by_cat, "total": money(sum(r["amount"] for r in shown)), "total_all": total_all}
 
 
 def _expense_fields(db, client_id, body, e):
@@ -1257,9 +1318,7 @@ def _expense_fields(db, client_id, body, e):
         raise HTTPException(400, "%g at %g is %s." % (qty, rate, amount))
     if not amount > 0:
         raise HTTPException(400, "The amount.")
-    if body.payment_status not in ("Unpaid", "Part paid", "Paid"):
-        raise HTTPException(400, "Unpaid, part paid or paid.")
-    e.invoice_no = check_invoice_unique(db, client_id, body.invoice_no, ("expense", e.id) if e.id else None)
+    e.invoice_no = check_invoice_unique(db, client_id, body.invoice_no, ("expense", e.id) if e.id else None, vendor=body.vendor or "")
     # The same cost typed twice - same machine, day, category and amount, with no voucher to tell them apart.
     if not e.invoice_no:
         q = db.query(models.DBPlantExpense).filter(models.DBPlantExpense.client_id == client_id, models.DBPlantExpense.asset_id == body.asset_id,
@@ -1273,7 +1332,8 @@ def _expense_fields(db, client_id, body, e):
             raise HTTPException(409, "%s is the same expense - same machine, day, category and amount. Give the invoice number if it really is another." % twin.number)
     e.category, e.spent_on, e.description = body.category, on, body.description.strip()[:500]
     e.quantity, e.unit_rate, e.amount = qty, rate, amount
-    e.vendor, e.payment_status, e.payment_ref = (body.vendor or "").strip()[:120], body.payment_status, (body.payment_ref or "").strip()[:80]
+    # Payment is recorded as payments once the expense is approved, not typed with it.
+    e.vendor = (body.vendor or "").strip()[:120]
 
 
 @router.post("/api/plant/expenses")
@@ -1281,18 +1341,19 @@ def create_expense(body: ExpenseIn, request: Request, db: Session = Depends(get_
     client, _, actor = wo_actor(request, db, MANAGE)
     a = asset_or_404(db, client.id, body.asset_id)
     E = models.DBPlantExpense
-    e = E(client_id=client.id, asset_id=a.id, job_id=a.current_job_id, recorded_by=actor, approval_status="Pending")
+    e = E(client_id=client.id, asset_id=a.id, job_id=a.current_job_id, recorded_by=actor, approval_status="Recorded", payment_status="Unpaid", payment_ref="")
     _expense_fields(db, client.id, body, e)
     e.number = number_for(db, E, client.id, "EXP")
     db.add(e)
     db.flush()
     audit(db, client, "plant.expense.recorded", "plant_expense", e.id, e.number, "%s %s %s" % (a.code, e.category, e.amount), actor, request)
     db.commit()
-    return {"ok": True, "id": e.id, "message": "%s recorded: %s." % (e.number, e.amount)}
+    return {"ok": True, "id": e.id, "message": "%s recorded: %s. Submit it for approval when it is ready." % (e.number, e.amount)}
 
 
-def _expense_or_404(db, client_id, eid):
-    e = db.query(models.DBPlantExpense).filter(models.DBPlantExpense.id == eid, models.DBPlantExpense.client_id == client_id).first()
+def _expense_or_404(db, client_id, eid, lock=False):
+    q = db.query(models.DBPlantExpense).filter(models.DBPlantExpense.id == eid, models.DBPlantExpense.client_id == client_id)
+    e = (q.with_for_update() if lock else q).first()
     if not e:
         raise HTTPException(404, "Expense not found")
     return e
@@ -1300,37 +1361,107 @@ def _expense_or_404(db, client_id, eid):
 
 @router.put("/api/plant/expenses/{eid}")
 def update_expense(eid: int, body: ExpenseIn, request: Request, db: Session = Depends(get_db)):
+    """The same record, changed - never a second one. An approved expense is the record and is not changed; any other goes
+    back to Recorded, to be submitted again."""
     client, _, actor = wo_actor(request, db, MANAGE)
-    e = _expense_or_404(db, client.id, eid)
+    e = _expense_or_404(db, client.id, eid, lock=True)
     if e.approval_status == "Approved":
         raise HTTPException(409, "%s is approved - it is the record now." % e.number)
     asset_or_404(db, client.id, body.asset_id)
+    before = "%s %s %s on %s" % (e.category, e.amount, e.vendor or "", e.spent_on)
     e.asset_id = body.asset_id
     _expense_fields(db, client.id, body, e)
-    e.approval_status = "Pending"
-    audit(db, client, "plant.expense.updated", "plant_expense", e.id, e.number, "%s %s" % (e.category, e.amount), actor, request)
+    was = e.approval_status
+    e.approval_status = "Recorded"
+    audit(db, client, "plant.expense.updated", "plant_expense", e.id, e.number, "Was %s (%s). Now %s %s %s on %s" % (
+        before, APPROVAL_LABEL.get(was, was), e.category, e.amount, e.vendor or "", e.spent_on), actor, request)
     db.commit()
-    return {"ok": True, "message": "%s saved." % e.number}
+    return {"ok": True, "message": "%s saved.%s" % (e.number, " Submit it again for approval." if was in ("Pending", "Rejected") else "")}
+
+
+@router.post("/api/plant/expenses/{eid}/submit")
+def submit_expense(eid: int, request: Request, db: Session = Depends(get_db)):
+    client, _, actor = wo_actor(request, db, MANAGE)
+    e = _expense_or_404(db, client.id, eid, lock=True)
+    if e.approval_status != "Recorded":
+        raise HTTPException(409, "%s is %s, so it cannot be submitted." % (e.number, APPROVAL_LABEL.get(e.approval_status, e.approval_status).lower()))
+    e.approval_status = "Pending"
+    audit(db, client, "plant.expense.submitted", "plant_expense", e.id, e.number, "%s %s" % (e.category, e.amount), actor, request)
+    db.commit()
+    return {"ok": True, "message": "%s submitted for approval." % e.number}
 
 
 @router.post("/api/plant/expenses/{eid}/decision")
 def decide_expense(eid: int, body: DecisionIn, request: Request, db: Session = Depends(get_db)):
+    """An approver's decision on a submitted expense - once. Who decided, when and why are kept on it and in the history."""
     client, _, actor = wo_actor(request, db, "site.signoff")
-    e = _expense_or_404(db, client.id, eid)
+    e = _expense_or_404(db, client.id, eid, lock=True)
     if body.decision not in ("approve", "reject"):
         raise HTTPException(400, "Approve or reject.")
-    if body.decision == "reject" and not (body.remarks or "").strip():
+    note = (body.remarks or "").strip()
+    if body.decision == "reject" and not note:
         raise HTTPException(400, "Say why it is rejected.")
+    # A submitted expense is decided once. The one way back from Approved is a rejection, with its reason, before anything is paid.
+    reversal = e.approval_status == "Approved" and body.decision == "reject"
+    if reversal and _payments_by_expense(db, client.id).get(e.id):
+        raise HTTPException(409, "%s has payments recorded against it, so it cannot be rejected now." % e.number)
+    if e.approval_status != "Pending" and not reversal:
+        raise HTTPException(409, "%s is %s - only a submitted expense is approved or rejected." % (e.number, APPROVAL_LABEL.get(e.approval_status, e.approval_status).lower()))
     e.approval_status, e.approved_by = ("Approved" if body.decision == "approve" else "Rejected"), actor
-    audit(db, client, "plant.expense." + e.approval_status.lower(), "plant_expense", e.id, e.number, body.remarks or "", actor, request)
+    e.approved_on, e.decision_note = now(), note[:1000]
+    audit(db, client, "plant.expense." + e.approval_status.lower(), "plant_expense", e.id, e.number, note, actor, request)
     db.commit()
     return {"ok": True, "message": "%s %s." % (e.number, e.approval_status.lower())}
+
+
+@router.post("/api/plant/expenses/{eid}/payments")
+def pay_expense(eid: int, body: ExpensePaymentIn, request: Request, db: Session = Depends(get_db)):
+    """A payment against an approved expense, never more than is left. Sent twice with the same Idempotency-Key it is
+    recorded once (core/middleware.py)."""
+    client, _, actor = wo_actor(request, db, PAY)
+    e = _expense_or_404(db, client.id, eid, lock=True)
+    if e.approval_status != "Approved":
+        raise HTTPException(409, "%s is %s - only an approved expense is paid." % (e.number, APPROVAL_LABEL.get(e.approval_status, e.approval_status).lower()))
+    paid, remaining, _ = _paid_of(e, _payments_by_expense(db, client.id))
+    amount = money(body.amount or 0)
+    if not amount > 0:
+        raise HTTPException(400, "The amount paid.")
+    if amount > remaining + 0.009:
+        raise HTTPException(400, "Only %s is left to pay on %s." % (remaining, e.number))
+    on = clean_day(body.paid_on, "payment date") or today()
+    if on > today():
+        raise HTTPException(400, "A payment cannot be dated in the future.")
+    if e.spent_on and on < e.spent_on:
+        raise HTTPException(400, "A payment cannot be dated before the expense (%s)." % e.spent_on)
+    ref = (body.reference or "").strip()[:80]
+    db.add(models.DBPlantExpensePayment(client_id=client.id, expense_id=e.id, amount=amount, paid_on=on, reference=ref, recorded_by=actor))
+    e.payment_status = _payment_status(e.amount, paid + amount)
+    if ref:
+        e.payment_ref = ref
+    audit(db, client, "plant.expense.paid", "plant_expense", e.id, e.number, "Paid %s on %s%s; %s left" % (
+        amount, on, (" ref %s" % ref) if ref else "", money(remaining - amount)), actor, request)
+    db.commit()
+    return {"ok": True, "message": "Payment of %s recorded on %s: %s." % (amount, e.number, e.payment_status.lower())}
+
+
+@router.get("/api/plant/expenses/{eid}/history")
+def expense_history(eid: int, request: Request, db: Session = Depends(get_read_db)):
+    """The payments made, and every step the expense went through, from the audit log."""
+    client = require_erp_read(request, db)
+    e = _expense_or_404(db, client.id, eid)
+    P, L = models.DBPlantExpensePayment, models.DBAuditLog
+    pays = db.query(P).filter(P.expense_id == e.id, P.client_id == client.id).order_by(P.paid_on, P.id).all()
+    steps = db.query(L).filter(L.client_id == client.id, L.entity_type == "plant_expense", L.entity_id == e.id).order_by(L.id).all()
+    paid, remaining, legacy = _paid_of(e, {e.id: pays})
+    return {"number": e.number, "amount": e.amount, "paid": paid, "remaining": remaining, "legacy_payment": legacy,
+            "payments": [{"amount": p.amount, "paid_on": p.paid_on, "reference": p.reference or "", "by": p.recorded_by or "", "at": (p.created_at or "")[:16]} for p in pays],
+            "history": [{"at": str(x.created_at or "")[:16], "who": x.user_name or "", "action": x.action.replace("plant.expense.", ""), "details": x.details or ""} for x in steps]}
 
 
 @router.delete("/api/plant/expenses/{eid}")
 def delete_expense(eid: int, request: Request, db: Session = Depends(get_db)):
     client, _, actor = wo_actor(request, db, MANAGE)
-    e = _expense_or_404(db, client.id, eid)
+    e = _expense_or_404(db, client.id, eid, lock=True)
     if e.approval_status == "Approved":
         raise HTTPException(409, "%s is approved - reject it instead of deleting it." % e.number)
     audit(db, client, "plant.expense.removed", "plant_expense", e.id, e.number, "%s %s" % (e.category, e.amount), actor, request)
@@ -1351,7 +1482,7 @@ REPORTS = {
 
 @router.get("/api/plant/reports/{kind}.xlsx")
 def plant_report(kind: str, request: Request, date_from: str = "", date_to: str = "", asset_id: int = 0, employee_id: int = 0,
-                 ownership: str = "", status: str = "", provider_id: int = 0, db: Session = Depends(get_read_db)):
+                 ownership: str = "", status: str = "", provider_id: int = 0, category: str = "", q: str = "", db: Session = Depends(get_read_db)):
     """Each report through the same reads the screens use, so it shows what the person asking may see. A .pdf of each
     is served beside it."""
     client = require_erp_read(request, db)
@@ -1416,9 +1547,12 @@ def plant_report(kind: str, request: Request, date_from: str = "", date_to: str 
                                  i["billed_hours"], i["amount"], i["paid"], i["outstanding"], i["paid_on"], i["payment_ref"]))
         head = ("Rental", "Provider", "Machine ID", "Invoice", "Date", "From", "To", "Hours", "Amount", "Paid", "Outstanding", "Paid on", "Reference")
     else:
-        d = list_expenses(request, df, dt, asset_id, "", db)["expenses"]
-        rows = [(e["number"], e["spent_on"], e["code"], e["machine"], e["category"], e["description"], e["quantity"] or "", e["unit_rate"] or "", e["amount"], e["vendor"],
-                 e["invoice_no"], e["payment_status"], e["approval_status"]) for e in d]
-        head = ("ID", "Date", "Machine ID", "Machine", "Category", "Description", "Qty", "Rate", "Amount", "Vendor", "Invoice", "Payment", "Approval")
+        d = list_expenses(request, df, dt, asset_id, category, q, db)["expenses"]
+        rows = [(e["number"], {"expense": "Entered", "fuel": "Fuel register", "maintenance": "Maintenance", "rental": "Rental bill"}.get(e["source"], e["source"]),
+                 e["spent_on"], e["code"], e["machine"], e["category"], e["description"], e["quantity"] or "", e["unit_rate"] or "", e["amount"], e["vendor"],
+                 e["invoice_no"], e["approval_label"], e["approved_by"], e["payment_status"], "" if e["paid"] is None else e["paid"],
+                 "" if e["remaining"] is None else e["remaining"]) for e in d]
+        head = ("ID", "Source", "Date", "Machine ID", "Machine", "Category", "Description", "Qty", "Rate", "Amount", "Vendor", "Invoice", "Approval",
+                "Decided by", "Payment", "Paid", "Remaining")
     from app.documents.forms import _pre
     return sheet_response(head, rows, "plant-%s.xlsx" % kind, preamble=_pre(client, REPORTS[kind].upper()), portrait=True)

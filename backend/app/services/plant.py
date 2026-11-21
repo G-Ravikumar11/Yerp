@@ -102,24 +102,57 @@ def hourly_cost(e):
     return round(float(e.salary or 0) / 208.0, 2) if e.salary else 0.0
 
 
-def check_invoice_unique(db, client_id, invoice_no, skip=None):
-    """One invoice or voucher, one record - across fuel, maintenance, rental bills and expenses."""
+def _squeeze(text):
+    """For comparing invoice numbers and vendor names: case and spaces do not make a different one ("INV 12" is "inv12")."""
+    return "".join((text or "").split()).lower()
+
+
+def _vendors_of(db, kind, row):
+    """Who issued a recorded document, in each register's own words: a fuel entry's supplier, an expense's vendor, a
+    maintenance job's vendor or mechanic, a rental bill's provider."""
+    if kind == "fuel":
+        names = [row.supplier]
+    elif kind == "expense":
+        names = [row.vendor]
+    elif kind == "maintenance":
+        names = [row.vendor, row.mechanic]
+    else:
+        r = db.query(models.DBPlantRental).filter(models.DBPlantRental.id == row.rental_id).first()
+        p = db.query(models.DBPlantRentalProvider).filter(models.DBPlantRentalProvider.id == r.provider_id).first() if r else None
+        names = [p.name if p else ""]
+    return {_squeeze(n) for n in names if _squeeze(n)}
+
+
+def check_invoice_unique(db, client_id, invoice_no, skip=None, vendor=None):
+    """One vendor's invoice, one record - across fuel, maintenance, rental bills and expenses. The same number from two
+    vendors is two invoices; from the same vendor it is the same one, whatever its case or spacing. Where the vendor is not
+    known - not given here (vendor=None, the rule before vendors were compared), or blank on either side - the number
+    alone decides, so a missing name never lets a repeat through. Two people sending the same invoice at once are taken
+    one after the other (a lock on the number until the first is saved), so the second sees the first."""
     v = (invoice_no or "").strip()
     if not v:
         return ""
-    low = v.lower()
+    key = _squeeze(v)
+    who = _squeeze(vendor) if vendor is not None else ""
+    from sqlalchemy import func, text
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        import zlib
+        db.execute(text("SELECT pg_advisory_xact_lock(:a, :b)"), {"a": int(client_id), "b": zlib.crc32(key.encode()) - 2 ** 31})
     checks = (("fuel", models.DBPlantFuel, models.DBPlantFuel.voucher_no, "fuel entry %s"),
               ("expense", models.DBPlantExpense, models.DBPlantExpense.invoice_no, "expense %s"),
               ("rental_invoice", models.DBPlantRentalInvoice, models.DBPlantRentalInvoice.invoice_no, "rental bill %s"),
               ("maintenance", models.DBAssetService, models.DBAssetService.invoice_no, "maintenance %s"))
-    from sqlalchemy import func
     for kind, model, col, label in checks:
-        q = db.query(model).filter(model.client_id == client_id, func.lower(col) == low)
+        squeezed = func.lower(func.replace(func.replace(func.replace(col, " ", ""), "\t", ""), "\n", ""))
+        q = db.query(model).filter(model.client_id == client_id, squeezed == key)
         if skip and skip[0] == kind:
             q = q.filter(model.id != skip[1])
-        hit = q.first()
-        if hit:
-            raise HTTPException(409, "Invoice or voucher %s is already recorded (%s)." % (v, label % (getattr(hit, "number", "") or getattr(hit, "invoice_no", "") or hit.id)))
+        for hit in q.all():
+            theirs = _vendors_of(db, kind, hit)
+            if who and theirs and who not in theirs:
+                continue                                   # another vendor's invoice with the same number
+            raise HTTPException(409, "Invoice or voucher %s%s is already recorded (%s)." % (
+                v, (" from %s" % vendor.strip()) if who else "", label % (getattr(hit, "number", "") or getattr(hit, "invoice_no", "") or hit.id)))
     return v
 
 

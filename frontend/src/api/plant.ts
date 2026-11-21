@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { del, get, post, put } from '@/lib/api'
+import { api, del, get, post, put } from '@/lib/api'
 
 /** Everything Equipment & Plant reads lives under the equipment keys, so any change refreshes every screen of it. */
 export const plantKeys = { all: ['equipment'] as const }
@@ -41,6 +41,17 @@ export interface Expense {
   id: number; number: string; source: 'expense' | 'fuel' | 'maintenance' | 'rental'; asset_id: number; code: string; machine: string; project: string; category: string
   spent_on: string; description: string; quantity: number; unit_rate: number; amount: number; vendor: string; invoice_no: string; payment_status: string
   payment_ref: string; approval_status: string; approved_by: string; recorded_by: string
+  /** Recorded, Submitted, Approved or Rejected for an expense entered here; a rental bill reads Verified once approved. */
+  approval_label: string; approved_on: string; decision_note: string
+  /** Paid and still owed; null for fuel and maintenance, which are paid where they are recorded. */
+  paid: number | null; remaining: number | null; legacy_payment: boolean; payments: number
+  /** Where the payment stands in the register that keeps it: a rental bill's last payment, or that fuel and maintenance keep none. */
+  payment_note: string
+}
+export interface ExpenseHistory {
+  number: string; amount: number; paid: number; remaining: number; legacy_payment: boolean
+  payments: { amount: number; paid_on: string; reference: string; by: string; at: string }[]
+  history: { at: string; who: string; action: string; details: string }[]
 }
 export interface CostRow {
   asset_id: number; code: string; name: string; ownership: string; operating_hours: number; idle_hours: number; breakdown_hours: number; fuel_litres: number
@@ -64,7 +75,7 @@ const qs = (o: Record<string, string | number | boolean | undefined>) => {
   const s = p.toString()
   return s ? `?${s}` : ''
 }
-export type Range = { date_from?: string; date_to?: string; asset_id?: number; employee_id?: number; status?: string; category?: string; provider_id?: number }
+export type Range = { date_from?: string; date_to?: string; asset_id?: number; employee_id?: number; status?: string; category?: string; provider_id?: number; q?: string }
 
 export const useDashboard = (r: Range) => useQuery({ queryKey: ['equipment', 'dashboard', r], queryFn: () => get<Dashboard>(`/api/plant/dashboard${qs(r)}`) })
 export const useCosts = (r: Range) => useQuery({ queryKey: ['equipment', 'costs', r], queryFn: () => get<{ machines: CostRow[]; totals: Record<string, number> }>(`/api/plant/costs${qs(r)}`) })
@@ -82,7 +93,10 @@ export interface ProviderDetail {
 }
 export const useProvider = (id: number) => useQuery({ queryKey: ['equipment', 'provider', id], enabled: id > 0, queryFn: () => get<ProviderDetail>(`/api/plant/rental-providers/${id}`) })
 export const useRentals = (r: Range) => useQuery({ queryKey: ['equipment', 'rentals', r], queryFn: () => get<{ rentals: Rental[]; billing: string[]; summary: Record<string, number> }>(`/api/plant/rentals${qs(r)}`) })
-export const useExpenses = (r: Range) => useQuery({ queryKey: ['equipment', 'expenses', r], queryFn: () => get<{ expenses: Expense[]; categories: string[]; all_categories: string[]; by_category: Record<string, number>; total: number }>(`/api/plant/expenses${qs(r)}`) })
+export const useExpenses = (r: Range) => useQuery({ queryKey: ['equipment', 'expenses', r], queryFn: () => get<{ expenses: Expense[]; categories: string[]; all_categories: string[]; by_category: Record<string, number>; total: number; total_all: number }>(`/api/plant/expenses${qs(r)}`) })
+export const useExpenseHistory = (id: number) => useQuery({ queryKey: ['equipment', 'expense-history', id], enabled: id > 0, queryFn: () => get<ExpenseHistory>(`/api/plant/expenses/${id}/history`) })
+/** The same filters as the register, for the Excel export. */
+export const expensesExport = (r: Range) => `/api/plant/reports/expenses.xlsx${qs(r)}`
 
 type Msg = { message: string; id?: number }
 export const allocate = (b: Record<string, unknown>) => post<Msg>('/api/plant/allocations', b)
@@ -136,6 +150,10 @@ export const payRentalInvoice = (id: number, amount: number, paid_on: string, pa
 export const saveExpense = (id: number | null, b: Record<string, unknown>) => (id ? put<Msg>(`/api/plant/expenses/${id}`, b) : post<Msg>('/api/plant/expenses', b))
 export const decideExpense = (id: number, decision: 'approve' | 'reject', remarks: string) => post<Msg>(`/api/plant/expenses/${id}/decision`, { decision, remarks })
 export const removeExpense = (id: number) => del<Msg>(`/api/plant/expenses/${id}`)
+export const submitExpense = (id: number) => post<Msg>(`/api/plant/expenses/${id}/submit`)
+/** One payment. The key is made once per payment form, so a second click or a retry after no answer records it once. */
+export const payExpense = (id: number, b: { amount: number; paid_on: string; reference: string }, key: string) =>
+  api<Msg>(`/api/plant/expenses/${id}/payments`, { method: 'POST', body: b, headers: { 'Idempotency-Key': key } })
 export const reportUrl = (kind: string, r: Range, pdf = false) => `/api/plant/reports/${kind}.${pdf ? 'pdf' : 'xlsx'}${qs(r)}`
 
 /** The status as it is shown: what the register stores, in the words a site uses. */
