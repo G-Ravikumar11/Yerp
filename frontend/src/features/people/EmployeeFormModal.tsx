@@ -52,7 +52,8 @@ function Form({ onClose }: { onClose: () => void }) {
   const set = (k: keyof EmployeeInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
   // The reporting line runs up the levels: somebody can report to the same level or above, never below. People with no level yet are not ruled out.
   const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0
-  const managers = (people.data ?? []).filter((p) => !f.level || !p.level || rank(p.level) >= rank(f.level))
+  // Everybody, senior first: the Master decides who reports to whom (a coordinator between a site and the heads, say).
+  const managers = [...(people.data ?? [])].sort((a, b) => rank(b.level ?? '') - rank(a.level ?? '') || a.full_name.localeCompare(b.full_name))
   // Choosing a role fills in its level. The reporting line follows the role too: the Master sees who it will be and may pick somebody else; for everyone else the server sets it when the employee is saved.
   // Access follows the role and the level, so the Master does not tick it all again: the access level the role carries is
   // chosen and its rights ticked at once, and can still be changed below. Only the Master gives access; for anybody else the server's default stands.

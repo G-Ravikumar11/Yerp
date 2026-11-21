@@ -439,12 +439,13 @@ PERMISSION_ROLES = [
                                        "siteprices.edit", "siteprices.finalize"],
     },
     {
-        "code": "ho_coordinator", "label": "HO Coordinator", "rank": 2, "head_office": True,
-        "description": "Head office coordinator. Sees every vendor, work order, BOQ and "
-                       "bill on every site, follows up whatever is waiting and keeps "
-                       "drafts up to date. Starts nothing new: no vendor codes, work "
-                       "orders, BOQs, projects, tenders, bills or variations.",
-        "permissions": list(_HEAD_OFFICE),
+        "code": "ho_coordinator", "label": "HO Coordinator", "rank": 4, "head_office": True,
+        "description": "Head office coordinator - the middleman between the sites and the heads. Sees every "
+                       "vendor, work order, BOQ and bill on every site, follows up whatever is waiting, keeps "
+                       "drafts up to date, and signs work orders and bills on their way up when somebody reports "
+                       "to them. Starts nothing new: no vendor codes, work orders, BOQs, projects, tenders, bills "
+                       "or variations.",
+        "permissions": list(_HEAD_OFFICE) + ["subcontracts.approve", "bills.approve"],
     },
     # ONE FOR EACH LEVEL (L1 - L19) that had no access level of its own. Project manager (L5) and HO Coordinator
     # (L3) already exist and are left as they are. Ranks keep the ladder rules: from rank 3 up every portal, and

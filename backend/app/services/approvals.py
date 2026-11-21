@@ -503,6 +503,12 @@ def sub_bill_owner_signs(db, client_id):
     return (tenant_setting(db, client_id, SUB_BILL_OWNER_SIGNS_KEY, "1") or "1") != "0"
 
 
+# The HO Coordinator signs on the way up only where the Master has put them in somebody's reporting line - never picked by
+# rank for a route nobody drew through them.
+def by_reporting_line_only(emp):
+    return (getattr(emp, "permission_role", "") or "").lower() == "ho_coordinator"
+
+
 def holders_of(db, client_id, permission, exclude=()):
     """Every active member of staff whose access includes this right - by
     their department or by what HR ticked for them on top of it, less what
@@ -544,7 +550,7 @@ def ladder_approver(db, client_id, submitted_by, entity_type, job_id=None):
     best = None
     for emp in holders_of(db, client_id, right, exclude={submitted_by}):
         rank = role_rank(emp)
-        if rank <= mine:
+        if rank <= mine or by_reporting_line_only(emp):
             continue
         theirs = employee_site_ids(db, emp)
         same_site = theirs is None or not my_sites or bool(theirs & my_sites)
@@ -979,7 +985,7 @@ def hierarchy_chain(db, client_id, submitter_id, right, job_id=None, owner_signs
     by_rank = {}
     for emp in holders_of(db, client_id, right, exclude=seen):
         rank = role_rank(emp)
-        if rank <= floor:
+        if rank <= floor or by_reporting_line_only(emp):
             continue
         theirs = employee_site_ids(db, emp)
         same = theirs is None or not sites or bool(theirs & sites)

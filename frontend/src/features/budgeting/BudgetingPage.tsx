@@ -71,6 +71,8 @@ export default function BudgetingPage() {
     { id: 'rate', header: 'BOQ rate', align: 'right', cell: (r) => (r.heading ? none : formatRate(r.rate)), hideBelow: 'lg', sort: (r) => r.rate },
     { id: 'rev', header: 'BOQ amount', align: 'right', cell: (r) => (r.heading ? none : r.rate_only ? 'Rate only' : formatINR(r.revenue)), sort: (r) => r.revenue },
     { id: 'cost', header: 'Our cost', align: 'right', cell: (r) => (r.heading ? none : r.budgeted ? <div><p>{formatINR(r.cost)}</p><p className="ml-auto max-w-[10rem] text-xs text-muted-foreground">Mat {compactINR(r.material)} · Lab {compactINR(r.labour)} · Other {compactINR(r.other)}</p>{(r.wastage_mismatches ?? 0) > 0 && <Badge tone="warning" className="mt-1" title={r.items.filter((i) => i.has_wastage_mismatch).map((i) => `${i.description}: ${i.mismatch_message}`).join('\n')}>Wastage % differs from store norm</Badge>}</div> : <Badge tone="warning">Not budgeted</Badge>), sort: (r) => r.cost },
+    // Work orders against the budget: what contractors were given on the line, red where it is past labour + plant & other.
+    { id: 'given', header: 'Given on WOs', align: 'right', hideBelow: 'md', cell: (r) => (r.heading || !r.given_out ? none : <span className={r.given_over ? 'font-semibold text-danger' : ''} title={r.given_over ? `More than the budget's labour + plant & other (${formatINR(r.labour + r.other)})` : `Budget for contractors: ${formatINR(r.labour + r.other)}`}>{formatINR(r.given_out)}</span>), sort: (r) => r.given_out ?? 0 },
     { id: 'profit', header: 'Profit', align: 'right', cell: (r) => (r.heading ? none : r.profit === null ? '-' : <span className={r.profit < 0 ? 'text-danger' : 'text-success'}>{formatINR(r.profit)}</span>), sort: (r) => r.profit ?? -Infinity },
     { id: 'margin', header: 'Margin', align: 'right', cell: (r) => (r.heading ? none : r.margin === null ? '-' : <span className={r.margin < 0 ? 'text-danger' : ''}>{pct(r.margin)}</span>), hideBelow: 'sm', sort: (r) => r.margin ?? -Infinity },
     ...(edit ? [{ id: 'edit', header: '', width: '3rem', cell: (r: Row) => (r.heading ? none : <Pencil className="size-4 text-muted-foreground" aria-label={`Budget ${r.description}`} />) }] : []),
@@ -88,7 +90,7 @@ export default function BudgetingPage() {
       )}
       {view === 'budget' && (job === 0 || q.isPending || b?.boq) && (<>
         <StatGrid>
-          <Stat label="BOQ value" value={compactINR(t?.boq_value)} sub={t ? `${plural(t.lines, 'line')}, ${t.lines_budgeted} budgeted` : undefined} loading={q.isPending && job > 0} />
+          <Stat label="BOQ value" value={compactINR(t?.boq_value)} sub={t ? `${plural(t.lines, 'line')}, ${t.lines_budgeted} budgeted${t.lines_over_given ? `, ${t.lines_over_given} given past budget` : ''}` : undefined} loading={q.isPending && job > 0} />
           <Stat label="Material" value={compactINR(t?.material)} loading={q.isPending && job > 0} />
           <Stat label="Labour" value={compactINR(t?.labour)} loading={q.isPending && job > 0} />
           <Stat label="Plant & other" value={compactINR(t?.other)} loading={q.isPending && job > 0} />

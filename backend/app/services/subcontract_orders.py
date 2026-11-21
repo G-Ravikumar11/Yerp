@@ -1256,6 +1256,20 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                      "Approve it in Approvals first." % (
                          con.company_name, con.vendor_code or "no code",
                          "waiting for approval" if con.registration_status == "PENDING" else "sent back"))
+        # Still within the budget: it can have been lowered, or a line taken out of it, since the order was sent.
+        lines_now = wo_line_budgets(db, order)
+        gone = [it for it, budget in lines_now if budget is None]
+        over_now, extra_now = wo_over_budget(db, order, lines_now)
+        if (gone or over_now) and not (order.over_budget_reason or "").strip():
+            what = ("%d line%s no longer budgeted" % (len(gone), "" if len(gone) == 1 else "s") if gone else
+                    "%s above the budget: %s" % (inr(extra_now), "; ".join(over_now[:5])))
+            if actor_id is not None:
+                raise HTTPException(409, "The budget has changed since this order was sent - %s. Send it back so it is "
+                                         "sent again with the reason, or ask the Master to approve it." % what)
+            if not (comments or "").strip():
+                raise HTTPException(409, "The budget has changed since this order was sent - %s. Say why to approve it "
+                                         "anyway." % what)
+            order.over_budget_reason = "Approved by the Master past the budget: %s (%s)" % ((comments or "").strip()[:500], what)
         # Still complete: an allocation can have been changed since the order was sent.
         missing = wo_budget_missing(db, order) + bank_guarantee_missing(order)
         if missing:

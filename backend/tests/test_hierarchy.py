@@ -83,14 +83,15 @@ def test_role_fills_in_its_level_when_none_is_given(tenant):
     assert make_employee(tenant, role="site_engineer")["level"] == "L8"
 
 
-def test_manager_cannot_sit_below_the_employee(tenant):
-    junior = make_employee(tenant, level="L13")
+def test_the_master_may_put_anybody_over_anybody(tenant):
+    """Who reports to whom is the Master's decision (a coordinator between a site and the heads, say): any level may be
+    chosen. Only a loop is refused."""
+    other = make_employee(tenant, level="L13")
     res = tenant.post("/api/employees", json={
         "first_name": "A", "last_name": "B", "email": "senior@example.com",
-        "level": "L5", "reports_to": junior["id"],
+        "level": "L5", "reports_to": other["id"],
     })
-    assert res.status_code == 400
-    assert "same level or higher" in res.json()["detail"]
+    assert res.status_code == 200, res.text
 
 
 def test_employee_cannot_report_to_themselves(tenant):
