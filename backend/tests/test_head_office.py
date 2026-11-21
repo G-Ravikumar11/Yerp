@@ -337,10 +337,10 @@ def test_the_coordinator_starts_no_project_tender_bill_or_variation_but_ho_qs_ca
     assert qs.post("/api/jobs", json={"name": "QS job", "customer_name": "x"}).status_code == 200
 
 
-def test_register_subcontractors_can_be_given_to_anybody_and_registers_without_choosing_the_code(tenant, portal):
-    """"Register subcontractors" is a box of its own, given to any designation: the person registers a contractor, the
-    vendor code is the next in the series (choosing one stays HO QS's), and the form waits for approval. The import of
-    a whole workbook of forms stays HO QS's."""
+def test_register_subcontractors_can_be_given_to_anybody_and_opens_the_vendor_code_too(tenant, portal):
+    """"Register subcontractors" is a box of its own, given to any designation: the person registers a contractor and
+    gives its vendor code (blank: the next in the series), and the form waits for approval. A code already taken is
+    refused as for HO QS."""
     emp = person(tenant, "site_engineer")
     res = tenant.put("/api/employees/%d/permissions" % emp["id"], json={
         "permission_role": "site_engineer",
@@ -350,7 +350,9 @@ def test_register_subcontractors_can_be_given_to_anybody_and_registers_without_c
     who = sign_in(portal, emp)
     made = who.post("/api/wo/contractors", json=vendor_body(vendor_code="MYOWN-1"))
     assert made.status_code == 200, made.text
-    assert made.json()["vendor_code"] != "MYOWN-1" and made.json()["registration_status"] == "PENDING"
+    assert made.json()["vendor_code"] == "MYOWN-1" and made.json()["registration_status"] == "PENDING"
+    assert who.post("/api/wo/contractors", json=vendor_body(vendor_code="MYOWN-1")).status_code == 409
+    assert who.post("/api/wo/contractors", json=vendor_body()).json()["vendor_code"]     # blank: next in the series
 
     other = sign_in(portal.__class__(portal.app), person(tenant, "site_engineer"))
     refused = other.post("/api/wo/contractors", json=vendor_body())

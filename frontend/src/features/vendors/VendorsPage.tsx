@@ -39,7 +39,7 @@ export default function VendorsPage() {
   const file = useRef<HTMLInputElement>(null)
   // Vendor codes are opened at head office, by HO QS (and the Master) - nobody else.
   const opens = can('vendors.create')
-  // "Register subcontractors": registers one (its code comes next in the series); the import stays HO QS's.
+  // "Register subcontractors": registers one and gives its vendor code; the import of a workbook stays HO QS's.
   const registers = opens || can('contractors.register')
   useOpenOnArrival(() => setCreating(true), registers)
 

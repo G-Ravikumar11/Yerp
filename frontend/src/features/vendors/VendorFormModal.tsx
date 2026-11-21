@@ -74,7 +74,9 @@ function Section({ children }: { children: string }) {
 
 function Form({ vendor, onClose }: { vendor: Vendor | null; onClose: () => void }) {
   // The code itself is HO QS's to give or change; anybody keeping the form up to date sees it, not edits it.
-  const codes = useSession().can('vendors.create')
+  // Registering, "Register subcontractors" gives the code too; changing an existing contractor's code stays HO QS's.
+  const { can } = useSession()
+  const codes = can('vendors.create') || (!vendor && can('contractors.register'))
   const [f, setF] = useState<Partial<Vendor>>(() => (vendor ? { ...vendor } : blank()))
   const [files, setFiles] = useState<Record<string, { name: string; data: string }>>({})
   const set = (k: keyof Vendor) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setF((s) => ({ ...s, [k]: e.target.value }))

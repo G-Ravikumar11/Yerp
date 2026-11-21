@@ -389,12 +389,10 @@ def wo_list_contractors(request: Request, q: str = "", status: str = "", db: Ses
 @router.post("/api/wo/contractors")
 def wo_create_contractor(body: ContractorIn, request: Request,
                          db: Session = Depends(get_db)):
-    # HO QS (or the Master) opens vendor codes; anybody given "Register subcontractors" may register one too, whose code
-    # is then the next in the series - choosing a code stays HO QS's - and whose form waits for approval as before.
+    # HO QS (or the Master) opens vendor codes, and so does anybody given "Register subcontractors": they register the
+    # contractor and give its code (left blank, the next in the series). The form waits for approval as before.
     registers_only = not session_can(request, db, "vendors.create") and session_can(request, db, "contractors.register")
     client, actor_id, actor_name = wo_actor(request, db, "contractors.register" if registers_only else "vendors.create")
-    if registers_only:
-        body.vendor_code = ""
     name = (body.company_name or "").strip()
     if not name:
         raise HTTPException(400, "The contractor needs a company name")
