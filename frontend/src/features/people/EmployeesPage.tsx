@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -21,7 +21,9 @@ export default function EmployeesPage() {
   // Everybody in one read; the tabs filter it here, so switching tab is instant rather than another trip.
   const q = useEmployees('')
   // Those who report to nobody: whatever they send for approval comes straight to the Master.
-  const [noManager, setNoManager] = useState(false)
+  // Opened from the setup check's "Set their Reports to": already showing only them.
+  const [params] = useSearchParams()
+  const [noManager, setNoManager] = useState(() => params.get('no_manager') === '1')
   const unassigned = useMemo(() => (q.data ?? []).filter((e) => !e.reports_to && e.status !== 'terminated'), [q.data])
   const rows = useMemo(() => {
     const byTab = tab ? q.data?.filter((e) => e.status === tab) : q.data

@@ -14,6 +14,7 @@ import { useState } from 'react'
 import { ConfirmDialog, InfoTip, Skeleton, Tooltip } from '@/components/ui'
 import { infoFor } from '@/lib/pageInfo'
 import { NotificationBell } from './NotificationBell'
+import { GoTo } from './GoTo'
 import { SyncIndicator } from './SyncIndicator'
 import { ActivityIndicator } from './ActivityIndicator'
 import { appUrl } from '@/lib/paths'
@@ -163,6 +164,7 @@ export function Topbar() {
         </button>
         <Breadcrumbs />
         <div className="ml-auto flex items-center gap-3">
+          <GoTo />
           <InstallButton />
           {user && <NotificationBell office={user.type !== 'employee'} />}
           <ActivityIndicator />
