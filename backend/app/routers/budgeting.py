@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import log_audit
 from app.core.auth import require_items_access, wo_actor
+from app.core.currency import inr
+from app.core.notifications import notify
 from app.core.sheets import sheet_response
 from app.db import get_db, get_read_db
 from app.services.boq import boq_lines_of_job
@@ -55,7 +57,7 @@ def job_budget(job_id: int, request: Request, db: Session = Depends(get_read_db)
 
 @router.put("/api/jobs/{job_id}/budget")
 def job_budget_settings(job_id: int, body: BudgetSettingsIn, request: Request, db: Session = Depends(get_db)):
-    client, _, who = wo_actor(request, db)
+    client, _, who = wo_actor(request, db, "budget.edit")
     job = job_or_404(db, client.id, job_id)
     save_settings(db, client.id, job.id, body.overhead_percent, body.contingency_percent, body.note, who)
     log_audit(db, client.id, "budget_settings", "job", job.id, job.number or "",
@@ -67,12 +69,28 @@ def job_budget_settings(job_id: int, body: BudgetSettingsIn, request: Request, d
 @router.put("/api/jobs/{job_id}/budget/lines/{key}")
 def job_budget_line(job_id: int, key: str, body: BudgetLineIn, request: Request, db: Session = Depends(get_db)):
     """Replace what one BOQ line costs us, as the editor holds it. An empty list takes the line out of the budget."""
-    client, _, who = wo_actor(request, db)
+    client, actor_id, who = wo_actor(request, db, "budget.edit")
     job = job_or_404(db, client.id, job_id)
-    if not any(l.key == key for l in boq_lines_of_job(db, client.id, job.id)):
+    line = next((l for l in boq_lines_of_job(db, client.id, job.id) if l.key == key), None)
+    if line is None:
         raise HTTPException(404, "That line is not in this project's BOQ.")
+    from app.services.budgeting import unit_costs
+    was = unit_costs(db, client.id, job.id).get(key) or {"MATERIAL": 0.0, "LABOUR": 0.0, "OTHER": 0.0}
     replace_items(db, client.id, job.id, key, [i.dict() for i in body.items], who)
-    log_audit(db, client.id, "budget_line", "job", job.id, job.number or "", "%s: %d items" % (key, len(body.items)), request)
+    db.flush()
+    now = unit_costs(db, client.id, job.id).get(key) or {"MATERIAL": 0.0, "LABOUR": 0.0, "OTHER": 0.0}
+    # Logged with the figures, not just a count: what one unit cost before and after, part by part.
+    change = "; ".join("%s %s -> %s" % (k.lower(), inr(was[k]), inr(now[k])) for k in ("MATERIAL", "LABOUR", "OTHER")
+                       if abs(was[k] - now[k]) > 0.004)
+    label = ("%s %s" % (line.item_no or "", (line.description or "").split(chr(10))[0][:60])).strip()
+    log_audit(db, client.id, "budget_line", "job", job.id, job.number or "",
+              ("%s: %s by %s" % (label, change or "%d items, cost unchanged" % len(body.items), who))[:900], request)
+    # The part a contractor is paid for, raised by staff: the Master is told, since a work order is checked against it.
+    paid_before, paid_after = was["LABOUR"] + was["OTHER"], now["LABOUR"] + now["OTHER"]
+    if actor_id is not None and paid_before > 0 and paid_after > paid_before + 0.004:
+        notify(db, client.id, "budget_raised", "Budget raised on %s: %s" % (job.number or job.name or "a project", label),
+               "%s raised labour + plant & other per unit from %s to %s." % (who, inr(paid_before), inr(paid_after)),
+               view="budgeting", ref_type="job", ref_id=job.id)
     db.commit()
     return budget_view(db, client.id, job)
 

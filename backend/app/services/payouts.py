@@ -117,12 +117,19 @@ def msme_flag(parties, party_type, party, start, today=None):
 
 # --- beneficiaries ------------------------------------------------------------------------------------------------------
 
+# Put where the bank name goes for a contractor whose registration - or a change to its bank or tax details - waits for
+# approval: no account is given, and the payment file says why.
+HELD = "Held: bank or tax details waiting for approval"
+
+
 def beneficiary(db, client_id, party_type, party_name, party_id=None):
     """(account, ifsc, bank, email) from the supplier, contractor or staff master."""
     if party_type == "contractor":
         q = db.query(models.DBContractor).filter(models.DBContractor.client_id == client_id)
         c = q.filter(models.DBContractor.id == party_id).first() if party_id else None
         c = c or next((x for x in q.all() if norm(x.company_name) == norm(party_name)), None)
+        if c and (c.registration_status or "APPROVED") != "APPROVED":
+            return "", "", HELD, c.email or ""             # changed bank details, or a form not yet approved: not paid
         if c:
             return c.bank_account or "", c.bank_ifsc or "", c.bank_name or "", c.email or ""
     elif party_type == "supplier":
@@ -140,7 +147,9 @@ def beneficiary(db, client_id, party_type, party_name, party_id=None):
     return "", "", "", ""
 
 
-def beneficiary_problem(account, ifsc, amount):
+def beneficiary_problem(account, ifsc, amount, bank=""):
+    if bank == HELD:
+        return "bank or tax details changed - waiting for approval, so not paid yet"
     if not re.sub(r"\s", "", account or ""):
         return "no bank account number on file"
     if not ifsc:
@@ -258,7 +267,7 @@ def payable_items(db, client):
     out = []
     for it in items:
         acct, ifsc, bank, email = beneficiary(db, client.id, it["party_type"], it["party_name"], it["party_id"])
-        it.update(account=acct, ifsc=ifsc, bank=bank, email=email, problem=beneficiary_problem(acct, ifsc, it["amount"]),
+        it.update(account=acct, ifsc=ifsc, bank=bank, email=email, problem=beneficiary_problem(acct, ifsc, it["amount"], bank),
                   in_a_file=(it["doc_type"], it["doc_id"]) in already and it["doc_id"] is not None)
         out.append(it)
     return {"items": out, "approval_on": bool(rules["on"])}
@@ -294,7 +303,7 @@ def make_batch(db, client, body, who):
             raise HTTPException(400, "%s: pay between 0 and %s." % (it["doc_number"] or it["party_name"], "{:,.2f}".format(it["amount"])))
         if it["request_id"] and abs(amount - it["amount"]) > 0.009:
             raise HTTPException(400, "%s: an approved request is paid in full, as approved." % it["request_number"])
-        why = beneficiary_problem(it["account"], it["ifsc"], amount)
+        why = beneficiary_problem(it["account"], it["ifsc"], amount, it.get("bank", ""))
         if why:
             problems.append("%s - %s" % (it["party_name"], why))
             continue

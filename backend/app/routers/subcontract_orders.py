@@ -1513,6 +1513,41 @@ def wo_update_business_unit(unit_id: int, body: BusinessUnitIn, request: Request
     return {"id": unit.id, "name": unit.name, "message": "%s saved. Documents print with it from now on." % name}
 
 
+# What a contractor is paid by and taxed on. Changed on an approved contractor by anybody but the Master, it goes back for
+# approval by somebody else, the Master is told, and no payment file takes them until it is approved - a changed account
+# number is how money is sent to the wrong person.
+MONEY_DETAILS = (("bank_name", "Bank"), ("bank_account", "Account"), ("bank_ifsc", "IFSC"), ("pan", "PAN"), ("gst_number", "GSTIN"))
+
+
+def money_details(con):
+    return tuple((getattr(con, f) or "").strip() for f, _ in MONEY_DETAILS)
+
+
+def _shown(field, value):
+    return ("..." + value[-4:] if len(value) > 4 else value) if field == "bank_account" else value
+
+
+def hold_changed_details(db, client, con, before, actor_id, actor_name, request):
+    """After an edit: log the money details that changed (old -> new, the account number masked), and when somebody other
+    than the Master changed them on an approved contractor, send the contractor back for approval and tell the Master."""
+    after = money_details(con)
+    if before == after:
+        return False
+    what = "; ".join("%s %s -> %s" % (label, _shown(f, b) or "(blank)", _shown(f, a) or "(blank)")
+                     for (f, label), b, a in zip(MONEY_DETAILS, before, after) if b != a)
+    log_audit(db, client.id, "contractor_money_details_changed", "contractor", con.id, con.company_name or "",
+              ("%s by %s" % (what, actor_name or "the Master"))[:900], request)
+    if actor_id is None or (con.registration_status or "APPROVED") != "APPROVED":
+        return False
+    con.registration_status = "PENDING"
+    con.details_changed_by = actor_id
+    notify(db, client.id, "contractor_details_changed",
+           "%s's bank or tax details were changed - waiting for approval" % con.company_name,
+           "Changed by %s: %s. Nothing is paid to them until somebody else approves it." % (actor_name, what),
+           view="approvals-view", ref_type="contractor", ref_id=con.id, severity="action")
+    return True
+
+
 @router.put("/api/wo/contractors/{con_id}")
 def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
                          db: Session = Depends(get_db)):
@@ -1534,6 +1569,8 @@ def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
     ifsc = (body.bank_ifsc or "").strip().upper()
     if ifsc and not re.match(r"^[A-Z]{4}0[A-Z0-9]{6}$", ifsc):
         raise HTTPException(400, "An IFSC is eleven characters: four letters, a zero, then six (for example SBIN0001234).")
+    before = money_details(con)
+    editor = session_employee(request, db)
     con.company_name = name
     con.contact_person = (body.contact_person or "").strip()
     con.email = (body.email or "").strip()
@@ -1561,10 +1598,13 @@ def wo_update_contractor(con_id: int, body: ContractorIn, request: Request,
     # A form that was sent back and has been put right goes back for approval.
     if (con.registration_status or "") == "REJECTED":
         con.registration_status = "PENDING"
+    held = hold_changed_details(db, client, con, before, editor.id if editor else None,
+                                ("%s %s" % (editor.first_name or "", editor.last_name or "")).strip() if editor else "", request)
     log_audit(db, client.id, "contractor_updated", "contractor", con.id, name, pan, request)
     db.commit()
     return {"id": con.id, "company_name": con.company_name, "registration_status": con.registration_status,
-            "message": "%s saved." % name}
+            "message": ("%s saved. The bank or tax details changed, so it now waits for somebody else's approval; nothing "
+                        "is paid to them until then." % name) if held else "%s saved." % name}
 
 
 @router.get("/api/wo/contractors/{con_id}/registration.pdf")
@@ -1707,10 +1747,13 @@ async def import_registration_forms(request: Request, file: UploadFile = File(..
                   "state": f.get("state"), "nature_of_work": f.get("nature_of_work"),
                   "entity_type": f.get("entity_type"), "pan": pan, "gst_number": gstin, "bank_ifsc": ifsc,
                   "aadhaar": aadhaar}
+        before = money_details(con)
         for key, value in values.items():
             value = (value or "").strip() if isinstance(value, str) else value
             if value:
                 setattr(con, key, str(value)[:300])
+        if con not in created:
+            hold_changed_details(db, client, con, before, actor_id, actor_name, request)
         con.declaration_signed = True
         if code:
             by_code[code] = con
@@ -1744,6 +1787,8 @@ def decide_contractor_registration(con_id: int, action: str, request: Request, b
         raise HTTPException(409, "%s is not waiting for approval." % (con.vendor_code or con.company_name))
     if actor_id and con.registered_by == actor_id:
         raise HTTPException(403, "You registered %s, so somebody else has to approve it." % con.company_name)
+    if actor_id and con.details_changed_by == actor_id:
+        raise HTTPException(403, "You changed %s's bank or tax details, so somebody else has to approve them." % con.company_name)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     who = actor_name if actor_id else owner_label(db, client.id)
     if move == "approve":
@@ -1753,6 +1798,7 @@ def decide_contractor_registration(con_id: int, action: str, request: Request, b
                                      "back to be completed." % (con.company_name, ", ".join(missing)))
         con.registration_status, con.approved_by_name, con.approved_at = "APPROVED", who, now
         con.rejection_reason = ""
+        con.details_changed_by = None
     else:
         if not comments:
             raise HTTPException(400, "Say what is wrong with the form, so it can be put right.")

@@ -169,6 +169,10 @@ PORTAL_PERMISSIONS = [
     # arrives with a job title is one nobody remembers deciding to give.
     {"key": "workorders.approve", "group": "Contracts",
      "label": "Final work order approval (MD)"},
+    # The budget is what a work order is held against, so the people who price work orders do not also move it: a
+    # budget raised by the person about to send an order at that rate is no check at all.
+    {"key": "budget.edit", "group": "Contracts",
+     "label": "Edit project budgets"},
     # THE SUBCONTRACTORS PORTAL, job by job. Each was carried by a broader right that also did something else.
     {"key": "contractors.register", "group": "Subcontractors",
      "label": "Register subcontractors"},
@@ -619,6 +623,8 @@ SUBCONTRACTOR_RIGHTS = {
     "mb.delete": {"site_director", "construction", "site_engineer", "deputy_manager_qs", "project_manager",
                   "construction_manager", "head_projects", "hod", "ho_qs", "supervisor", "manager"},
 }
+# Who sets the budget by default: the heads, not the people who prepare work orders. The Master gives it to others.
+SUBCONTRACTOR_RIGHTS["budget.edit"] = {"md", "hod", "head_projects", "ho_qs"}
 for _r in PERMISSION_ROLES:
     for _key, _holders in SUBCONTRACTOR_RIGHTS.items():
         if _r["code"] in _holders and _key not in _r["permissions"]:

@@ -283,6 +283,7 @@ ACCOUNTS_COLUMNS = (
     ("money_entries", "payee_bank", "VARCHAR DEFAULT ''"), ("money_entries", "payee_account", "VARCHAR DEFAULT ''"), ("money_entries", "payee_ifsc", "VARCHAR DEFAULT ''"),
     # A sub contractor work order priced above the budget: the reason given when it was sent, for its approvers only.
     ("subcontract_orders", "over_budget_reason", "TEXT DEFAULT ''"),
+    ("contractors", "details_changed_by", "INTEGER"),
     ("payment_requests", "payee_bank", "VARCHAR DEFAULT ''"), ("payment_requests", "payee_account", "VARCHAR DEFAULT ''"), ("payment_requests", "payee_ifsc", "VARCHAR DEFAULT ''"),
     # A site expense entered by the Master or a colleague of theirs, who may not then approve it.
     ("site_cash_expenses", "submitted_by_master", "BOOLEAN DEFAULT FALSE"),

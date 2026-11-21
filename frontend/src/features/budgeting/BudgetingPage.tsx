@@ -34,7 +34,7 @@ export default function BudgetingPage() {
   const q = useBudget(job)
   const b = q.data
   const t = b?.total
-  const edit = can('workorders.manage')
+  const edit = can('budget.edit')
 
   const lines = (b?.rows ?? []).filter((r) => (show === 'todo' ? !r.budgeted : show === 'loss' ? (r.profit ?? 0) < 0 && r.budgeted : true))
   // All lines are shown with the BOQ's headings in bold above their sections, each section folded or open; a filtered view shows

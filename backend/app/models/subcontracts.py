@@ -74,6 +74,9 @@ class DBContractor(Base):
     __tablename__ = "contractors"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Who last changed the bank account, PAN or GST of an approved contractor: the change waits for somebody else's
+    # approval, and nothing is paid to them until then.
+    details_changed_by = Column(Integer, nullable=True)
     client_id = Column(Integer, ForeignKey("clients.id"), index=True)
     vendor_code = Column(String, default="", index=True)
     company_name = Column(String, default="", index=True)
