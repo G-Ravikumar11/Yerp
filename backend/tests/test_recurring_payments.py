@@ -276,3 +276,31 @@ def test_only_accounts_may_set_them_up_and_only_those_who_see_the_books_may_read
     assert portal.post("/api/recurring-payments", json={"payee": "X", "head": "Rent", "amount": 1, "day_of_month": 1}).status_code in (401, 403)
     assert portal.get("/api/recurring-payments").status_code in (401, 403)
     assert portal.delete("/api/recurring-payments/1").status_code in (401, 403)
+
+
+def test_the_tax_selection_and_bank_details_are_kept_and_go_with_each_months_request(tenant):
+    # Due today, so the job raises it at once.
+    p = made(tenant, day_of_month=TODAY.day, start_date=TODAY.isoformat(), amount=11800, mode="Bank transfer", tax="taxable", supply="non_local",
+             supply_state="29", gst_rate=18, payee_bank="State Bank of India", payee_account="30123456789", payee_ifsc="sbin0001234")
+    assert (p["tax"], p["supply"], p["supply_state"], p["gst_rate"]) == ("taxable", "non_local", "29", 18.0)
+    assert (p["payee_bank"], p["payee_account"], p["payee_ifsc"]) == ("State Bank of India", "30123456789", "SBIN0001234")
+    job()
+    req = [r for r in requests_of(tenant) if r["doc_type"] == "expense"][0]
+    # The month's request carries the tax selection and where the money goes.
+    assert (req["tax"], req["supply"], req["supply_state"], req["gst_rate"]) == ("taxable", "non_local", "29", 18.0)
+    assert (req["payee_bank"], req["payee_account"], req["payee_ifsc"]) == ("State Bank of India", "30123456789", "SBIN0001234")
+
+
+def test_non_taxable_needs_no_supply_and_a_cash_mode_keeps_no_bank_details(tenant):
+    p = tenant.post("/api/recurring-payments", json={"payee": "Airtel", "head": "Telephone & internet", "amount": 4200, "day_of_month": 22, "start_date": "2026-01-01",
+                                                   "mode": "Cash", "tax": "non_taxable", "supply": "local", "payee_bank": "SBI", "payee_account": "30123456789"}).json()["payment"]
+    assert (p["tax"], p["supply"], p["supply_state"], p["gst_rate"]) == ("non_taxable", "", "", 0.0)
+    assert (p["payee_bank"], p["payee_account"], p["payee_ifsc"]) == ("", "", "")
+
+
+def test_a_taxable_payment_needs_local_or_a_state_for_non_local(tenant):
+    base = {"payee": "Hire Co", "head": "Machinery hire", "amount": 5000, "day_of_month": 1, "start_date": "2026-01-01", "tax": "taxable"}
+    assert tenant.post("/api/recurring-payments", json=base).status_code == 400                                   # neither local nor non local
+    assert tenant.post("/api/recurring-payments", json={**base, "supply": "non_local"}).status_code == 400       # no state
+    assert tenant.post("/api/recurring-payments", json={**base, "supply": "non_local", "supply_state": "29", "gst_rate": 17}).status_code == 400
+    assert tenant.post("/api/recurring-payments", json={**base, "supply": "local", "gst_rate": 18}).status_code == 200

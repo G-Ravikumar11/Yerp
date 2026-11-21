@@ -76,6 +76,8 @@ def recurring_dict(t, jobs=None, accounts=None, last=None):
             "amount": money(t.amount), "day_of_month": t.day_of_month, "start_date": t.start_date or "", "end_date": t.end_date or "",
             "next_due": t.next_due or "", "status": status_of(t), "is_active": bool(t.is_active),
             "account_id": t.account_id, "account": account.name if account else "", "mode": t.mode or "", "note": t.note or "",
+            "tax": t.tax or "", "supply": t.supply or "", "supply_state": t.supply_state or "", "gst_rate": t.gst_rate or 0.0,
+            "payee_bank": t.payee_bank or "", "payee_account": t.payee_account or "", "payee_ifsc": t.payee_ifsc or "",
             "raised_count": t.raised_count or 0, "last_raised_on": t.last_raised_on or "", "last_error": t.last_error or "",
             "last_request": last or None, "created_by_name": t.created_by_name or "", "created_at": t.created_at or ""}
 
@@ -160,6 +162,17 @@ def apply_recurring(db, client_id, t, body, who, creating):
         t.mode = _name(body.mode)[:30]
     if given("note"):
         t.note = _name(body.note)[:200]
+    # The tax selection, as on an expense voucher: non taxable is complete, taxable is local or non local (from a state) at a rate.
+    if given("tax"):
+        from app.services.money import expense_gst, expense_tax
+        t.tax, t.supply, t.supply_state = expense_tax(body.tax, body.supply, body.supply_state)
+        t.gst_rate = expense_gst(t.tax, body.gst_rate)
+    # Where a bank transfer goes: kept only while the mode is a bank transfer, and checked when given.
+    if given("mode") or given("payee_bank") or given("payee_account") or given("payee_ifsc"):
+        from app.services.money import payee_bank_details
+        t.payee_bank, t.payee_account, t.payee_ifsc = payee_bank_details(
+            t.mode, body.payee_bank if given("payee_bank") else t.payee_bank, body.payee_account if given("payee_account") else t.payee_account,
+            body.payee_ifsc if given("payee_ifsc") else t.payee_ifsc)
     # The same rent twice would be paid twice: one live template for a payee, head and project.
     if t.next_due != "" or creating:
         from app.services.crm import norm_name
@@ -201,7 +214,9 @@ def raise_due(db, t, today):
             break
         if not db.query(DBRecurringPaymentRun.id).filter(DBRecurringPaymentRun.recurring_id == t.id, DBRecurringPaymentRun.due_on == t.next_due).first():
             body = MoneyIn(doc_type="expense", head=t.head, party_name=t.payee, amount=t.amount, job_id=t.job_id, account_id=t.account_id,
-                           mode=t.mode or "", note=("Recurring: %s, due %s" % (t.note or t.head, due.strftime("%d %b %Y")))[:300])
+                           mode=t.mode or "", tax=t.tax or "", supply=t.supply or "", supply_state=t.supply_state or "", gst_rate=t.gst_rate or None,
+                           payee_bank=t.payee_bank or "", payee_account=t.payee_account or "", payee_ifsc=t.payee_ifsc or "",
+                           note=("Recurring: %s, due %s" % (t.note or t.head, due.strftime("%d %b %Y")))[:300])
             r = preq.raise_request(db, client, None, WHO, body)
             db.add(DBRecurringPaymentRun(client_id=t.client_id, recurring_id=t.id, due_on=t.next_due, request_id=r.id))
             t.raised_count = (t.raised_count or 0) + 1
