@@ -170,6 +170,8 @@ PORTAL_PERMISSIONS = [
     {"key": "workorders.approve", "group": "Contracts",
      "label": "Final work order approval (MD)"},
     # THE SUBCONTRACTORS PORTAL, job by job. Each was carried by a broader right that also did something else.
+    {"key": "contractors.register", "group": "Subcontractors",
+     "label": "Register subcontractors"},
     {"key": "contractors.edit", "group": "Subcontractors",
      "label": "Edit contractor details (bank, GST, contacts)"},
     {"key": "contractors.portal", "group": "Subcontractors",

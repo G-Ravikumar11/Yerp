@@ -39,7 +39,9 @@ export default function VendorsPage() {
   const file = useRef<HTMLInputElement>(null)
   // Vendor codes are opened at head office, by HO QS (and the Master) - nobody else.
   const opens = can('vendors.create')
-  useOpenOnArrival(() => setCreating(true), opens)
+  // "Register subcontractors": registers one (its code comes next in the series); the import stays HO QS's.
+  const registers = opens || can('contractors.register')
+  useOpenOnArrival(() => setCreating(true), registers)
 
   const decide = useAction((a: { v: Vendor; decision: 'approve' | 'reject'; comments?: string }) => decideVendor(a.v.id, a.decision, a.comments), {
     invalidate: [vendorKeys.all, ['approvals'], ['orders']],
@@ -146,7 +148,7 @@ export default function VendorsPage() {
       <PageHeader
         eyebrow="Subcontractors"
         title="Sub Contract Registration"
-        description={`Every contractor with its vendor code and its Sub Contractor Registration Form. No order is issued to a contractor whose form is not signed off.${opens ? '' : ' Vendor codes are opened by HO QS.'}`}
+        description={`Every contractor with its vendor code and its Sub Contractor Registration Form. No order is issued to a contractor whose form is not signed off.${registers ? '' : ' Vendor codes are opened by HO QS.'}`}
         actions={
           <>
             <Button variant="outline" asChild>
@@ -154,12 +156,16 @@ export default function VendorsPage() {
                 <Download /> Excel
               </a>
             </Button>
-            {opens && (
+            {registers && (
               <>
-                <input ref={file} type="file" hidden accept=".xlsx" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) bring.mutate(f) }} />
-                <Button variant="outline" loading={bring.isPending} onClick={() => file.current?.click()}>
-                  <FileUp /> Import forms
-                </Button>
+                {opens && (
+                  <>
+                    <input ref={file} type="file" hidden accept=".xlsx" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) bring.mutate(f) }} />
+                    <Button variant="outline" loading={bring.isPending} onClick={() => file.current?.click()}>
+                      <FileUp /> Import forms
+                    </Button>
+                  </>
+                )}
                 <Button onClick={() => setCreating(true)}>
                   <Plus /> Register a sub contractor
                 </Button>
@@ -179,7 +185,7 @@ export default function VendorsPage() {
         columns={columns}
         rowKey={(v) => v.id}
         loading={vendors.isPending}
-        empty={filters.active ? 'Nobody matches those filters.' : opens ? 'No sub contractors yet. Register one, or import the registration forms workbook.' : 'No sub contractors yet. HO QS opens their vendor codes.'}
+        empty={filters.active ? 'Nobody matches those filters.' : registers ? 'No sub contractors yet. Register one, or import the registration forms workbook.' : 'No sub contractors yet. HO QS opens their vendor codes.'}
       />
 
       <VendorFormModal vendor={null} open={creating} onOpenChange={setCreating} />
