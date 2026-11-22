@@ -658,3 +658,16 @@ def claims_by_job(db, client_id, job_ids=None):
         if job_ids is None or jid in job_ids:
             out[jid] = out.get(jid, 0.0) + (amount or 0)
     return out
+
+
+def contractor_payment_hold(db, client_id, party_id, party_name):
+    """Why a sub contractor cannot be paid right now, or "" when they can: their registration, or a change to their bank
+    account, PAN or GST, waits for approval. Found by id, else by name."""
+    q = db.query(models.DBContractor).filter(models.DBContractor.client_id == client_id)
+    c = q.filter(models.DBContractor.id == party_id).first() if party_id else None
+    c = c or next((x for x in q.all() if norm(x.company_name) == norm(party_name)), None)
+    if c is None or (c.registration_status or "APPROVED") == "APPROVED":
+        return ""
+    what = "a change to their bank or tax details" if c.details_changed_by else "their registration"
+    return ("%s is not paid yet: %s is waiting for approval. Approve it in Approvals (by somebody other than whoever "
+            "made it), then pay." % (c.company_name, what))

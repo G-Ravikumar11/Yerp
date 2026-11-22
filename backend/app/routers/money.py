@@ -897,6 +897,14 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
             raise HTTPException(400, "Who is this from or to?")
         party_id, job_id, doc_number = None, owned_or_404(db, models.DBJob, client.id, body.job_id, "Project"), ""
 
+    # A sub contractor whose registration - or a change to their bank account, PAN or GST - waits for approval is not paid,
+    # by hand any more than by the bank file: a changed account number is how money goes to the wrong person.
+    if direction == "OUT" and party_type == "contractor":
+        from app.services.payouts import contractor_payment_hold
+        held = contractor_payment_hold(db, client.id, party_id, party_name)
+        if held:
+            raise HTTPException(409, held)
+
     if mode == "Cheque" and direction == "OUT":
         refuse_duplicate_cheque(db, client.id, account.id if account else None, body.reference)
 

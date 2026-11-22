@@ -84,3 +84,17 @@ def test_whoever_measured_the_work_does_not_certify_its_bill(tenant, portal):
     sign_in(portal, pm)
     res = portal.post("/api/sub-bills/%d/certify" % bill["id"], json={})
     assert res.status_code == 403 and "recorded measurements" in res.json()["detail"]
+
+
+def test_a_contractor_with_changed_bank_details_is_not_paid_by_hand_either(tenant, portal):
+    """Pay & Receive holds them as the bank file does, until somebody else approves the change."""
+    con = approved_contractor(tenant)
+    sign_in(portal, staff(tenant, "project_manager"))
+    portal.put("/api/wo/contractors/%d" % con["id"], json=body_of(tenant, con["id"], bank_account="999988887777"))
+    pay = {"doc_type": "on_account", "doc_id": None, "direction": "OUT", "party_type": "contractor",
+           "party_name": con["company_name"], "amount": 5000, "paid_on": "2026-11-01", "mode": "Cash", "reference": "",
+           "note": "", "account_id": None, "job_id": None}
+    held = tenant.post("/api/money/entries", json=pay)
+    assert held.status_code == 409 and "waiting for approval" in held.json()["detail"], held.text
+    assert tenant.post("/api/wo/contractors/%d/approve" % con["id"], json={}).status_code == 200
+    assert tenant.post("/api/money/entries", json=pay).status_code == 200
