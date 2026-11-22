@@ -5,6 +5,7 @@ import { MotionConfig } from 'framer-motion'
 import { Loader2 } from 'lucide-react'
 import { Toaster, TooltipProvider } from '@/components/ui'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
+import { FileSheet } from '@/components/FileSheet'
 import { FreshBuild } from '@/lib/freshness'
 import { LegacyLinks } from '@/lib/legacyLinks'
 import { persistOptions, queryClient } from '@/lib/query'
@@ -117,6 +118,7 @@ export default function App() {
         </BrowserRouter>
         <Toaster />
         <UpdatePrompt />
+        <FileSheet />
       </TooltipProvider>
       </MotionConfig>
     </PersistQueryClientProvider>

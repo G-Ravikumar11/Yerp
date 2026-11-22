@@ -41,3 +41,13 @@ describe('what the saved file is called', () => {
     expect(fileNameFor('../../secret/x:y.pdf', null, '/api/x.pdf')).not.toMatch(/[\/:]/)
   })
 })
+
+describe('the name a saved copy is given', () => {
+  it('keeps the file\'s own name when it is free, and numbers it when it is not', async () => {
+    const { savedName } = await import('./download')
+    expect(savedName('registration.pdf', new Set())).toBe('registration.pdf')
+    expect(savedName('registration.pdf', new Set(['registration.pdf']))).toBe('registration (2).pdf')
+    expect(savedName('registration.pdf', new Set(['registration.pdf', 'registration (2).pdf']))).toBe('registration (3).pdf')
+    expect(savedName('notes', new Set(['notes']))).toBe('notes (2)')
+  })
+})

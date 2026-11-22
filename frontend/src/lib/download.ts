@@ -3,6 +3,7 @@ import { Directory, Filesystem } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import { apiUrl } from '@/lib/api'
 import { toast } from '@/stores/toast'
+import { useFileSheet, type HeldFile } from '@/stores/fileSheet'
 
 /**
  * Downloads in the phone app.
@@ -10,7 +11,8 @@ import { toast } from '@/stores/toast'
  * The website's PDF and Excel buttons are plain links ("/api/ra-bills/3/export.xlsx"). In the app a bare "/api/..." address
  * points at the app's own files, not the server, and the phone's own browser has none of the person's sign-in - so such a
  * button did nothing. Here the app does the fetching itself, with the person's sign-in, keeps the file on the phone, and
- * hands it to the phone's own "Open with / Share" choices (a spreadsheet app, a PDF reader, WhatsApp, e-mail).
+ * then asks what to do with it (lib/download.ts: components/FileSheet.tsx): save it to the phone, or share it (WhatsApp, e-mail,
+ * a spreadsheet app). It used to open the share list at once, which left no way to just keep the file.
  *
  * Every button that links to a download is covered at once, without editing any of them: clicks on such links (and
  * window.open, and a script clicking a link it made) are caught here. Only the native app installs any of this, so the
@@ -82,7 +84,7 @@ export async function downloadAndShare(href: string, downloadAttr?: string | nul
     const name = fileNameFor(downloadAttr, res.headers.get('content-disposition'), href)
     const data = await toBase64(await res.blob())
     const saved = await Filesystem.writeFile({ path: `downloads/${Date.now()}/${name}`, data, directory: Directory.Cache, recursive: true })
-    await Share.share({ title: name, dialogTitle: `Open or share ${name}`, url: saved.uri })
+    useFileSheet.getState().show({ name, uri: saved.uri, data })
   } catch (e) {
     const msg = String((e as { message?: unknown })?.message ?? e)
     // Someone dismissing the share sheet is not an error.
@@ -92,6 +94,41 @@ export async function downloadAndShare(href: string, downloadAttr?: string | nul
       : 'That file could not be downloaded. Check the connection and try again.')
   } finally {
     busy.delete(href)
+  }
+}
+
+/** Hand the held file to the phone's share list (WhatsApp, e-mail, a spreadsheet app, a PDF reader). */
+export async function shareHeld(file: HeldFile) {
+  try {
+    await Share.share({ title: file.name, dialogTitle: `Share ${file.name}`, url: file.uri })
+  } catch (e) {
+    // Someone dismissing the share list is not an error.
+    if (!/cancel|dismiss/i.test(String((e as { message?: unknown })?.message ?? e))) toast.error('That file could not be shared.')
+  }
+}
+
+/** The name a copy kept in the phone's Documents folder is given: the file's own, with a number if the name is taken. */
+export function savedName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name
+  const dot = name.lastIndexOf('.')
+  const stem = dot > 0 ? name.slice(0, dot) : name
+  const ext = dot > 0 ? name.slice(dot) : ''
+  for (let i = 2; ; i++) if (!taken.has(`${stem} (${i})${ext}`)) return `${stem} (${i})${ext}`
+}
+
+/** Keep a copy in the phone's Documents folder (Documents/Y ERP), where the Files app shows it. Says where it went. */
+export async function saveHeld(file: HeldFile): Promise<boolean> {
+  try {
+    const dir = 'Y ERP'
+    let taken = new Set<string>()
+    try { taken = new Set((await Filesystem.readdir({ path: dir, directory: Directory.Documents })).files.map((f) => f.name)) } catch { /* no folder yet */ }
+    const name = savedName(file.name, taken)
+    await Filesystem.writeFile({ path: `${dir}/${name}`, data: file.data, directory: Directory.Documents, recursive: true })
+    toast.success(`Saved in Documents / ${dir} as ${name}`)
+    return true
+  } catch {
+    toast.error('The phone would not let the app save it. Use Share, and choose Save to Files or Drive.')
+    return false
   }
 }
 
