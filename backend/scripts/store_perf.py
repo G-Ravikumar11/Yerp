@@ -563,7 +563,7 @@ def _writes(c, meta, meter, repeat):
     s1 = meta["stores"][0]
     bal = c.get("/api/store/enquiry/balances?store_id=%d" % s1).json()
     rows = [r for r in (bal.get("items") or bal.get("rows") or []) if float(r.get("available") or r.get("on_hand") or 0) > 50]
-    out = {}
+    out, refused = {}, {}
     site = meta["stores"][2]
     open_lines = [(po["id"], l) for po in c.get("/api/store/inward/po-options").json().get("items", []) for l in po["lines"] if not l.get("needs_item")]
     low = [r for r in c.get("/api/store/levels/low-stock").json().get("items", []) if not r.get("action")]
@@ -580,10 +580,13 @@ def _writes(c, meta, meter, repeat):
                 d = c.post("/api/store/inward/grn", json={"store_id": s1, "grn_date": day(0), "po_id": po_id, "challan_no": "PERF-%d" % n,
                                                           "lines": [{"po_line_id": l["po_line_id"], "qty": "1", "uom": l["base_uom"],
                                                                      **({"batch_no": "PERF-%d" % n, "expiry_date": day(-90)} if l.get("batch_tracked") else {})}]}).json()
-                for gl in d.get("lines", []):
-                    c.post("/api/store/inward/grn/%d/qc/%d" % (d["id"], gl["id"]), json={"result": "PASSED", "rejected_qty": "0", "note": "ok"})
-                for step in ("submit", "approve", "post"):
-                    c.post("/api/store/inward/grn/%d/%s" % (d["id"], step))
+                if "id" not in d:
+                    refused.setdefault(make, str(d)[:160])
+                else:
+                    for gl in d.get("lines", []):
+                        c.post("/api/store/inward/grn/%d/qc/%d" % (d["id"], gl["id"]), json={"result": "PASSED", "rejected_qty": "0", "note": "ok"})
+                    for step in ("submit", "approve", "post"):
+                        c.post("/api/store/inward/grn/%d/%s" % (d["id"], step))
             elif make == "indent":
                 d = c.post("/api/store/outward/indent", json={"store_id": site, "indent_date": day(0), "required_by": day(-7), "project_id": meta["jobs"][0],
                                                               "activity": "Slab casting", "lines": [{"item_id": r["item_id"], "qty": "5"}]}).json()
@@ -607,6 +610,8 @@ def _writes(c, meta, meter, repeat):
             qs.append(meter.stop()["n"])
         out[label] = {"median_ms": round(statistics.median(times), 1), "p95_ms": round(_p95(times), 1), "queries": int(statistics.median(qs))}
         print("%-45s %7.1f ms  q=%d" % (label, out[label]["median_ms"], out[label]["queries"]))
+    for k, why in refused.items():
+        print("  refused (%s): %s" % (k, why))
     return out
 
 
