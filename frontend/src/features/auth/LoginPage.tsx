@@ -1,7 +1,7 @@
 import { forgetLocalData } from '@/lib/query'
 import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Eye, EyeOff } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { Notice, YahooMark, nextTarget } from './AuthLayout'
@@ -72,6 +72,34 @@ export default function LoginPage() {
       else markScreensGood()
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // The phone's keyboard is drawn over the page without shrinking it. The native Keyboard plugin says how tall it is: that much
+  // room is added under the form so the page can scroll, and the field being typed in (with the button below it) is brought into view.
+  useEffect(() => {
+    const root = document.documentElement
+    const keepInView = () => {
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement) {
+        // Placed in the upper part of what the keyboard leaves visible, so the field after it and the button are also in sight.
+        window.setTimeout(() => {
+          const kb = parseFloat(root.style.getPropertyValue('--kb')) || 0
+          window.scrollBy({ top: el.getBoundingClientRect().top - (window.innerHeight - kb) * 0.25, behavior: 'smooth' })
+        }, 120)
+      }
+    }
+    const handles: Promise<{ remove: () => Promise<void> }>[] = []
+    if (native) {
+      const kb = registerPlugin<{ addListener: (event: string, fn: (e: { keyboardHeight?: number }) => void) => Promise<{ remove: () => Promise<void> }> }>('Keyboard')
+      handles.push(kb.addListener('keyboardWillShow', (e) => { root.style.setProperty('--kb', `${e.keyboardHeight ?? 0}px`); keepInView() }))
+      handles.push(kb.addListener('keyboardWillHide', () => root.style.removeProperty('--kb')))
+    }
+    document.addEventListener('focusin', keepInView)
+    return () => {
+      document.removeEventListener('focusin', keepInView)
+      root.style.removeProperty('--kb')
+      handles.forEach((h) => void h.then((x) => x.remove()).catch(() => undefined))
+    }
   }, [])
 
   const submit = async (e: React.FormEvent) => {
