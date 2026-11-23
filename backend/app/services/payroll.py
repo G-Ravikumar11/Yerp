@@ -63,7 +63,8 @@ def compute_payslip_figures(emp, data, lines=None, tax_fn=None):
     gross = money(basic + ot_pay + bonus + allowances)
 
     tax = data.get("tax_amount")
-    if tax is None or float(tax) <= 0:
+    typed_tax = not (tax is None or float(tax) <= 0)
+    if not typed_tax:
         if tax_fn is not None:
             # New-regime TDS on the year's projected salary; bonus and overtime are this month's only, not projected.
             tax = tax_fn(gross, bonus + ot_pay)
@@ -84,6 +85,10 @@ def compute_payslip_figures(emp, data, lines=None, tax_fn=None):
     standing = money(emp.deductions or 0)
     # A salary advance taken back this month: HR's figure, checked against the advance held before it gets here.
     advance = money(data.get("advance_recovery") or 0)
+    if not typed_tax:
+        # Worked-out TDS takes no more than the month's pay leaves after the other deductions. Tax short-deducted
+        # earlier in the year, charged to a month with little or no pay (all loss of pay), made the net negative.
+        tax = money(min(tax, max(gross - (insurance + retirement + other + pt + standing + advance), 0.0)))
     total_deductions = money(tax + insurance + retirement + other + pt + standing + advance)
     # Expense claims paid with the salary: repaid money, not pay. Outside the gross, so no tax, PF or ESI is worked on it.
     reimbursement = money(data.get("reimbursement") or 0)
@@ -196,7 +201,9 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
     holidays = custom_holidays(db, client_id, date(start_day.year, 1, 1), date(end_day.year, 12, 31)) if start_day and end_day else {}
     for emp in employees:
         clash = find_overlapping_payslip(db, client_id, emp.id, period_start, period_end)
-        if clash:
+        # A dry run asked not to skip works a month out again even where it was already run, to check it against what
+        # was paid: the payslip already there is named on the row rather than refusing the whole preview.
+        if clash and not (dry_run and not skip_existing):
             if skip_existing:
                 skipped.append({
                     "employee_id": emp.id, "name": f"{emp.first_name} {emp.last_name}",
@@ -262,6 +269,7 @@ def generate_payroll(db, client_id, period_start, period_end, pay_date, employee
                 # The advance they hold (less what other unreleased payslips take back), and what this one takes.
                 "advance_balance": money(advance_held - spoken_for.get(staff_advances.norm_name(staff_advances.employee_name(emp)), 0.0)),
                 "advance_recovery": figures["advance_recovery"], "reimbursement": figures["reimbursement"],
+                "existing_payslip": clash.number if clash else None,
             })
             total_net += figures["net_pay"]
             total_gross += figures["gross_pay"]
