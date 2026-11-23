@@ -978,7 +978,9 @@ def hierarchy_chain(db, client_id, submitter_id, right, job_id=None, owner_signs
             if boss and boss.id not in seen and employee_can(boss, right):
                 chain.append(boss)
                 seen.add(boss.id)
-    floor = max([raising_rank(me) if me else 0] + [role_rank(e) for e in chain])
+    # The HO Coordinator signs because somebody reports to them, not as a rung of the ladder: their rank does not
+    # lift the floor, or the project manager and HO QS the paper still has to climb through would be passed over.
+    floor = max([raising_rank(me) if me else 0] + [role_rank(e) for e in chain if not by_reporting_line_only(e)])
     sites = (employee_site_ids(db, me) if me else None) or set()
     if job_id:
         sites = set(sites) | {job_id}
