@@ -1459,6 +1459,15 @@ def ensure_columns():
                     for table in ("employees", "job_requisitions", "offers", "document_requirements", "approval_chains"):
                         conn.execute(text(f"UPDATE {table} SET level = {case} WHERE level IS NOT NULL AND level <> ''"))
                     conn.execute(text("INSERT INTO data_fixes (name) VALUES ('levels_in_hierarchy_order')"))
+                # HR got its own level (L4) under Coordinator / HO: every saved level from L4 down moves one step,
+                # and the people in the HR role move to the new L4. Once, as above.
+                done = conn.execute(text("SELECT 1 FROM data_fixes WHERE name = 'levels_hr_inserted'")).fetchone()
+                if not done:
+                    case = "CASE level " + " ".join(f"WHEN 'L{n}' THEN 'L{n + 1}'" for n in range(4, 20)) + " ELSE level END"
+                    for table in ("employees", "job_requisitions", "offers", "document_requirements", "approval_chains"):
+                        conn.execute(text(f"UPDATE {table} SET level = {case} WHERE level IS NOT NULL AND level <> ''"))
+                    conn.execute(text("UPDATE employees SET level = 'L4' WHERE role = 'hr'"))
+                    conn.execute(text("INSERT INTO data_fixes (name) VALUES ('levels_hr_inserted')"))
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 30b: {sys.exc_info()[1]}")
