@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-const sheets = vi.hoisted(() => ({ read: vi.fn() }))
+const sheets = vi.hoisted(() => ({ read: vi.fn(), names: vi.fn() }))
 const pdf = vi.hoisted(() => ({ getDocument: vi.fn() }))
-vi.mock('read-excel-file', () => ({ default: sheets.read }))
+vi.mock('read-excel-file', () => ({ default: sheets.read, readSheetNames: sheets.names }))
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({ getDocument: pdf.getDocument, GlobalWorkerOptions: {} }))
 vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({ default: 'worker.js' }))
 
@@ -16,6 +16,7 @@ const xlsx = (name = 'bill.xlsx') => ({ name, uri: 'file:///cache/' + name, data
 
 beforeEach(() => {
   sheets.read.mockReset()
+  sheets.names.mockReset()
   pdf.getDocument.mockReset()
   vi.spyOn(toast, 'error').mockImplementation(() => undefined as never)
   useFileSheet.setState({ file: null, viewing: null })
@@ -24,9 +25,10 @@ beforeEach(() => {
 })
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-/** read-excel-file is asked twice: for the sheet names, then for one sheet's rows. */
+/** read-excel-file is asked for the sheet names, then for one sheet's rows. */
 function workbook(names: string[], rows: Record<number, unknown[][]>) {
-  sheets.read.mockImplementation(async (_blob: Blob, o: { getSheets?: boolean; sheet?: number }) => (o.getSheets ? names.map((name) => ({ name })) : rows[o.sheet ?? 1]))
+  sheets.names.mockResolvedValue(names)
+  sheets.read.mockImplementation(async (_blob: Blob, o: { sheet?: number }) => rows[o.sheet ?? 1])
 }
 
 describe('the file viewer', () => {
@@ -65,7 +67,7 @@ describe('the file viewer', () => {
   })
 
   it('sends a workbook it cannot read to the Save / Share box instead, with a message', async () => {
-    sheets.read.mockRejectedValue(new Error('not a workbook'))
+    sheets.names.mockRejectedValue(new Error('not a workbook'))
     useFileSheet.getState().view(xlsx('broken.xlsx'))
     render(<FileViewer />)
     await waitFor(() => expect(useFileSheet.getState().file?.name).toBe('broken.xlsx'))

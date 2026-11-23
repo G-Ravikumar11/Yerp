@@ -9,7 +9,7 @@ import { toast } from '@/stores/toast'
  * (lib/download.ts), so in a browser this draws nothing. The PDF and spreadsheet readers are loaded only when a file is opened.
  */
 
-function bytesOf(base64: string): Uint8Array {
+function bytesOf(base64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(base64)
   const out = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
@@ -165,11 +165,11 @@ function SheetBody({ file, onFail }: { file: HeldFile; onFail: () => void }) {
     let dead = false
     ;(async () => {
       try {
-        const read = (await import('read-excel-file')).default
+        const lib = await import('read-excel-file')
         blob.current = new Blob([bytesOf(file.data)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-        const list = (await read(blob.current, { getSheets: true })) as { name: string }[]
+        const names = await lib.readSheetNames(blob.current)
         if (dead) return
-        setSheets(list.map((s) => s.name))
+        setSheets(names)
         setActive(0)
       } catch {
         if (!dead) failRef.current()
