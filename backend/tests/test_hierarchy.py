@@ -7,9 +7,9 @@ from conftest import make_employee
 def test_level_catalogue_is_served(tenant):
     data = tenant.get("/api/hr/levels").json()
     codes = [l["code"] for l in data["levels"]]
-    assert codes == ["L%d" % i for i in range(1, 20)]
+    assert codes == ["L%d" % i for i in range(1, 21)]
     roles = {r["code"]: r for r in data["roles"]}
-    assert roles["project_manager"]["level"] == "L5"
+    assert roles["project_manager"]["level"] == "L6"
     assert roles["store_assistant"]["reports_to"] == "store_executive"
 
 
@@ -80,7 +80,7 @@ def test_reporting_line_builds_a_tree(tenant):
 
 
 def test_role_fills_in_its_level_when_none_is_given(tenant):
-    assert make_employee(tenant, role="site_engineer")["level"] == "L8"
+    assert make_employee(tenant, role="site_engineer")["level"] == "L9"
 
 
 def test_manager_cannot_sit_below_the_employee(tenant):
