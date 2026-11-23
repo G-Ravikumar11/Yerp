@@ -126,6 +126,24 @@ def erp_wo_delete_report(db, client, wo):
     }
 
 
+def wo_department_for(db, client_id, raised_by, work_type=""):
+    """The department a work order is filed under - and so its number series - decided for it, not chosen: the department
+    of the person who raises it. The Master belongs to none, so an order the Master raises goes under the department its
+    kind of work is filed under (Recoveries & Work Types), and with neither it is a general order (GEN)."""
+    if raised_by:
+        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == raised_by,
+                                                 models.DBEmployee.client_id == client_id).first()
+        dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == emp.department_id).first()             if emp is not None and emp.department_id else None
+        if dept is not None and (dept.name or "").strip():
+            return dept.name.strip()
+    if (work_type or "").strip():
+        wt = db.query(models.DBWorkType).filter(models.DBWorkType.client_id == client_id,
+                                                models.DBWorkType.name == work_type.strip()).first()
+        if wt is not None and (wt.department or "").strip():
+            return wt.department.strip()
+    return ""
+
+
 def wo_department_choices(db, client_id):
     """The departments an order can be raised for: the ones the owner has added to a site.
 

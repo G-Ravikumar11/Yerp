@@ -120,6 +120,7 @@ from app.services.subcontract_orders import (
     wo_delete_order_now,
     wo_delete_report,
     wo_department_choices,
+    wo_department_for,
     wo_department_sites,
     wo_dict,
     wo_involved_ids,
@@ -770,7 +771,8 @@ def wo_create_order(body: WorkOrderHeadIn, request: Request,
     BOQ is still being priced, which is how the site office refers to it.
     Work orders are opened at head office, by HO QS (or the Master)."""
     client, actor_id, actor_name = wo_actor(request, db, "workorders.create")
-    dept = (body.department or "").strip()
+    # Decided, not chosen: the department of whoever raises it (the Master's: its kind of work's), and so its series.
+    dept = wo_department_for(db, client.id, actor_id, body.work_type or "")
     order = models.DBSubcontractOrder(
         client_id=client.id, status="DRAFT",
         wo_number=next_wo_number(db, client.id, dept, body.commencement_date),
@@ -829,11 +831,12 @@ def wo_copy_order(order_id: int, request: Request, db: Session = Depends(get_db)
     """
     client, actor_id, actor_name = wo_actor(request, db, "workorders.create")
     source = wo_or_404(db, client.id, order_id)
+    dept = wo_department_for(db, client.id, actor_id, source.work_type or "")     # whoever makes the copy raises it
     order = models.DBSubcontractOrder(
         client_id=client.id, status="DRAFT",
-        wo_number=next_wo_number(db, client.id, source.department),
+        wo_number=next_wo_number(db, client.id, dept),
         business_unit_id=source.business_unit_id, contractor_id=source.contractor_id,
-        job_id=source.job_id, department=source.department, work_type=source.work_type,
+        job_id=source.job_id, department=dept, work_type=source.work_type,
         subject=source.subject, scope_of_work=source.scope_of_work,
         duration_months=source.duration_months,
         defect_liability_months=source.defect_liability_months,
@@ -916,9 +919,9 @@ def wo_update_order(order_id: int, body: WorkOrderHeadIn, request: Request,
     before = wo_snapshot(order)
     wo_take_head(db, client, order, body, creating=False)
 
-    # The number carries the discipline, so changing the discipline on a draft
-    # has to reissue it - otherwise it is filed under the wrong one for ever.
-    dept = (body.department or "").strip()
+    # The department is decided, not typed: the raiser's, or for an order the Master raised, its kind of work's - which can
+    # be set or changed while it is a draft. The number carries the department, so a change reissues it.
+    dept = wo_department_for(db, client.id, order.submitted_by, order.work_type or "")
     if dept != (order.department or ""):
         order.department = dept
         order.wo_number = next_wo_number(db, client.id, dept, order.commencement_date)

@@ -1,5 +1,5 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, Field, Input, NumField, Select, Textarea } from '@/components/ui'
-import { departmentsForSite, useBusinessUnits, useContractors, useOrderVocabulary, type Order, type OrderHead } from '@/api/orders'
+import { useBusinessUnits, useContractors, useOrderVocabulary, type Order, type OrderHead } from '@/api/orders'
 
 const BILLING_CYCLES = ['Monthly', 'Fortnightly', 'On milestone', 'On completion']
 
@@ -49,7 +49,8 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
   const statutory = picked?.tds_rate ?? order.statutory_tds?.rate ?? null
   const basis = picked?.tds_basis ?? order.statutory_tds?.why ?? ''
   const tdsOptions = (v?.tds_options ?? [{ rate: 1, label: '1%' }]).map((t) => ({ value: t.rate, label: t.label }))
-  const workTypes = (v?.work_types ?? []).filter((w) => !head.department || w.department === head.department)
+  // Every kind of work: the department is decided by who raised the order, not the other way round.
+  const workTypes = v?.work_types ?? []
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
@@ -80,8 +81,8 @@ export function HeadForm({ head, onChange, disabled, order }: { head: OrderHead;
           <Field label="Project" htmlFor="h-job" hint="Its budget is what this order is held against.">
             <Select id="h-job" disabled={disabled} value={head.job_id ?? ''} onChange={(e) => onChange({ job_id: id(e.target.value) })} placeholder="Choose" options={(v?.jobs ?? []).map((j) => ({ value: j.id, label: `${j.number} ${j.name}` }))} />
           </Field>
-          <Field label="Trade" htmlFor="h-dept" hint={disabled ? undefined : 'Changing it on a draft issues a new number.'}>
-            <Select id="h-dept" disabled={disabled} value={head.department} onChange={(e) => onChange({ department: e.target.value })} placeholder="Choose" options={departmentsForSite(v, head.job_id, head.department).map((d) => ({ value: d, label: d }))} />
+          <Field label="Department" htmlFor="h-dept" hint="Set for you: the department of whoever raised it (an order the Master raised takes its kind of work's). It decides the number series.">
+            <Input id="h-dept" readOnly disabled value={head.department || 'General (GEN)'} />
           </Field>
           <Field label="Kind of work" htmlFor="h-type">
             <Select id="h-type" disabled={disabled} value={head.work_type} onChange={(e) => onChange({ work_type: e.target.value })} placeholder="Choose" options={workTypes.map((w) => ({ value: w.name, label: w.name }))} />

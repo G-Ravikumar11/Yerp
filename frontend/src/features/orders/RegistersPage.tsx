@@ -112,7 +112,7 @@ function WorkTypes() {
   const columns: TableColumn<WorkTypeRow>[] = [
     { id: 'n', header: 'Kind of work', sort: (w) => w.name, cell: (w) => <div className="font-medium">{w.name}</div> },
     { id: 'c', header: 'Code', hideBelow: 'md', cell: (w) => <span className="font-mono text-xs">{w.code}</span> },
-    { id: 'd', header: 'Trade', sort: (w) => w.department, cell: (w) => w.department || '-' },
+    { id: 'd', header: 'Department', sort: (w) => w.department, cell: (w) => w.department || '-' },
   ]
   const asked: TableColumn<WorkTypeRow>[] = [
     ...columns,
@@ -171,7 +171,7 @@ function WorkTypes() {
           <Field label="Name" htmlFor="wt-name">
             <Input id="wt-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Waterproofing - basement" autoFocus />
           </Field>
-          <Field label="Trade" htmlFor="wt-dept" hint="The department it is filed under, as on the order.">
+          <Field label="Department" htmlFor="wt-dept" hint="The department it is filed under, as on the order.">
             <Input id="wt-dept" value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Civil" />
           </Field>
           {!admin && (
