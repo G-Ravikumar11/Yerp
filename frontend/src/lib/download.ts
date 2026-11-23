@@ -21,11 +21,25 @@ import { useFileSheet, type HeldFile } from '@/stores/fileSheet'
 
 const DOWNLOAD_EXT = /\.(pdf|xlsx|xls|csv|docx|doc|zip)$/i
 
-/** The part of an address after the origin, when the address is on this app's own origin; else null. */
+/** The server's own address in the phone app ("https://yerp.example.com"), or null when the app and server share an origin. */
+function apiOrigin(): string | null {
+  try {
+    const root = apiUrl('/')
+    return /^https?:\/\//i.test(root) ? new URL(root).origin : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The part of an address after the origin, when the address is on this app's own origin or on the server's; else null.
+ * A button built with apiUrl() points at the server's full address, not at "/api/...": it must be caught too, or the
+ * phone's own browser opens it, without the person's sign-in.
+ */
 function appPath(href: string, base: string): string | null {
   try {
     const u = new URL(href, base)
-    return u.origin === new URL(base).origin ? u.pathname + u.search : null
+    return u.origin === new URL(base).origin || u.origin === apiOrigin() ? u.pathname + u.search : null
   } catch {
     return null
   }
