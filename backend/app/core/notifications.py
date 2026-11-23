@@ -145,6 +145,23 @@ def smtp_from_header(from_email):
     return formataddr((name or own_name or "", own or account)) if (own or account) else from_email
 
 
+def smtp_reason(exc):
+    """What went wrong with the mail account, in words a person can act on - never the password or the server's reply."""
+    import smtplib
+    import socket
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return ("the mail server refused the sign-in: check SMTP_USER is the full mailbox address and SMTP_PASSWORD is an "
+                "app password made in Zoho (Accounts > Security > App passwords), with no spaces")
+    if isinstance(exc, smtplib.SMTPSenderRefused) or (isinstance(exc, smtplib.SMTPDataError) and exc.smtp_code == 553):
+        return "the mail server would not send from that address: the address in SMTP_FROM must be the same mailbox as SMTP_USER"
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "the mail server refused the address it was sent to"
+    if isinstance(exc, (socket.gaierror, ConnectionRefusedError, TimeoutError, socket.timeout, OSError)) and             not isinstance(exc, smtplib.SMTPException):
+        return ("the mail server could not be reached: check SMTP_HOST (smtppro.zoho.in for a paid Zoho account on your own "
+                "domain, smtppro.zoho.com on zoho.com) and SMTP_PORT (465), then redeploy")
+    return "the mail server did not accept the message"
+
+
 def _send_via_smtp(to_email: str, raw_msg: str):
     """Server-wide mail account (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD) - Zoho Mail: smtp.zoho.in, 465 (SSL) or 587
     (STARTTLS), the mailbox's address and an app-specific password."""
@@ -168,7 +185,7 @@ def _send_via_smtp(to_email: str, raw_msg: str):
         return True, "Email sent via SMTP"
     except Exception as e:
         logger.error(f"SMTP failed: {type(e).__name__}")
-        return False, f"SMTP error: {type(e).__name__}"
+        return False, f"SMTP error: {type(e).__name__} - {smtp_reason(e)}"
 
 
 def send_email_background(to_email: str, subject: str, body: str, from_email: str, html_body: str = None, pdf_b64: str = None, pdf_filename: str = "invoice.pdf", logo_data: str = "", client_id: int = None):

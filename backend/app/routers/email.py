@@ -105,8 +105,8 @@ def send_test_email(request: Request, body: dict = None, db: Session = Depends(g
         "%s <%s>" % (company, default_from_email()), None, None, "", "", client_id=client.id)
     if not ok:
         # The provider's own words can carry details of the account; the error log has them, the screen does not.
-        raise HTTPException(status_code=502, detail=(
-            "The mail server did not accept the message. Check SMTP_USER and the app password (Zoho Accounts > Security > "
-            "App passwords) and that the service was redeployed after setting them." if by_smtp else
-            "Gmail did not accept the message. Reconnect Gmail and try again."))
+        # 409, not 502: the app is fine and says so on the same screen; only the mail account needs putting right.
+        why = message.split(" - ", 1)[1] if " - " in (message or "") else "the mail server did not accept the message"
+        raise HTTPException(status_code=409, detail=(
+            "Not sent: %s." % why if by_smtp else "Gmail did not accept the message. Reconnect Gmail and try again."))
     return {"ok": True, "message": "Test email sent to %s%s." % (to, " by SMTP" if by_smtp else " through Gmail")}

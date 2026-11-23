@@ -132,3 +132,20 @@ def test_settings_shows_the_smtp_mailbox_never_its_password_and_sends_a_test_by_
     res = tenant.post("/api/gmail/test", json={"to": "someone@example.com"})
     assert res.status_code == 200 and "by SMTP" in res.json()["message"], res.text
     assert FakeSMTP.sent and FakeSMTP.sent[-1][1] == ["someone@example.com"]
+
+
+def test_a_refused_test_email_says_why_on_the_same_screen(monkeypatch, tenant):
+    """The page stays; the reason is named (sign-in refused, address not allowed, server not reached) - never the password."""
+    zoho(monkeypatch)
+    monkeypatch.setenv("SMTP_PASSWORD", "zoho-app-password-123")
+    FakeSMTP.fail = True                                         # Zoho refuses the sign-in
+    res = tenant.post("/api/gmail/test", json={"to": "someone@example.com"})
+    assert res.status_code == 409 and "refused the sign-in" in res.json()["detail"], res.text
+    assert "zoho-app-password-123" not in res.text
+
+    class Unreachable(FakeSSL):
+        def __init__(self, *a, **k):
+            raise OSError("no route")
+    monkeypatch.setattr(smtplib, "SMTP_SSL", Unreachable)
+    res = tenant.post("/api/gmail/test", json={"to": "someone@example.com"})
+    assert res.status_code == 409 and "could not be reached" in res.json()["detail"], res.text
