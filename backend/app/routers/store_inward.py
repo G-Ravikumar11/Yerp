@@ -30,8 +30,10 @@ from app.models.store_inward import (
     CLIENT_SUPPLY, GRN, OPENING, PURCHASE_RETURN, DBStoreClientSupply, DBStoreGrn, DBStoreInwardLog, DBStoreOpening, DBStorePurchaseReturn,
 )
 from app.services import store_inward as svc
+from app.services.store_pages import page as store_page
 from app.services.store_batches import shelf_state
 from app.services.stock_ledger import assert_store_access
+
 
 router = APIRouter(prefix="/api/store/inward", tags=["store-inward"])
 ZERO = Decimal("0")
@@ -351,7 +353,9 @@ def list_documents(kind_key: str, request: Request, status: str = "", store_id: 
     total = query.count()
     rows = query.order_by(kind.header.id.desc()).offset(max(0, offset)).limit(max(1, min(limit, 500))).all()
     stores = _store_names(db, {r.store_id for r in rows})
-    return {"total": total, "items": [{**doc_dict(db, kind, r), "store_code": stores[r.store_id].code if r.store_id in stores else ""} for r in rows]}
+    # The page's lines and what its documents point at, read once (a purchase return's receipt's order too) - not per row.
+    with store_page(db, kind, rows, svc.LINE_ORDER[kind.line], follow=((DBStoreGrn, "po_id"),)):
+        return {"total": total, "items": [{**doc_dict(db, kind, r), "store_code": stores[r.store_id].code if r.store_id in stores else ""} for r in rows]}
 
 
 @router.get("/{kind_key}/export")

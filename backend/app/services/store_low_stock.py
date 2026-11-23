@@ -60,11 +60,10 @@ def _docs(db, alerts):
     return out
 
 
-def _stages_data(db, client_id, keys, alerts):
-    """What the stage of each (store, item) is read from: receipts in hand (not yet posted, and whether they passed QC), stock
-    posted in since the alert, and items a live order still has to deliver."""
+def _stages_data(db, keys, alerts):
+    """What the stage of each (store, item) is read from: receipts in hand (not yet posted, and whether they passed QC) and
+    stock posted in since the alert. (Items a live order still has to deliver come from the order book low_rows reads once.)"""
     from app.models.store_inward import DBStoreGrn, DBStoreGrnLine
-    from app.services.buying_links import items_on_order
     stores, items = {k[0] for k in keys}, {k[1] for k in keys}
     pending = {}
     for g, l in (db.query(DBStoreGrn, DBStoreGrnLine).join(DBStoreGrnLine, DBStoreGrnLine.grn_id == DBStoreGrn.id)
@@ -81,7 +80,7 @@ def _stages_data(db, client_id, keys, alerts):
                                      DBStoreStockLedger.ref_doc_type.in_(("GRN", "CLIENT_SUPPLY", "TRANSFER")),
                                      DBStoreStockLedger.created_at >= first).all()):
             since[(sid, iid)] = max(since.get((sid, iid)) or at, at)
-    return pending, since, items_on_order(db, client_id)
+    return pending, since
 
 
 def _stage(key, a, open_alert, live, pending, since, ordered):
@@ -130,8 +129,10 @@ def low_rows(db, client_id, store_ids, only=None):
     docs = _docs(db, [a for a in alerts.values() if a.cleared_at is None])
     jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.id.in_({s.project_id for s in stores.values() if s.project_id} or {0})).all()}
     # What is already coming (open enquiries, orders not yet received) is the company's: it is set against the first store's need, then the next.
-    coming = _coming(db, client_id)
-    pending, since, ordered = _stages_data(db, client_id, {(x[0], x[1]) for x in low}, alerts)
+    from app.services.buying_links import order_book
+    _by_indent, by_item, ordered = order_book(db, client_id)
+    coming = dict(by_item)
+    pending, since = _stages_data(db, {(x[0], x[1]) for x in low}, alerts)
     rows = []
     for sid, iid, f, level, low_qty, high, target, basis in sorted(low, key=lambda x: (x[2]["available"] / x[3], stores[x[0]].code, items[x[1]].item_name or "")):
         store, item, s = stores[sid], items[iid], sets.get(iid)

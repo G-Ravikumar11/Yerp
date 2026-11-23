@@ -798,6 +798,8 @@ def ensure_columns():
                 "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS expiry_tracking BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE store_batch_hold ADD COLUMN IF NOT EXISTS inspection_ref VARCHAR DEFAULT ''",
                 "CREATE INDEX IF NOT EXISTS ix_store_batch_on_hold ON store_batch (on_hold)",
+                # A receipt's history is read by (doc_type, doc_id) on every detail view, as the outward and control logs are.
+                "CREATE INDEX IF NOT EXISTS ix_store_inward_log_doc ON store_inward_log (doc_type, doc_id)",
                 "ALTER TABLE qc_ncrs ADD COLUMN IF NOT EXISTS origin VARCHAR DEFAULT ''",
                 "ALTER TABLE qc_ncrs ADD COLUMN IF NOT EXISTS auto_key VARCHAR",
                 "ALTER TABLE qc_ncrs ADD COLUMN IF NOT EXISTS store_batch_id INTEGER",
@@ -2278,6 +2280,10 @@ def migrate_sqlite():
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_erp_items_merged_into_id ON erp_items (merged_into_id)"))
             except Exception:
                 pass
+            try:
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_store_inward_log_doc ON store_inward_log (doc_type, doc_id)"))
+            except Exception:
+                pass                                  # the table is made by create_all with the index on a new database
             add_col("assets", "fuel_norm_lph", "FLOAT")
             add_col("assets", "tank_capacity_l", "FLOAT")
             add_col("asset_logs", "day_key", "VARCHAR")

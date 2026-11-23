@@ -184,6 +184,80 @@ def batch_view(db, b, detail=False):
     return out
 
 
+def batch_views(db, batches):
+    """batch_view (without detail) for a list of lots, in a fixed number of queries rather than nine a lot - what the lot list
+    shows, worked out the same way: holds standing now (an NCR hold only while its NCR is open), what came in and what is
+    left, the receipt it came on, its stores and project."""
+    batches = list(batches)
+    if not batches:
+        return []
+    ids = [b.id for b in batches]
+
+    def chunks(xs):
+        xs = list(xs)
+        return [xs[n:n + 500] for n in range(0, len(xs), 500)]
+
+    holds, ever = {}, set()
+    for c in chunks(ids):
+        for h in db.query(DBStoreBatchHold).filter(DBStoreBatchHold.batch_id.in_(c)).order_by(DBStoreBatchHold.id).all():
+            ever.add(h.batch_id)
+            if h.status == "ACTIVE":
+                holds.setdefault(h.batch_id, []).append(h)
+    ncr_ids = {h.ncr_id for hs in holds.values() for h in hs if h.ncr_id}
+    ncrs = {n.id: n for c in chunks(ncr_ids) for n in db.query(models.DBNcr).filter(models.DBNcr.id.in_(c)).all()}
+
+    def standing(h):
+        if h.kind == "NCR":
+            n = ncrs.get(h.ncr_id) if h.ncr_id else None
+            return n is not None and n.status not in ("CLOSED", "REJECTED")
+        return True
+    held = {bid: [h for h in hs if standing(h)] for bid, hs in holds.items()}
+    items = {i.id: i for c in chunks({b.item_id for b in batches}) for i in db.query(models.DBItem).filter(models.DBItem.id.in_(c)).all()}
+    balances = {}
+    for c in chunks(ids):
+        for x in db.query(DBStoreBatchBalance).filter(DBStoreBatchBalance.batch_id.in_(c)).all():
+            balances.setdefault(x.batch_id, []).append(x)
+    received, grn_of = {}, {}
+    for c in chunks(ids):
+        for bid, qty in (db.query(DBStoreLedgerBatch.batch_id, func.coalesce(func.sum(DBStoreLedgerBatch.qty), 0))
+                         .join(DBStoreStockLedger, DBStoreStockLedger.id == DBStoreLedgerBatch.ledger_id)
+                         .filter(DBStoreLedgerBatch.batch_id.in_(c), DBStoreStockLedger.qty_in > 0, DBStoreStockLedger.reversal_of_id.is_(None))
+                         .group_by(DBStoreLedgerBatch.batch_id).all()):
+            received[bid] = qty
+        for bid, ref in (db.query(DBStoreLedgerBatch.batch_id, DBStoreStockLedger.ref_doc_id)
+                         .join(DBStoreStockLedger, DBStoreStockLedger.id == DBStoreLedgerBatch.ledger_id)
+                         .filter(DBStoreLedgerBatch.batch_id.in_(c), DBStoreStockLedger.ref_doc_type == "GRN").order_by(DBStoreLedgerBatch.id).all()):
+            grn_of.setdefault(bid, ref)                      # the first receipt the lot came on
+    grns = {g.id: g for c in chunks(set(grn_of.values())) for g in db.query(DBStoreGrn).filter(DBStoreGrn.id.in_(c)).all()}
+    stores = {s.id: s for c in chunks({x.store_id for xs in balances.values() for x in xs}) for s in db.query(DBStore).filter(DBStore.id.in_(c)).all()}
+    today = date.today()
+    pre = []
+    for b in batches:
+        bal = balances.get(b.id, [])
+        grn = grns.get(grn_of.get(b.id))
+        mine = {x.store_id: stores[x.store_id] for x in bal if x.store_id in stores}
+        project_id = (grn.project_id if grn else None) or next((s.project_id for s in mine.values() if s.project_id), None)
+        pre.append((b, bal, grn, project_id))
+    jobs = {j.id: j for c in chunks({p for *_x, p in pre if p}) for j in db.query(models.DBJob).filter(models.DBJob.id.in_(c)).all()}
+    out = []
+    for b, bal, grn, project_id in pre:
+        hs = held.get(b.id, [])
+        item = items.get(b.item_id)
+        available = sum((Decimal(str(x.qty or 0)) for x in bal), Decimal("0"))
+        expired = b.expiry_date is not None and b.expiry_date < today and available > 0
+        status = "Rejected" if b.lot_status == "REJECTED" else "On Hold" if hs else "Expired" if expired else "Released" if b.id in ever else "Available"
+        job = jobs.get(project_id) if project_id else None
+        out.append({"id": b.id, "batch_no": lot_label(b), "item_id": b.item_id, "item_name": item.item_name if item else "", "item_code": item.item_code if item else "",
+                    "uom": item.units_of_measure if item else "", "supplier": (grn.supplier_name if grn else "") or b.source or "", "job_id": project_id,
+                    "project": ("%s %s" % (job.number or "", job.name or "")).strip() if job else "",
+                    "received_qty": format(Decimal(str(received.get(b.id) or 0)).normalize(), "f"), "available_qty": format(available.normalize(), "f"),
+                    "expiry_date": b.expiry_date.isoformat() if b.expiry_date else "", "lot_id": b.id, "hold_status": status,
+                    "status_code": {"On Hold": "ON_HOLD", "Rejected": "REJECTED", "Expired": "EXPIRED"}.get(status, "AVAILABLE"), "blocked": bool(hs) or status in ("Rejected", "Expired"),
+                    "held_at": hs[0].placed_at if hs else "", "held_by": hs[0].placed_by if hs else "", "hold_reason": "; ".join(h.reason or "" for h in hs),
+                    "ncrs": [{"id": h.ncr_id, "number": ncrs[h.ncr_id].number} for h in hs if h.kind == "NCR"]})
+    return out
+
+
 @scheduled_job("store_expiry_watch")
 def note_expired_lots(db, now_):
     """Puts each lot on the audit trail the day it is found expired, once. Nothing is written off or moved: an expired lot

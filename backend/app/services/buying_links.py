@@ -13,16 +13,17 @@ from decimal import Decimal
 
 from app import models
 from app.models.store_outward import DBStoreIndentLine
-from app.services.stock_ledger import InvalidMovementError, convert_to_base
+from app.services.stock_ledger import InvalidMovementError
 
 ZERO = Decimal("0")
 DEAD_PO = ("Cancelled", "Rejected", "Closed")
 
 
-def _base(db, item_id, qty, uom):
-    """`qty` in `uom` as the item's base unit; an unknown unit is taken as the base unit rather than dropped."""
+def _base(units, item_id, qty, uom):
+    """`qty` in `uom` as the item's base unit; an unknown unit is taken as the base unit rather than dropped. `units` is a
+    BaseUnits read for the whole list."""
     try:
-        return convert_to_base(db, item_id, qty, uom or "")
+        return units.convert(item_id, qty, uom or "")
     except InvalidMovementError:
         return Decimal(str(qty or 0))
 
@@ -39,8 +40,21 @@ def on_order(db, client_id):
     """Everything this company is already buying, in two views:
 
     ({indent_line_id: {"qty": base qty, "refs": ["RFQ-0003", "PO-0012"]}}, {item_id: base qty})."""
+    by_indent, by_item, _items = order_book(db, client_id)
+    return by_indent, by_item
+
+
+def items_on_order(db, client_id):
+    """The items a live purchase order still has to deliver (ordered less received, above nothing) - orders only, not enquiries."""
+    return order_book(db, client_id)[2]
+
+
+def order_book(db, client_id):
+    """on_order's two views and items_on_order's set, worked out together: one read of the open enquiries and live orders,
+    and every line's unit converted from one read of the items' units (not three queries a line)."""
     from app.services.procurement import OrderPrefetch
-    by_indent, by_item = {}, {}
+    from app.services.stock_ledger import BaseUnits
+    by_indent, by_item, po_items = {}, {}, set()
 
     def add(item_id, indent_line_id, qty, ref):
         if qty <= 0:
@@ -64,29 +78,21 @@ def on_order(db, client_id):
         DBStoreIndentLine.id.in_(indent_ids or {0})).all()}
     code_item = _items_by_code(db, client_id, {l.item_code for l, _n in rfq_rows} | {l.item_code for _p, l in po_rows})
 
+    def item_of(l):
+        return getattr(l, "item_id", None) or indent_item.get(l.indent_line_id) or code_item.get(l.item_code)
+
+    units = BaseUnits(db, {item_of(l) for l, _n in rfq_rows} | {item_of(l) for _p, l in po_rows})
     for l, number in rfq_rows:
         item_id = indent_item.get(l.indent_line_id) or code_item.get(l.item_code)
-        add(item_id, l.indent_line_id, _base(db, item_id, l.qty, l.uom) if item_id else Decimal(str(l.qty or 0)), number)
+        add(item_id, l.indent_line_id, _base(units, item_id, l.qty, l.uom) if item_id else Decimal(str(l.qty or 0)), number)
     for po, l in po_rows:
-        left = max(0.0, (l.qty or 0) - pre.received(po.id).get(l.id, 0.0))
+        raw_left = (l.qty or 0) - pre.received(po.id).get(l.id, 0.0)
+        left = max(0.0, raw_left)
         item_id = l.item_id or indent_item.get(l.indent_line_id) or code_item.get(l.item_code)
-        add(item_id, l.indent_line_id, _base(db, item_id, left, l.uom) if item_id else Decimal(str(left)), po.number or "PO")
-    return by_indent, by_item
-
-
-def items_on_order(db, client_id):
-    """The items a live purchase order still has to deliver (ordered less received, above nothing) - orders only, not enquiries."""
-    from app.services.procurement import OrderPrefetch
-    orders = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == client_id,
-                                                     models.DBPurchaseOrder.status.notin_(DEAD_PO)).all()
-    if not orders:
-        return set()
-    pre = OrderPrefetch(db, orders)
-    po_rows = [(po, l) for po in orders for l in pre.lines.get(po.id, []) if (l.qty or 0) - pre.received(po.id).get(l.id, 0.0) > 0.0005]
-    indent_item = {i: it for i, it in db.query(DBStoreIndentLine.id, DBStoreIndentLine.item_id).filter(
-        DBStoreIndentLine.id.in_({l.indent_line_id for _p, l in po_rows if l.indent_line_id} or {0})).all()}
-    code_item = _items_by_code(db, client_id, {l.item_code for _p, l in po_rows})
-    return {i for i in ((l.item_id or indent_item.get(l.indent_line_id) or code_item.get(l.item_code)) for _p, l in po_rows) if i}
+        add(item_id, l.indent_line_id, _base(units, item_id, left, l.uom) if item_id else Decimal(str(left)), po.number or "PO")
+        if item_id and raw_left > 0.0005:
+            po_items.add(item_id)
+    return by_indent, by_item, po_items
 
 
 def check_indent_lines(db, client_id, lines):

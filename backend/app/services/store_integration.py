@@ -154,14 +154,15 @@ def hub_received_on_orders(db, po_ids):
     back = _returned_by_grn_line(db, [r[2] for r in rows], posted)
     po_lines = {l.id: l for l in db.query(models.DBPurchaseOrderLineItem).filter(
         models.DBPurchaseOrderLineItem.id.in_({r[3] for r in rows if r[3]} or {0})).all()}
-    items = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_({r[4] for r in rows})).all()}
-    received, receipts, seen = {}, {}, {}
+    from app.services.stock_ledger import BaseUnits
+    units = BaseUnits(db, {r[4] for r in rows})                  # every item's unit and conversions in one read, not two queries an item
+    received, receipts = {}, {}
     for po, grn, gl, pl, item_id, accepted in rows:
         receipts.setdefault(po, set()).add(grn)
         if pl not in po_lines:
             continue
         base = Decimal(str(accepted or 0)) - back.get(gl, ZERO)
-        per = _per_unit(db, items.get(item_id), po_lines[pl].uom, seen)
+        per = units.per_unit(item_id, po_lines[pl].uom)
         slot = received.setdefault(po, {})
         slot[pl] = float(Decimal(str(slot.get(pl, 0))) + (base / per if per else base))
     return received, {po: len(g) for po, g in receipts.items()}
@@ -188,10 +189,12 @@ def old_received_in_base(db, lines_with_items):
             models.DBGoodsReceipt, models.DBGoodsReceipt.id == models.DBGoodsReceiptLine.goods_receipt_id).filter(
             models.DBGoodsReceiptLine.po_line_id.in_(list(lines_with_items)), models.DBGoodsReceipt.status == "POSTED").all():
         got[pl] = got.get(pl, 0.0) + (qty or 0.0)
-    out, seen = {}, {}
+    from app.services.stock_ledger import BaseUnits
+    units = BaseUnits(db, {lines_with_items[pl][1].id for pl in got if lines_with_items[pl][1] is not None})
+    out = {}
     for pl, qty in got.items():
         line, item = lines_with_items[pl]
-        per = _per_unit(db, item, line.uom, seen)
+        per = units.per_unit(item.id, line.uom) if item is not None else None
         out[pl] = (Decimal(str(qty)) * per if per else Decimal(str(qty))).quantize(Decimal("0.001"))
     return out
 

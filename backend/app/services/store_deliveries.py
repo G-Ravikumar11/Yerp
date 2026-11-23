@@ -33,16 +33,17 @@ def pending_deliveries(db, client_id, supplier="", project_id=0):
     today = date.today()
     jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.client_id == client_id).all()}
     out = []
-    for po in q.order_by(models.DBPurchaseOrder.id).all():
-        summary = {s.po_line_id: s for s in inward.get_po_receipt_summary(db, po.id)}
-        lines = db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).order_by(models.DBPurchaseOrderLineItem.id).all()
+    orders = q.order_by(models.DBPurchaseOrder.id).all()
+    summaries, lines_by, items, units = inward.po_receipt_summaries(db, orders)      # the whole list in a few queries, not a dozen an order
+    for po in orders:
+        summary = {s.po_line_id: s for s in summaries.get(po.id, [])}
         rows = []
-        for l in lines:
+        for l in lines_by.get(po.id, []):
             sm = summary.get(l.id)
-            item = inward.po_item(db, po, l)
+            item = items.get(l.id)
             if sm is None or item is None or sm.pending_qty <= 0:
                 continue
-            rows.append({"po_line_id": l.id, "item_code": item.item_code, "item_name": item.item_name, "base_uom": inward.base_uom_of(db, item),
+            rows.append({"po_line_id": l.id, "item_code": item.item_code, "item_name": item.item_name, "base_uom": units.base.get(item.id, "").strip(),
                          "ordered": inward.s3(sm.ordered_qty), "accepted": inward.s3(sm.accepted_qty), "pending": inward.s3(sm.pending_qty)})
         if not rows:
             continue

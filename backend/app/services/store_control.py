@@ -29,6 +29,7 @@ from app.models.store_control import (
 from app.schemas.store_contracts import CountVarianceLine, InTransitLine, ScrapLine
 from app.services import store_cycle, store_outward, store_reservations
 from app.core.store_auth import check_not_own
+from app.services.store_pages import cached_lines
 from app.services.stock_ledger import check_date, convert_to_base, entry_lots, freeze_store, get_balance, post_movement, reverse_document, unfreeze_store
 from app.services.store_numbering import next_doc_number
 
@@ -151,7 +152,10 @@ def write_transfer_lines(db, doc, lines):
 
 
 def transfer_lines(db, doc):
-    return db.query(DBStoreTransferLine).filter(DBStoreTransferLine.transfer_id == doc.id).order_by(DBStoreTransferLine.line_no, DBStoreTransferLine.id).all()
+    hit = cached_lines(db, DBStoreTransferLine, doc.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreTransferLine).filter(DBStoreTransferLine.transfer_id == doc.id).order_by(*LINE_ORDER[DBStoreTransferLine]).all()
 
 
 def is_inter_project(db, from_id, to_id) -> bool:
@@ -212,7 +216,10 @@ def transfer_cancel_hook(db, doc):
 # --- stock counts -------------------------------------------------------------------------------------------------------
 
 def count_lines(db, doc):
-    return db.query(DBStoreCountLine).filter(DBStoreCountLine.count_id == doc.id).order_by(DBStoreCountLine.id).all()
+    hit = cached_lines(db, DBStoreCountLine, doc.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreCountLine).filter(DBStoreCountLine.count_id == doc.id).order_by(*LINE_ORDER[DBStoreCountLine]).all()
 
 
 def count_variance(l) -> Decimal:
@@ -408,7 +415,10 @@ def write_scrap_lines(db, doc, lines):
 
 
 def scrap_lines(db, doc):
-    return db.query(DBStoreScrapLine).filter(DBStoreScrapLine.scrap_id == doc.id).order_by(DBStoreScrapLine.line_no, DBStoreScrapLine.id).all()
+    hit = cached_lines(db, DBStoreScrapLine, doc.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreScrapLine).filter(DBStoreScrapLine.scrap_id == doc.id).order_by(*LINE_ORDER[DBStoreScrapLine]).all()
 
 
 def scrap_value(db, doc) -> Decimal:
@@ -456,6 +466,10 @@ def _count_has_adjustments(db, doc):
 def _scrap_moved_stock(db, doc):
     return any(not l.writeoff_request_id for l in scrap_lines(db, doc))
 
+
+# The order each kind's lines are read in - by its reader and by a list page alike.
+LINE_ORDER = {DBStoreTransferLine: (DBStoreTransferLine.line_no, DBStoreTransferLine.id), DBStoreCountLine: (DBStoreCountLine.id,),
+              DBStoreScrapLine: (DBStoreScrapLine.line_no, DBStoreScrapLine.id)}
 
 KINDS = {
     "transfer": Kind("transfer", TRANSFER, "Transfer", DBStoreTransfer, DBStoreTransferLine, "transfer_id", "transfer_date", lambda db, d: len(transfer_lines(db, d)), transfer_post,

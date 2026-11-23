@@ -30,8 +30,10 @@ from app.models.store_outward import (
 )
 from app.models.store_extras import DBStoreIndentLineNote
 from app.services import store_outward as svc
+from app.services.store_pages import page as store_page
 from app.services.store_batches import batches_on_hand
 from app.services.stock_ledger import assert_store_access
+
 
 router = APIRouter(prefix="/api/store/outward", tags=["store-outward"])
 ZERO = Decimal("0")
@@ -989,7 +991,8 @@ def list_documents(kind_key: str, request: Request, status: str = "", store_id: 
         query = query.filter(date_col <= svc.day(to_date, "To date", allow_future=True))
     total = query.count()
     rows = query.order_by(kind.header.id.desc()).offset(max(0, offset)).limit(max(1, min(limit, 500))).all()
-    return {"total": total, "items": [doc_dict(db, kind, r) for r in rows]}
+    with store_page(db, kind, rows, svc.LINE_ORDER[kind.line]):          # the page's lines and what it points at, read once
+        return {"total": total, "items": [doc_dict(db, kind, r) for r in rows]}
 
 
 @router.get("/{kind_key}/export")
