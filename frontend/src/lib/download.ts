@@ -11,8 +11,8 @@ import { useFileSheet, type HeldFile } from '@/stores/fileSheet'
  * The website's PDF and Excel buttons are plain links ("/api/ra-bills/3/export.xlsx"). In the app a bare "/api/..." address
  * points at the app's own files, not the server, and the phone's own browser has none of the person's sign-in - so such a
  * button did nothing. Here the app does the fetching itself, with the person's sign-in, keeps the file on the phone, and
- * then asks what to do with it (lib/download.ts: components/FileSheet.tsx): save it to the phone, or share it (WhatsApp, e-mail,
- * a spreadsheet app). It used to open the share list at once, which left no way to just keep the file.
+ * then opens a PDF or an Excel sheet in the app to look at (components/FileViewer.tsx, read only, nothing saved). From there the person
+ * can still save it to the phone or share it (components/FileSheet.tsx). Other files go straight to that Save / Share box.
  *
  * Every button that links to a download is covered at once, without editing any of them: clicks on such links (and
  * window.open, and a script clicking a link it made) are caught here. Only the native app installs any of this, so the
@@ -80,6 +80,11 @@ function toBase64(blob: Blob): Promise<string> {
   })
 }
 
+/** Whether the app can show this file itself, read only: a PDF, or an Excel sheet (.xlsx). */
+export function canView(name: string): boolean {
+  return /\.(pdf|xlsx)$/i.test(name)
+}
+
 const busy = new Set<string>()
 
 /** Fetch the file with the person's sign-in, keep it on the phone, and offer to open or share it. */
@@ -98,7 +103,11 @@ export async function downloadAndShare(href: string, downloadAttr?: string | nul
     const name = fileNameFor(downloadAttr, res.headers.get('content-disposition'), href)
     const data = await toBase64(await res.blob())
     const saved = await Filesystem.writeFile({ path: `downloads/${Date.now()}/${name}`, data, directory: Directory.Cache, recursive: true })
-    useFileSheet.getState().show({ name, uri: saved.uri, data })
+    const held = { name, uri: saved.uri, data }
+    // A PDF or an Excel sheet is opened to look at, in the app, with nothing saved; the viewer offers Save / Share from its top bar.
+    // Anything else (Word, zip, ...) has no viewer here and goes straight to the Save / Share box.
+    if (canView(name)) useFileSheet.getState().view(held)
+    else useFileSheet.getState().show(held)
   } catch (e) {
     const msg = String((e as { message?: unknown })?.message ?? e)
     // Someone dismissing the share sheet is not an error.

@@ -9,6 +9,7 @@ import { PushNotifications } from '@capacitor/push-notifications'
 import { linkTarget, openLink } from '@/lib/deepLink'
 import { api, get, post } from '@/lib/api'
 import { installDownloads } from '@/lib/download'
+import { useFileSheet } from '@/stores/fileSheet'
 import { queryClient } from '@/lib/query'
 import { toast } from '@/stores/toast'
 import { useUpdatePrompt } from '@/stores/updatePrompt'
@@ -30,6 +31,10 @@ export async function initMobile() {
   try {
     // 1. Android physical & gesture back button handling
     await App.addListener('backButton', ({ canGoBack }) => {
+      // A file being held or looked at (the Save / Share box over a PDF or Excel sheet) is closed first, one layer per press.
+      const held = useFileSheet.getState()
+      if (held.file) return held.close()
+      if (held.viewing) return held.closeView()
       // If there's an open dialog/drawer or history to pop, go back; otherwise minimize/exit
       // A site story open over Home is in the address (?story=): back closes it rather than leaving the app.
       const story = new URLSearchParams(window.location.search).has('story')

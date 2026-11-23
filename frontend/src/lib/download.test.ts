@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fileNameFor, isDownloadLink } from './download'
+import { canView, fileNameFor, isDownloadLink } from './download'
 
 const BASE = 'https://localhost/projects/drawings' // where the phone app's pages live
 
@@ -72,5 +72,15 @@ describe('buttons that point at the full server address', () => {
   it('does nothing extra when the app and server share an origin', () => {
     vi.stubEnv('VITE_API_BASE_URL', '')
     expect(isDownloadLink('https://yerp.example.com/api/bbs/export.xlsx', null, BASE)).toBe(false)
+  })
+})
+
+describe('what the app can show itself', () => {
+  it('opens PDFs and .xlsx sheets to look at, and sends anything else to Save / Share', () => {
+    expect(canView('bill.pdf')).toBe(true)
+    expect(canView('Register.XLSX')).toBe(true)
+    expect(canView('old.xls')).toBe(false)
+    expect(canView('list.csv')).toBe(false)
+    expect(canView('letter.docx')).toBe(false)
   })
 })
