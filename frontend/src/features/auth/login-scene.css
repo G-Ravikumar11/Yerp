@@ -45,6 +45,9 @@
   position: relative;
   min-height: 100dvh;
   overflow: hidden;
+  /* The phone's keyboard (its height is set by the sign-in page): room under the form so the fields can scroll above it. */
+  padding-bottom: var(--kb, 0px);
+  box-sizing: content-box;
   background-color: #f1eadd;
   color: var(--foreground);
 }
