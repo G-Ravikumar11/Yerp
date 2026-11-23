@@ -37,13 +37,7 @@ export const REDIRECTS: { from: string; to: string }[] = [
   { from: '/store/stock', to: '/store/hub/enquiry' },
   { from: '/store/material-vouchers', to: '/store/hub/outward/issue' },
   { from: '/store/material-costing', to: '/store/hub/reports/budget-use' },
-  // The old store's screens are gone. What they held is read in the Store Hub's Reports (Old store records, Used vs budget); a bookmark lands on the same thing there,
-  // and any other address under /store/old goes to the Store page. Every target is outside /store/old, so none can loop.
-  { from: '/store/old/stock', to: '/store/hub/reports/old-store' },
-  { from: '/store/old/goods-receipt', to: '/store/hub/reports/old-store/receipts' },
-  { from: '/store/old/material-vouchers', to: '/store/hub/reports/old-store/vouchers' },
-  { from: '/store/old/material-costing', to: '/store/hub/reports/budget-use' },
-  { from: '/store/old/*', to: '/store' },
+  // The old store (/store/old/*) is removed: nothing answers or redirects there, so its addresses get the 404 page.
   // The Store Desk is the Store page now, the one entry in the menu.
   { from: '/store/desk', to: '/store' },
 ]

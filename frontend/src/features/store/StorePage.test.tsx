@@ -23,7 +23,6 @@ vi.mock('@/lib/api', async (orig) => ({
   get: vi.fn(async (url: string) => {
     urls.push(url)
     if (url.startsWith('/api/store/enquiry/quick')) return { rows: hits }
-    if (url.startsWith('/api/stock/cutover')) return { done: null }
     if (url.startsWith('/api/store/dashboard')) return dashboard
     return {}
   }),
@@ -48,10 +47,11 @@ function mount() {
 beforeEach(() => { urls.length = 0; rights = () => true; hits = []; dashboard = DASHBOARD })
 
 describe('Store home page', () => {
-  it('shows the old-store card together with the search, the one-click jobs and the sections', async () => {
+  it('shows the search, the one-click jobs and the sections - and nothing of the removed old store', async () => {
     mount()
-    expect(await screen.findByText('Move the old store into the Hub')).toBeTruthy()
-    expect(screen.getByLabelText('Find an item')).toBeTruthy()
+    expect(await screen.findByLabelText('Find an item')).toBeTruthy()
+    expect(screen.queryByText(/old store/i)).toBeNull()
+    expect(urls.some((u) => u.startsWith('/api/stock/cutover'))).toBe(false)
     expect(screen.getByText('Receive goods')).toBeTruthy()
     expect(screen.getByText('Do something')).toBeTruthy()
     expect(screen.getByText('Browse')).toBeTruthy()
@@ -60,7 +60,7 @@ describe('Store home page', () => {
   it('searches only after two characters and a short pause, then lists matches with the stock held', async () => {
     hits = [{ item_id: 1, item_code: 'CEM-1', item_name: 'Cement OPC 53', uom: 'kg', qty: '5000', stores: 2 }, { item_id: 2, item_code: 'CEM-2', item_name: 'Cement PPC', uom: 'kg', qty: '0', stores: 0 }]
     mount()
-    await screen.findByText('Move the old store into the Hub')
+    await screen.findByLabelText('Find an item')
     await userEvent.type(screen.getByLabelText('Find an item'), 'c')
     await new Promise((r) => setTimeout(r, 350))
     expect(urls.some((u) => u.startsWith('/api/store/enquiry/quick'))).toBe(false)
@@ -73,7 +73,7 @@ describe('Store home page', () => {
 
   it('says so when nothing matches, and opens the enquiry for a chosen item', async () => {
     mount()
-    await screen.findByText('Move the old store into the Hub')
+    await screen.findByLabelText('Find an item')
     await userEvent.type(screen.getByLabelText('Find an item'), 'zzz')
     expect(await screen.findByText('No matching item.')).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: /check stock/i }))
@@ -83,7 +83,7 @@ describe('Store home page', () => {
   it('disables the search without the enquiry right and hides jobs the person cannot do', async () => {
     rights = (p) => !p.includes('enquiry') && !p.includes('create')
     mount()
-    await screen.findByText('Move the old store into the Hub')
+    await screen.findByLabelText('Find an item')
     expect((screen.getByLabelText('Find an item') as HTMLInputElement).disabled).toBe(true)
     expect(screen.getByText('Stock enquiry is not enabled for your account.')).toBeTruthy()
     expect(screen.queryByText('Receive goods')).toBeNull()
@@ -115,7 +115,7 @@ describe('Store home page', () => {
   it('does not ask for the figures without any Store right', async () => {
     rights = () => false
     mount()
-    await screen.findByText('Move the old store into the Hub')
+    await screen.findByLabelText('Find an item')
     expect(urls.some((u) => u.startsWith('/api/store/dashboard'))).toBe(false)
     expect(screen.queryByText('Stock value')).toBeNull()
   })
