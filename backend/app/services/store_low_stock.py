@@ -18,7 +18,7 @@ from fastapi import HTTPException
 
 from app import models
 from app.core.audit import log_audit
-from app.models.store_core import DBStore, DBStoreItemSettings
+from app.models.store_core import DBStore, DBStoreItemSettings, DBStoreStockLedger
 from app.models.store_extras import DBStoreReorderAlert
 from app.models.store_outward import INDENT, DBStoreIndent
 from app.services import store_levels
@@ -31,6 +31,10 @@ MAX_LINES = 200
 ACTIONS = ("INDENT", "ENQUIRY")
 DEAD = {"INDENT": ("CANCELLED",), "ENQUIRY": ("CANCELLED",)}
 STATUS_OF = {"INDENT": "INDENT_RAISED", "ENQUIRY": "ENQUIRY_RAISED"}
+# Where an open alert's replenishment has got to. Worked out from the records each time, never stored, and never a reason to
+# resolve: only available stock back above the reorder level does that.
+STAGE_ACTIVE, STAGE_INDENT, STAGE_ENQUIRY, STAGE_PO = "ALERT ACTIVE", "INDENT RAISED", "ENQUIRY RAISED", "PO CREATED"
+STAGE_RECEIVED, STAGE_QC, STAGE_UPDATED, STAGE_LOW = "GOODS RECEIVED", "QUALITY ACCEPTED", "STOCK UPDATED", "LOW STOCK"
 
 
 def s3(x):
@@ -54,6 +58,44 @@ def _docs(db, alerts):
         st = (ind_status if a.action == "INDENT" else rfq_status).get(a.action_doc_id)
         out[a.id] = (st is not None and st.upper() not in DEAD[a.action], st or "deleted")
     return out
+
+
+def _stages_data(db, client_id, keys, alerts):
+    """What the stage of each (store, item) is read from: receipts in hand (not yet posted, and whether they passed QC), stock
+    posted in since the alert, and items a live order still has to deliver."""
+    from app.models.store_inward import DBStoreGrn, DBStoreGrnLine
+    from app.services.buying_links import items_on_order
+    stores, items = {k[0] for k in keys}, {k[1] for k in keys}
+    pending = {}
+    for g, l in (db.query(DBStoreGrn, DBStoreGrnLine).join(DBStoreGrnLine, DBStoreGrnLine.grn_id == DBStoreGrn.id)
+                 .filter(DBStoreGrn.store_id.in_(stores or {0}), DBStoreGrnLine.item_id.in_(items or {0}),
+                         DBStoreGrn.status.in_(("DRAFT", "SUBMITTED", "APPROVED"))).all()):
+        k = (g.store_id, l.item_id)
+        pending[k] = pending.get(k, False) or l.qc_status == "PASSED"
+    since = {}
+    first = min((a.alerted_at for a in alerts.values() if a.cleared_at is None and a.alerted_at), default=None)
+    if first is not None:
+        for sid, iid, at in (db.query(DBStoreStockLedger.store_id, DBStoreStockLedger.item_id, DBStoreStockLedger.created_at)
+                             .filter(DBStoreStockLedger.store_id.in_(stores or {0}), DBStoreStockLedger.item_id.in_(items or {0}),
+                                     DBStoreStockLedger.qty_in > 0, DBStoreStockLedger.reversal_of_id.is_(None),
+                                     DBStoreStockLedger.ref_doc_type.in_(("GRN", "CLIENT_SUPPLY", "TRANSFER")),
+                                     DBStoreStockLedger.created_at >= first).all()):
+            since[(sid, iid)] = max(since.get((sid, iid)) or at, at)
+    return pending, since, items_on_order(db, client_id)
+
+
+def _stage(key, a, open_alert, live, pending, since, ordered):
+    if not open_alert:
+        return STAGE_LOW
+    if key in pending:
+        return STAGE_QC if pending[key] else STAGE_RECEIVED
+    if key in since and a.alerted_at and since[key] >= a.alerted_at:
+        return STAGE_UPDATED
+    if key[1] in ordered:
+        return STAGE_PO
+    if a.action and live:
+        return STAGE_INDENT if a.action == "INDENT" else STAGE_ENQUIRY
+    return STAGE_ACTIVE
 
 
 def _coming(db, client_id):
@@ -89,6 +131,7 @@ def low_rows(db, client_id, store_ids, only=None):
     jobs = {j.id: j for j in db.query(models.DBJob).filter(models.DBJob.id.in_({s.project_id for s in stores.values() if s.project_id} or {0})).all()}
     # What is already coming (open enquiries, orders not yet received) is the company's: it is set against the first store's need, then the next.
     coming = _coming(db, client_id)
+    pending, since, ordered = _stages_data(db, client_id, {(x[0], x[1]) for x in low}, alerts)
     rows = []
     for sid, iid, f, level, low_qty, high, target, basis in sorted(low, key=lambda x: (x[2]["available"] / x[3], stores[x[0]].code, items[x[1]].item_name or "")):
         store, item, s = stores[sid], items[iid], sets.get(iid)
@@ -108,6 +151,8 @@ def low_rows(db, client_id, store_ids, only=None):
                      "alerted_at": a.alerted_at.isoformat(timespec="seconds") if open_alert and a.alerted_at else "",
                      "last_checked_at": a.last_checked_at.isoformat(timespec="seconds") if open_alert and a.last_checked_at else "",
                      "times_raised": (a.times_raised or 1) if a is not None else 0, "status": status,
+                     "shortage": s3(max(ZERO, level - f["available"])),
+                     "stage": _stage((sid, iid), a, open_alert, live, pending, since, ordered),
                      "action": a.action if open_alert and a.action else "", "action_ref": a.action_ref if open_alert and a.action else "",
                      "action_doc_id": a.action_doc_id if open_alert and a.action else None, "action_doc_status": doc_status, "action_live": live,
                      "action_qty": s3(a.action_qty) if open_alert and a.action_qty is not None else None,

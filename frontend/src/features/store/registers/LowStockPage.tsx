@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
+﻿import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ShoppingCart, TriangleAlert } from 'lucide-react'
 import { Badge, Button, Card } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { cn } from '@/lib/utils'
 import { dmy } from '../reports/api'
-import { matching, useLowHistory, useLowStock, type LowHistoryRow, type LowRow, type LowStatus } from './api'
+import { matching, useLowHistory, useLowStock, type LowHistoryRow, type LowRow, type LowStage, type LowStatus } from './api'
 import { RaiseLowStock } from './RaiseLowStock'
 import { RegisterFilters, RegisterHeader } from './RegisterParts'
 
@@ -15,6 +15,11 @@ const STATUS: Record<LowStatus | 'RESOLVED', { label: string; tone: 'danger' | '
   INDENT_RAISED: { label: 'INDENT RAISED', tone: 'info' },
   ENQUIRY_RAISED: { label: 'ENQUIRY RAISED', tone: 'warning' },
   RESOLVED: { label: 'RESOLVED', tone: 'success' },
+}
+/** The alert's way to replenishment: raised, ordered, received, passed QC, posted - and back to low if still under its level. */
+const STAGE: Record<LowStage, 'danger' | 'info' | 'warning' | 'success' | 'neutral'> = {
+  'ALERT ACTIVE': 'danger', 'INDENT RAISED': 'info', 'ENQUIRY RAISED': 'warning', 'PO CREATED': 'info',
+  'GOODS RECEIVED': 'warning', 'QUALITY ACCEPTED': 'success', 'STOCK UPDATED': 'success', 'LOW STOCK': 'danger',
 }
 
 /** Store > Low Stock: what is low now - its available stock (not just what is on hand) at or under its reorder level - worst first, with how
@@ -48,7 +53,7 @@ export function LowStockList({ storeId: fixed }: { storeId?: number } = {}) {
           {Number(r.on_hand) !== Number(r.available) && <div className="text-[11px] font-normal text-muted-foreground" title="On hand, before what is on hold, rejected, expired or reserved for approved indents">{n(r.on_hand)} on hand</div>}</div>
       ),
     },
-    { id: 'lvl', header: 'Reorder level', align: 'right', width: '7rem', hideBelow: 'md', sort: (r) => Number(r.reorder_level), cell: (r) => n(r.reorder_level) },
+    { id: 'lvl', header: 'Reorder level', align: 'right', width: '7rem', hideBelow: 'md', sort: (r) => Number(r.reorder_level), cell: (r) => <div>{n(r.reorder_level)}{Number(r.shortage) > 0 && <div className="text-[11px] text-danger">{n(r.shortage)} short</div>}</div> },
     {
       id: 'sug', header: 'Suggested reorder', align: 'right', width: '8rem', sort: (r) => Number(r.suggested_qty),
       cell: (r) => <div title={r.suggest_basis}>{n(r.suggested_qty)} <span className="text-xs text-muted-foreground">{r.base_uom}</span>{Number(r.on_order) > 0 && <div className="text-[11px] text-muted-foreground">{n(r.on_order)} already coming</div>}</div>,
@@ -59,6 +64,7 @@ export function LowStockList({ storeId: fixed }: { storeId?: number } = {}) {
       cell: (r) => (
         <div>
           <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
+          {r.stage && r.stage !== STATUS[r.status].label && <Badge tone={STAGE[r.stage] ?? 'neutral'} className="ml-1" title="How far replenishment has got">{r.stage}</Badge>}
           {r.action && (
             <div className="mt-0.5 text-xs text-muted-foreground" title={r.action_by ? `Raised by ${r.action_by}` : undefined}>
               {r.action === 'INDENT' ? 'Indent' : 'Enquiry'} {r.action_ref}{r.action_doc_status ? ` - ${r.action_doc_status.toLowerCase()}` : ''}{r.action_qty ? ` for ${n(r.action_qty)}` : ''}

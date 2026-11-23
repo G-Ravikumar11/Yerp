@@ -88,12 +88,24 @@ def avg_value(db, store_id, item_id, qty: Decimal) -> Decimal:
     return v2(qty * get_balance(db, store_id, item_id).avg_rate)
 
 
+def _on_hold(db, store_id, item_ids):
+    """{item id: quantity in this store's lots on a quality hold or rejected on an NCR} - what the ledger will not let out."""
+    from app.models.store_core import DBStoreBatch, DBStoreBatchBalance
+    out = {}
+    for item_id, qty in (db.query(DBStoreBatchBalance.item_id, DBStoreBatchBalance.qty).join(DBStoreBatch, DBStoreBatch.id == DBStoreBatchBalance.batch_id)
+                         .filter(DBStoreBatchBalance.store_id == store_id, DBStoreBatchBalance.item_id.in_(item_ids or [0]), DBStoreBatchBalance.qty > 0,
+                                 (DBStoreBatch.on_hold.is_(True)) | (DBStoreBatch.lot_status == "REJECTED")).all()):
+        out[item_id] = out.get(item_id, ZERO) + Decimal(str(qty))
+    return out
+
+
 def check_stock(db, store_id, wants, on_hand=True):
     """`wants` is [(item_id, qty)]: every item must be on hand in the store and not promised to an approved indent (lines of the same item add up)."""
     want = {}
     for item_id, qty in wants:
         want[item_id] = want.get(item_id, ZERO) + Decimal(str(qty))
     held = store_reservations.reserved_map(db, [store_id], list(want), None)
+    on_hold = _on_hold(db, store_id, list(want))
     for item_id, qty in want.items():
         have = get_balance(db, store_id, item_id).qty
         item = db.get(models.DBItem, item_id)
@@ -101,6 +113,12 @@ def check_stock(db, store_id, wants, on_hand=True):
             if on_hand:
                 raise HTTPException(409, "Only %s %s of %s on hand in this store; %s was asked for." % (s3(have), base_uom_of(db, item), item.item_name, s3(qty)))
             continue                                # at posting the ledger itself refuses what is not there
+        # Lots on a quality hold (or rejected on an NCR) are not moved or written off - the ledger refuses them at posting;
+        # said here, the document is stopped before it is sent round for approval.
+        stuck = on_hold.get(item_id, ZERO)
+        if stuck and qty > have - stuck:
+            raise HTTPException(409, "Only %s %s of %s can be moved or written off - %s is on a quality hold or rejected on an NCR; %s was asked for. "
+                                     "Close the NCR (or release the hold) first." % (s3(max(ZERO, have - stuck)), base_uom_of(db, item), item.item_name, s3(stuck), s3(qty)))
         promised = held.get((store_id, item_id), ZERO)
         if qty > have - promised:
             raise HTTPException(409, "Only %s %s of %s is free in this store - %s of the %s on hand is promised to approved indents; %s was asked for." % (

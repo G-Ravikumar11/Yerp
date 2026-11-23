@@ -120,6 +120,9 @@ class OrderPrefetch:
         # What the Store Hub has received against the same orders, in the order line's unit.
         hub, self.hub_receipts = hub_received_on_orders(db, ids)
         self.debit_notes = hub_debit_notes(db, ids)
+        # Orders the store has short-closed (nothing more to come), for each order's receipt status.
+        from app.models.store_extras import DBStorePoClosure
+        self.short_closed = {c.po_id for c in _in_chunks(db, DBStorePoClosure.po_id, ids)}
         for po_id, got in hub.items():
             slot = self._received.setdefault(po_id, {})
             for line_id, qty in got.items():
@@ -201,8 +204,12 @@ def purchase_order_to_dict(db, o, include_chain=False, pre=None):
         "qty": l.qty or 0.0, "price": l.price or 0.0,
         "tax_rate": l.tax_rate or "",
         "received_qty": money(got.get(l.id, 0.0)),
+        "pending_qty": money(max(0.0, (l.qty or 0.0) - got.get(l.id, 0.0))),
         "boq_key": getattr(l, "boq_key", "") or "",
     } for l in lines]
+    # How far the goods have come, beside (never instead of) the approval status: an order stays Approved while it is being
+    # received, since a receipt is taken only against an approved order.
+    row["receipt_status"] = po_receipt_status(db, o, lines, got, pre)
     import json as _json
     row["over_budget"] = bool(getattr(o, "over_budget", False))
     row["budget_reason"] = getattr(o, "budget_reason", "") or ""
@@ -216,6 +223,24 @@ def purchase_order_to_dict(db, o, include_chain=False, pre=None):
         from app.services.store_integration import po_receipt_for_order
         row["store_receipt"] = po_receipt_for_order(db, o.id)
     return row
+
+
+def po_receipt_status(db, o, lines, got, pre=None):
+    """Not received, Partially received, Fully received - or Short-closed, once the store has said no more is coming."""
+    ordered = [l for l in lines if (l.qty or 0) > 0]
+    if not ordered:
+        return "Not received"
+    done = all(got.get(l.id, 0.0) >= (l.qty or 0) - 0.0005 for l in ordered)
+    if done:
+        return "Fully received"
+    if pre is not None:
+        closed = o.id in pre.short_closed
+    else:
+        from app.services.store_inward import short_closed
+        closed = short_closed(db, o.id)
+    if closed:
+        return "Short-closed"
+    return "Partially received" if any(got.get(l.id, 0.0) > 0 for l in ordered) else "Not received"
 
 
 def purchase_order_or_404(db, client_id, order_id):

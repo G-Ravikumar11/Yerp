@@ -74,6 +74,21 @@ def on_order(db, client_id):
     return by_indent, by_item
 
 
+def items_on_order(db, client_id):
+    """The items a live purchase order still has to deliver (ordered less received, above nothing) - orders only, not enquiries."""
+    from app.services.procurement import OrderPrefetch
+    orders = db.query(models.DBPurchaseOrder).filter(models.DBPurchaseOrder.client_id == client_id,
+                                                     models.DBPurchaseOrder.status.notin_(DEAD_PO)).all()
+    if not orders:
+        return set()
+    pre = OrderPrefetch(db, orders)
+    po_rows = [(po, l) for po in orders for l in pre.lines.get(po.id, []) if (l.qty or 0) - pre.received(po.id).get(l.id, 0.0) > 0.0005]
+    indent_item = {i: it for i, it in db.query(DBStoreIndentLine.id, DBStoreIndentLine.item_id).filter(
+        DBStoreIndentLine.id.in_({l.indent_line_id for _p, l in po_rows if l.indent_line_id} or {0})).all()}
+    code_item = _items_by_code(db, client_id, {l.item_code for _p, l in po_rows})
+    return {i for i in ((l.item_id or indent_item.get(l.indent_line_id) or code_item.get(l.item_code)) for _p, l in po_rows) if i}
+
+
 def check_indent_lines(db, client_id, lines):
     """The enquiry lines that name an indent line: each must be this company's, and not be bought already. Returns
     (lines to raise, [(description, refs)] left out because they are already on an enquiry or order)."""
