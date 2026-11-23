@@ -1,4 +1,5 @@
 """The email endpoints."""
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -10,7 +11,8 @@ from app import models
 from app.db import get_db
 
 from app.core.auth import get_client_user, require_owner
-from app.core.notifications import default_from_email, get_gmail_credentials, get_stored_refresh_token, send_email_background
+from app.core.notifications import (default_from_email, email_sender, get_gmail_credentials, get_stored_refresh_token,
+                                    send_email_background, smtp_from_header, smtp_ready)
 from app.core.security import rate_limiter
 from app.validators.common import validate_email_address
 from app.services.email import TRACKING_PIXEL
@@ -60,6 +62,11 @@ def gmail_status(request: Request, db: Session = Depends(get_db)):
         "gmail_ready": bool(refresh_token) and not expired,
         "gmail_expired": expired,
         "gmail_authorized_email": gmail_email,
+        # The server's own mail account (Zoho Mail, say): which way mail goes, and the address it goes from - never the password.
+        "sender": email_sender(),
+        "smtp_ready": smtp_ready(),
+        "smtp_from": smtp_from_header("") if smtp_ready() else "",
+        "smtp_host": os.getenv("SMTP_HOST", "").strip() if smtp_ready() else "",
     }
 
 
@@ -88,8 +95,9 @@ def send_test_email(request: Request, body: dict = None, db: Session = Depends(g
     to = ((body or {}).get("to") or "").strip()
     if not to or not validate_email_address(to):
         raise HTTPException(status_code=400, detail="Enter a valid email address to send the test to.")
-    if not get_stored_refresh_token(db, client_id=client.id):
-        raise HTTPException(status_code=409, detail="Gmail is not connected yet. Connect it first.")
+    by_smtp = smtp_ready() and (email_sender() == "smtp" or (email_sender() == "auto" and not get_stored_refresh_token(db, client_id=client.id)))
+    if not by_smtp and not get_stored_refresh_token(db, client_id=client.id):
+        raise HTTPException(status_code=409, detail="No way to send email is set up: connect Gmail, or set the SMTP account (Zoho Mail) on the server.")
     company = client.company_name or "Y ERP"
     ok, message = send_email_background(
         to, "Test email from %s" % company,
@@ -97,5 +105,8 @@ def send_test_email(request: Request, body: dict = None, db: Session = Depends(g
         "%s <%s>" % (company, default_from_email()), None, None, "", "", client_id=client.id)
     if not ok:
         # The provider's own words can carry details of the account; the error log has them, the screen does not.
-        raise HTTPException(status_code=502, detail="Gmail did not accept the message. Reconnect Gmail and try again.")
-    return {"ok": True, "message": "Test email sent to %s." % to}
+        raise HTTPException(status_code=502, detail=(
+            "The mail server did not accept the message. Check SMTP_USER and the app password (Zoho Accounts > Security > "
+            "App passwords) and that the service was redeployed after setting them." if by_smtp else
+            "Gmail did not accept the message. Reconnect Gmail and try again."))
+    return {"ok": True, "message": "Test email sent to %s%s." % (to, " by SMTP" if by_smtp else " through Gmail")}
