@@ -6,6 +6,7 @@ import { Loader2 } from 'lucide-react'
 import { Toaster, TooltipProvider } from '@/components/ui'
 import { UpdatePrompt } from '@/components/UpdatePrompt'
 import { FileSheet } from '@/components/FileSheet'
+import { FileViewer } from '@/components/FileViewer'
 import { FreshBuild } from '@/lib/freshness'
 import { LegacyLinks } from '@/lib/legacyLinks'
 import { persistOptions, queryClient } from '@/lib/query'
@@ -118,6 +119,7 @@ export default function App() {
         </BrowserRouter>
         <Toaster />
         <UpdatePrompt />
+        <FileViewer />
         <FileSheet />
       </TooltipProvider>
       </MotionConfig>
