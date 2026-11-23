@@ -6,6 +6,7 @@ import { Badge, Skeleton, Stat, StatGrid } from '@/components/ui'
 import { hrefFor, type ApprovalItem } from '@/api/approvals'
 import { useHoOverview, type HoDraft, type HoProject } from '@/api/headOffice'
 import { ClockCard } from '@/features/staff/ClockCard'
+import { HoBudgetControl } from './HoBudgetControl'
 import { formatDate, plural } from '@/lib/format'
 import { useSession } from '@/lib/session'
 import { compactINR, formatINR } from '@/lib/utils'
@@ -35,7 +36,7 @@ const REGISTERS = [
  * only they see the buttons that do; the coordinator follows them up.
  */
 export default function HoPortalPage() {
-  const { user } = useSession()
+  const { user, can } = useSession()
   const nav = useNavigate()
   const q = useHoOverview()
   const d = q.data
@@ -164,6 +165,8 @@ export default function HoPortalPage() {
         <p className="mb-3 text-[13px] text-muted-foreground">Opened and not yet sent for approval - finish them and send them up.</p>
         <DataTable label="Orders in draft" rows={d?.drafts ?? []} columns={draftColumns} rowKey={(o) => `${o.kind}:${o.id}`} loading={q.isPending} onRowClick={(o) => nav(o.href)} empty="No orders in draft." />
       </section>
+
+      {can('budget.view|budget.edit') && <HoBudgetControl />}
 
       <section aria-label="Projects without a BOQ" className="mb-8">
         <h2 className="mb-1 text-sm font-semibold">Projects without a BOQ</h2>

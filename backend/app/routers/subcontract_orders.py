@@ -818,6 +818,22 @@ def wo_get_order(order_id: int, request: Request, db: Session = Depends(get_db))
     return {"order": wo_dict(db, wo_or_404(db, client.id, order_id), detail=True)}
 
 
+@router.get("/api/wo/orders/{order_id}/budget-check")
+def wo_budget_check(order_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """What the HO QS budget says of this order before it is sent: the project's lines still to budget (which stop it), and
+    the lines it takes past the BOQ quantity or the contractor budget left (which need the Master). The same figures the
+    server checks at sending and approval. The BOQ's own values only for those who see budgets."""
+    from app.core.auth import session_can
+    from app.services.budget_control import order_check
+    client = require_erp_read(request, db)
+    c = order_check(db, wo_or_404(db, client.id, order_id))
+    if not (session_can(request, db, "budget.view") or session_can(request, db, "budget.edit")):
+        for m in c["missing"]:
+            m["value"] = None
+    c["can_send"] = not c["missing"]
+    return c
+
+
 @router.post("/api/wo/orders/{order_id}/copy")
 def wo_copy_order(order_id: int, request: Request, db: Session = Depends(get_db)):
     """A new draft that starts as this order did.

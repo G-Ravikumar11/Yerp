@@ -49,6 +49,14 @@ class BudgetSettingsIn(BaseModel):
     note: Optional[str] = ""
 
 
+@router.get("/api/jobs/{job_id}/budget-control")
+def job_budget_control(job_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """The project's BOQ lines with how much of each is budgeted, given to contractors and left (services/budget_control.py)."""
+    from app.services.budget_control import project_budget
+    client = require_items_access(request, db, ("budget.view", "budget.edit"))
+    return project_budget(db, client.id, job_or_404(db, client.id, job_id))
+
+
 @router.get("/api/jobs/{job_id}/budget")
 def job_budget(job_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_items_access(request, db, ("budget.view", "budget.edit"))

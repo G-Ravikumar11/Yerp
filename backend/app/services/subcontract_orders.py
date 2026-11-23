@@ -932,14 +932,27 @@ def wo_line_budgets(db, order):
 
 
 def wo_over_budget(db, order, lines=None):
-    """The lines priced above their budgeted rate, as approvers read them, and how much more the order costs for it."""
+    """The lines priced above their budgeted rate, as approvers read them, and how much more the order costs for it - and,
+    on a live BOQ project, the BOQ lines this order takes past the contractor budget the other orders have left (services/
+    budget_control.py). Both go the same way: a reason to send it, and the Master signs it."""
+    from app.services.boq import boq_shares_of
     rows, extra = [], 0.0
+    by_rate = set()
     for it, budget in (lines if lines is not None else wo_line_budgets(db, order)):
         if budget is not None and unit_rate(it.unit_rate or 0) > budget + 0.005:
             more = money((unit_rate(it.unit_rate or 0) - budget) * (it.quantity or 0))
             extra += more
+            by_rate |= {key for key, _ in boq_shares_of(it)}
             rows.append("%s at %s against a budget of %s (%s more)" % (
                 (it.activity_no or (it.item_description or "")[:30]).strip(), inr(it.unit_rate or 0), inr(budget), inr(more)))
+    if on_boq_budget(db, order):
+        from app.services.budget_control import order_check
+        for x in order_check(db, order)["over_value"]:
+            if x["key"] in by_rate:
+                continue                               # already counted above, at its rate
+            extra += x["short_value"]
+            rows.append("%s: %s on this order against %s of budget left (%s more)" % (
+                x["item"], inr(x["this_order_value"]), inr(x["available_value"]), inr(x["short_value"])))
     return rows, money(extra)
 
 
@@ -1216,6 +1229,9 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                                          "it" if len(unbudgeted) == 1 else "them", len(unbudgeted),
                                          "" if len(unbudgeted) == 1 else "s", "has" if len(unbudgeted) == 1 else "have",
                                          first.strip()))
+        # HO QS budget control: no work order goes out until the whole project BOQ is budgeted.
+        from app.services.budget_control import refuse_unless_within
+        refuse_unless_within(db, order)
         over, extra = wo_over_budget(db, order, lines)
         if over and not (comments or "").strip():
             raise HTTPException(409, "%d line%s %s priced above the budget, %s more in all: %s. Say why to send it; the "
@@ -1256,6 +1272,9 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                      "Approve it in Approvals first." % (
                          con.company_name, con.vendor_code or "no code",
                          "waiting for approval" if con.registration_status == "PENDING" else "sent back"))
+        # HO QS budget control again at approval: a budget line can have been removed, or another order sent, meanwhile.
+        from app.services.budget_control import refuse_unless_within
+        refuse_unless_within(db, order)
         # Still within the budget: it can have been lowered, or a line taken out of it, since the order was sent.
         lines_now = wo_line_budgets(db, order)
         gone = [it for it, budget in lines_now if budget is None]
