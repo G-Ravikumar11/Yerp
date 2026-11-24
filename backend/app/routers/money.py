@@ -1739,7 +1739,8 @@ def ledger_statement(request: Request, party_type: str, party: str,
         if con:
             master = {"name": con.company_name, "gstin": con.gst_number or "", "pan": con.pan or "",
                       "address": con.address or "", "phone": con.phone_number or ""}
-    return {"party": party, "party_type": party_type, "master": master,
+    # A party with no record of its own (a client, a member of staff, a supplier not yet on the master) has an empty one, not none.
+    return {"party": party, "party_type": party_type, "master": master or {},
             "our": our_party(db, client.id), "opening": opening,
             "rows": out, "closing": balance,
             "billed": money(sum(r["billed"] for r in out)),

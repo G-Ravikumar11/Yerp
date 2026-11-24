@@ -18,7 +18,7 @@ export function StatementModal({ target, onClose }: { target: { type: PartyType;
       ) : (
         <div>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm">
-            <div className="text-muted-foreground">{[d.master.gstin && `GSTIN ${d.master.gstin}`, d.master.pan && `PAN ${d.master.pan}`, d.master.phone].filter(Boolean).join(' · ') || ' '}</div>
+            <div className="text-muted-foreground">{[d.master?.gstin && `GSTIN ${d.master.gstin}`, d.master?.pan && `PAN ${d.master.pan}`, d.master?.phone].filter(Boolean).join(' · ') || ' '}</div>
             <Button variant="outline" size="sm" asChild>
               <a href={`/api/ledger/statement.pdf?party_type=${encodeURIComponent(d.party_type)}&party=${encodeURIComponent(d.party)}`} target="_blank" rel="noopener"><Download /> PDF</a>
             </Button>
