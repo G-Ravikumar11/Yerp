@@ -67,7 +67,8 @@ HOME_HEAD = (
     '<meta property="og:description" content="Houses and villas, apartments, gated townships, roads, drainage and water '
     'works - one civil builder from the plot to the keys.">'
     '<meta property="og:image" content="%%s/next/site/img/cat3.jpg">'
-    '<meta name="theme-color" content="#000000">' % HOME_DESCRIPTION.replace("'", "&#39;"))
+    '<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">'
+    '<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">' % HOME_DESCRIPTION.replace("'", "&#39;"))
 
 
 HOME_NOSCRIPT = ('<noscript><p style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center">'
@@ -105,15 +106,23 @@ async def home(request: Request):
 app.add_api_route("/", home, methods=["GET"], include_in_schema=False)
 
 
-# What a search engine is told: the front page and the careers page are for it; the ERP and its API are not.
+# What a search engine is told: the front page and the careers page are for it; the ERP and its API are not. The front
+# page is drawn by the app's script, so the files it is drawn with - the scripts and styles, its photos, the logo and icons,
+# and the public figures it reads - stay open too: blocked, Google sees an empty page and keeps an old copy instead. The
+# longer rule wins, so these open their own folders and leave the rest of /next/ and /api/ closed.
+ROBOTS_OPEN = ("/$", "/next/jobs", "/next/assets/", "/next/site/", "/next/brand/", "/next/icons/", "/next/favicon",
+               "/next/logo.png", "/next/manifest.webmanifest", "/api/public/site")
+
+
 async def robots(request: Request):
-    base = str(request.base_url).rstrip("/")
-    return Response("User-agent: *\nAllow: /$\nAllow: /next/jobs\nDisallow: /next/\nDisallow: /api/\n\nSitemap: %s/sitemap.xml\n" % base,
+    base = _public_base(request)
+    rules = "".join("Allow: %s\n" % p for p in ROBOTS_OPEN)
+    return Response("User-agent: *\n%sDisallow: /next/\nDisallow: /api/\n\nSitemap: %s/sitemap.xml\n" % (rules, base),
                     media_type="text/plain")
 
 
 async def sitemap(request: Request):
-    base = str(request.base_url).rstrip("/")
+    base = _public_base(request)
     # One page: the front page. The careers page needs the company's reference in its link, which the front page carries.
     return Response('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
                     '<url><loc>%s/</loc></url></urlset>' % base,

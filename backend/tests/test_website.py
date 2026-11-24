@@ -20,11 +20,18 @@ def job(tenant, name, status="in_progress"):
     return res.json()
 
 
+def put_on_website(tenant, job_id, **card):
+    """A project's card drafted in Settings -> Website, and published."""
+    card = dict({"show": True, "sector": "", "location": "", "scope": ""}, **card)
+    res = tenant.put("/api/website/sections/projects", json={"draft": {str(job_id): card}})
+    assert res.status_code == 200, res.text
+    assert tenant.post("/api/website/publish", json={}).status_code == 200
+
+
 def test_only_ticked_projects_show_and_only_what_their_card_says(tenant, client, ours):
     shown = job(tenant, "Vanya City STP", status="complete")
     job(tenant, "Not on the website")
-    res = tenant.put("/api/jobs/%d/website" % shown["id"], json={"show": True, "sector": "Water", "location": "Hyderabad", "scope": "295 KLD STP"})
-    assert res.status_code == 200, res.text
+    put_on_website(tenant, shown["id"], sector="Water", location="Hyderabad", scope="295 KLD STP")
     assert tenant.get("/api/jobs/%d" % shown["id"]).json()["website"] == {"show": True, "sector": "Water", "location": "Hyderabad", "scope": "295 KLD STP"}
 
     site = client.get("/api/public/site").json()
@@ -37,7 +44,7 @@ def test_only_ticked_projects_show_and_only_what_their_card_says(tenant, client,
 
 def test_a_photo_is_served_only_for_a_project_on_the_website(tenant, client, ours):
     on, off = job(tenant, "Shown"), job(tenant, "Hidden")
-    tenant.put("/api/jobs/%d/website" % on["id"], json={"show": True})
+    put_on_website(tenant, on["id"])
     with database.SessionLocal() as s:
         ids = []
         for j in (on, off):
@@ -77,6 +84,33 @@ def test_search_engines_are_shown_the_front_page_and_not_the_erp(client):
     robots = client.get("/robots.txt").text
     assert "Disallow: /next/" in robots and "Disallow: /api/" in robots and "Sitemap:" in robots
     assert "<loc>http://testserver/</loc>" in client.get("/sitemap.xml").text
+
+
+def allowed(robots, path):
+    """robots.txt as Google reads it: the longest rule that matches the path wins, Allow on a tie; '$' ends a rule."""
+    best = (-1, True)
+    for line in robots.splitlines():
+        kind, _, rule = line.partition(": ")
+        if kind not in ("Allow", "Disallow"):
+            continue
+        exact = rule.endswith("$")
+        stem = rule.rstrip("$")
+        if (path == stem) if exact else path.startswith(stem):
+            if len(rule) > best[0] or (len(rule) == best[0] and kind == "Allow"):
+                best = (len(rule), kind == "Allow")
+    return best[1]
+
+
+def test_google_can_fetch_everything_the_front_page_is_drawn_with(client):
+    """The front page's words and pictures come from the app's script: blocked, Google sees an empty page and keeps
+    showing an old copy. The ERP's own screens and the rest of the API stay closed."""
+    robots = client.get("/robots.txt").text
+    for path in ("/", "/next/assets/index-CCb_YzMP.js", "/next/assets/index-x.css", "/next/site/img/cat3.jpg",
+                 "/next/favicon.svg", "/next/favicon-32.png", "/next/icons/apple-touch-icon.png", "/next/manifest.webmanifest",
+                 "/next/jobs", "/api/public/site"):
+        assert allowed(robots, path), path
+    for path in ("/next/", "/next/projects", "/next/login.html", "/api/jobs", "/api/public/enquiry"):
+        assert not allowed(robots, path), path
 
 
 def test_the_front_page_is_described_as_the_civil_company():

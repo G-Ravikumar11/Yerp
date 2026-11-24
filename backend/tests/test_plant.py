@@ -322,6 +322,7 @@ def test_expenses_are_stored_once_and_counted_once(tenant):
     assert reg["by_category"] == {"Spare parts": 12000.0, "Fuel and diesel": 1000.0} and reg["total"] == 13000.0
     assert {r["source"] for r in reg["expenses"]} == {"expense", "fuel"}
     eid = e.json()["id"]
+    assert tenant.post("/api/plant/expenses/%d/submit" % eid).status_code == 200                                    # recorded, then submitted
     assert tenant.post("/api/plant/expenses/%d/decision" % eid, json={"decision": "approve"}).status_code == 200
     assert tenant.delete("/api/plant/expenses/%d" % eid).status_code == 409
     assert tenant.get("/api/plant/costs").json()["machines"][0]["total"] == 13000.0

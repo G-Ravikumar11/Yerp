@@ -104,3 +104,28 @@ def test_only_the_owner_can_see_or_clear_storage(tenant, portal):
     sign_in(portal, emp)
     assert portal.get("/api/storage").status_code in (401, 403)
     assert portal.post("/api/storage/clean", json={"keys": ["orphan_files"]}).status_code in (401, 403)
+
+
+def test_with_some_project_locked_removing_a_file_still_never_reads_its_bytes(tenant):
+    """The Job Lock check follows a removed file up to its project; it reads only the columns that lead there, never the
+    file's bytes or picture copy."""
+    from sqlalchemy import event
+    from test_project_job_lock import lock, unlock
+    other = job(tenant)
+    lock(tenant, other["id"])
+    try:
+        j = job(tenant)
+        f = upload(tenant, "job", j["id"], data=PDF, name="plan.pdf", ctype="application/pdf").json()["file"]
+        seen = []
+
+        def watch(conn, cur, stmt, *a, **k):
+            seen.append(stmt)
+        event.listen(database.engine, "before_cursor_execute", watch)
+        try:
+            assert tenant.delete("/api/files/%d" % f["id"]).status_code == 200
+        finally:
+            event.remove(database.engine, "before_cursor_execute", watch)
+        reads = [s for s in seen if s.lstrip().upper().startswith("SELECT") and "project_files" in s]
+        assert not any("project_files.data" in s or "project_files.thumb" in s for s in reads), reads
+    finally:
+        unlock(tenant, other["id"])

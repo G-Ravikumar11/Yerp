@@ -14,7 +14,7 @@ from datetime import datetime
 
 from app import models
 from app.core.config import logger
-from app.core.scheduler import scheduled_job
+from app.core.scheduler import each_active_client, scheduled_job
 
 LIVE = ("won", "in_progress")
 # The project manager gets the evening report unless the company turns it off; the client only when it is turned on.
@@ -177,7 +177,7 @@ def job_evening_site_reports(db, now):
     if now.hour < 19:
         return "too early"
     reports = reminders = 0
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    for client in each_active_client(db):
         got = evening_for(db, client, now)
         reports += got["reports"]
         reminders += got["reminders"]
@@ -241,5 +241,5 @@ def delay_alerts_for(db, client, now):
 def job_delay_alerts(db, now):
     if now.hour < 9:
         return "too early"
-    told = sum(delay_alerts_for(db, c, now) for c in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all())
+    told = sum(delay_alerts_for(db, c, now) for c in each_active_client(db))
     return "%d delay(s) told" % told

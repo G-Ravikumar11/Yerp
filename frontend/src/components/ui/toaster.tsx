@@ -6,9 +6,10 @@ import { useToasts, type ToastTone } from '@/stores/toast'
 const icons: Record<ToastTone, typeof Info> = { success: CheckCircle2, error: XCircle, info: Info }
 const tones: Record<ToastTone, string> = { success: 'text-success', error: 'text-danger', info: 'text-info' }
 
-/** Messages from the server, in its own words, where they will be seen. */
+/** Messages from the server, in its own words, where they will be seen. A success fades after a few seconds (not while the
+    pointer or keyboard is on it); a failure or a notice stays until it is closed. */
 export function Toaster() {
-  const { toasts, dismiss } = useToasts()
+  const { toasts, dismiss, hold, release } = useToasts()
   return (
     <div
       aria-live="polite"
@@ -26,6 +27,10 @@ export function Toaster() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, x: 24 }}
               transition={{ type: 'spring', stiffness: 460, damping: 36 }}
+              onPointerEnter={() => hold(t.id)}
+              onPointerLeave={() => release(t.id)}
+              onFocus={() => hold(t.id)}
+              onBlur={() => release(t.id)}
               className="pointer-events-auto flex items-start gap-3 rounded-xl border border-border bg-popover p-3.5 shadow-pop"
             >
               <Icon className={cn('mt-0.5 size-[18px] shrink-0', tones[t.tone])} />

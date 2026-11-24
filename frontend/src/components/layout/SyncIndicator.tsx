@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
  * On a shared phone, what another person entered stays theirs: it is listed, but only they can send or remove it.
  */
 export function SyncIndicator({ className }: { className?: string }) {
-  const { online, syncing, queue, flush, discard, retry, keepMine } = useOffline()
+  const { online, syncing, queue, sendNow, discard, retry, keepMine } = useOffline()
   const [open, setOpen] = useState(false)
   const me = personKey()
   const mine = queue.filter((q) => isMine(q, me))
@@ -59,7 +59,7 @@ export function SyncIndicator({ className }: { className?: string }) {
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Close
             </Button>
-            <Button onClick={() => void flush()} loading={syncing} disabled={!online || waiting === 0}>
+            <Button onClick={() => void sendNow()} loading={syncing} disabled={waiting === 0}>
               Send now
             </Button>
           </>
@@ -76,6 +76,7 @@ export function SyncIndicator({ className }: { className?: string }) {
                     <p className="text-[13.5px] font-medium">{q.label}</p>
                     <p className="text-xs text-muted-foreground">{new Date(q.createdAt).toLocaleString('en-IN')}</p>
                     {q.status === 'conflict' && <p className="mt-1 text-xs text-warning">Somebody else saved this while you were away from signal. Choose whose version stands.</p>}
+                    {q.status === 'waiting' && q.error && <p className="mt-1 text-xs text-warning">Last try: {q.error}</p>}
                     {q.status === 'failed' && q.error && <p className="mt-1 text-xs text-danger">The server said: {q.error}</p>}
                   </div>
                   {q.status === 'failed' && (

@@ -48,7 +48,7 @@ def public_job_board(client_ref: str, db: Session = Depends(get_read_db)):
             "id": job.id, "reference": job.reference, "title": job.title,
             "department": job.department.name if job.department else "",
             "location": job.location or "", "work_mode": job.work_mode,
-            "employment_type": job.employment_type, "level": job.level or "",
+            "employment_type": job.employment_type, "level": job.level or "", "experience": job.experience or "",
             "description": job.description or "", "requirements": job.requirements or "",
             "salary_min": job.salary_min if job.show_salary else None,
             "salary_max": job.salary_max if job.show_salary else None,

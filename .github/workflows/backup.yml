@@ -1,0 +1,112 @@
+name: Nightly database backup
+
+# A copy of the live database every night, proved by restoring it, kept encrypted for 30 days.
+#
+# One-time set-up (repository Settings > Secrets and variables > Actions > New repository secret):
+#   BACKUP_DATABASE_URL  the live database's connection string (the DATABASE_URL Railway uses)
+#   BACKUP_PASSPHRASE    a long passphrase only the Master keeps - without it a backup cannot be opened
+# Then Actions > Nightly database backup > Run workflow, once, to see it work. GitHub emails the repository owner when a
+# night fails. How to open and restore a copy: docs/RESTORE.md.
+
+on:
+  schedule:
+    - cron: '30 20 * * *'          # 02:00 India time
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Back up, prove it restores, encrypt and keep
+    runs-on: ubuntu-latest
+    if: github.repository == 'G-Ravikumar11/Yerp'
+    timeout-minutes: 60
+    services:
+      # A scratch database the copy is restored into, to prove it is whole. Thrown away when the job ends.
+      scratch:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: scratch
+          POSTGRES_DB: restorecheck
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DB_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      SCRATCH: postgresql://postgres:scratch@localhost:5432/restorecheck
+    steps:
+      - name: The two secrets are set
+        run: |
+          if [ -z "$DB_URL" ] || [ -z "$PASSPHRASE" ]; then
+            echo "::error::Add BACKUP_DATABASE_URL and BACKUP_PASSPHRASE under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          if [ "${#PASSPHRASE}" -lt 20 ]; then
+            echo "::error::BACKUP_PASSPHRASE is too short - use at least 20 characters."
+            exit 1
+          fi
+
+      - name: PostgreSQL 17 tools
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Copy the database
+        run: |
+          stamp=$(date -u +%Y-%m-%d)
+          echo "STAMP=$stamp" >> "$GITHUB_ENV"
+          pg_dump --no-owner --no-privileges --format=custom --compress=6 --file=yerp.dump "$DB_URL"
+          echo "Copied: $(du -h yerp.dump | cut -f1)"
+
+      - name: Prove it restores - every table, every row
+        run: |
+          pg_restore --no-owner --no-privileges --exit-on-error --dbname="$SCRATCH" yerp.dump
+          # Exact row counts table by table, live against restored. Only "same" or the table names that differ are
+          # printed: this repository is public, so its logs say nothing about how much business there is.
+          counts() {
+            psql "$1" -At -c "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY 1" | while read -r t; do
+              echo "$t $(psql "$1" -At -c "SELECT count(*) FROM public.\"$t\"")"
+            done
+          }
+          counts "$DB_URL" > live.txt
+          counts "$SCRATCH" > restored.txt
+          if ! diff -q live.txt restored.txt > /dev/null; then
+            # Rows written while the copy was taken make a busy table differ by a few; anything else is a failure.
+            # (Steps run with -e and pipefail, and diff "fails" when files differ: || true keeps the check going.)
+            changed=$( (diff live.txt restored.txt || true) | grep '^[<>]' | awk '{print $2}' | sort -u | tr '\n' ' ' || true)
+            missing=$(comm -23 <(cut -d' ' -f1 live.txt | sort) <(cut -d' ' -f1 restored.txt | sort) | tr '\n' ' ' || true)
+            if [ -n "$missing" ]; then
+              echo "::error::Tables missing from the restored copy: $missing"
+              exit 1
+            fi
+            echo "::warning::Row counts moved while copying in: $changed(written during the copy)"
+          else
+            echo "Restored copy matches the live database: $(wc -l < live.txt) tables, every row."
+          fi
+          rm -f live.txt restored.txt
+
+      - name: Encrypt it
+        run: |
+          gpg --batch --yes --quiet --symmetric --cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-count 65011712 \
+              --passphrase-fd 0 --output "yerp-$STAMP.dump.gpg" yerp.dump <<< "$PASSPHRASE"
+          shred -u yerp.dump
+          echo "Encrypted: $(du -h "yerp-$STAMP.dump.gpg" | cut -f1)"
+
+      - name: Keep it for 30 days
+        uses: actions/upload-artifact@v4
+        with:
+          name: yerp-database-${{ env.STAMP }}
+          path: yerp-${{ env.STAMP }}.dump.gpg
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error

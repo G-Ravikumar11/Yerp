@@ -1,0 +1,409 @@
+{
+  "company": {
+    "name": "Yalavarti Infra Projects",
+    "email": "info@yalavartiinfra.com",
+    "phone": {
+      "show": "040 4005 9348",
+      "tel": "+914040059348"
+    },
+    "address": "Plot 1-109/21, Near RTA Office, Kondapur, Hyderabad 500084",
+    "founded": null,
+    "staff": null,
+    "group": {
+      "name": "Yalavarti Projects",
+      "url": "https://www.yalavarti.com/",
+      "does": "building services (MEP)"
+    }
+  },
+  "hero": {
+    "title": "Building homes, townships and the infrastructure around them",
+    "sub": "Civil engineering and construction: houses and villas, apartments, gated townships, and the roads, drains and water lines that serve them."
+  },
+  "slides": [
+    {
+      "img": "site/img/cat3.jpg",
+      "t": "Apartments & townships",
+      "l": "Gated communities and residential blocks"
+    },
+    {
+      "img": "site/img/cat2.jpg",
+      "t": "Structure",
+      "l": "Foundations, frames and slabs"
+    },
+    {
+      "img": "site/img/gallery/g63.jpg",
+      "t": "Roads & layouts",
+      "l": "Internal roads, drains and open spaces"
+    },
+    {
+      "img": "site/img/banner3.jpg",
+      "t": "Commercial & institutional",
+      "l": "Offices, campuses and public buildings"
+    }
+  ],
+  "lead": "One builder from the plot to the keys: approvals, design, structure, finishing and handover.",
+  "about": [
+    "Yalavarti Infra Projects builds houses, apartments and townships, and the civil infrastructure around them: roads, drainage, water supply and sewerage.",
+    "We take a project from the land and its approvals through design and construction to handover."
+  ],
+  "capabilities": [
+    {
+      "id": "house",
+      "title": "Houses & villas",
+      "tag": "Your plot, your home",
+      "img": "site/img/cat2.jpg",
+      "intro": "Independent houses, villas and row houses, built on your plot to your drawings or to ours.",
+      "list": [
+        "Architectural and structural drawings",
+        "Building permission and approvals",
+        "Foundation, RCC frame and masonry",
+        "Plastering, flooring, painting and finishes",
+        "Sumps, overhead tanks and compound walls"
+      ]
+    },
+    {
+      "id": "apartment",
+      "title": "Apartments",
+      "tag": "Residential blocks",
+      "img": "site/img/cat3.jpg",
+      "intro": "Apartment blocks and residential towers, from the foundation to the finished flat.",
+      "list": [
+        "RCC framed structures",
+        "Stilt and basement parking",
+        "Staircases, lift wells and common areas",
+        "Finishes to the agreed specification",
+        "External works and landscaping"
+      ]
+    },
+    {
+      "id": "township",
+      "title": "Gated townships & layouts",
+      "tag": "Plots to communities",
+      "img": "site/img/gallery/g63.jpg",
+      "intro": "Plotted layouts and gated communities, with everything a township needs before the first family moves in.",
+      "list": [
+        "Site clearing, grading and levelling",
+        "Internal roads, footpaths and kerbs",
+        "Storm water drains and culverts",
+        "Compound walls, gates and security rooms",
+        "Clubhouses, parks and open spaces"
+      ]
+    },
+    {
+      "id": "road",
+      "title": "Roads & drainage",
+      "tag": "Roads, drains, culverts",
+      "img": "site/img/gallery/g63.jpg",
+      "intro": "Roads and the drains beside them, for layouts, campuses and public works.",
+      "list": [
+        "CC and bituminous roads",
+        "Granular sub-base and WBM",
+        "Storm water and roadside drains",
+        "Culverts and cross drainage",
+        "Kerbs, footpaths and medians"
+      ]
+    },
+    {
+      "id": "water",
+      "title": "Water supply & sewerage",
+      "tag": "Water in, water out",
+      "img": "site/img/gallery/g112.jpg",
+      "intro": "The civil works that bring water to a site and carry it away.",
+      "list": [
+        "Water supply mains and distribution lines",
+        "Sumps and overhead tanks",
+        "Sewer lines and manholes",
+        "Civil works for sewage treatment plants",
+        "Rainwater harvesting and recharge pits"
+      ]
+    },
+    {
+      "id": "commercial",
+      "title": "Commercial & industrial buildings",
+      "tag": "Places of work",
+      "img": "site/img/banner3.jpg",
+      "intro": "Offices, shops, schools, warehouses and industrial sheds.",
+      "list": [
+        "Office and retail buildings",
+        "Schools and institutional buildings",
+        "Warehouses and industrial sheds",
+        "Foundations for pre-engineered buildings",
+        "Hard standings and yards"
+      ]
+    },
+    {
+      "id": "civil",
+      "title": "Civil structures",
+      "tag": "Walls, tanks, foundations",
+      "img": "site/img/cat2.jpg",
+      "intro": "The structures a site needs around its buildings.",
+      "list": [
+        "Retaining walls",
+        "Water tanks and reservoirs",
+        "Compound walls",
+        "Foundations for plant and equipment",
+        "Culverts"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "t": "Land & approvals",
+      "d": "We check the plot, its title papers and the rules that apply, and take the plans through building permission."
+    },
+    {
+      "t": "Design",
+      "d": "Architectural and structural drawings, the specification and a costed bill of quantities you can check line by line."
+    },
+    {
+      "t": "Foundation",
+      "d": "Soil checked, the site set out, excavation and footings cast to the drawings."
+    },
+    {
+      "t": "Structure",
+      "d": "Columns, beams and slabs, floor by floor, to the structural drawings."
+    },
+    {
+      "t": "Finishing",
+      "d": "Masonry, plastering, flooring, doors, windows and paint, to the specification you agreed."
+    },
+    {
+      "t": "Handover",
+      "d": "A walk-through with you, any snags put right, and the keys."
+    }
+  ],
+  "sites": [
+    {
+      "group": "APTIDCO sites",
+      "where": "Andhra Pradesh",
+      "names": [
+        "Nuzividu",
+        "Tiruvuru",
+        "Ongole",
+        "Addanki",
+        "Giddaluru"
+      ]
+    },
+    {
+      "group": "High rise",
+      "where": "Andhra Pradesh",
+      "names": [
+        "Visakhapatnam"
+      ]
+    },
+    {
+      "group": "Hyderabad",
+      "where": "Telangana",
+      "names": [
+        "Vision Anmaya",
+        "Vision Arusha",
+        "Steel Alpha"
+      ]
+    }
+  ],
+  "sitePhotos": [
+    {
+      "img": "site/img/sites/giddaluru-c2.jpg",
+      "site": "APTIDCO, Giddaluru",
+      "text": "C-2 block: staircase and kicker aluminium formwork being fixed."
+    },
+    {
+      "img": "site/img/sites/nuzividu-a05.jpg",
+      "site": "APTIDCO, Nuzividu",
+      "text": "A-05 block: rebar fixing and Mivan formwork in progress."
+    }
+  ],
+  "timeline": [],
+  "headings": {
+    "about": {
+      "eyebrow": "About Us",
+      "title": "Civil works, start to finish",
+      "lede": ""
+    },
+    "build": {
+      "eyebrow": "What We Build",
+      "title": "Homes, townships and the works around them",
+      "lede": "From a single house on your plot to a gated township with its roads, drains and water lines."
+    },
+    "process": {
+      "eyebrow": "How We Build",
+      "title": "From the land to the keys",
+      "lede": "The six stages of a job, in the order they happen."
+    },
+    "projects": {
+      "eyebrow": "Projects",
+      "title": "Recent & ongoing projects",
+      "lede": "Where we are building, and our projects with photos from site. Filter by type of work or city.",
+      "ledeEmpty": "Where we are building. Photos from site are being added here."
+    },
+    "story": {
+      "eyebrow": "Our Story",
+      "title": "Milestones",
+      "lede": ""
+    },
+    "credentials": {
+      "eyebrow": "Credentials",
+      "title": "Registered and accountable",
+      "lede": "The registrations and certificates a tender asks for. Copies go to evaluators who ask for them."
+    },
+    "safety": {
+      "eyebrow": "Quality & Safety",
+      "title": "Checked work, safe sites",
+      "lede": ""
+    },
+    "quote": {
+      "eyebrow": "Start a Project",
+      "title": "Tell us about your project",
+      "lede": "Four questions. Your brief builds as you answer, and comes straight to our team."
+    },
+    "careers": {
+      "eyebrow": "Careers",
+      "title": "Build homes and townships with us",
+      "lede": ""
+    },
+    "contact": {
+      "eyebrow": "Contact",
+      "title": "Let's build together",
+      "lede": ""
+    }
+  },
+  "layout": [
+    {
+      "id": "hero",
+      "shown": true
+    },
+    {
+      "id": "proof",
+      "shown": true
+    },
+    {
+      "id": "about",
+      "shown": true
+    },
+    {
+      "id": "build",
+      "shown": true
+    },
+    {
+      "id": "process",
+      "shown": true
+    },
+    {
+      "id": "projects",
+      "shown": true
+    },
+    {
+      "id": "story",
+      "shown": true
+    },
+    {
+      "id": "credentials",
+      "shown": true
+    },
+    {
+      "id": "safety",
+      "shown": true
+    },
+    {
+      "id": "quote",
+      "shown": true
+    },
+    {
+      "id": "careers",
+      "shown": true
+    },
+    {
+      "id": "contact",
+      "shown": true
+    }
+  ],
+  "footer": {
+    "tagline": "Civil Engineering & Construction",
+    "showGroupLink": true
+  },
+  "credentials": [
+    {
+      "label": "Contractor registration",
+      "value": ""
+    },
+    {
+      "label": "ISO certification",
+      "value": ""
+    },
+    {
+      "label": "GSTIN",
+      "value": ""
+    },
+    {
+      "label": "RERA registration",
+      "value": ""
+    },
+    {
+      "label": "Safety record",
+      "value": "Safe man-hours counted live from our site records (see Quality & Safety)"
+    },
+    {
+      "label": "Plant & machinery",
+      "value": ""
+    }
+  ],
+  "safety": [
+    {
+      "title": "Health, safety & environment",
+      "text": "Our sites work to a written safety plan, and every incident and near miss is recorded and investigated."
+    },
+    {
+      "title": "Quality",
+      "text": "Work is inspected against the drawings and the specification before it is covered up or poured, and anything that does not pass is recorded and put right."
+    },
+    {
+      "title": "Materials",
+      "text": "Cement, steel, aggregates and concrete are checked when they arrive and tested as the work goes on, and the records are kept with the project."
+    }
+  ],
+  "plan": {
+    "types": [
+      {
+        "id": "house",
+        "label": "House or villa",
+        "hint": "On your own plot"
+      },
+      {
+        "id": "apartment",
+        "label": "Apartment",
+        "hint": "Residential block or tower"
+      },
+      {
+        "id": "township",
+        "label": "Township or layout",
+        "hint": "Gated community, plotted layout"
+      },
+      {
+        "id": "road",
+        "label": "Road or drainage",
+        "hint": "Roads, drains, water and sewer lines"
+      },
+      {
+        "id": "commercial",
+        "label": "Commercial or industrial",
+        "hint": "Offices, schools, warehouses, sheds"
+      },
+      {
+        "id": "other",
+        "label": "Something else",
+        "hint": "Tell us in a line"
+      }
+    ],
+    "units": [
+      "sq ft",
+      "sq yd",
+      "acres"
+    ],
+    "starts": [
+      "Within 3 months",
+      "3 to 6 months",
+      "6 to 12 months",
+      "Not decided yet"
+    ]
+  }
+}

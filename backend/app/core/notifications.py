@@ -60,7 +60,8 @@ def get_stored_refresh_token(db: Session, client_id: int = None):
     return setting.value if setting else None
 
 
-def prepare_email_message(to_email, subject, body_text, html_body, from_email, logo_data="", pdf_bytes=None, pdf_filename="invoice.pdf"):
+def prepare_email_message(to_email, subject, body_text, html_body, from_email, logo_data="", pdf_bytes=None, pdf_filename="invoice.pdf",
+                          reply_to=None):
     """Build a properly structured MIME email with CID-embedded logo and PDF attachment."""
     import re as _re
     from email.mime.multipart import MIMEMultipart
@@ -73,8 +74,12 @@ def prepare_email_message(to_email, subject, body_text, html_body, from_email, l
     msg['Subject'] = subject
     msg['From'] = from_email
     msg['To'] = to_email
-    msg['Reply-To'] = from_email
+    msg['Reply-To'] = reply_to or from_email
     msg['Date'] = formatdate(localtime=True)
+    # A message id in the sender's own domain: mail servers mark one without it, or with a stranger's, as likely spam.
+    from email.utils import make_msgid, parseaddr
+    domain = (parseaddr(from_email)[1].rpartition("@")[2] or "localhost").strip()
+    msg['Message-ID'] = make_msgid(domain=domain)
 
     alt_part = MIMEMultipart('alternative')
     alt_part.attach(MIMEText(body_text, 'plain', 'utf-8'))
@@ -116,8 +121,50 @@ def prepare_email_message(to_email, subject, body_text, html_body, from_email, l
     return msg.as_string()
 
 
+def smtp_ready():
+    return bool(os.getenv("SMTP_HOST", "").strip())
+
+
+def email_sender():
+    """Which way mail goes: "smtp" (the server's mail account - Zoho Mail, say - for everything), "gmail" (the Gmail account
+    connected in Settings, only), or "auto" (the default: Gmail when one is connected, else SMTP, and SMTP again should
+    Gmail fail)."""
+    chosen = (os.getenv("EMAIL_SENDER", "auto") or "auto").strip().lower()
+    return chosen if chosen in ("smtp", "gmail", "auto") else "auto"
+
+
+def smtp_from_header(from_email):
+    """The From a mail account will send: its own address. Zoho and most others refuse a message "from" any other
+    address ("553 sender not allowed"), so the name stays - the company's - and the address is the account's own
+    (SMTP_FROM, else SMTP_USER). Replies still go to whoever the message was written for (Reply-To)."""
+    from email.utils import formataddr, parseaddr
+    name, _ = parseaddr(from_email or "")
+    account = (os.getenv("SMTP_FROM", "") or os.getenv("SMTP_USER", "")).strip()
+    _, own = parseaddr(account)
+    own_name, _ = parseaddr(account)
+    return formataddr((name or own_name or "", own or account)) if (own or account) else from_email
+
+
+def smtp_reason(exc):
+    """What went wrong with the mail account, in words a person can act on - never the password or the server's reply."""
+    import smtplib
+    import socket
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return ("the mail server refused the sign-in: check SMTP_USER is the full mailbox address and SMTP_PASSWORD is an "
+                "app password made in Zoho (Accounts > Security > App passwords), with no spaces")
+    if isinstance(exc, smtplib.SMTPSenderRefused) or (isinstance(exc, smtplib.SMTPDataError) and exc.smtp_code == 553):
+        return "the mail server would not send from that address: the address in SMTP_FROM must be the same mailbox as SMTP_USER"
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "the mail server refused the address it was sent to"
+    if isinstance(exc, (socket.gaierror, ConnectionRefusedError, TimeoutError, socket.timeout, OSError)) and             not isinstance(exc, smtplib.SMTPException):
+        return ("the mail server could not be reached: check SMTP_HOST (smtppro.zoho.in for a paid Zoho account on your own "
+                "domain, smtppro.zoho.com on zoho.com) and SMTP_PORT (465), then redeploy")
+    return "the mail server did not accept the message"
+
+
 def _send_via_smtp(to_email: str, raw_msg: str):
-    """Server-wide mail account (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD) for when no Gmail is connected."""
+    """Server-wide mail account (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD) - Zoho Mail: smtp.zoho.in, 465 (SSL) or 587
+    (STARTTLS), the mailbox's address and an app-specific password."""
     import smtplib
     import ssl
     host, port = os.getenv("SMTP_HOST", ""), int(os.getenv("SMTP_PORT", "587"))
@@ -131,12 +178,14 @@ def _send_via_smtp(to_email: str, raw_msg: str):
         with server:
             if user:
                 server.login(user, password)
-            server.sendmail(user or os.getenv("SMTP_FROM", ""), [to_email], raw_msg.encode("utf-8"))
+            from email.utils import parseaddr
+            envelope = parseaddr(os.getenv("SMTP_FROM", ""))[1] or user
+            server.sendmail(envelope, [to_email], raw_msg.encode("utf-8"))
         logger.info(f"Email sent via SMTP to {to_email}")
         return True, "Email sent via SMTP"
     except Exception as e:
         logger.error(f"SMTP failed: {type(e).__name__}")
-        return False, f"SMTP error: {type(e).__name__}"
+        return False, f"SMTP error: {type(e).__name__} - {smtp_reason(e)}"
 
 
 def send_email_background(to_email: str, subject: str, body: str, from_email: str, html_body: str = None, pdf_b64: str = None, pdf_filename: str = "invoice.pdf", logo_data: str = "", client_id: int = None):
@@ -149,13 +198,28 @@ def send_email_background(to_email: str, subject: str, body: str, from_email: st
 
     raw_msg = prepare_email_message(to_email, subject, body, html_body or "", from_email, logo_data or "", pdf_bytes, pdf_filename)
 
+    def by_smtp():
+        # Sent from the mail account's own address, under the same name; replies go where the message says.
+        from email.utils import parseaddr
+        reply = from_email if parseaddr(from_email or "")[1] else None
+        return _send_via_smtp(to_email, prepare_email_message(
+            to_email, subject, body, html_body or "", smtp_from_header(from_email), logo_data or "", pdf_bytes, pdf_filename,
+            reply_to=reply))
+
+    sender = email_sender()
+    if sender == "smtp":
+        if smtp_ready():
+            return by_smtp()
+        logger.error(f"Email to {to_email} not sent: EMAIL_SENDER is smtp but SMTP_HOST is not set")
+        return False, "SMTP is chosen for email but SMTP_HOST is not set"
+
     with SessionLocal() as db:
         refresh_token = get_stored_refresh_token(db, client_id=client_id)
 
     if not refresh_token:
-        # No Gmail connected in the app: fall back to the server's own mail account, if one is configured.
-        if os.getenv("SMTP_HOST"):
-            return _send_via_smtp(to_email, raw_msg)
+        # No Gmail connected in the app: the server's own mail account, if one is configured.
+        if sender == "auto" and smtp_ready():
+            return by_smtp()
         logger.error(f"Email to {to_email} not sent: no Gmail connected and SMTP_HOST is not set")
         return False, "Gmail refresh token not configured"
 
@@ -163,7 +227,10 @@ def send_email_background(to_email: str, subject: str, body: str, from_email: st
         creds = get_gmail_credentials(access_token=None, refresh_token=refresh_token)
         if creds is None:
             # Google no longer accepts the connection (revoked, the account's password changed, or the Google app still
-            # in Testing, where a connection lasts 7 days). Sending with no credentials would try the server's own.
+            # in Testing, where a connection lasts 7 days). The server's own mail account carries it instead, if set.
+            if sender == "auto" and smtp_ready():
+                logger.warning("Gmail connection has expired - sending to %s by SMTP instead", to_email)
+                return by_smtp()
             return False, "Gmail connection has expired - connect Gmail again in Settings"
         service = build('gmail', 'v1', credentials=creds)
         encoded_message = base64.urlsafe_b64encode(raw_msg.encode('utf-8')).decode()
@@ -172,6 +239,8 @@ def send_email_background(to_email: str, subject: str, body: str, from_email: st
         return True, "Email sent via Gmail API"
     except Exception as e:
         logger.error(f"Gmail API failed: {e}")
+        if sender == "auto" and smtp_ready():
+            return by_smtp()
         return False, f"Gmail API error: {str(e)}"
 
 
@@ -240,6 +309,7 @@ NOTIFY_KINDS = {
     "plant_weekly": "The week's alerts for a machine: service, papers, hire return, no logbook",
     "plant_breakdown": "A machine has broken down - emergency",
     "plant_unbilled": "A hired machine has a month with no rental invoice",
+    "plant_rental_bill": "A rental bill differs from its agreement, repeats another bill, or is approved and still unpaid",
     "payroll_ready": "A month's payroll was drafted and is ready to review",
     "payroll_failed": "A month's automatic payroll could not run",
     "payroll_check": "Something to put right before a month's payroll is approved (missing PAN, bank, UAN or ESI details, pay that looks wrong)",

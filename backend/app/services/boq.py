@@ -10,7 +10,7 @@ from sqlalchemy import and_, func, or_
 from app import models
 
 from app.constants.approvals import GONE_STATUSES
-from app.constants.boq import BOQ_KINDS, BOQ_NOT_LIVE, BOQ_PRICED, BV_TRANSITIONS
+from app.constants.boq import BOQ_KINDS, BOQ_NOT_LIVE, BOQ_PRICED, BV_TRANSITIONS, boq_grade
 from app.core.currency import money, qty3, unit_rate
 from app.core.naming import short_name
 from app.core.permissions import employee_can
@@ -266,7 +266,7 @@ def boq_save_lines(db, boq, rev, rows, issue_codes, client_id):
             amount=boq_amount(kind, qty, rate, rate_only),
             item_code=(r.item_code or "").strip().upper()[:40] if kind in BOQ_PRICED else "",
             remarks=(r.remarks or "").strip(), display_order=len(kept),
-            material=(getattr(r, "material", "") or "").strip()[:60] if kind in BOQ_PRICED else "", rate_only=rate_only)
+            material=boq_grade(getattr(r, "material", "")) if kind in BOQ_PRICED else "", rate_only=rate_only)
         db.add(line)
         kept.append(line)
     db.flush()

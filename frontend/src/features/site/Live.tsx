@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react'
-import { CREDENTIALS, QUALITY } from './data/credentials'
+import { useContent } from './siteContent'
+import { credentialShown } from './data/content'
 import { goTo } from './Nav'
-import { asset, inr } from './lib'
+import { asset, imgSrc, inr } from './lib'
+import { Head } from './Head'
 import { apiPath, sendEnquiry, type Live, type LiveProject } from './siteApi'
 
 /** The projects ticked "show on website" in our records, with their own photos. Until there is one, a line saying so. */
 export function LiveProjects({ live }: { live: Live | null }) {
+  const { SITE } = useContent()
   const [sector, setSector] = useState('')
   const [city, setCity] = useState('')
   const all = useMemo(() => live?.projects ?? [], [live])
@@ -21,10 +24,27 @@ export function LiveProjects({ live }: { live: Live | null }) {
   return (
     <section className="band" id="projects" aria-label="Projects">
       <div className="wrap">
-        <div className="sechead sechead--split">
-          <div><p className="eyebrow">Projects</p><h2 className="h2">Recent &amp; ongoing projects</h2></div>
-          <p className="lede">{all.length ? 'Straight from our project records, with photos from site. Filter by type of work or city.' : 'Our projects, with photos from site, are being added here.'}</p>
+        <Head h={SITE.headings.projects} lede={all.length ? SITE.headings.projects.lede : SITE.headings.projects.ledeEmpty ?? SITE.headings.projects.lede} />
+        <div className="sites" aria-label="Our sites">
+          {SITE.sites.map((g) => (
+            <div key={g.group} className="sites__group">
+              <p className="eyebrow">{g.group} · {g.where}</p>
+              <ul>{g.names.map((n) => <li key={n}>{n}</li>)}</ul>
+            </div>
+          ))}
         </div>
+        {SITE.sitePhotos.length > 0 && (
+          <ul className="sites__photos" aria-label="From our sites">
+            {SITE.sitePhotos.map((ph) => (
+              <li key={ph.img}>
+                <figure>
+                  <img src={imgSrc(ph.img)} alt={`${ph.site}: ${ph.text}`} loading="lazy" decoding="async" />
+                  <figcaption><p className="eyebrow">{ph.site}</p><p>{ph.text}</p></figcaption>
+                </figure>
+              </li>
+            ))}
+          </ul>
+        )}
         {all.length > 0 && <div className="live__filters">{chips('Type of work', sectors, sector, setSector)}{chips('City', cities, city, setCity)}</div>}
         {all.length > 0 && <ul className="live__grid">{shown.map((p) => <ProjectCard key={p.id} p={p} />)}</ul>}
         {all.length > 0 && !shown.length && <p className="lede">Nothing matches that filter.</p>}
@@ -56,15 +76,16 @@ function ProjectCard({ p }: { p: LiveProject }) {
 
 /** What a tender evaluator looks for. Each line says what it is; documents are sent on request. */
 export function Credentials() {
+  const { SITE } = useContent()
+  const shown = SITE.credentials.filter(credentialShown)
+  // Nothing with a real value yet: the section is left off rather than filled with promises.
+  if (!shown.length) return null
   return (
     <section className="band band--light" id="credentials" aria-label="Credentials">
       <div className="wrap">
-        <div className="sechead sechead--split">
-          <div><p className="eyebrow">Credentials</p><h2 className="h2">Registered and accountable</h2></div>
-          <p className="lede">The papers a tender asks for. Copies go to evaluators on request.</p>
-        </div>
+        <Head h={SITE.headings.credentials} />
         <dl className="creds">
-          {CREDENTIALS.map((c) => <div key={c.label}><dt>{c.label}</dt><dd>{c.value}</dd></div>)}
+          {shown.map((c) => <div key={c.label}><dt>{c.label}</dt><dd>{c.value}</dd></div>)}
         </dl>
         <a href="#enquire" className="btn btn--line creds__cta" onClick={(e) => goTo('#enquire') && e.preventDefault()}>Request Documents</a>
       </div>
@@ -72,18 +93,20 @@ export function Credentials() {
   )
 }
 
-/** The policies, and the safe man-hours the ERP counts from attendance and incidents. */
+/** The policies, and the safe man-hours counted from site attendance and incidents. */
 export function QualitySafety({ live }: { live: Live | null }) {
+  const { SITE } = useContent()
   const hours = live?.numbers.safe_man_hours ?? 0
+  const h = SITE.headings.safety
   return (
     <section className="band" id="safety" aria-label="Quality and safety">
       <div className="wrap">
         <div className="sechead sechead--split">
-          <div><p className="eyebrow">Quality &amp; Safety</p><h2 className="h2">Checked work, safe sites</h2></div>
+          <div><p className="eyebrow">{h.eyebrow}</p><h2 className="h2">{h.title}</h2>{h.lede && <p className="lede">{h.lede}</p>}</div>
           {hours > 0 && <p className="safety__hours"><span className="num">{inr(hours)}</span> safe man-hours since the last lost-time injury, counted live from our site records</p>}
         </div>
         <div className="safety__grid">
-          {QUALITY.map((q) => (
+          {SITE.safety.map((q) => (
             <article key={q.title}>
               <h3>{q.title}</h3>
               <p>{q.text}</p>

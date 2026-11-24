@@ -77,8 +77,10 @@ describe('The payroll month', () => {
     const fetched: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       fetched.push(url)
+      // The file's body as text: Node's Response cannot read jsdom's Blob ("object.stream is not a function"), so a Blob
+      // here made the stand-in fetch throw and the download look failed.
       return url.includes('allow_incomplete')
-        ? new Response(new Blob(['a,b']), { status: 200, headers: { 'content-disposition': 'attachment; filename="Salary_NEFT_2026-10.xlsx"', 'X-Rows-Left-Out': '1' } })
+        ? new Response('a,b', { status: 200, headers: { 'content-disposition': 'attachment; filename="Salary_NEFT_2026-10.xlsx"', 'X-Rows-Left-Out': '1' } })
         : new Response(JSON.stringify({ detail: '1 people cannot go in the file: Ravi Kumar (no IFSC).' }), { status: 400 })
     }))
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} }))

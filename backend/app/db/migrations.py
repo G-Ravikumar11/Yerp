@@ -285,6 +285,9 @@ ACCOUNTS_COLUMNS = (
     ("recurring_payments", "payee_bank", "VARCHAR DEFAULT ''"), ("recurring_payments", "payee_account", "VARCHAR DEFAULT ''"),
     ("recurring_payments", "payee_ifsc", "VARCHAR DEFAULT ''"),
     ("money_entries", "payee_bank", "VARCHAR DEFAULT ''"), ("money_entries", "payee_account", "VARCHAR DEFAULT ''"), ("money_entries", "payee_ifsc", "VARCHAR DEFAULT ''"),
+    # A sub contractor work order priced above the budget: the reason given when it was sent, for its approvers only.
+    ("subcontract_orders", "over_budget_reason", "TEXT DEFAULT ''"),
+    ("contractors", "details_changed_by", "INTEGER"),
     ("payment_requests", "payee_bank", "VARCHAR DEFAULT ''"), ("payment_requests", "payee_account", "VARCHAR DEFAULT ''"), ("payment_requests", "payee_ifsc", "VARCHAR DEFAULT ''"),
     # A site expense entered by the Master or a colleague of theirs, who may not then approve it.
     ("site_cash_expenses", "submitted_by_master", "BOOLEAN DEFAULT FALSE"),
@@ -299,6 +302,8 @@ ACCOUNTS_COLUMNS = (
 WEBSITE_COLUMNS = (
     ("jobs", "show_on_website", "BOOLEAN DEFAULT FALSE"), ("jobs", "website_sector", "VARCHAR DEFAULT ''"),
     ("jobs", "website_location", "VARCHAR DEFAULT ''"), ("jobs", "website_scope", "TEXT DEFAULT ''"),
+    # The experience an opening on the careers page asks for.
+    ("job_requisitions", "experience", "VARCHAR DEFAULT ''"),
     # The budget's own wastage % on a material item; the store's norm, where one is set, is used instead of it.
     ("boq_budget_items", "wastage_percent", "FLOAT DEFAULT 0"),
     # A reorder alert's lifecycle: its figures at the last check, the indent or enquiry raised for it, and its earlier episodes.
@@ -764,6 +769,13 @@ def ensure_columns():
                 "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verified_by VARCHAR DEFAULT ''",
                 "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verified_on VARCHAR DEFAULT ''",
                 "ALTER TABLE plant_rental_invoices ADD COLUMN IF NOT EXISTS verification_note TEXT DEFAULT ''",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS return_meter DOUBLE PRECISION",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS return_condition VARCHAR DEFAULT ''",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS return_charges DOUBLE PRECISION DEFAULT 0",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS return_note TEXT DEFAULT ''",
+                "ALTER TABLE plant_rentals ADD COLUMN IF NOT EXISTS returned_by VARCHAR DEFAULT ''",
+                "ALTER TABLE plant_expenses ADD COLUMN IF NOT EXISTS approved_on VARCHAR DEFAULT ''",
+                "ALTER TABLE plant_expenses ADD COLUMN IF NOT EXISTS decision_note TEXT DEFAULT ''",
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_logs_day_key ON asset_logs (day_key)",
                 "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS dup_key VARCHAR",
                 "ALTER TABLE erp_items ADD COLUMN IF NOT EXISTS merged_into_id INTEGER",
@@ -1447,6 +1459,15 @@ def ensure_columns():
                     for table in ("employees", "job_requisitions", "offers", "document_requirements", "approval_chains"):
                         conn.execute(text(f"UPDATE {table} SET level = {case} WHERE level IS NOT NULL AND level <> ''"))
                     conn.execute(text("INSERT INTO data_fixes (name) VALUES ('levels_in_hierarchy_order')"))
+                # HR got its own level (L4) under Coordinator / HO: every saved level from L4 down moves one step,
+                # and the people in the HR role move to the new L4. Once, as above.
+                done = conn.execute(text("SELECT 1 FROM data_fixes WHERE name = 'levels_hr_inserted'")).fetchone()
+                if not done:
+                    case = "CASE level " + " ".join(f"WHEN 'L{n}' THEN 'L{n + 1}'" for n in range(4, 20)) + " ELSE level END"
+                    for table in ("employees", "job_requisitions", "offers", "document_requirements", "approval_chains"):
+                        conn.execute(text(f"UPDATE {table} SET level = {case} WHERE level IS NOT NULL AND level <> ''"))
+                    conn.execute(text("UPDATE employees SET level = 'L4' WHERE role = 'hr'"))
+                    conn.execute(text("INSERT INTO data_fixes (name) VALUES ('levels_hr_inserted')"))
                 conn.commit()
             except Exception:
                 MIGRATION_ERRORS.append(f"migration step 30b: {sys.exc_info()[1]}")
@@ -2276,6 +2297,13 @@ def migrate_sqlite():
             add_col("plant_rental_invoices", "verified_by", "VARCHAR DEFAULT ''")
             add_col("plant_rental_invoices", "verified_on", "VARCHAR DEFAULT ''")
             add_col("plant_rental_invoices", "verification_note", "TEXT DEFAULT ''")
+            add_col("plant_rentals", "return_meter", "FLOAT")
+            add_col("plant_rentals", "return_condition", "VARCHAR DEFAULT ''")
+            add_col("plant_rentals", "return_charges", "FLOAT DEFAULT 0")
+            add_col("plant_rentals", "return_note", "TEXT DEFAULT ''")
+            add_col("plant_rentals", "returned_by", "VARCHAR DEFAULT ''")
+            add_col("plant_expenses", "approved_on", "VARCHAR DEFAULT ''")
+            add_col("plant_expenses", "decision_note", "TEXT DEFAULT ''")
             try:
                 conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_logs_day_key ON asset_logs (day_key)"))
             except Exception:

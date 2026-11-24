@@ -1,14 +1,17 @@
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useState, type CSSProperties } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronLeft } from 'lucide-react'
 import { Button, Skeleton } from '@/components/ui'
 import { CompanyNotice } from '@/components/company/CompanyNotice'
 import { PageErrorBoundary } from '@/components/layout/PageErrorBoundary'
 import { SyncIndicator } from '@/components/layout/SyncIndicator'
+import { useInbox } from '@/api/approvals'
 import { attachNavigator } from '@/lib/deepLink'
+import { useNativeTabBar } from '@/lib/glassTabBar'
 import { ShellTitle } from '@/lib/shellTitle'
 import { markScreensGood, registerPush } from '@/lib/mobile'
 import { trailFor } from '@/lib/nav'
+import { REFUSED_TEXT, useRefusedNotOffline } from '@/lib/blocked'
 import { appUrl } from '@/lib/paths'
 import { useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
@@ -26,8 +29,13 @@ export default function MobileShell() {
   const { pathname } = useLocation()
   const go = useNavigate()
   const { isLoading, isAnonymous, error, user } = useSession()
+  // Asked again, a server that answers means the phone is online and it was the request that was refused.
+  const refused = useRefusedNotOffline(error)
   const [adding, setAdding] = useState(false)
   const isTab = TABS.has(pathname)
+  // The iPhone app draws the bar natively (lib/glassTabBar.ts); everywhere else the web bar below is the one.
+  const waiting = useInbox().data?.mine ?? 0
+  const bar = useNativeTabBar({ pathname, waiting, covered: adding, go, onAdd: () => setAdding(true) })
   const title = TAB_TITLES[pathname] ?? trailFor(pathname, user?.type === 'employee').at(-1)?.label ?? ''
 
   useEffect(() => {
@@ -61,7 +69,10 @@ export default function MobileShell() {
   return (
     // --tabbar is the height of the bottom bar: shorter when the phone is turned on its side, so the screen keeps its room.
     // The sides keep clear of a camera cut-out or a fold (the safe-area insets), which only show up when turned.
-    <div className="relative isolate min-h-dvh [--tabbar:78px] [@media(max-height:480px)]:[--tabbar:70px]">
+    <div
+      className="relative isolate min-h-dvh [--tabbar:78px] [@media(max-height:480px)]:[--tabbar:70px]"
+      style={bar.height ? ({ '--tabbar': `${bar.height}px` } as CSSProperties) : undefined}
+    >
       {!isTab && (
         <header className="sticky top-0 z-30 flex h-12 items-center gap-1 border-b border-border bg-[var(--app-glass)] backdrop-blur-xl pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))]">
           <button type="button" onClick={() => (window.history.length > 1 ? go(-1) : go('/'))} className="flex h-10 items-center gap-0.5 rounded-xl pl-1 pr-3 text-[15px] font-medium text-primary active:opacity-60">
@@ -81,9 +92,13 @@ export default function MobileShell() {
           <div className="space-y-4" role="status" aria-label="Loading"><Skeleton className="h-9 w-48" /><Skeleton className="h-48 w-full rounded-lg" /></div>
         ) : isAnonymous || error ? (
           <div className="py-24 text-center">
-            <h1 className="text-2xl font-semibold">{error ? 'Could not reach the server' : 'Please sign in'}</h1>
-            <p className="mt-2 text-[15px] text-muted-foreground">{error ? 'Check the connection and try again.' : 'Your session has ended, or you have not signed in yet.'}</p>
-            <Button asChild className="mt-6"><a href={appUrl('login')}>Go to sign in</a></Button>
+            <h1 className="text-2xl font-semibold">{refused ? 'The server did not take that' : error ? 'Could not reach the server' : 'Please sign in'}</h1>
+            <p className="mt-2 text-[15px] text-muted-foreground">{refused ? REFUSED_TEXT : error ? 'Check the connection and try again.' : 'Your session has ended, or you have not signed in yet.'}</p>
+            {error ? (
+              <Button className="mt-6" onClick={() => window.location.reload()}>Try again</Button>
+            ) : (
+              <Button asChild className="mt-6"><a href={appUrl('login')}>Go to sign in</a></Button>
+            )}
           </div>
         ) : (
           <PageErrorBoundary resetKey={pathname}>
@@ -97,7 +112,7 @@ export default function MobileShell() {
       <div className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--tabbar)+22px+env(safe-area-inset-bottom))] z-40 flex justify-center">
         <SyncIndicator className="pointer-events-auto rounded-full px-4 py-2 shadow-[var(--app-card-shadow)]" />
       </div>
-      <TabBar onAdd={() => setAdding(true)} />
+      {bar.webBar && <TabBar onAdd={() => setAdding(true)} />}
       <AddSheet open={adding} onClose={() => setAdding(false)} />
     </div>
   )

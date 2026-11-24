@@ -555,3 +555,12 @@ def company_identity_api(request: Request, db: Session = Depends(get_read_db)):
     # On every page (the company mark): a link the browser keeps, not the image itself every time.
     out["logo_url"] = logo_link(client.id, out.get("logo_url"), "letterhead")
     return out
+
+
+@router.get("/api/setup-check")
+def setup_check_api(request: Request, db: Session = Depends(get_read_db)):
+    """What the business's controls rely on that is not yet set, with the screen that puts each right. The Master's."""
+    from app.services.setup_check import setup_check
+    client = get_client_user(request, db)
+    require_owner(request, db)
+    return setup_check(db, client)

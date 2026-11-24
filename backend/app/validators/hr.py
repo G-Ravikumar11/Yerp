@@ -64,12 +64,8 @@ def validate_manager(db, client_id, employee_id, manager_id, level=""):
     ).first()
     if not manager:
         raise HTTPException(status_code=400, detail="Manager not found")
-    if LEVEL_RANK.get(level) and LEVEL_RANK.get(manager.level) and LEVEL_RANK[manager.level] < LEVEL_RANK[level]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"{manager.first_name} {manager.last_name} is {manager.level}, below this employee's "
-                   f"{level}; a manager must be at the same level or higher",
-        )
+    # Who reports to whom is the Master's to decide (a coordinator between a site and the heads, say), so any level
+    # may be chosen; only a loop is refused.
     # Walk up from the proposed manager; hitting this employee means a cycle.
     seen = set()
     cursor = manager

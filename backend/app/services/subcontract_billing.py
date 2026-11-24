@@ -738,6 +738,11 @@ def sub_bill_decide(db, client, bill, actor_id, actor_name, approve, comments=""
     if not owner and approve and bill.submitted_by and bill.submitted_by == actor_id:
         raise HTTPException(403, "You prepared this bill, so somebody else has to certify it. It is waiting with %s."
                                  % (sub_bill_step_name(db, step) or "the Master"))
+    # Nor does whoever measured the work it pays for: the measurement and the certificate are two different people.
+    if not owner and approve and db.query(models.DBSubMeasurement.id).filter(
+            models.DBSubMeasurement.sub_bill_id == bill.id, models.DBSubMeasurement.recorded_by == actor_id).first():
+        raise HTTPException(403, "You recorded measurements on %s, so somebody else has to certify it - the Master can "
+                                 "sign it at any step." % bill.number)
     if not owner and (step is None or step.approver_id != actor_id):
         later = any(r.approver_id == actor_id and r.status == "pending" for r in sub_bill_chain_rows(db, bill.id))
         raise HTTPException(403, "%s is waiting with %s.%s" % (

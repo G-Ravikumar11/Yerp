@@ -345,7 +345,14 @@ def test_a_job_that_throws_is_recorded_and_does_not_stop_the_others():
         main.SCHEDULED_JOBS[:] = [j for j in main.SCHEDULED_JOBS if j[0] != "test_explodes"]
 
 
-def test_an_operator_can_run_the_jobs_now(client, tenant):
+def test_an_operator_can_run_the_jobs_now(client, tenant, monkeypatch):
+    # What is tested is the operator's button: it reaches every registered job and reports each. The jobs' own work is
+    # tested job by job; run for real here, they went through every company the whole suite had made (thousands by this
+    # point) and the test took many minutes.
+    from app.core import scheduler
+    stand_ins = [(name, key, lambda db, now: "ran") for name, key, _fn in scheduler.SCHEDULED_JOBS]
+    monkeypatch.setattr(scheduler, "SCHEDULED_JOBS", stand_ins)
+    monkeypatch.setattr(main, "SCHEDULED_JOBS", stand_ins)
     main.rate_limiter._hits.clear()
     client.post("/api/superadmin/login", json={
         "identifier": "hello@billing.com", "password": "TestSuper123"})

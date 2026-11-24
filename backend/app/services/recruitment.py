@@ -134,6 +134,7 @@ def requisition_to_dict(job, db=None, counts=None):
         "description": job.description or "", "requirements": job.requirements or "",
         "location": job.location or "", "work_mode": job.work_mode or "onsite",
         "employment_type": job.employment_type or "full_time", "level": job.level or "",
+        "experience": job.experience or "",
         "salary_min": job.salary_min or 0, "salary_max": job.salary_max or 0,
         "salary_currency": job.salary_currency or "", "show_salary": bool(job.show_salary),
         "openings": job.openings or 1, "status": job.status,

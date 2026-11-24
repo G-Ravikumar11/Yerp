@@ -121,10 +121,22 @@ export function EmployeeAccess({ e }: { e: EmployeeDetail }) {
   const wasAssigned = (p: (typeof perms)[number]) => e.permissions.includes(p.key) && !reserved(p)
   const assigned = perms.filter(wasAssigned)
   const unassigned = perms.filter((p) => !wasAssigned(p))
+  // Each right under the portal it belongs to: the portal card that holds it, or else the portal its group works in.
+  // Rights that are no portal's (everybody's own, head office, the phone app) keep their group's name.
+  const byKey = new Map<string, string>()
+  for (const pt of portals) for (const k of [...pt.read, ...pt.write]) byKey.set(k, pt.label)
+  const label = (code: string) => portals.find((pt) => pt.code === code)?.label ?? code
+  const GROUP_PORTAL: Record<string, string> = {
+    Portals: 'projects', Site: 'projects', Costs: 'money', Sales: 'money', Accounts: 'money', People: 'people',
+    Contracts: 'subcontractors', 'Planning & Billing': 'clients', Purchase: 'store', Stores: 'store', 'Store module': 'store',
+  }
+  const sectionOf = (p: (typeof perms)[number]) => byKey.get(p.key) ?? (GROUP_PORTAL[p.group] ? label(GROUP_PORTAL[p.group]) : p.group || 'Other')
+  const order = [...portals.map((pt) => pt.label), 'Everyone', 'Head office', 'Website', 'Phone app']
   const groupsOf = (list: typeof perms) => {
     const m = new Map<string, typeof perms>()
-    for (const p of list) m.set(p.group || 'Other', [...(m.get(p.group || 'Other') ?? []), p])
-    return [...m.entries()]
+    for (const p of list) { const s = sectionOf(p); m.set(s, [...(m.get(s) ?? []), p]) }
+    const rank = (s: string) => (order.indexOf(s) < 0 ? order.length : order.indexOf(s))
+    return [...m.entries()].sort((a, b) => rank(a[0]) - rank(b[0]))
   }
 
   if (!editing) {
@@ -190,10 +202,11 @@ export function EmployeeAccess({ e }: { e: EmployeeDetail }) {
       <details>
         <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">Individual rights{changed > 0 ? ` (${changed} different from the role)` : ''}</summary>
         <div className="mt-3">
-        {/* Ordered by what is saved for them, not by the switches as they are flipped, so a card does not jump away from under the cursor. */}
-        {[{ title: 'Assigned to them', list: assigned }, { title: 'Not assigned', list: unassigned }].map(({ title, list }) => list.length > 0 && (
-          <div key={title} className="mb-4 last:mb-0">
-            <p className="mb-2 text-[13px] font-medium text-muted-foreground">{title} ({list.length})</p>
+        {/* One section per portal, its heading above its rights. Within it, what is saved for them comes first - ordered by
+            what is saved, not by the switches as they are flipped, so a card does not jump away from under the cursor. */}
+        {groupsOf([...assigned, ...unassigned]).map(([section, list]) => (
+          <div key={section} className="mb-6 border-b border-border pb-6 last:mb-0 last:border-b-0 last:pb-0">
+            <p className="mb-3 text-sm font-semibold">{section} <span className="font-normal text-muted-foreground">({list.filter((p) => !reserved(p) && isOn(p.key)).length} of {list.length})</span></p>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {list.map((p) => {
                 const locked = reserved(p)
@@ -202,7 +215,7 @@ export function EmployeeAccess({ e }: { e: EmployeeDetail }) {
                   <div key={p.key} className={card + ' flex items-center justify-between gap-3 !py-3' + (diff ? ' border-[var(--primary)]' : '')}>
                     <div className="min-w-0">
                       <p className="text-[13px] leading-snug">{p.label}</p>
-                      <p className="text-[11px] text-muted-foreground">{locked ? `${cat.data!.permission_roles.find((r) => r.code === p.only_role)?.label ?? p.only_role} only` : diff ? (isOn(p.key) ? 'Added for them' : 'Removed for them') : p.group}</p>
+                      <p className="text-[11px] text-muted-foreground">{locked ? `${cat.data!.permission_roles.find((r) => r.code === p.only_role)?.label ?? p.only_role} only` : diff ? (isOn(p.key) ? 'Added for them' : 'Removed for them') : wasAssigned(p) ? 'Assigned' : 'Not assigned'}</p>
                       {p.warning && !locked && isOn(p.key) && <p role="alert" className="mt-1 text-[11px] text-danger">{p.warning}</p>}
                     </div>
                     <Toggle on={!locked && isOn(p.key)} disabled={locked} label={p.label} onChange={(v) => setGranted((g) => v ? [...g, p.key] : g.filter((k) => k !== p.key))} />

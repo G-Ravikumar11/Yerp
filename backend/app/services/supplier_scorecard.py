@@ -14,7 +14,7 @@ address for it.
 from datetime import datetime
 
 from app import models
-from app.core.scheduler import scheduled_job
+from app.core.scheduler import each_active_client, scheduled_job
 from app.services.crm import norm_name
 
 POSTED_OLD = ("POSTED",)
@@ -128,7 +128,7 @@ def job_supplier_scorecard(db, now):
     from app.core.notifications import default_from_email, send_email_background
     from app.core.tenant_settings import tenant_setting
     sent = 0
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    for client in each_active_client(db):
         to = [e.strip() for e in (tenant_setting(db, client.id, PURCHASING_EMAILS_KEY, "") or "").split(",") if "@" in e]
         if not to:
             continue

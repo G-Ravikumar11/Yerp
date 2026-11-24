@@ -141,8 +141,19 @@ def contract_rate(db, client_id, supplier, item_code, on=None):
     return None
 
 
+def best_contract(db, client_id, item_code, on=None):
+    """The cheapest rate contract in force for the item, whoever it is with - or None. Buying the item above it, from
+    that supplier or any other, pays more than the company has already agreed to pay."""
+    on = (on or date.today().isoformat())[:10]
+    live = [c for c in db.query(models.DBRateContract).filter(models.DBRateContract.client_id == client_id,
+                                                              models.DBRateContract.item_code == (item_code or "").strip()).all()
+            if (c.valid_from or "") <= on and (not c.valid_to or c.valid_to >= on) and (c.rate or 0) > 0]
+    return min(live, key=lambda c: (c.rate, c.id)) if live else None
+
+
 def rate_flags(db, client_id, supplier, lines, exclude_po_id=None):
-    """Lines priced more than the alert % over the supplier's last price (or anyone's), or over a rate contract in force."""
+    """Lines priced more than the alert % over the supplier's last price (or anyone's), over the supplier's own rate
+    contract, or over a cheaper rate contract in force with another supplier."""
     pct = alert_pct(db, client_id)
     out = []
     for l in lines:
@@ -152,14 +163,21 @@ def rate_flags(db, client_id, supplier, lines, exclude_po_id=None):
         points = price_points(db, client_id, code, exclude_po_id)
         last = last_prices(points).get(norm_name(supplier)) or (points[-1] if points else None)
         c = contract_rate(db, client_id, supplier, code)
+        cheapest = best_contract(db, client_id, code)
         reasons = []
         if last and rate > last["rate"] * (1 + pct / 100.0) + 0.0001:
             reasons.append("%.1f%% above the last price %s (%s, %s)" % ((rate / last["rate"] - 1) * 100, last["rate"], last["supplier"], last["po"]))
         if c and rate > c.rate + 0.0001:
             reasons.append("above the rate contract %s" % unit_rate(c.rate))
+        # A cheaper contract in force with somebody else (unless this supplier's own contract is as cheap).
+        if (cheapest and norm_name(cheapest.supplier_name) != norm_name(supplier) and rate > cheapest.rate + 0.0001
+                and not (c and c.rate <= cheapest.rate)):
+            reasons.append("above the rate contract with %s at %s (%s, to %s)" % (
+                cheapest.supplier_name, unit_rate(cheapest.rate), cheapest.contract_no or "", cheapest.valid_to or ""))
         if reasons:
+            shown = c if c else cheapest
             out.append({"item_code": code, "description": l.get("description") or "", "rate": unit_rate(rate),
-                        "last_rate": last["rate"] if last else None, "contract_rate": unit_rate(c.rate) if c else None,
+                        "last_rate": last["rate"] if last else None, "contract_rate": unit_rate(shown.rate) if shown else None,
                         "why": "; ".join(reasons)})
     return out
 

@@ -591,7 +591,7 @@ async def import_sub_measurement_book(order_id: int, request: Request, file: Upl
 
 @router.delete("/api/sub-mb/entries/{entry_id}")
 def delete_sub_measurement(entry_id: int, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, "site.record")
+    client, _, _ = wo_actor(request, db, "mb.delete")
     entry = db.query(models.DBSubMeasurement).filter(
         models.DBSubMeasurement.id == entry_id,
         models.DBSubMeasurement.client_id == client.id).first()
@@ -1451,7 +1451,7 @@ def create_release(body: RetentionReleaseIn, request: Request, db: Session = Dep
         raise HTTPException(400, "Is this retention the client holds, or retention we hold from a contractor?")
     # Owing a contractor money is a decision, as certifying their bill is.
     client, actor_id, actor_name = wo_actor(
-        request, db, ("billing.manage", "accounts.manage") if side == "client" else "subcontracts.approve")
+        request, db, ("billing.manage", "accounts.manage") if side == "client" else "retention.prepare")
     stage = (body.stage or "").strip()
     if stage not in RETENTION_STAGES:
         raise HTTPException(400, "Which stage is this - %s?" % ", ".join(RETENTION_STAGES))
@@ -1538,7 +1538,7 @@ def certify_release(release_id: int, request: Request, body: dict = None, db: Se
     """The second signature on a contractor's retention raised by staff: from here it is owed, and can be paid.
     Not by whoever raised it. What would have stopped it is checked again - a back-charge raised since, say -
     and only the Master signs past that, with a reason."""
-    client, actor_id, actor_name = wo_actor(request, db, "subcontracts.approve")
+    client, actor_id, actor_name = wo_actor(request, db, "retention.certify")
     r = release_or_404(db, client.id, release_id)
     comments = ((body or {}).get("comments") or "").strip()
     if r.status != "SUBMITTED":
@@ -1578,7 +1578,7 @@ def cancel_release(release_id: int, request: Request, body: dict = None,
                    db: Session = Depends(get_db)):
     """A release raised in error goes back to being held. Not once money has
     moved against it - that is voided first, as with any bill."""
-    client, actor_id, actor_name = wo_actor(request, db, ("billing.manage", "accounts.manage", "subcontracts.approve"))
+    client, actor_id, actor_name = wo_actor(request, db, ("billing.manage", "accounts.manage", "retention.prepare"))
     r = release_or_404(db, client.id, release_id)
     reason = ((body or {}).get("reason") or "").strip()
     if not reason:

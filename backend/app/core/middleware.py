@@ -126,19 +126,6 @@ app.add_middleware(
 )
 app.add_middleware(SessionCookieLifetimeMiddleware)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    # The phone app is another origin, so a header it adds is asked about first (the preflight) and refused if it is not listed:
-    # the browser then reports an ordinary network failure, which the offline queue reads as "no signal". Idempotency-Key is sent
-    # with every change that may be kept for later (stores/offline.ts), X-Base-Version with an edit sent from the queue.
-    allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Base-Version"],
-    # The installed phone app talks to the server from another origin; these are read by lib/freshness.ts.
-    expose_headers=["X-App-Build", "X-Client-Reset"],
-)
-
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 
@@ -298,8 +285,10 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     # A PDF may be shown inside the app's own pages - so what is on screen is
     # the document that prints - but never framed by anybody else's site.
-    response.headers["X-Frame-Options"] = (
-        "SAMEORIGIN" if response.headers.get("content-type", "").startswith("application/pdf") else "DENY")
+    # So may the company website, when Settings -> Website shows it as the preview of its draft (/?preview=1).
+    framed = response.headers.get("content-type", "").startswith("application/pdf") or (
+        path in ("/", "/next/site") and request.query_params.get("preview") == "1")
+    response.headers["X-Frame-Options"] = "SAMEORIGIN" if framed else "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     # Only our own pages may frame ours (the PDF beside a bill), whatever an old browser makes of X-Frame-Options.
@@ -419,3 +408,20 @@ from app.core.login_guard import ClientAddressMiddleware  # noqa: E402
 app.add_middleware(HeavyMiddleware)
 app.add_middleware(FloodMiddleware)
 app.add_middleware(ClientAddressMiddleware)
+
+# Added after every other layer, so it is the outermost: a reply made by an inner layer - the idempotency one rebuilds
+# the answer and keeps only its type, a replay never reaches the inner layers at all, the body limit and the flood
+# guard answer for themselves - still carries the Access-Control headers. Without them the phone app's browser refuses
+# to hand the answer over and reports a dropped connection, though the server did the work.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    # The phone app is another origin, so a header it adds is asked about first (the preflight) and refused if it is not listed:
+    # the browser then reports an ordinary network failure, which the offline queue reads as "no signal". Idempotency-Key is sent
+    # with every change that may be kept for later (stores/offline.ts), X-Base-Version with an edit sent from the queue.
+    allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Base-Version"],
+    # The installed phone app talks to the server from another origin; these are read by lib/freshness.ts.
+    expose_headers=["X-App-Build", "X-Client-Reset"],
+)

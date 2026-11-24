@@ -244,7 +244,7 @@ function BillView({ bill, reseed }: { bill: SubBill; reseed: () => void }) {
 
           <HardCopy bill={bill} canAttach={can('billing.manage')} onChanged={reseed} />
 
-          <BackCharges bill={bill} canEdit={can('billing.manage')} onChanged={reseed} />
+          <BackCharges bill={bill} canEdit={can('backcharges.manage')} onChanged={reseed} />
 
           <AiCheck bill={bill} />
 

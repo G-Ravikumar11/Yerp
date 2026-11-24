@@ -171,7 +171,7 @@ def invite_to_portal(body: PortalInviteIn, request: Request, background_tasks: B
                      db: Session = Depends(get_db)):
     """Give one person at a contractor or a supplier their own login. Letting an
     outsider in is an approver's decision, like passing their bill."""
-    client, _, actor_name = wo_actor(request, db, "subcontracts.approve")
+    client, _, actor_name = wo_actor(request, db, "contractors.portal")
     if body.party_type not in PORTAL_PARTY_TYPES:
         raise HTTPException(400, "A portal login is for a subcontractor or a supplier.")
     party, party_name = portal_party(db, client.id, body.party_type, body.party_id)
@@ -204,7 +204,7 @@ def reinvite_to_portal(user_id: int, request: Request, background_tasks: Backgro
                        db: Session = Depends(get_db)):
     """A fresh link - for an invite that ran out, or a forgotten password.
     Any earlier link stops working."""
-    client, _, _ = wo_actor(request, db, "subcontracts.approve")
+    client, _, _ = wo_actor(request, db, "contractors.portal")
     u = _portal_user_or_404(db, client.id, user_id)
     if not u.is_active:
         raise HTTPException(409, "Turn the login back on first.")
@@ -219,7 +219,7 @@ def reinvite_to_portal(user_id: int, request: Request, background_tasks: Backgro
 
 @router.post("/api/portal-access/{user_id}/{action}")
 def switch_portal_access(user_id: int, action: str, request: Request, db: Session = Depends(get_db)):
-    client, _, _ = wo_actor(request, db, "subcontracts.approve")
+    client, _, _ = wo_actor(request, db, "contractors.portal")
     if action not in ("disable", "enable"):
         raise HTTPException(404, "Not found")
     u = _portal_user_or_404(db, client.id, user_id)

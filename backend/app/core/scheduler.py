@@ -24,6 +24,29 @@ def daily_key(now=None):
     return (now or datetime.now()).strftime("%Y-%m-%d")
 
 
+def each_active_client(db):
+    """Every active company, one at a time, each read fresh and let go of before the next.
+
+    A job that goes through every company and commits as it goes must not keep what it read: each commit expires every
+    object the session holds, so carrying all companies' records along made each commit slower than the last and a
+    run grew with the square of the data (it stalled with a few hundred companies). What a company's turn changed and did
+    not commit is written first (flushed - still in the job's transaction), so letting go of it loses nothing."""
+    ids = [cid for (cid,) in db.query(models.DBClient.id).filter(models.DBClient.is_active.is_(True))
+           .order_by(models.DBClient.id).all()]
+    for cid in ids:
+        client = db.get(models.DBClient, cid)
+        if client is None:
+            continue
+        try:
+            yield client
+        finally:
+            try:
+                db.flush()
+            except Exception:
+                db.rollback()
+            db.expunge_all()
+
+
 def scheduled_job(name, period_key_fn=daily_key):
     def register(fn):
         SCHEDULED_JOBS.append((name, period_key_fn, fn))

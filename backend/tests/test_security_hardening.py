@@ -131,7 +131,7 @@ def test_staff_cannot_delete_measurements_on_an_order_they_cannot_see(tenant, po
     item = book(tenant, order["id"])["lines"][0]["item_id"]
     tenant.post("/api/sub-mb/%d/entries" % order["id"], json={"item_id": item, "quantity": 5})
     entry = book(tenant, order["id"])["entries"][0]
-    site = staff(tenant, "staff")
+    site = staff(tenant, "site_engineer")   # holds mb.delete, so only the order being out of sight stops it
     sign_in(portal, site)
     assert portal.delete("/api/sub-mb/entries/%d" % entry["id"]).status_code == 404
     assert len(book(tenant, order["id"])["entries"]) == 1

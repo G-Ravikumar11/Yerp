@@ -1,0 +1,3 @@
+# LiquidGlassKit is fetched at build time (scripts/add-liquidglasskit.sh), at a pinned tag.
+ios/Sources/LiquidGlassKit/
+ios/LICENSE-LiquidGlassKit

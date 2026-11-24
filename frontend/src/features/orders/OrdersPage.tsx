@@ -31,7 +31,7 @@ export default function OrdersPage() {
     search: (o) => [o.wo_number, o.contractor, o.vendor_code, o.project, o.subject, o.work_type, o.department, o.status, o.net_order_value].join(' '),
     status: (o) => o.status,
     date: (o) => o.created_at,
-    facets: { project: { label: 'Projects', get: (o) => o.project }, contractor: { label: 'Contractors', get: (o) => o.contractor }, trade: { label: 'Trades', get: (o) => o.department } },
+    facets: { project: { label: 'Projects', get: (o) => o.project }, contractor: { label: 'Contractors', get: (o) => o.contractor }, trade: { label: 'Departments', get: (o) => o.department } },
   })
 
   const s = orders.data?.summary
@@ -62,7 +62,7 @@ export default function OrdersPage() {
       ),
     },
     { id: 'subject', header: 'Work', cell: (o) => <span className="line-clamp-2 max-w-sm text-muted-foreground">{o.subject || '-'}</span>, hideBelow: 'lg' },
-    { id: 'dept', header: 'Trade', sort: (o) => o.department, cell: (o) => o.department || '-', hideBelow: 'md' },
+    { id: 'dept', header: 'Department', sort: (o) => o.department, cell: (o) => o.department || '-', hideBelow: 'md' },
     { id: 'items', header: 'Lines', align: 'right', sort: (o) => o.item_count, cell: (o) => o.item_count, hideBelow: 'md' },
     { id: 'value', header: 'Net value', align: 'right', sort: (o) => o.net_order_value, cell: (o) => formatINR(o.net_order_value) },
     { id: 'start', header: 'Starts', sort: (o) => o.commencement_date, cell: (o) => formatDate(o.commencement_date) || '-', hideBelow: 'xl' },

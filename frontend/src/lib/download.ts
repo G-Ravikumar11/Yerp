@@ -3,6 +3,7 @@ import { Directory, Filesystem } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import { apiUrl } from '@/lib/api'
 import { toast } from '@/stores/toast'
+import { useFileSheet, type HeldFile } from '@/stores/fileSheet'
 
 /**
  * Downloads in the phone app.
@@ -10,7 +11,8 @@ import { toast } from '@/stores/toast'
  * The website's PDF and Excel buttons are plain links ("/api/ra-bills/3/export.xlsx"). In the app a bare "/api/..." address
  * points at the app's own files, not the server, and the phone's own browser has none of the person's sign-in - so such a
  * button did nothing. Here the app does the fetching itself, with the person's sign-in, keeps the file on the phone, and
- * hands it to the phone's own "Open with / Share" choices (a spreadsheet app, a PDF reader, WhatsApp, e-mail).
+ * then opens a PDF or an Excel sheet in the app to look at (components/FileViewer.tsx, read only, nothing saved). From there the person
+ * can still save it to the phone or share it (components/FileSheet.tsx). Other files go straight to that Save / Share box.
  *
  * Every button that links to a download is covered at once, without editing any of them: clicks on such links (and
  * window.open, and a script clicking a link it made) are caught here. Only the native app installs any of this, so the
@@ -19,11 +21,25 @@ import { toast } from '@/stores/toast'
 
 const DOWNLOAD_EXT = /\.(pdf|xlsx|xls|csv|docx|doc|zip)$/i
 
-/** The part of an address after the origin, when the address is on this app's own origin; else null. */
+/** The server's own address in the phone app ("https://yerp.example.com"), or null when the app and server share an origin. */
+function apiOrigin(): string | null {
+  try {
+    const root = apiUrl('/')
+    return /^https?:\/\//i.test(root) ? new URL(root).origin : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The part of an address after the origin, when the address is on this app's own origin or on the server's; else null.
+ * A button built with apiUrl() points at the server's full address, not at "/api/...": it must be caught too, or the
+ * phone's own browser opens it, without the person's sign-in.
+ */
 function appPath(href: string, base: string): string | null {
   try {
     const u = new URL(href, base)
-    return u.origin === new URL(base).origin ? u.pathname + u.search : null
+    return u.origin === new URL(base).origin || u.origin === apiOrigin() ? u.pathname + u.search : null
   } catch {
     return null
   }
@@ -64,6 +80,11 @@ function toBase64(blob: Blob): Promise<string> {
   })
 }
 
+/** Whether the app can show this file itself, read only: a PDF, or an Excel sheet (.xlsx). */
+export function canView(name: string): boolean {
+  return /\.(pdf|xlsx)$/i.test(name)
+}
+
 const busy = new Set<string>()
 
 /** Fetch the file with the person's sign-in, keep it on the phone, and offer to open or share it. */
@@ -71,7 +92,7 @@ export async function downloadAndShare(href: string, downloadAttr?: string | nul
   if (busy.has(href)) return
   busy.add(href)
   try {
-    toast.info('Getting the file...')
+    toast.brief('Getting the file...')
     const res = href.startsWith('blob:') ? await fetch(href) : await fetch(apiUrl(appPath(href, location.href) ?? href), { credentials: 'include' })
     if (!res.ok) {
       let why = ''
@@ -82,7 +103,11 @@ export async function downloadAndShare(href: string, downloadAttr?: string | nul
     const name = fileNameFor(downloadAttr, res.headers.get('content-disposition'), href)
     const data = await toBase64(await res.blob())
     const saved = await Filesystem.writeFile({ path: `downloads/${Date.now()}/${name}`, data, directory: Directory.Cache, recursive: true })
-    await Share.share({ title: name, dialogTitle: `Open or share ${name}`, url: saved.uri })
+    const held = { name, uri: saved.uri, data }
+    // A PDF or an Excel sheet is opened to look at, in the app, with nothing saved; the viewer offers Save / Share from its top bar.
+    // Anything else (Word, zip, ...) has no viewer here and goes straight to the Save / Share box.
+    if (canView(name)) useFileSheet.getState().view(held)
+    else useFileSheet.getState().show(held)
   } catch (e) {
     const msg = String((e as { message?: unknown })?.message ?? e)
     // Someone dismissing the share sheet is not an error.
@@ -92,6 +117,41 @@ export async function downloadAndShare(href: string, downloadAttr?: string | nul
       : 'That file could not be downloaded. Check the connection and try again.')
   } finally {
     busy.delete(href)
+  }
+}
+
+/** Hand the held file to the phone's share list (WhatsApp, e-mail, a spreadsheet app, a PDF reader). */
+export async function shareHeld(file: HeldFile) {
+  try {
+    await Share.share({ title: file.name, dialogTitle: `Share ${file.name}`, url: file.uri })
+  } catch (e) {
+    // Someone dismissing the share list is not an error.
+    if (!/cancel|dismiss/i.test(String((e as { message?: unknown })?.message ?? e))) toast.error('That file could not be shared.')
+  }
+}
+
+/** The name a copy kept in the phone's Documents folder is given: the file's own, with a number if the name is taken. */
+export function savedName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name
+  const dot = name.lastIndexOf('.')
+  const stem = dot > 0 ? name.slice(0, dot) : name
+  const ext = dot > 0 ? name.slice(dot) : ''
+  for (let i = 2; ; i++) if (!taken.has(`${stem} (${i})${ext}`)) return `${stem} (${i})${ext}`
+}
+
+/** Keep a copy in the phone's Documents folder (Documents/Y ERP), where the Files app shows it. Says where it went. */
+export async function saveHeld(file: HeldFile): Promise<boolean> {
+  try {
+    const dir = 'Y ERP'
+    let taken = new Set<string>()
+    try { taken = new Set((await Filesystem.readdir({ path: dir, directory: Directory.Documents })).files.map((f) => f.name)) } catch { /* no folder yet */ }
+    const name = savedName(file.name, taken)
+    await Filesystem.writeFile({ path: `${dir}/${name}`, data: file.data, directory: Directory.Documents, recursive: true })
+    toast.success(`Saved in Documents / ${dir} as ${name}`)
+    return true
+  } catch {
+    toast.error('The phone would not let the app save it. Use Share, and choose Save to Files or Drive.')
+    return false
   }
 }
 

@@ -3,6 +3,10 @@ import { useEffect, useRef, useState } from 'react'
 /** A file under public/site, as the browser must ask for it (the app lives under /next/). */
 export const asset = (path: string) => import.meta.env.BASE_URL + path
 
+/** A picture named in the website's content: one of the site's own files (site/img/...), or one uploaded from
+ *  Settings -> Website, which the server keeps (/api/public/site/images/...). */
+export const imgSrc = (path: string) => (path.startsWith('/api/') ? (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '') + path : asset(path))
+
 export const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
 export const inr = (n: number) => new Intl.NumberFormat('en-IN').format(Math.round(n))

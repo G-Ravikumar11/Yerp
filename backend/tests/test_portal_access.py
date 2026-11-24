@@ -120,7 +120,8 @@ def test_the_catalogue_hands_the_cards_to_the_screen(tenant):
 def test_the_hr_designation_is_fixed_and_hidden_from_the_picker():
     from app.core.permissions import ASSIGNABLE_ROLES, EMPLOYEE_ROLES, FIXED_ROLES
     hr = next(r for r in EMPLOYEE_ROLES if r["code"] == "hr")
-    assert (hr["label"], hr["level"], hr["department"], hr["reports_to"], hr["access"]) == ("HR", "L3", "HR", "hod", "hr")
+    # HR has its own level, L4, under Coordinator / HO (e3fb5976).
+    assert (hr["label"], hr["level"], hr["department"], hr["reports_to"], hr["access"]) == ("HR", "L4", "HR", "hod", "hr")
     assert "hr" in FIXED_ROLES and "hr" not in {r["code"] for r in ASSIGNABLE_ROLES}
     assert not any(r["code"] == "sr_hr" for r in EMPLOYEE_ROLES)
 

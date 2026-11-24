@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 
 from app import models
 from app.core.config import logger
-from app.core.scheduler import scheduled_job
+from app.core.scheduler import each_active_client, scheduled_job
 
 REPEAT_FROM = 3          # refused this many times in the week: a pattern, not an accident
 
@@ -116,7 +116,7 @@ def job_lock_weekly(db, now):
         return "too early"
     ended = now.date() - timedelta(days=1)
     told = 0
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    for client in each_active_client(db):
         try:
             s = summary(db, client.id, ended)
             if s["refused"] or s["flagged_punches"]:

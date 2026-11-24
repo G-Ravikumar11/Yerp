@@ -1,4 +1,5 @@
 """Variations to the BOQ: extra items and quantities past it, priced, approved on a route, and applied as the next revision."""
+from conftest import budget_all
 from test_boq import CLIENT_SHEET, import_lines, make_boq, saved, contractor_order, job_of_key
 from test_subcontract_orders import draft, fund_order
 from test_subcontract_orders import staff, sign_in
@@ -164,6 +165,7 @@ def test_the_lines_executed_past_the_boq_are_suggested(tenant):
     sched = dict(pulled["lines"][0], tolerance_percent=50)                          # the contractor may measure 50% over
     order = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": [sched]}).json()["order"]
     fund_order(tenant, order)
+    budget_all(tenant, order["job_id"])
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
     assert tenant.post("/api/wo/orders/%d/approve" % order["id"], json={}).status_code == 200
     item = tenant.get("/api/sub-mb/%d" % order["id"]).json()["lines"][0]["item_id"]

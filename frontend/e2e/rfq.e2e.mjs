@@ -115,7 +115,9 @@ await gone()
 await sleep(800)
 check('the enquiry says it was awarded and names the order', /Awarded/.test(await text(page, 'main')) && /PO-/.test(await text(page, 'ol[aria-label=Progress]')))
 const pos = (await api(page, 'GET', '/api/purchase-orders')).data.orders
-check('the award made a draft purchase order for the lowest total', pos.some((o) => o.supplier_name === st.l1 && o.status === 'Draft'))
+// The award is the decision to buy: it goes straight on for approval, and the Master's own award is approved there and then.
+check('the award made a purchase order for the lowest total, approved (the Master awarded it)', pos.some((o) => o.supplier_name === st.l1 && o.status === 'Approved'),
+  JSON.stringify(pos.filter((o) => o.supplier_name === st.l1).map((o) => o.status)))
 
 // The list: awarded under its own tab; an old ?id= link still opens the page
 await open(page, '/store/enquiries?show=awarded')

@@ -17,7 +17,7 @@ export function HistoryTab() {
   const out = useAction((r: AttRecord) => clockFor(r.employee_id, 'out'), { invalidate: [attKeys.all], success: (r) => r.message })
   const download = async () => {
     const rows = await exportAttendance(date)
-    if (!rows.length) return toast.info('No records to export')
+    if (!rows.length) return toast.brief('No records to export')
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([csv(rows)], { type: 'text/csv' }))
     a.download = `attendance-${date || 'all'}.csv`

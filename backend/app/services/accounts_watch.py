@@ -240,18 +240,25 @@ def job_accounts_store_watch(db, now):
     if now.hour < 7:
         return "too early"
     alerts = told = 0
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    # Company by company, starting each with an empty session. Every commit expires everything the session holds, so
+    # keeping each company's stock, stores and alerts loaded made every later commit slower than the one before - the
+    # run grew with the square of the records and stalled with many companies' stores.
+    ids = [cid for (cid,) in db.query(models.DBClient.id).filter(models.DBClient.is_active.is_(True)).order_by(models.DBClient.id).all()]
+    for cid in ids:
         try:
-            alerts += scan_reorder_levels(db, client.id)
+            client = db.get(models.DBClient, cid)
+            alerts += scan_reorder_levels(db, cid)
             db.commit()
             items = accounts_items(db, client, now.date())
             if items:
-                tell_approvers(db, client.id, "Accounts: %d thing%s to see to today" % (len(items), _s(len(items))),
+                tell_approvers(db, cid, "Accounts: %d thing%s to see to today" % (len(items), _s(len(items))),
                                "\n".join("- %s: %s" % (i["title"], i["detail"]) for i in items[:6]),
                                rights=CHECKERS, link="/next/money/dashboard", owner=False)
                 told += 1
             db.commit()
         except Exception as exc:
             db.rollback()
-            logger.error("Accounts and store watch for %s failed: %s", client.id, exc)
+            logger.error("Accounts and store watch for %s failed: %s", cid, exc)
+        finally:
+            db.expunge_all()
     return "%d reorder alert(s), %d office(s) told" % (alerts, told)

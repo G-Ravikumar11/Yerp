@@ -74,6 +74,9 @@ class DBContractor(Base):
     __tablename__ = "contractors"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Who last changed the bank account, PAN or GST of an approved contractor: the change waits for somebody else's
+    # approval, and nothing is paid to them until then.
+    details_changed_by = Column(Integer, nullable=True)
     client_id = Column(Integer, ForeignKey("clients.id"), index=True)
     vendor_code = Column(String, default="", index=True)
     company_name = Column(String, default="", index=True)
@@ -200,6 +203,9 @@ class DBSubcontractOrder(Base):
     copied_from_id = Column(Integer, ForeignKey("subcontract_orders.id"), nullable=True)
 
     submitted_by = Column(Integer, nullable=True)
+    # Why lines are priced above the project budget, said when it was sent. Read by its approvers inside Y ERP only:
+    # never printed on the order or shown to the contractor.
+    over_budget_reason = Column(Text, default="")
     approved_by = Column(Integer, nullable=True)
     approved_at = Column(String, default="")
     executed_at = Column(String, default="")

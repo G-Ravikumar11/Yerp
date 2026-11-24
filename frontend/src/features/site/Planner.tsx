@@ -1,26 +1,25 @@
-import { COMPANY, SITE } from './data/content'
+import { useContent } from './siteContent'
 import { goTo } from './Nav'
+import { Head } from './Head'
 import { EnquiryForm } from './Live'
 import { areaText, briefText, typeLabel, type Plan } from './plan'
 
 /** "Tell us about your project": four questions, and the brief builds beside them. Sent with a name and a number, it
  *  arrives as a new lead in the Tender Pipeline; it can still be emailed or copied instead. */
 export function Planner({ plan, setPlan, toast }: { plan: Plan; setPlan: (f: (p: Plan) => Plan) => void; toast: (m: string) => void }) {
+  const { COMPANY, SITE } = useContent()
   const T = SITE.plan.types.find((t) => t.id === plan.type)
   const area = areaText(plan)
   const done = [plan.type, plan.city.trim(), area, plan.start].filter(Boolean).length
   const ready = !!T
-  const mailto = ready ? `mailto:${COMPANY.email}?subject=${encodeURIComponent(`Enquiry: ${T!.label}${plan.city.trim() ? ', ' + plan.city.trim() : ''}`)}&body=${encodeURIComponent(briefText(plan))}` : '#quote'
+  const mailto = ready ? `mailto:${COMPANY.email}?subject=${encodeURIComponent(`Enquiry: ${T!.label}${plan.city.trim() ? ', ' + plan.city.trim() : ''}`)}&body=${encodeURIComponent(briefText(plan, COMPANY.name, SITE.plan.types))}` : '#quote'
   const row = (k: string, v: React.ReactNode) => <div><dt>{k}</dt><dd className={v ? undefined : 'empty'}>{v || 'Not set'}</dd></div>
   const set = (k: keyof Plan) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => { const v = e.target.value; setPlan((p) => ({ ...p, [k]: v })) }
 
   return (
     <section className="band band--light" id="quote">
       <div className="wrap">
-        <div className="sechead sechead--split">
-          <div><p className="eyebrow">Start a Project</p><h2 className="h2">Tell us about your project</h2></div>
-          <p className="lede">Four questions. Your brief builds as you answer, and comes straight to our team.</p>
-        </div>
+        <Head h={SITE.headings.quote} />
         <div className="plan">
           <form className="plan__form" id="planform" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
             <fieldset className="q"><legend><span>01</span>Type of work</legend>
@@ -51,11 +50,11 @@ export function Planner({ plan, setPlan, toast }: { plan: Plan; setPlan: (f: (p:
               {row('Start', plan.start)}
             </dl>
             {ready
-              ? <div className="brief__send"><EnquiryForm tone="light" send="Send This Brief" toast={toast} brief={{ type: typeLabel(plan.type), scopes: [], city: plan.city.trim(), text: briefText(plan) }} /></div>
+              ? <div className="brief__send"><EnquiryForm tone="light" send="Send This Brief" toast={toast} brief={{ type: typeLabel(plan.type, SITE.plan.types), scopes: [], city: plan.city.trim(), text: briefText(plan, COMPANY.name, SITE.plan.types) }} /></div>
               : <p className="brief__note">Choose the type of work, then send the brief with your name and number.</p>}
             <div className="brief__cta">
               <a className="btn btn--line" id="briefsend" href={mailto} aria-disabled={!ready} onClick={(e) => { if (!ready) { e.preventDefault(); toast('Choose the type of work first'); goTo('#quote') } else toast('Opening your email app…') }}>Email Instead</a>
-              <button className="btn btn--line" id="briefcopy" type="button" onClick={async () => { try { await navigator.clipboard.writeText(briefText(plan)); toast('Brief copied to clipboard') } catch { toast('Copying is blocked here. Use Email Instead.') } }}>Copy</button>
+              <button className="btn btn--line" id="briefcopy" type="button" onClick={async () => { try { await navigator.clipboard.writeText(briefText(plan, COMPANY.name, SITE.plan.types)); toast('Brief copied to clipboard') } catch { toast('Copying is blocked here. Use Email Instead.') } }}>Copy</button>
             </div>
             <p className="brief__note">Prefer to talk? <a href={`tel:${COMPANY.phone.tel}`}>{COMPANY.phone.show}</a></p>
           </aside>

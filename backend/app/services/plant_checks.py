@@ -395,7 +395,8 @@ def expected_charge(r, period_from, period_to, hours):
     first = max(period_from, r.start_date or period_from)
     last = min(period_to, r.actual_return) if r.actual_return else period_to
     if last < first:
-        return {"days_on_hire": 0, "minimum_hours": 0.0, "actual_hours": 0.0, "overtime_hours": 0.0, "base": 0.0, "overtime": 0.0, "transport": 0.0, "expected": 0.0}
+        return {"days_on_hire": 0, "minimum_hours": 0.0, "actual_hours": 0.0, "overtime_hours": 0.0, "base": 0.0, "overtime": 0.0, "transport": 0.0,
+                "return_charges": 0.0, "expected": 0.0}
     span = list(_days(first, last))
     worked = round(sum(hours.get(d, 0.0) for d in span), 2)
     minimum_cycle, rate, ot_rate = r.min_billable_hours or 0.0, r.rate or 0.0, r.overtime_rate or 0.0
@@ -416,8 +417,10 @@ def expected_charge(r, period_from, period_to, hours):
         ot_rate = ot_rate or rate
     extra = overtime * ot_rate
     transport = (r.transport_charges or 0.0) if first <= (r.start_date or "") <= last else 0.0
+    # Extra or damage charges agreed at the return belong to the bill that covers the return day, as transport belongs to the first.
+    returned = (getattr(r, "return_charges", 0.0) or 0.0) if r.actual_return and first <= r.actual_return <= last else 0.0
     return {"days_on_hire": len(span), "minimum_hours": round(minimum, 2), "actual_hours": worked, "overtime_hours": round(overtime, 2), "base": money(base),
-            "overtime": money(extra), "transport": money(transport), "expected": money(base + extra + transport)}
+            "overtime": money(extra), "transport": money(transport), "return_charges": money(returned), "expected": money(base + extra + transport + returned)}
 
 
 def _months(first, last):
@@ -468,7 +471,9 @@ def rental_rows(db, client_id, month="", rental_id=0, upto=None):
             twin = next((o for o in seen if pf <= o[1] and o[0] <= pt), None)
             seen.append((pf, pt, inv))
             state = "Duplicate" if twin else ("Mismatch" if off else "Matched")
-            rows.append({**base, **c, "kind": "invoice", "invoice_id": inv.id, "invoice_no": inv.invoice_no, "month": pf[:7], "period_from": pf, "period_to": pt,
+            pct = round(diff / c["expected"] * 100, 2) if c["expected"] else None
+            rows.append({**base, **c, "kind": "invoice", "invoice_id": inv.id, "invoice_no": inv.invoice_no, "invoice_date": inv.invoice_date or "", "month": pf[:7], "period_from": pf, "period_to": pt,
+                         "difference_percent": pct, "billed_days": c["days_on_hire"], "unbilled_days": 0, "billed_hours": inv.billed_hours or 0,
                          "project": job_label(jobs, worked_on.get((r.asset_id, pf[:7]))), "actual": money(inv.amount or 0), "difference": diff, "status": state,
                          "detail": ("Overlaps invoice %s." % twin[2].invoice_no) if twin else "", "verification_status": inv.verification_status or "", "verified_by": inv.verified_by or "",
                          "verification_note": inv.verification_note or "", "expected_at_review": inv.expected_at_review})
@@ -487,7 +492,8 @@ def rental_rows(db, client_id, month="", rental_id=0, upto=None):
                     continue
                 closed = month_end(m + "-01") < upto or bool(r.actual_return and r.actual_return <= upto)
                 c = expected_charge(r, min(missing), max(missing), days)
-                rows.append({**base, **c, "kind": "missing", "invoice_id": None, "invoice_no": "", "month": m, "period_from": min(missing), "period_to": max(missing),
+                rows.append({**base, **c, "kind": "missing", "invoice_id": None, "invoice_no": "", "invoice_date": "", "month": m, "period_from": min(missing), "period_to": max(missing),
+                             "difference_percent": None, "billed_days": len(on_hire) - len(missing), "unbilled_days": len(missing), "billed_hours": 0,
                              "project": job_label(jobs, worked_on.get((r.asset_id, m)) or (a.current_job_id if a else None)), "actual": None, "difference": None,
                              "status": ("Incomplete" if covered else "Missing") if closed else "In progress",
                              "detail": "%d of %d days on hire have no invoice." % (len(missing), len(on_hire)), "verification_status": "", "verified_by": "", "verification_note": "", "expected_at_review": None})
@@ -635,6 +641,45 @@ def run_unbilled_alerts(db, client_id, day):
     return raised
 
 
+UNPAID_ALERT_DAYS = 30
+
+
+def run_bill_alerts(db, client_id, day):
+    """Rental bills that need somebody: one off its agreement by more than the tolerance, or a second bill for the same
+    days, while finance has not yet decided on it; and one approved by finance still unpaid a month after its date.
+    One alert per bill and issue, however many times this runs."""
+    rows = rental_rows(db, client_id, upto=day.isoformat())
+    tol = rows["tolerance_percent"]
+    raised = 0
+    for x in rows["rows"]:
+        if x["kind"] != "invoice" or x.get("verification_status"):
+            continue
+        if x["status"] == "Mismatch":
+            kind, key, title = "bill_difference", "billdiff:%d" % x["invoice_id"], "Rental bill differs: %s, invoice %s" % (x["code"], x["invoice_no"])
+            what = "Billed %s against %s expected (%s%%, tolerance %g%%)." % (x["actual"], x["expected"], x["difference_percent"], tol)
+        elif x["status"] == "Duplicate":
+            kind, key, title = "bill_duplicate", "billdup:%d" % x["invoice_id"], "Duplicate rental bill: %s, invoice %s" % (x["code"], x["invoice_no"])
+            what = x["detail"] or "It covers days another bill already covers."
+        else:
+            continue
+        body = "Machine: %s %s\nSupplier: %s\nAgreement: %s\nInvoice: %s, %s to %s\n%s\nFinance to approve or dispute it." % (
+            x["code"], x["machine"], x["supplier"] or "-", x["agreement_no"], x["invoice_no"], x["period_from"], x["period_to"], what)
+        if raise_alert(db, client_id, kind, key, "plant_rental_bill", title, body, asset_id=x["asset_id"], rental_id=x["rental_id"], period=x["month"]):
+            raised += 1
+    due_by = (day - timedelta(days=UNPAID_ALERT_DAYS)).isoformat()
+    I, R = models.DBPlantRentalInvoice, models.DBPlantRental
+    for inv, r in db.query(I, R).join(R, R.id == I.rental_id).filter(I.client_id == client_id, I.verification_status == "Approved").all():
+        owed = money((inv.amount or 0) - (inv.paid or 0))
+        if owed <= 0 or not inv.invoice_date or inv.invoice_date > due_by:
+            continue
+        a = db.query(models.DBAsset).filter(models.DBAsset.id == r.asset_id).first()
+        body = "Invoice %s of %s, approved by %s, has %s unpaid of %s." % (inv.invoice_no, inv.invoice_date, inv.verified_by or "finance", owed, inv.amount)
+        if raise_alert(db, client_id, "bill_unpaid", "billunpaid:%d" % inv.id, "plant_rental_bill", "Rental bill unpaid: %s, invoice %s" % (a.code if a else r.number, inv.invoice_no),
+                       body, asset_id=r.asset_id, rental_id=r.id, period=inv.invoice_date[:7]):
+            raised += 1
+    return raised
+
+
 def _clients_with_machines(db):
     return [cid for (cid,) in db.query(models.DBAsset.client_id).distinct().all()]
 
@@ -661,6 +706,18 @@ def monthly_unbilled_rentals(db, now_):
             logger.exception("Unbilled rental alerts failed for company %s", cid)
             db.rollback()
     return "%d unbilled rental alerts" % total
+
+
+@scheduled_job("plant_rental_bills")
+def daily_rental_bill_alerts(db, now_):
+    total = 0
+    for cid in _clients_with_machines(db):
+        try:
+            total += run_bill_alerts(db, cid, now_.date())
+        except Exception:
+            logger.exception("Rental bill alerts failed for company %s", cid)
+            db.rollback()
+    return "%d rental bill alerts" % total
 
 
 def alert_dict(x, assets):

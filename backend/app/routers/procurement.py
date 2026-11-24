@@ -923,6 +923,9 @@ def award_rfq(rfq_id: int, body: AwardIn, request: Request, db: Session = Depend
     r.award_reason = reason
     from app.services.po_sending import supplier_email
     from app.services.po_controls import check_order
+    # The orders' lines are read back below: written first, or the last order made (the only one, on a one-supplier
+    # award) is checked with no lines - and its prices and budget are never looked at.
+    db.flush()
     for m in made:
         po = db.get(models.DBPurchaseOrder, m["id"])
         po.supplier_email = supplier_email(db, client.id, po)

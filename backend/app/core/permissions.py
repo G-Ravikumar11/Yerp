@@ -13,25 +13,26 @@ TEAM_ROLES = ("owner", "admin", "viewer")
 # can be the same band but different roles.
 # L1 is the top of the ladder, as in the company's own org notes, so a HIGHER rank is a MORE senior level.
 EMPLOYEE_LEVELS = [
-    {"code": "L1", "label": "L1 - HOD", "rank": 19},
-    {"code": "L2", "label": "L2 - MD", "rank": 18},
-    {"code": "L3", "label": "L3 - Coordinator / HO", "rank": 17},
-    {"code": "L4", "label": "L4 - Construction Manager", "rank": 16},
-    {"code": "L5", "label": "L5 - Project Manager", "rank": 15},
-    {"code": "L6", "label": "L6 - Deputy Manager Q.S.", "rank": 14},
-    {"code": "L7", "label": "L7 - Site Director / Sr. Engineer", "rank": 13},
-    {"code": "L8", "label": "L8 - Site Engineer", "rank": 12},
-    {"code": "L9", "label": "L9 - Accounts & Store", "rank": 11},
-    {"code": "L10", "label": "L10 - Civil Supervisor", "rank": 10},
-    {"code": "L11", "label": "L11 - Surveyor", "rank": 9},
-    {"code": "L12", "label": "L12 - Jr. QS", "rank": 8},
-    {"code": "L13", "label": "L13 - Engineer / Assistant", "rank": 7},
-    {"code": "L14", "label": "L14 - Junior Engineer", "rank": 6},
-    {"code": "L15", "label": "L15 - GET", "rank": 5},
-    {"code": "L16", "label": "L16 - Steel Foreman", "rank": 4},
-    {"code": "L17", "label": "L17 - P&M Technician", "rank": 3},
-    {"code": "L18", "label": "L18 - Jr. Safety Officer", "rank": 2},
-    {"code": "L19", "label": "L19 - Store Keeper", "rank": 1},
+    {"code": "L1", "label": "L1 - HOD", "rank": 20},
+    {"code": "L2", "label": "L2 - MD", "rank": 19},
+    {"code": "L3", "label": "L3 - Coordinator / HO", "rank": 18},
+    {"code": "L4", "label": "L4 - HR", "rank": 17},
+    {"code": "L5", "label": "L5 - Construction Manager", "rank": 16},
+    {"code": "L6", "label": "L6 - Project Manager", "rank": 15},
+    {"code": "L7", "label": "L7 - Deputy Manager Q.S.", "rank": 14},
+    {"code": "L8", "label": "L8 - Site Director / Sr. Engineer", "rank": 13},
+    {"code": "L9", "label": "L9 - Site Engineer", "rank": 12},
+    {"code": "L10", "label": "L10 - Accounts & Store", "rank": 11},
+    {"code": "L11", "label": "L11 - Civil Supervisor", "rank": 10},
+    {"code": "L12", "label": "L12 - Surveyor", "rank": 9},
+    {"code": "L13", "label": "L13 - Jr. QS", "rank": 8},
+    {"code": "L14", "label": "L14 - Engineer / Assistant", "rank": 7},
+    {"code": "L15", "label": "L15 - Junior Engineer", "rank": 6},
+    {"code": "L16", "label": "L16 - GET", "rank": 5},
+    {"code": "L17", "label": "L17 - Steel Foreman", "rank": 4},
+    {"code": "L18", "label": "L18 - P&M Technician", "rank": 3},
+    {"code": "L19", "label": "L19 - Jr. Safety Officer", "rank": 2},
+    {"code": "L20", "label": "L20 - Store Keeper", "rank": 1},
 ]
 LEVEL_CODES = {lvl["code"] for lvl in EMPLOYEE_LEVELS}
 LEVEL_RANK = {lvl["code"]: lvl["rank"] for lvl in EMPLOYEE_LEVELS}
@@ -53,49 +54,49 @@ EMPLOYEE_ROLES = [
      "reports_to": "md", "access": "ho_qs"},
     {"code": "store_coordinator", "label": "Coordinator Store / Sr. Store", "level": "L3",
      "department": "Store", "reports_to": "hod", "access": "store_incharge"},
-    {"code": "hr", "label": "HR", "level": "L3", "department": "HR",
+    {"code": "hr", "label": "HR", "level": "L4", "department": "HR",
      "reports_to": "hod", "access": "hr"},
-    {"code": "project_manager", "label": "Project Manager", "level": "L5", "department": "Projects",
+    {"code": "project_manager", "label": "Project Manager", "level": "L6", "department": "Projects",
      "reports_to": "ho_planning_head", "access": "project_manager"},
-    {"code": "safety_head", "label": "Safety Head", "level": "L5", "department": "Site",
+    {"code": "safety_head", "label": "Safety Head", "level": "L6", "department": "Site",
      "reports_to": "ho_planning_head", "access": "construction"},
-    {"code": "tpt", "label": "TPT (Transport)", "level": "L5", "department": "Transport",
+    {"code": "tpt", "label": "TPT (Transport)", "level": "L6", "department": "Transport",
      "reports_to": "hod", "access": "staff"},
-    {"code": "site_director", "label": "Site Director", "level": "L7", "department": "Site",
+    {"code": "site_director", "label": "Site Director", "level": "L8", "department": "Site",
      "reports_to": "project_manager", "access": "construction"},
-    {"code": "sr_engineer", "label": "Sr. Engineer", "level": "L7", "department": "Site",
+    {"code": "sr_engineer", "label": "Sr. Engineer", "level": "L8", "department": "Site",
      "reports_to": "project_manager", "access": "construction"},
-    {"code": "site_engineer", "label": "Site Engineer", "level": "L8", "department": "Site",
+    {"code": "site_engineer", "label": "Site Engineer", "level": "L9", "department": "Site",
      "reports_to": "site_director", "access": "construction"},
-    {"code": "store_executive", "label": "Store Executive", "level": "L8", "department": "Store",
+    {"code": "store_executive", "label": "Store Executive", "level": "L9", "department": "Store",
      "reports_to": "project_manager", "access": "stores"},
-    {"code": "engineer", "label": "Engineer", "level": "L13", "department": "Site",
+    {"code": "engineer", "label": "Engineer", "level": "L14", "department": "Site",
      "reports_to": "site_engineer", "access": "staff"},
-    {"code": "store_assistant", "label": "Store Assistant", "level": "L13", "department": "Store",
+    {"code": "store_assistant", "label": "Store Assistant", "level": "L14", "department": "Store",
      "reports_to": "store_executive", "access": "stores"},
-    {"code": "construction_manager", "label": "Construction Manager", "level": "L4", "department": "Site",
+    {"code": "construction_manager", "label": "Construction Manager", "level": "L5", "department": "Site",
      "reports_to": "ho_planning_head", "access": "construction"},
-    {"code": "deputy_manager_qs", "label": "Deputy Manager Q.S.", "level": "L6", "department": "Projects",
+    {"code": "deputy_manager_qs", "label": "Deputy Manager Q.S.", "level": "L7", "department": "Projects",
      "reports_to": "project_manager", "access": "planning_billing"},
-    {"code": "surveyor", "label": "Surveyor", "level": "L11", "department": "Site",
+    {"code": "surveyor", "label": "Surveyor", "level": "L12", "department": "Site",
      "reports_to": "sr_engineer", "access": "staff"},
-    {"code": "civil_supervisor", "label": "Civil Supervisor", "level": "L10", "department": "Site",
+    {"code": "civil_supervisor", "label": "Civil Supervisor", "level": "L11", "department": "Site",
      "reports_to": "sr_engineer", "access": "staff"},
-    {"code": "accounts_store", "label": "Accounts & Store", "level": "L9", "department": "Store",
+    {"code": "accounts_store", "label": "Accounts & Store", "level": "L10", "department": "Store",
      "reports_to": "project_manager", "access": "stores"},
-    {"code": "jr_qs", "label": "Jr. QS", "level": "L12", "department": "Projects",
+    {"code": "jr_qs", "label": "Jr. QS", "level": "L13", "department": "Projects",
      "reports_to": "deputy_manager_qs", "access": "planning_billing"},
-    {"code": "store_keeper", "label": "Store Keeper", "level": "L19", "department": "Store",
+    {"code": "store_keeper", "label": "Store Keeper", "level": "L20", "department": "Store",
      "reports_to": "store_executive", "access": "stores"},
-    {"code": "steel_foreman", "label": "Steel Foreman", "level": "L16", "department": "Site",
+    {"code": "steel_foreman", "label": "Steel Foreman", "level": "L17", "department": "Site",
      "reports_to": "site_engineer", "access": "staff"},
-    {"code": "jr_safety_officer", "label": "Jr. Safety Officer", "level": "L18", "department": "Site",
+    {"code": "jr_safety_officer", "label": "Jr. Safety Officer", "level": "L19", "department": "Site",
      "reports_to": "safety_head", "access": "staff"},
-    {"code": "get", "label": "GET", "level": "L15", "department": "Site",
+    {"code": "get", "label": "GET", "level": "L16", "department": "Site",
      "reports_to": "site_engineer", "access": "staff"},
-    {"code": "junior_engineer", "label": "Junior Engineer", "level": "L14", "department": "Site",
+    {"code": "junior_engineer", "label": "Junior Engineer", "level": "L15", "department": "Site",
      "reports_to": "sr_engineer", "access": "staff"},
-    {"code": "pm_technician", "label": "P&M Technician", "level": "L17", "department": "Site",
+    {"code": "pm_technician", "label": "P&M Technician", "level": "L18", "department": "Site",
      "reports_to": "site_engineer", "access": "staff"},
 ]
 ROLE_LEVEL = {r["code"]: r["level"] for r in EMPLOYEE_ROLES}
@@ -169,6 +170,32 @@ PORTAL_PERMISSIONS = [
     # arrives with a job title is one nobody remembers deciding to give.
     {"key": "workorders.approve", "group": "Contracts",
      "label": "Final work order approval (MD)"},
+    # The budget is what a work order is held against, so the people who price work orders do not also move it: a
+    # budget raised by the person about to send an order at that rate is no check at all.
+    {"key": "budget.edit", "group": "Contracts",
+     "label": "Edit project budgets"},
+    # What each line costs us and what it makes: the margins. Kept from everybody who merely reads reports.
+    {"key": "budget.view", "group": "Contracts",
+     "label": "See project budgets and margins"},
+    # THE SUBCONTRACTORS PORTAL, job by job. Each was carried by a broader right that also did something else.
+    {"key": "contractors.register", "group": "Subcontractors",
+     "label": "Register subcontractors"},
+    {"key": "contractors.edit", "group": "Subcontractors",
+     "label": "Edit contractor details (bank, GST, contacts)"},
+    {"key": "contractors.portal", "group": "Subcontractors",
+     "label": "Give contractors portal access"},
+    {"key": "worktypes.approve", "group": "Subcontractors",
+     "label": "Approve new work types"},
+    {"key": "compliance.manage", "group": "Subcontractors",
+     "label": "Contractor compliance documents and ratings"},
+    {"key": "backcharges.manage", "group": "Subcontractors",
+     "label": "Back charges and recoveries"},
+    {"key": "retention.prepare", "group": "Subcontractors",
+     "label": "Prepare and cancel retention releases"},
+    {"key": "retention.certify", "group": "Subcontractors",
+     "label": "Certify a contractor's retention release"},
+    {"key": "mb.delete", "group": "Subcontractors",
+     "label": "Delete measurement book entries"},
     # Receiving is its own job, done by whoever is at the gate when the lorry
     # arrives - usually not the person who raised the order and never the one
     # who pays the bill. Kept separate so those three signatures stay apart.
@@ -224,6 +251,10 @@ PORTAL_PERMISSIONS = [
      "label": "Download PDFs in the app"},
     {"key": "app.download_excel", "group": "Phone app",
      "label": "Download Excel reports in the app"},
+    # THE COMPANY WEBSITE. Its words and pictures are kept here (Settings -> Website) and shown at yalavartiinfra.com.
+    # Part of no access level but the Master's: it is given person by person, by the Master, to whoever runs the site.
+    {"key": "website.manage", "group": "Website",
+     "label": "Manage website"},
 ]
 
 # THE STORE MODULE: store.<slice>.<action>. The six slices and five actions are every combination, so a new screen
@@ -244,6 +275,7 @@ STORE_KEYS = [f"store.{sl}.{act}" for sl in STORE_SLICES for act in STORE_ACTION
 PORTAL_PERMISSIONS += [{"key": k, "group": "Store module", "label": "Store %s: %s" % (k.split(".")[1], k.split(".")[2])}
                        for k in STORE_KEYS] + STORE_EXTRAS
 PERMISSION_KEYS = {p["key"] for p in PORTAL_PERMISSIONS}
+SUBCONTRACTOR_KEYS = [p["key"] for p in PORTAL_PERMISSIONS if p["group"] == "Subcontractors"]
 
 # The rights only HO QS (and the Master) can hold, whatever else is ticked.
 HO_QS_ONLY = frozenset(p["key"] for p in PORTAL_PERMISSIONS if p.get("only_role") == "ho_qs")
@@ -318,7 +350,7 @@ PERMISSION_ROLES = [
         "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE,
     },
     {
-        "code": "construction", "label": "Construction management team", "rank": 2,
+        "code": "construction", "label": "Sr. Engineer", "rank": 2,
         "description": "Site engineers and supervisors running the work: the site's "
                        "record and its sign-offs, material received at the gate, and "
                        "their crew's costs, leave and attendance.",
@@ -415,12 +447,133 @@ PERMISSION_ROLES = [
                                        "siteprices.edit", "siteprices.finalize"],
     },
     {
-        "code": "ho_coordinator", "label": "HO Coordinator", "rank": 2, "head_office": True,
-        "description": "Head office coordinator. Sees every vendor, work order, BOQ and "
-                       "bill on every site, follows up whatever is waiting and keeps "
-                       "drafts up to date. Starts nothing new: no vendor codes, work "
-                       "orders, BOQs, projects, tenders, bills or variations.",
-        "permissions": list(_HEAD_OFFICE),
+        "code": "ho_coordinator", "label": "HO Coordinator", "rank": 4, "head_office": True,
+        "description": "Head office coordinator - the middleman between the sites and the heads. Sees every "
+                       "vendor, work order, BOQ and bill on every site, follows up whatever is waiting, keeps "
+                       "drafts up to date, and signs work orders and bills on their way up when somebody reports "
+                       "to them. Starts nothing new: no vendor codes, work orders, BOQs, projects, tenders, bills "
+                       "or variations.",
+        "permissions": list(_HEAD_OFFICE) + ["subcontracts.approve", "bills.approve"],
+    },
+    # ONE FOR EACH LEVEL (L1 - L19) that had no access level of its own. Project manager (L5) and HO Coordinator
+    # (L3) already exist and are left as they are. Ranks keep the ladder rules: from rank 3 up every portal, and
+    # nobody at rank 1 sees a portal a rank-2 role lacks.
+    {
+        "code": "hod", "label": "HOD", "rank": 5,
+        "description": "L1 - Head of department. Over every project: a project manager's rights on all of them, "
+                       "purchase and stores, checks payments, finalises site prices and sees the money.",
+        "permissions": _PROJECT_MANAGER + ["purchase.manage", "stores.manage", "payments.approve",
+                                           "siteprices.finalize", "invoices.manage", "recruitment.manage"],
+    },
+    {
+        "code": "md", "label": "MD", "rank": 5,
+        "description": "L2 - Managing director. Sees and approves across the whole business and releases "
+                       "payments over the limit. Final work order approval and the website stay with the Master.",
+        "permissions": sorted(PERMISSION_KEYS - HO_QS_ONLY - HR_ONLY - {"workorders.approve", "store.admin", "website.manage"}),
+    },
+    {
+        "code": "construction_manager", "label": "Construction Manager", "rank": 3,
+        "description": "L4 - Runs construction across sites: every site's record and sign-offs, the crews' costs, "
+                       "leave and attendance, and approves what site raises.",
+        "permissions": [k for k in _PROJECT_MANAGER if k != "customers.manage"],
+    },
+    {
+        "code": "deputy_manager_qs", "label": "Deputy Manager Q.S.", "rank": 2,
+        "description": "L6 - Leads planning & billing: tenders, budgets, client bills and subcontractor bills, and "
+                       "checks the Jr. QS's work.",
+        "permissions": ["self.service", "bills.submit", "bills.approve", "billing.manage", "workorders.manage",
+                        "items.manage", "customers.manage", "subcontracts.approve", "siteprices.view",
+                        "siteprices.edit", "reports.view", "attendance.view_team", "leave.approve",
+                        "projects.view", "clients.view", "subcontractors.view", "store.view",
+                        "store.enquiry.view", "store.reports.view"] + _SITE,
+    },
+    {
+        "code": "site_director", "label": "Site Director", "rank": 2,
+        "description": "L7 - Runs a site: its record and sign-offs, material at the gate, the crew's costs, leave "
+                       "and attendance, and the site's bills and reports.",
+        "permissions": ["self.service", "bills.submit", "bills.approve", "bills.view_all", "reports.view",
+                        "attendance.view_team", "leave.approve", "stores.receive", "site.record", "site.signoff",
+                        "siteprices.view", "projects.view", "subcontractors.view", "store.view"]
+                       + _STORE_REQUEST + ["store.outward.approve"],
+    },
+    {
+        "code": "sr_engineer", "label": "Sr. Engineer", "rank": 2,
+        "description": "L7 - Senior engineer on site: the site's record and sign-offs, material at the gate, and "
+                       "the crew's costs, leave and attendance.",
+        "permissions": ["self.service", "bills.submit", "bills.approve", "attendance.view_team", "leave.approve",
+                        "stores.receive", "site.record", "site.signoff",
+                        "projects.view", "subcontractors.view", "store.view"] + _STORE_REQUEST,
+    },
+    {
+        "code": "site_engineer", "label": "Site Engineer", "rank": 2,
+        "description": "L8 - Records and signs off site work, receives material, asks for material and checks "
+                       "the crew's costs and attendance.",
+        "permissions": ["self.service", "bills.submit", "bills.approve", "attendance.view_team",
+                        "stores.receive", "site.record", "site.signoff",
+                        "projects.view", "subcontractors.view", "store.view"] + _STORE_REQUEST,
+    },
+    {
+        "code": "accounts_store", "label": "Accounts & Store", "rank": 2,
+        "description": "L9 - Keeps a site's store and its books: receives, issues and counts stock, and sees the "
+                       "site's bills and reports. Pays nothing and approves nothing.",
+        "permissions": ["self.service", "bills.submit", "bills.view_all", "reports.view", "stores.receive",
+                        "stores.manage", "items.manage", "projects.view", "store.view", "money.view"]
+                       + _SITE + _STORE_KEEPER,
+    },
+    {
+        "code": "jr_qs", "label": "Jr. QS", "rank": 2,
+        "description": "L12 - Measures and prepares bills and variations; sends them for approval.",
+        "permissions": ["self.service", "bills.submit", "billing.manage", "siteprices.view",
+                        "projects.view", "clients.view", "subcontractors.view", "store.view",
+                        "store.enquiry.view"] + _SITE,
+    },
+    {
+        "code": "store_keeper", "label": "Store Keeper", "rank": 2,
+        "description": "L19 - Keeps a store: receives, issues, returns, moves and counts stock. Approves nothing.",
+        "permissions": ["self.service", "bills.submit", "stores.receive", "projects.view", "store.view"]
+                       + _SITE + _STORE_KEEPER,
+    },
+    {
+        "code": "civil_supervisor", "label": "Civil Supervisor", "rank": 1,
+        "description": "L10 - Runs a crew on site: records the work, receives material, asks for material and "
+                       "sees the crew's attendance.",
+        "permissions": ["self.service", "bills.submit", "attendance.view_team", "stores.receive",
+                        "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "surveyor", "label": "Surveyor", "rank": 1,
+        "description": "L11 - Records levels and measurements on site; own timesheet, leave and payslips.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE,
+    },
+    {
+        "code": "engineer", "label": "Engineer / Assistant", "rank": 1,
+        "description": "L13 - Records site work and asks for material; sends costs up for approval.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "junior_engineer", "label": "Junior Engineer", "rank": 1,
+        "description": "L14 - Records site work and asks for material; sends costs up for approval.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "get", "label": "GET", "rank": 1,
+        "description": "L15 - Graduate engineer trainee: records site work; own timesheet, leave and payslips.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE,
+    },
+    {
+        "code": "steel_foreman", "label": "Steel Foreman", "rank": 1,
+        "description": "L16 - Records the steel work and asks for material.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "pm_technician", "label": "P&M Technician", "rank": 1,
+        "description": "L17 - Plant & machinery: records work on site and asks for parts.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE + _STORE_REQUEST,
+    },
+    {
+        "code": "jr_safety_officer", "label": "Jr. Safety Officer", "rank": 1,
+        "description": "L18 - Records safety on site; own timesheet, leave and payslips.",
+        "permissions": ["self.service", "bills.submit", "projects.view"] + _SITE,
     },
     # The first presets, before the list followed the departments. Still
     # honoured for whoever holds one, and offered only to them.
@@ -459,6 +612,50 @@ PERMISSION_ROLES = [
         "permissions": sorted(PERMISSION_KEYS),
     },
 ]
+
+# WHO HOLDS THE SUBCONTRACTOR RIGHTS: whoever already did that job under the broader right, up the ladder.
+# MD and the Master hold every one of them already (they hold every right); HOD is given them here.
+_SUB_PREPARE = {"planning_billing", "deputy_manager_qs", "project_manager", "construction_manager",
+                "head_projects", "hod", "ho_qs", "ho_coordinator"}
+_SUB_DECIDE = {"deputy_manager_qs", "project_manager", "construction_manager", "head_projects", "hod", "ho_qs",
+               "manager", "finance"}
+SUBCONTRACTOR_RIGHTS = {
+    # The bank account a contractor is paid into: those who keep the contractor's record, not every billing clerk.
+    "contractors.edit": _SUB_PREPARE - {"planning_billing"} | {"manager", "finance"},
+    "contractors.portal": _SUB_DECIDE,
+    "worktypes.approve": _SUB_DECIDE - {"manager", "finance"},   # the old presets never decided these
+    "compliance.manage": _SUB_PREPARE | {"jr_qs", "manager", "finance"},
+    "backcharges.manage": _SUB_PREPARE | {"manager", "finance"},
+    "retention.prepare": _SUB_PREPARE | {"manager", "finance"},
+    "retention.certify": _SUB_DECIDE,
+    # Taking a measurement back: the one who signs site work off, not everybody who writes it.
+    "mb.delete": {"site_director", "construction", "site_engineer", "deputy_manager_qs", "project_manager",
+                  "construction_manager", "head_projects", "hod", "ho_qs", "supervisor", "manager"},
+}
+# Who sets the budget by default: the heads, not the people who prepare work orders. The Master gives it to others.
+SUBCONTRACTOR_RIGHTS["budget.edit"] = {"md", "hod", "head_projects", "ho_qs"}
+# Who sees the budget and its margins by default: those who set it and those who run the projects against it.
+SUBCONTRACTOR_RIGHTS["budget.view"] = {"md", "hod", "head_projects", "ho_qs", "ho_coordinator", "construction_manager",
+                                       "project_manager"}
+for _r in PERMISSION_ROLES:
+    for _key, _holders in SUBCONTRACTOR_RIGHTS.items():
+        if _r["code"] in _holders and _key not in _r["permissions"]:
+            _r["permissions"] = list(_r["permissions"]) + [_key]
+
+# Level roles that turned out to carry exactly the rights of another: kept for whoever holds one (retired), but no
+# longer offered. Surveyor, GET and Jr. Safety Officer = Site staff; Sr. Engineer (old) = construction (now named Sr. Engineer);
+# Junior Engineer, Steel Foreman and P&M Technician = Engineer / Assistant.
+_DUPLICATES = {"surveyor", "get", "jr_safety_officer", "sr_engineer", "junior_engineer", "steel_foreman", "pm_technician"}
+for _r in PERMISSION_ROLES:
+    if _r["code"] in _DUPLICATES:
+        _r["retired"] = True
+# The order the picker shows them in: from the top of the business down, then the older ones nobody new is given.
+_PICKER_ORDER = ["owner", "md", "hod", "head_projects", "ho_qs", "construction_manager", "project_manager",
+                 "ho_coordinator", "deputy_manager_qs", "planning_billing", "jr_qs", "site_director", "construction",
+                 "site_engineer", "civil_supervisor", "engineer", "staff", "store_incharge", "stores", "store_keeper",
+                 "accounts_store", "purchase", "accounts", "hr", "attendance"]
+PERMISSION_ROLES.sort(key=lambda r: (r.get("retired", False),
+                                     _PICKER_ORDER.index(r["code"]) if r["code"] in _PICKER_ORDER else len(_PICKER_ORDER)))
 
 # The base role for people kept only for attendance and pay: they hold nothing and may not sign in.
 NO_ACCESS_ROLE = "attendance"
@@ -503,7 +700,7 @@ PORTALS = [
      "read": ["clients.view"], "write": ["billing.manage", "customers.manage"]},
     {"code": "subcontractors", "label": "Subcontractors Portal",
      "blurb": "Contractors, work orders, the measurement book and RA bills.",
-     "read": ["subcontractors.view"], "write": ["workorders.manage", "subcontracts.approve"]},
+     "read": ["subcontractors.view"], "write": ["workorders.manage", "subcontracts.approve"] + SUBCONTRACTOR_KEYS},
     {"code": "store", "label": "Store & Supplies",
      "blurb": "Items, enquiries, purchase orders, goods received and stock.",
      "read": ["store.view"] + [k for k in STORE_KEYS if k.endswith(".view")],

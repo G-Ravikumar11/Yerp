@@ -39,6 +39,7 @@ from app.models.plant import (
     DBPlantAlert,
     DBPlantAllocation,
     DBPlantExpense,
+    DBPlantExpensePayment,
     DBPlantFuel,
     DBPlantFuelReview,
     DBPlantMeterEvent,
@@ -208,6 +209,7 @@ from app.models.procurement import DBRateContract  # noqa: F401
 from app.models.files import DBDrawingTrace  # noqa: F401
 from app.models.material_voucher import DBMaterialVoucher  # noqa: F401
 from app.models.stories import DBStoryView  # noqa: F401
+from app.models.website import DBWebsiteSection, DBWebsiteVersion  # noqa: F401
 from app.models.safety import (
     DBEquipmentCheck,
     DBSafetyIncident,

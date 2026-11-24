@@ -16,7 +16,7 @@ from app import models
 from app.core.config import logger
 from app.constants.common import PAYROLL_EXCLUDED_STATUSES
 from app.core.dates import _parse_date
-from app.core.scheduler import daily_key, scheduled_job
+from app.core.scheduler import daily_key, each_active_client, scheduled_job
 
 PROBATION_DAYS = (15, 7, 1, 0)
 CONTRACT_DAYS = (30, 15, 7, 1, 0, -1)
@@ -104,7 +104,7 @@ def send(db, client_id, found):
 def job_hr_reminders(db, now):
     today = now.date() if isinstance(now, datetime) else now
     done, failed = [], []
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    for client in each_active_client(db):
         try:
             n = send(db, client.id, due_today(db, client.id, today))
         except Exception as exc:

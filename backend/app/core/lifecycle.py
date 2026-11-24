@@ -55,6 +55,22 @@ def fill_document_names():
         db.close()
 
 
+def clear_number_grades():
+    """BOQs imported from a sheet whose "Material" column held a factor (0.028, 0.0357 ...) kept those numbers as grades,
+    and the work orders drawn from them copied them. They are cleared; a real grade (M25, Fe500) is left alone."""
+    from app.constants.boq import boq_grade
+    with SessionLocal() as db:
+        changed = 0
+        for model in (models.DBBoqLine, models.DBSubcontractItem):
+            for row in db.query(model).filter(model.material.isnot(None), model.material != "").all():
+                if (row.material or "").strip() and not boq_grade(row.material):
+                    row.material = ""
+                    changed += 1
+        if changed:
+            db.commit()
+            logger.info("Cleared %d number-only grades from BOQ and work order lines", changed)
+
+
 def carry_reorder_levels_into_hub():
     """An item once had two reorder levels: "Tell me when stock falls below" on the item master, and the Store Hub's,
     which is what raises the low-stock alerts. There is one now, the Hub's. A level kept only on the item master is

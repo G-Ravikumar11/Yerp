@@ -98,7 +98,7 @@ const NAV: NavEntry[] = [
       { label: 'Project Chart', path: '/projects/chart' },
       { label: 'Equipment & Plant', path: '/projects/equipment' },
       { label: 'Bar Bending Schedule', path: '/projects/bbs' },
-      { label: 'Budgeting', path: '/projects/budgeting', perm: 'reports.view' },
+      { label: 'Budgeting', path: '/projects/budgeting', perm: 'budget.view|budget.edit' },
       { label: 'Project Profit', path: '/projects/profit', perm: 'reports.view' },
       { label: 'Cost by Project', path: '/projects/costs', perm: 'reports.view' },
     ],
@@ -176,7 +176,8 @@ const NAV: NavEntry[] = [
       { label: 'Payroll', path: '/people/payroll', perm: 'payroll.manage' },
     ],
   },
-  { kind: 'link', id: 'settings', label: 'Settings', icon: Settings, path: '/settings', ownerOnly: true },
+  // The Master's (who holds every right); a member of staff only with "Manage website", and then sees only the Website tab.
+  { kind: 'link', id: 'settings', label: 'Settings', icon: Settings, path: '/settings', perm: 'website.manage' },
 ]
 
 export type Trail = { label: string; path?: string }[]

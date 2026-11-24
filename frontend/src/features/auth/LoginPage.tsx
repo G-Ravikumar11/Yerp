@@ -1,9 +1,11 @@
+import { forgetLocalData } from '@/lib/query'
 import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Eye, EyeOff } from 'lucide-react'
-import { api, ApiError, apiUrl } from '@/lib/api'
-import { AuthLayout, Notice, YahooMark, nextTarget } from './AuthLayout'
+import { api, ApiError } from '@/lib/api'
+import { Notice, YahooMark, nextTarget } from './AuthLayout'
+import { LoginScene } from './LoginScene'
 import { codeLine } from '@/lib/errorCodes'
 import { markScreensGood } from '@/lib/mobile'
 import { appUrl } from '@/lib/paths'
@@ -24,15 +26,10 @@ const ERRORS: Record<string, string> = {
   gmail_sign_in_first: 'Sign in first, then connect Gmail from inside the app.',
 }
 
-const STEPS: [string, string][] = [
-  ['Tender & estimate', 'Rates built up from material, labour and plant. Winning it opens the order.'],
-  ['Work orders', 'Received from the client, issued to the contractors. Numbered, approved, printed.'],
-  ['Measurement book', 'No × L × B × D, deductions for openings, both directions.'],
-  ['RA bills', 'Retention, advance, GST split by place of supply, TDS, labour cess, in the order they are made.'],
-  ['Store, site diary, profit', 'Goods in, three-way match, issues at cost, mandays and plant, margin per project.'],
-]
-
 const go = (to: string) => window.location.assign(to)
+// A fresh sign-in: whatever the last person left in this phone's saved copy (who is signed in, their screens) is dropped first,
+// so the next screens are read for the person who just signed in and never drawn from somebody else's.
+const goSignedIn = (to: string) => { void forgetLocalData().catch(() => undefined).finally(() => go(to)) }
 // Inside the native app there is no website to go back to, and Yahoo's sign-in page cannot hand its cookie back.
 const native = Capacitor.isNativePlatform()
 
@@ -42,8 +39,8 @@ export default function LoginPage() {
   const code = params.get('error')
   const [error, setError] = useState(code ? (ERRORS[code] ?? 'Something went wrong. Please try again.') : '')
   const [company, setCompany] = useState('')
-  // The company's own logo, which the server shows to anyone before they sign in; the blue Y until it has loaded or if there is none.
-  const [logo, setLogo] = useState(`${import.meta.env.BASE_URL}brand/yalavarti-mark.svg`)
+  // The Yalavarti logo, always: the sign-in page shows the company's own artwork, not the logo uploaded in Settings.
+  const logo = `${import.meta.env.BASE_URL}brand/yalavarti-logo.png`
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -56,7 +53,7 @@ export default function LoginPage() {
   const [round, setRound] = useState(0)
 
   useEffect(() => {
-    api<{ company_name?: string; logo_url?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name); if (b?.logo_url) setLogo(apiUrl(b.logo_url)) }).catch(() => undefined)
+    api<{ company_name?: string }>('/api/public/brand', { quiet: true }).then((b) => { if (b?.company_name) setCompany(b.company_name) }).catch(() => undefined)
     if (params.get('signedout')) {
       // Arrived from Sign out: end whatever sign-in this browser still holds, and show the form.
       for (const u of ['/api/client/logout', '/api/employee/auth/logout', '/api/portal/logout']) void api(u, { method: 'POST', quiet: true }).catch(() => undefined)
@@ -75,6 +72,34 @@ export default function LoginPage() {
       else markScreensGood()
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // The phone's keyboard is drawn over the page without shrinking it. The native Keyboard plugin says how tall it is: that much
+  // room is added under the form so the page can scroll, and the field being typed in (with the button below it) is brought into view.
+  useEffect(() => {
+    const root = document.documentElement
+    const keepInView = () => {
+      const el = document.activeElement
+      if (el instanceof HTMLInputElement) {
+        // Placed in the upper part of what the keyboard leaves visible, so the field after it and the button are also in sight.
+        window.setTimeout(() => {
+          const kb = parseFloat(root.style.getPropertyValue('--kb')) || 0
+          window.scrollBy({ top: el.getBoundingClientRect().top - (window.innerHeight - kb) * 0.25, behavior: 'smooth' })
+        }, 120)
+      }
+    }
+    const handles: Promise<{ remove: () => Promise<void> }>[] = []
+    if (native) {
+      const kb = registerPlugin<{ addListener: (event: string, fn: (e: { keyboardHeight?: number }) => void) => Promise<{ remove: () => Promise<void> }> }>('Keyboard')
+      handles.push(kb.addListener('keyboardWillShow', (e) => { root.style.setProperty('--kb', `${e.keyboardHeight ?? 0}px`); keepInView() }))
+      handles.push(kb.addListener('keyboardWillHide', () => root.style.removeProperty('--kb')))
+    }
+    document.addEventListener('focusin', keepInView)
+    return () => {
+      document.removeEventListener('focusin', keepInView)
+      root.style.removeProperty('--kb')
+      handles.forEach((h) => void h.then((x) => x.remove()).catch(() => undefined))
+    }
   }, [])
 
   const submit = async (e: React.FormEvent) => {
@@ -100,9 +125,9 @@ export default function LoginPage() {
       const owner = email.includes('@')
         ? await api<{ is_onboarded?: boolean }>('/api/client/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', ...extra }, quiet: true }).catch(none)
         : null
-      if (owner) return go(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
+      if (owner) return goSignedIn(owner.is_onboarded === false ? nextTarget(appUrl('onboard')) : nextTarget(appUrl()))
       const staff = await api('/api/employee/auth/login', { method: 'POST', body: { email: email.trim(), password, rememberMe, channel: native ? 'app' : 'web', device_info: navigator.userAgent.slice(0, 200), ...extra }, quiet: true }).catch(none)
-      if (staff) return go(nextTarget(appUrl()))
+      if (staff) return goSignedIn(nextTarget(appUrl()))
       const refusal = other as ApiError | null
       // Too many wrong tries from here, or against this account: from now on every try needs the check.
       if (refusal?.status === 428 || askCheck) {
@@ -119,54 +144,39 @@ export default function LoginPage() {
     }
   }
 
-  const pitch = (
-    <section aria-label="About Y ERP" className="hidden flex-col justify-between bg-primary p-10 text-white md:flex">
-      <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-white/80">Civil contracting ERP</p>
-        <h2 className="mb-2 mt-3 text-3xl font-extrabold leading-tight text-white">From the tender to the money, in one place.</h2>
-        <p className="max-w-[34ch] text-sm text-white/80">Every link of a contract, and each one feeds the next. Nothing is typed twice, and nothing lives in a spreadsheet beside it.</p>
-        {company && <p className="mt-2 text-sm text-white/80">The system of record for {company}.</p>}
-        <ol className="mt-6 grid gap-3">
-          {STEPS.map(([head, text], i) => (
-            <li key={head} className="grid grid-cols-[30px_1fr] items-start gap-2.5 text-sm">
-              <span className="grid size-6 place-items-center rounded-lg bg-white/15 text-xs font-bold text-white/80">{i + 1}</span>
-              <span><b className="text-white">{head}</b><small className="block text-xs text-white/70">{text}</small></span>
-            </li>
-          ))}
-        </ol>
-      </div>
-      <p className="mt-7 text-xs text-white/70"><b className="text-white">No spreadsheets.</b> Grids paste and walk like a sheet, every table sorts and totals, every bill has a page that prints.</p>
-    </section>
-  )
-
   return (
-    <AuthLayout title="Y ERP" subtitle="Sign in to your account" logo={logo} aside={pitch}>
+    <LoginScene title="Y ERP" subtitle="Sign in to your account" logo={logo} logoAlt={company || 'Y ERP'}>
       {params.get('reset') && !error && <Notice tone="success">Your password has been updated. Sign in with the new one.</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
-      <form onSubmit={submit} className="grid gap-4">
-        <Field label="Email or employee ID" htmlFor="email"><Input id="email" type="text" inputMode="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="username" autoFocus required placeholder="you@company.com or EMP-0002" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-        <Field label="Password" htmlFor="password"><Input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Enter your password" value={password} onChange={(e) => setPassword(e.target.value)}
-          trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-6 place-items-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <Eye className="size-4" /> : <EyeOff className="size-4" />}</button>} /></Field>
+      <form onSubmit={submit} className="grid gap-5">
+        <Field label="Email or employee ID" htmlFor="email"><Input id="email" type="text" inputMode="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="username" autoFocus required placeholder="you@company.com or EMP-0002" className="ls-input" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+        <Field label="Password" htmlFor="password"><Input id="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" required placeholder="Enter your password" className="ls-input pr-12" value={password} onChange={(e) => setPassword(e.target.value)}
+          trailing={<button type="button" onClick={() => setShowPassword((v) => !v)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} className="grid size-7 place-items-center rounded-md text-white/70 hover:text-white focus-visible:outline-2 focus-visible:outline-primary">{showPassword ? <Eye className="size-[18px]" /> : <EyeOff className="size-[18px]" />}</button>} /></Field>
         {askCheck && <CaptchaBox round={round} onChange={setCheck} />}
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
-          <label htmlFor="rememberMe" className="flex w-fit cursor-pointer items-center gap-2 text-muted-foreground">
-            <input id="rememberMe" type="checkbox" className="size-4 cursor-pointer rounded-md border-border accent-primary" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-[15px]">
+          <label htmlFor="rememberMe" className="flex w-fit cursor-pointer items-center gap-2.5 font-normal text-foreground">
+            <input id="rememberMe" type="checkbox" className="size-[18px] cursor-pointer rounded-md border-border accent-primary" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
             Remember me
           </label>
-          <a href={appUrl('forgot-password')} className="text-muted-foreground hover:text-primary">Forgot password?</a>
+          <a href={appUrl('forgot-password')} className="font-medium text-foreground hover:text-primary">Forgot password?</a>
         </div>
-        <Button type="submit" loading={busy} className="w-full">Sign in</Button>
+        <Button type="submit" loading={busy} className="h-12 w-full rounded-[0.6rem] text-[15px]">Sign in</Button>
       </form>
       {/* Always offered on the website. A server without Yahoo keys answers a click with "not set up yet" (yahoo_unconfigured). */}
       {!native && (
         <>
-          <div className="my-5 flex items-center gap-3 text-xs uppercase text-muted-foreground"><span className="h-px flex-1 bg-border" />or<span className="h-px flex-1 bg-border" /></div>
+          <div className="my-5 flex items-center gap-4 text-sm uppercase text-muted-foreground"><span className="h-px flex-1 bg-[#cfc9bc]" />or<span className="h-px flex-1 bg-[#cfc9bc]" /></div>
           <div className="grid gap-2">
-            <Button type="button" variant="outline" className="w-full gap-2.5" onClick={() => go('/api/auth/yahoo/start?next=' + encodeURIComponent(nextTarget(appUrl())))}><YahooMark /> Continue with Yahoo</Button>
+            <Button type="button" variant="outline" className="h-12 w-full items-center justify-center gap-3 rounded-[0.6rem] [&>svg]:!size-[22px] border-white/10 bg-[#1f2633] text-[15px] text-white hover:border-white/20 hover:bg-[#283041]" onClick={() => go('/api/auth/yahoo/start?next=' + encodeURIComponent(nextTarget(appUrl())))}><YahooMark /> Continue with Yahoo</Button>
           </div>
         </>
       )}
-      {!native && <p className="mt-5 text-center text-sm"><a className="text-muted-foreground hover:text-primary" href="/">&larr; Back to website</a></p>}
-    </AuthLayout>
+      {!native && <p className="mt-6 text-center text-[15px]"><a className="text-foreground hover:text-primary" href="/">&larr; Back to website</a></p>}
+      {/* The legal pages belong to the ERP, so they are linked from its door, not from the company website. */}
+      <nav aria-label="Legal" className="mt-4 flex justify-center gap-5 text-sm text-muted-foreground">
+        <a className="hover:text-foreground" href={appUrl('terms')}>Terms of Service</a>
+        <a className="hover:text-foreground" href={appUrl('privacy')}>Privacy Policy</a>
+      </nav>
+    </LoginScene>
   )
 }

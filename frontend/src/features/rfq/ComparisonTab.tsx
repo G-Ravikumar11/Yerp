@@ -157,6 +157,7 @@ function Sheet({ d, c, onQuote }: { d: Statement; c: Comparison; onQuote: (suppl
                     <div className="font-medium">{l.description}</div>
                     <div className="text-xs text-muted-foreground">{formatQty(l.qty)} {l.uom}{l.item_code && <span className="font-mono"> · {l.item_code}</span>}</div>
                     <LastPaid h={l.price_history} />
+                    {l.contract && <div className="mt-1 text-xs text-muted-foreground">Rate contract <strong className="text-foreground">{formatRate(l.contract.rate)}</strong> ({l.contract.supplier_name}, {l.contract.contract_no}, to {l.contract.valid_to})</div>}
                   </th>
                   {sups.map((s) => {
                     const o = l.offers.find((x) => same(x.supplier_name, s.supplier_name))
@@ -169,6 +170,7 @@ function Sheet({ d, c, onQuote }: { d: Statement; c: Comparison; onQuote: (suppl
                           {won && <Check className="size-3.5 text-primary" aria-label="Awarded" />}
                           {formatINR(show === 'rate' ? o.rate : o.amount)}
                         </div>
+                        {o.over_contract && <div className="text-[11px] font-medium text-warning">Above the rate contract</div>}
                         {o.remarks && <div className="truncate text-[11px] text-muted-foreground">{o.remarks}</div>}
                       </td>
                     )

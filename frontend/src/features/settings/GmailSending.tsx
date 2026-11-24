@@ -7,7 +7,16 @@ import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { Section } from './Section'
 
-interface GmailStatus { gmail_ready: boolean; gmail_expired?: boolean; gmail_authorized_email: string | null }
+interface GmailStatus {
+  gmail_ready: boolean
+  gmail_expired?: boolean
+  gmail_authorized_email: string | null
+  /** smtp: every email by the server's mail account (Zoho Mail); gmail: only Gmail; auto: Gmail when connected, else SMTP. */
+  sender?: 'smtp' | 'gmail' | 'auto'
+  smtp_ready?: boolean
+  smtp_from?: string
+  smtp_host?: string
+}
 const KEY = ['settings', 'gmail'] as const
 
 const NOTICE: Record<string, string> = {
@@ -28,10 +37,20 @@ export function GmailSending() {
   if (!isOwner) return null
   const connect = () => window.location.assign('/api/auth/login?portal=settings')
   return (
-    <Section title="Company email (Gmail)" description="The Gmail account the company's emails are sent from - invoices, alerts, reminders and password resets. People receive them at whatever address they have.">
+    <Section title="Company email" description="Where the company's emails are sent from - invoices, alerts, reminders and password resets: the company's mail account (Zoho Mail, by SMTP) or a connected Gmail. People receive them at whatever address they have.">
       {notice && <p role="status" className="mb-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">{notice}</p>}
       {q.isPending || !q.data ? <Skeleton className="h-16 w-full" /> : (
         <div className="grid gap-4">
+          {q.data.smtp_ready && (
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <Mail className="size-4 text-muted-foreground" />
+              <Badge tone={q.data.sender === 'gmail' ? 'neutral' : 'success'} dot>{q.data.sender === 'smtp' ? 'Sending by SMTP' : q.data.sender === 'gmail' ? 'SMTP set, not used' : 'SMTP ready'}</Badge>
+              <span>
+                {q.data.smtp_from || 'The server mail account'} via {q.data.smtp_host}
+                {q.data.sender === 'auto' && <span className="text-muted-foreground"> - used when Gmail is not connected or fails</span>}
+              </span>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <Mail className="size-4 text-muted-foreground" />
             {q.data.gmail_ready
@@ -44,7 +63,7 @@ export function GmailSending() {
             <Button variant={q.data.gmail_ready ? 'outline' : 'primary'} onClick={connect}>{q.data.gmail_ready ? 'Connect a different Gmail' : 'Connect Gmail'}</Button>
             {q.data.gmail_ready && <Button variant="outline" loading={disconnect.isPending} onClick={() => disconnect.mutate()}>Disconnect</Button>}
           </div>
-          {q.data.gmail_ready && (
+          {(q.data.gmail_ready || q.data.smtp_ready) && (
             <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (to.trim()) test.mutate() }}>
               <Field label="Send a test email to" htmlFor="gm-test" className="w-72"><Input id="gm-test" type="email" placeholder="someone@yahoo.com" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
               <Button type="submit" variant="outline" loading={test.isPending} disabled={!to.trim()}>Send test</Button>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { asset, reduceMotion } from './lib'
+import { useContent } from './siteContent'
 
 const LINKS: [string, string][] = [['about', 'About'], ['build', 'What We Build'], ['projects', 'Projects'], ['credentials', 'Credentials'], ['safety', 'Safety'], ['careers', 'Careers'], ['contact', 'Contact']]
 const WATCHED = ['about', 'build', 'process', 'projects', 'story', 'credentials', 'safety', 'quote', 'careers', 'contact']
@@ -17,6 +18,8 @@ export function goTo(id: string) {
 /** The top bar: clear over the photographs, solid once scrolled, hidden while reading downwards. Staff sign in from the
  *  footer, not from here. */
 export function Nav() {
+  const { SITE } = useContent()
+  const shown = new Set(SITE.layout.filter((s) => s.shown).map((s) => s.id as string))
   const [open, setOpen] = useState(false)
   const [solid, setSolid] = useState(false)
   const [hide, setHide] = useState(false)
@@ -69,12 +72,12 @@ export function Nav() {
         <span translate="no">Yalavarti <small>Infra</small></span>
       </a>
       <nav className="nav__links" id="navlinks" aria-label="Primary">
-        {LINKS.map(([id, label]) => (
+        {LINKS.filter(([id]) => shown.has(id)).map(([id, label]) => (
           <a key={id} href={`#${id}`} className={active === id ? 'active' : undefined} aria-current={active === id ? 'true' : undefined} onClick={(e) => click(e, `#${id}`)}>{label}</a>
         ))}
-        <a href="#quote" className="nav__m nav__m--quote" onClick={(e) => click(e, '#quote')}>Start a Project</a>
+        {shown.has('quote') && <a href="#quote" className="nav__m nav__m--quote" onClick={(e) => click(e, '#quote')}>Start a Project</a>}
       </nav>
-      <a href="#quote" className="btn btn--primary btn--sm nav__cta" onClick={(e) => click(e, '#quote')}>Start a Project</a>
+      {shown.has('quote') && <a href="#quote" className="btn btn--primary btn--sm nav__cta" onClick={(e) => click(e, '#quote')}>Start a Project</a>}
       <button className="nav__burger" id="burger" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} aria-controls="navlinks" onClick={() => setOpen((o) => !o)}><span /><span /></button>
     </header>
   )

@@ -109,7 +109,7 @@ export default function BoqPage() {
     if (book.data && !dirty) setRows(fromLines(book.data.lines))
   }, [book.data, dirty])
 
-  const editable = !!book.data?.editable && can('workorders.manage')
+  const editable = !!book.data?.editable && can('boq.create')
   const edit = (next: Row[]) => {
     setRows(next)
     setDirty(true)
@@ -199,7 +199,7 @@ export default function BoqPage() {
                   PDF
                 </a>
               </Button>
-              {can('workorders.manage') && viewing === undefined && (
+              {can('boq.create') && viewing === undefined && (
                 <Button variant="outline" onClick={() => setRevising(true)}>
                   <GitBranch /> New revision
                 </Button>

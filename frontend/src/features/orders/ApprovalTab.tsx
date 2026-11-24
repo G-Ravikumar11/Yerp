@@ -29,6 +29,11 @@ export function ApprovalTab({ order }: { order: Order }) {
           <CardDescription>
             {order.status === 'PROVISIONAL' && order.pending_with?.length ? `Waiting with ${order.pending_with.join(', ')}.` : 'Each person above the one who raised it signs in turn.'}
           </CardDescription>
+          {order.over_budget_reason && (
+            <p className="mt-2 rounded-lg bg-warning-soft p-3 text-[13px] text-warning" role="note">
+              <strong>Priced above the budget</strong> - the Master signs it too. {order.over_budget_reason}
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           {route.length === 0 ? (
