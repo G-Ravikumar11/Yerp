@@ -96,3 +96,43 @@ def test_only_somebody_on_the_staff_and_only_an_open_item(tenant, second_tenant)
     assert second_tenant.put("/api/follow-up/ncr/%d" % n["id"], json={}).status_code == 404
     people = tenant.get("/api/follow-up/people").json()["people"]
     assert all(p["id"] != stranger["id"] for p in people)
+
+
+def _day_of_ticks(day, emp_id, every_minutes=30):
+    """The real scheduler through one day: a tick every half hour, nothing cleared between them. {notice: time it came}."""
+    with database.SessionLocal() as db:
+        db.query(models.DBJobRun).filter(models.DBJobRun.job_name == "quality_safety_follow_up").delete()
+        db.commit()
+    seen, came = set(notices(emp_id)), {}
+    t = datetime.combine(day, datetime.min.time()).replace(minute=5)
+    while t.date() == day:
+        main.run_due_jobs(now=t, only="quality_safety_follow_up")
+        for n in notices(emp_id):
+            if n not in seen:
+                seen.add(n)
+                came[n] = t.strftime("%H:%M")
+        t += timedelta(minutes=every_minutes)
+    return came
+
+
+def test_on_the_real_schedule_an_ncr_reminder_comes_in_working_hours_not_at_midnight(tenant):
+    j, emp = job(tenant), make_employee(tenant)
+    day = date.today() + timedelta(days=10)
+    n = ncr(tenant, j, (day + timedelta(days=1)).isoformat())
+    tenant.put("/api/follow-up/ncr/%d" % n["id"], json={"owner_id": emp["id"]})
+    came = _day_of_ticks(day, emp["id"])
+    assert list(came) == ["NCR %s: due tomorrow" % n["number"]]
+    assert "08:00" <= came["NCR %s: due tomorrow" % n["number"]] <= "09:00", came
+
+
+def test_on_the_real_schedule_a_permit_is_chased_the_same_day_it_runs_out(tenant):
+    j, emp = job(tenant), make_employee(tenant)
+    p = tenant.post("/api/safety/permits", json=permit_body(j)).json()["permit"]
+    tenant.put("/api/follow-up/permit/%d" % p["id"], json={"owner_id": emp["id"]})
+    day = date.today() + timedelta(days=10)
+    with database.SessionLocal() as db:                       # a day shift: it runs out at six in the evening
+        db.query(models.DBWorkPermit).filter(models.DBWorkPermit.id == p["id"]).update({"valid_to": "%s 18:00" % day.isoformat()})
+        db.commit()
+    came = _day_of_ticks(day, emp["id"])
+    chased = [t for n, t in came.items() if n.startswith("Permit %s: still open" % p["number"])]
+    assert chased and "18:00" <= chased[0] <= "18:35", came

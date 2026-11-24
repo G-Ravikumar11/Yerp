@@ -6,7 +6,9 @@ and the owner is reminded every day from the day before it is due until it is cl
   permit     due when it runs out (valid to); a permit still live after that is the owner's to close, so the
              reminders start once it has run out - a permit runs a shift, not days.
 
-The bell is told once when an item goes overdue. Reminders go in the owner's own notices (and to their phone): this
+The job looks every hour. An NCR or incident reminder goes once a day, from eight in the morning (never in the
+night); a permit is chased within the hour it runs out, at any hour, since a permit still open after its time is a live
+hazard on site - and then once a day while it stays open. The bell is told once when an item goes overdue. Reminders go in the owner's own notices (and to their phone): this
 is the company's own staff, never anybody outside it.
 """
 from datetime import date, datetime, timedelta
@@ -17,6 +19,13 @@ from app import models
 from app.core.config import logger
 from app.core.notifications import notify, notify_employee
 from app.core.scheduler import scheduled_job
+
+# Reminders about an NCR or an incident wait for the working day; a permit's do not.
+DAY_STARTS = 8
+
+
+def hourly_key(now=None):
+    return (now or datetime.now()).strftime("%Y-%m-%d %H")
 
 LIVE = ("active", "onboarding", "offboarding")      # on the staff: somebody who has left is never given a follow-up
 
@@ -69,13 +78,16 @@ def tell_new_owner(db, client_id, kind, row, actor):
                     link=k["link"] % row.id if "%d" in k["link"] else k["link"])
 
 
-@scheduled_job("quality_safety_follow_up")
+@scheduled_job("quality_safety_follow_up", hourly_key)
 def job_follow_up(db, now):
-    """Every open item with an owner: reminded once a day from the day before it is due; the bell told once when late."""
+    """Every open item with an owner: reminded once a day from the day before it is due (a permit, once it has run out);
+    the bell told once when late. Run every hour; NCRs and incidents wait for the working day."""
     now = now if isinstance(now, datetime) else datetime.now()
     today = now.date()
     reminded = told = 0
     for kind, k in KINDS.items():
+        if kind != "permit" and now.hour < DAY_STARTS:
+            continue
         M = k["model"]
         for row in db.query(M).filter(M.owner_id.isnot(None)).all():
             if not k["open"](row):

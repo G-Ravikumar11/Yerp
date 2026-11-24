@@ -561,7 +561,11 @@ def comparative_statement(db, rfq):
             "basic": money(basic), "tax": money(tax),
             "landed": landed})
     rows = []
+    from app.services.po_controls import best_contract
     for l in lines:
+        # A rate contract in force for the item: shown beside the quotes, and every quote above it marked, so nothing is
+        # awarded above a rate the company has already agreed without the buyer seeing it.
+        rc = best_contract(db, rfq.client_id, l.item_code) if l.item_code else None
         offers = []
         for q in quotes:
             ql = rates.get((q.id, l.id))
@@ -569,7 +573,8 @@ def comparative_statement(db, rfq):
                 offers.append({"supplier_name": q.supplier_name, "rate": unit_rate(ql.rate),
                                "tax_percent": ql.tax_percent or 0,
                                "amount": money((l.qty or 0) * ql.rate),
-                               "remarks": ql.remarks or ""})
+                               "remarks": ql.remarks or "",
+                               "over_contract": bool(rc and ql.rate > rc.rate + 0.0001)})
         low = min(offers, key=lambda o: o["rate"]) if offers else None
         high = max(offers, key=lambda o: o["rate"]) if offers else None
         rows.append({
@@ -580,6 +585,8 @@ def comparative_statement(db, rfq):
                                if low and low["rate"] else 0.0),
             "awarded_supplier": l.awarded_supplier or "", "awarded_rate": unit_rate(l.awarded_rate),
             "po_id": l.po_id, "indent_line_id": l.indent_line_id,
+            "contract": ({"supplier_name": rc.supplier_name or "", "rate": unit_rate(rc.rate), "contract_no": rc.contract_no or "",
+                          "valid_to": rc.valid_to or ""} if rc else None),
             # What the item cost on approved orders before: the trend, and the last price per supplier.
             "price_history": _price_history(db, rfq.client_id, l.item_code)})
     # The order each awarded line went on, by number: what the buyer looks for next; and the orders themselves, so

@@ -1,14 +1,16 @@
 import { useEffect, useRef } from 'react'
-import { SITE } from './data/content'
-import { asset, reduceMotion } from './lib'
+import { useContent } from './siteContent'
+import { imgSrc, reduceMotion } from './lib'
 
 /** Our story, once there is one to tell (SITE.timeline, from Uday). Left off the page while it is empty. */
 export function Timeline() {
+  const { SITE } = useContent()
   return SITE.timeline.length ? <Milestones /> : null
 }
 
 /** The milestones: a pinned stage where scrolling down slides the cards sideways, each turning as it passes the middle. */
 function Milestones() {
+  const { SITE } = useContent()
   const sec = useRef<HTMLElement>(null)
   const pin = useRef<HTMLDivElement>(null)
   const track = useRef<HTMLDivElement>(null)
@@ -80,12 +82,12 @@ function Milestones() {
   return (
     <section className="timeline" id="story" aria-label="Our story" ref={sec}>
       <div className="timeline__pin" ref={pin}>
-        <div className="wrap sechead"><p className="eyebrow">Our Story</p><h2 className="h2">Milestones</h2></div>
+        <div className="wrap sechead"><p className="eyebrow">{SITE.headings.story.eyebrow}</p><h2 className="h2">{SITE.headings.story.title}</h2>{SITE.headings.story.lede && <p className="lede">{SITE.headings.story.lede}</p>}</div>
         <div className="timeline__track" id="tltrack" ref={track}>
           {SITE.timeline.map((m) => (
             <article className="tl" key={m.y}>
               <p className="tl__y">{m.y}</p>
-              <div className="tl__img"><img src={asset(m.img)} alt="" loading="lazy" width="340" height="227" /></div>
+              <div className="tl__img"><img src={imgSrc(m.img)} alt="" loading="lazy" width="340" height="227" /></div>
               <h3>{m.t}</h3>
               <p>{m.d}</p>
             </article>

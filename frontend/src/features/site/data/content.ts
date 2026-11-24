@@ -8,6 +8,16 @@
 
 export interface WorkType { id: string; label: string; hint: string }
 export interface Capability { id: string; title: string; tag: string; img: string; intro: string; list: string[] }
+/** A section's heading: the small line above it, the heading itself and the line beside it (left out when empty). */
+export interface Heading { eyebrow: string; title: string; lede: string }
+/** The sections of the page in the order they are shown. Each can be hidden from Settings -> Website. */
+export type PageSection = 'hero' | 'proof' | 'about' | 'build' | 'process' | 'projects' | 'story' | 'credentials' | 'safety' | 'quote' | 'careers' | 'contact'
+export const PAGE_SECTIONS: { id: PageSection; label: string }[] = [
+  { id: 'hero', label: 'Opening banner' }, { id: 'proof', label: 'At a glance' }, { id: 'about', label: 'About' },
+  { id: 'build', label: 'What we build' }, { id: 'process', label: 'How we build' }, { id: 'projects', label: 'Projects' },
+  { id: 'story', label: 'Our story' }, { id: 'credentials', label: 'Credentials' }, { id: 'safety', label: 'Quality & safety' },
+  { id: 'quote', label: 'Start a project' }, { id: 'careers', label: 'Careers' }, { id: 'contact', label: 'Contact' },
+]
 
 export const COMPANY = {
   // TODO(Uday): the exact legal name and its spelling (Pvt. Ltd.?), as on the registration certificate.
@@ -120,6 +130,48 @@ export const SITE = {
   // The section is left off the page while this is empty.
   timeline: [] as { y: string; t: string; d: string; img: string }[],
 
+  // The heading of each section. `lede` is the line beside the heading; the projects' `ledeEmpty` is used while no
+  // project with photos is on the website yet.
+  headings: {
+    about: { eyebrow: 'About Us', title: 'Civil works, start to finish', lede: '' },
+    build: { eyebrow: 'What We Build', title: 'Homes, townships and the works around them', lede: 'From a single house on your plot to a gated township with its roads, drains and water lines.' },
+    process: { eyebrow: 'How We Build', title: 'From the land to the keys', lede: 'The six stages of a job, in the order they happen.' },
+    projects: { eyebrow: 'Projects', title: 'Recent & ongoing projects', lede: 'Where we are building, and our projects with photos from site. Filter by type of work or city.', ledeEmpty: 'Where we are building. Photos from site are being added here.' },
+    story: { eyebrow: 'Our Story', title: 'Milestones', lede: '' },
+    credentials: { eyebrow: 'Credentials', title: 'Registered and accountable', lede: 'The registrations and certificates a tender asks for. Copies go to evaluators who ask for them.' },
+    safety: { eyebrow: 'Quality & Safety', title: 'Checked work, safe sites', lede: '' },
+    quote: { eyebrow: 'Start a Project', title: 'Tell us about your project', lede: 'Four questions. Your brief builds as you answer, and comes straight to our team.' },
+    careers: { eyebrow: 'Careers', title: 'Build homes and townships with us', lede: '' },
+    contact: { eyebrow: 'Contact', title: "Let's build together", lede: '' },
+  } as Record<Exclude<PageSection, 'hero' | 'proof'>, Heading & { ledeEmpty?: string }>,
+
+  // The order of the page, and which sections are shown.
+  layout: PAGE_SECTIONS.map((p) => ({ id: p.id, shown: true })) as { id: PageSection; shown: boolean }[],
+
+  // The foot of the page. The "Staff login" link is always there and is not set here.
+  footer: { tagline: 'Civil Engineering & Construction', showGroupLink: true },
+
+  // Credentials, for the company website, edited in Settings -> Website. An item is shown only once it has a real value
+  // (credentialShown): nothing here may claim what the company cannot produce a copy of, and nothing says "on request".
+  // TODO(Uday): the registration class and authority, ISO certificate numbers, GSTIN and the RERA number of each project.
+  credentials: [
+    { label: 'Contractor registration', value: '' },
+    { label: 'ISO certification', value: '' },
+    { label: 'GSTIN', value: '' },
+    { label: 'RERA registration', value: '' },
+    { label: 'Safety record', value: 'Safe man-hours counted live from our site records (see Quality & Safety)' },
+    { label: 'Plant & machinery', value: '' },
+  ] as { label: string; value: string }[],
+
+  // The quality and safety policies.
+  // TODO(Uday): have the quality and safety heads check this says what really happens on our sites, and send the HSE
+  // plan and quality policy PDFs to link here (as { label, href: 'site/docs/....pdf' }).
+  safety: [
+    { title: 'Health, safety & environment', text: 'Our sites work to a written safety plan, and every incident and near miss is recorded and investigated.' },
+    { title: 'Quality', text: 'Work is inspected against the drawings and the specification before it is covered up or poured, and anything that does not pass is recorded and put right.' },
+    { title: 'Materials', text: 'Cement, steel, aggregates and concrete are checked when they arrive and tested as the work goes on, and the records are kept with the project.' },
+  ] as { title: string; text: string; link?: { label: string; href: string } }[],
+
   // The enquiry form.
   plan: {
     types: [
@@ -135,5 +187,9 @@ export const SITE = {
   },
 }
 
+/** Whether a credential has a real value to show: not empty, and not a placeholder such as "on request" or "to follow". */
+export const credentialShown = (c: { label: string; value: string }) =>
+  !!c.label.trim() && !!c.value.trim() && !/\b(on request|to follow|tbc|tbd|awaited|pending)\b/i.test(c.value)
+
 /** The kind of work an enquiry asks about, for a capability: "Water supply & sewerage" asks as a road or drainage job. */
-export const typeFor = (capability: string) => (SITE.plan.types.some((t) => t.id === capability) ? capability : capability === 'water' ? 'road' : 'other')
+export const typeFor = (capability: string, types: WorkType[] = SITE.plan.types) => (types.some((t) => t.id === capability) ? capability : capability === 'water' ? 'road' : 'other')

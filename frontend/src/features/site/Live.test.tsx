@@ -6,7 +6,7 @@ import { EnquiryForm, LiveProjects } from './Live'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Company website', () => {
-  it('sends an enquiry, with the planner brief, to the ERP and thanks the visitor', async () => {
+  it('sends an enquiry, with the planner brief, to the Tender Pipeline and thanks the visitor', async () => {
     const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ message: 'Thank you, Ravi.' }) }))
     vi.stubGlobal('fetch', fetch)
     render(<EnquiryForm toast={() => undefined} brief={{ type: 'House or villa', scopes: [], city: 'Hyderabad', text: 'Brief' }} />)

@@ -14,6 +14,8 @@ class JobRequisitionIn(BaseModel):
     work_mode: Optional[str] = "onsite"
     employment_type: Optional[str] = "full_time"
     level: Optional[str] = ""
+    # Left out (None) keeps what the opening had.
+    experience: Optional[str] = None
     salary_min: Optional[float] = 0.0
     salary_max: Optional[float] = 0.0
     show_salary: Optional[bool] = True

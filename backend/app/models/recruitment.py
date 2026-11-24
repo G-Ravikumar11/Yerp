@@ -42,6 +42,8 @@ class DBJobRequisition(Base):
     work_mode = Column(String, default="onsite")       # onsite | hybrid | remote
     employment_type = Column(String, default="full_time")
     level = Column(String, default="")
+    # The experience asked for, as the careers page says it: "3-5 years", "Fresher".
+    experience = Column(String, default="")
 
     salary_min = Column(Float, default=0.0)
     salary_max = Column(Float, default=0.0)

@@ -131,8 +131,10 @@ def test_a_supplier_sends_rates_and_his_word_file_and_it_lands_in_the_comparison
     assert st["invites"][0]["status"] == "quoted" and st["invites"][0]["message"] == "Prices valid 15 days"
     assert next(s for s in st["suppliers"] if s["supplier_name"] == "ACC")["source"] == "buyer"
     with SessionLocal() as db:
-        alert = db.query(models.DBAlert).filter(models.DBAlert.kind == "quote_received").first()
-        assert alert and "Sri Ram Traders" in alert.title
+        # This enquiry's own alert: other tests' suppliers quote into the same database.
+        alert = db.query(models.DBAlert).filter(models.DBAlert.kind == "quote_received",
+                                                models.DBAlert.title.like("Sri Ram Traders sent a quote for %")).first()
+        assert alert is not None
     # sent again, his quote is revised, not doubled
     lines[0]["rate"] = 375
     assert send(client, token_of(inv), lines, quote_ref="SR/45").status_code == 200

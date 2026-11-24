@@ -113,7 +113,7 @@ def create_requisition(request: Request, body: JobRequisitionIn, db: Session = D
         employment_type=body.employment_type or "full_time", level=level,
         salary_min=float(body.salary_min or 0), salary_max=float(body.salary_max or 0),
         salary_currency=client.currency or "", show_salary=bool(body.show_salary),
-        openings=openings, status=status,
+        openings=openings, status=status, experience=(body.experience or "").strip()[:80],
         is_published=(status == "open"),
         closing_date=body.closing_date or "",
         opened_at=now if status == "open" else "",
@@ -171,6 +171,8 @@ def update_requisition(job_id: int, request: Request, body: JobRequisitionIn, db
     job.salary_max = float(body.salary_max or 0)
     job.show_salary = bool(body.show_salary)
     job.openings = openings
+    if body.experience is not None:
+        job.experience = body.experience.strip()[:80]
     job.status = status
     job.is_published = status == "open"
     job.closing_date = body.closing_date or ""

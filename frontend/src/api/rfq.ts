@@ -12,10 +12,13 @@ export interface Rfq {
 }
 /** A row of the list: how far the enquiry has got - suppliers asked, still to answer, and the best full quote so far. */
 export interface RfqRow extends Rfq { asked: number; waiting: number; best: { supplier_name: string; landed: number } | null; awarded_to: string[]; orders: number }
-interface Offer { supplier_name: string; rate: number; amount: number; tax_percent: number; remarks?: string }
+/** `over_contract`: priced above a rate contract in force for the item (with this supplier or any other). */
+interface Offer { supplier_name: string; rate: number; amount: number; tax_percent: number; remarks?: string; over_contract?: boolean }
 export interface RfqLine { rfq_line_id: number; description: string; item_code: string; uom: string; qty: number; spread_percent: number; awarded_supplier: string; awarded_rate: number; po_id: number | null; po_number: string; lowest: string; lowest_rate: number; offers: Offer[]
   /** What the item cost on approved orders before: the trend, and the last price per supplier. */
-  price_history?: { points: PricePoint[]; last_by_supplier: PricePoint[] } }
+  price_history?: { points: PricePoint[]; last_by_supplier: PricePoint[] }
+  /** The cheapest rate contract in force for the item, whoever it is with. */
+  contract?: { supplier_name: string; rate: number; contract_no: string; valid_to: string } | null }
 interface QuoteDocument { id: number; name: string; size: number }
 export interface RfqSupplier {
   quote_id: number; supplier_name: string; quote_ref: string; quote_date: string; rank?: string; is_l1: boolean; basic: number; tax: number; freight: number; landed: number

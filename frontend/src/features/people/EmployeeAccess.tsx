@@ -131,7 +131,7 @@ export function EmployeeAccess({ e }: { e: EmployeeDetail }) {
     Contracts: 'subcontractors', 'Planning & Billing': 'clients', Purchase: 'store', Stores: 'store', 'Store module': 'store',
   }
   const sectionOf = (p: (typeof perms)[number]) => byKey.get(p.key) ?? (GROUP_PORTAL[p.group] ? label(GROUP_PORTAL[p.group]) : p.group || 'Other')
-  const order = [...portals.map((pt) => pt.label), 'Everyone', 'Head office', 'Phone app']
+  const order = [...portals.map((pt) => pt.label), 'Everyone', 'Head office', 'Website', 'Phone app']
   const groupsOf = (list: typeof perms) => {
     const m = new Map<string, typeof perms>()
     for (const p of list) { const s = sectionOf(p); m.set(s, [...(m.get(s) ?? []), p]) }

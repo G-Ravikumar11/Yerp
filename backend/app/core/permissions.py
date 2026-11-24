@@ -241,6 +241,10 @@ PORTAL_PERMISSIONS = [
      "label": "Download PDFs in the app"},
     {"key": "app.download_excel", "group": "Phone app",
      "label": "Download Excel reports in the app"},
+    # THE COMPANY WEBSITE. Its words and pictures are kept here (Settings -> Website) and shown at yalavartiinfra.com.
+    # Part of no access level but the Master's: it is given person by person, by the Master, to whoever runs the site.
+    {"key": "website.manage", "group": "Website",
+     "label": "Manage website"},
 ]
 
 # THE STORE MODULE: store.<slice>.<action>. The six slices and five actions are every combination, so a new screen
@@ -453,8 +457,8 @@ PERMISSION_ROLES = [
     {
         "code": "md", "label": "MD", "rank": 5,
         "description": "L2 - Managing director. Sees and approves across the whole business and releases "
-                       "payments over the limit. Final work order approval stays with the Master.",
-        "permissions": sorted(PERMISSION_KEYS - HO_QS_ONLY - HR_ONLY - {"workorders.approve", "store.admin"}),
+                       "payments over the limit. Final work order approval and the website stay with the Master.",
+        "permissions": sorted(PERMISSION_KEYS - HO_QS_ONLY - HR_ONLY - {"workorders.approve", "store.admin", "website.manage"}),
     },
     {
         "code": "construction_manager", "label": "Construction Manager", "rank": 3,

@@ -25,6 +25,12 @@ describe('signing in', () => {
     expect(screen.getByLabelText('Email or employee ID')).toBeTruthy()
   })
 
+  it('links the Terms of Service and Privacy Policy at the foot of the page', () => {
+    render(<LoginPage />)
+    expect(screen.getByRole('link', { name: 'Terms of Service' }).getAttribute('href')).toBe('/terms')
+    expect(screen.getByRole('link', { name: 'Privacy Policy' }).getAttribute('href')).toBe('/privacy')
+  })
+
   it('sends an employee ID to the staff door only, never the Master\'s', async () => {
     const user = userEvent.setup()
     render(<LoginPage />)

@@ -67,7 +67,8 @@ HOME_HEAD = (
     '<meta property="og:description" content="Houses and villas, apartments, gated townships, roads, drainage and water '
     'works - one civil builder from the plot to the keys.">'
     '<meta property="og:image" content="%%s/next/site/img/cat3.jpg">'
-    '<meta name="theme-color" content="#000000">' % HOME_DESCRIPTION.replace("'", "&#39;"))
+    '<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">'
+    '<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">' % HOME_DESCRIPTION.replace("'", "&#39;"))
 
 
 HOME_NOSCRIPT = ('<noscript><p style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center">'

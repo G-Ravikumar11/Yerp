@@ -295,6 +295,8 @@ ACCOUNTS_COLUMNS = (
 WEBSITE_COLUMNS = (
     ("jobs", "show_on_website", "BOOLEAN DEFAULT FALSE"), ("jobs", "website_sector", "VARCHAR DEFAULT ''"),
     ("jobs", "website_location", "VARCHAR DEFAULT ''"), ("jobs", "website_scope", "TEXT DEFAULT ''"),
+    # The experience an opening on the careers page asks for.
+    ("job_requisitions", "experience", "VARCHAR DEFAULT ''"),
     # The budget's own wastage % on a material item; the store's norm, where one is set, is used instead of it.
     ("boq_budget_items", "wastage_percent", "FLOAT DEFAULT 0"),
     # A reorder alert's lifecycle: its figures at the last check, the indent or enquiry raised for it, and its earlier episodes.

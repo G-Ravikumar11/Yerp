@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import './site.css'
@@ -8,7 +8,9 @@ import { Timeline } from './Timeline'
 import { About, Capabilities, Careers, Contact, Footer, Hero, HowWeBuild, Proof } from './Sections'
 import { reduceMotion, useToast } from './lib'
 import { Credentials, LiveProjects, QualitySafety } from './Live'
-import { useLive } from './siteApi'
+import { isPreview, useLive, usePreviewMessages } from './siteApi'
+import type { PageSection } from './data/content'
+import { ContentProvider, contentFrom } from './siteContent'
 import { EMPTY_PLAN, typeLabel, type Plan } from './plan'
 
 gsap.registerPlugin(ScrollTrigger)
@@ -21,18 +23,41 @@ export default function SitePage() {
   const root = useRef<HTMLDivElement>(null)
   const [plan, setPlan] = useState<Plan>(EMPTY_PLAN)
   const toast = useToast()
-  const live = useLive()
+  const [preview] = useState(isPreview)
+  const messages = usePreviewMessages(preview)
+  const live = useLive(preview, messages.reload)
+  // The words and pictures as last published, once they arrive; the built-in copy until then. In the preview inside
+  // Settings -> Website, the draft - as it is being typed.
+  const content = useMemo(() => contentFrom(messages.draft ?? live?.content), [live, messages.draft])
 
   useEffect(() => {
     document.title = TITLE
-    document.documentElement.style.colorScheme = 'dark'
+    // Light, or dark when the visitor's device is set to dark (site.css follows the same setting).
+    document.documentElement.style.colorScheme = 'light dark'
+    document.documentElement.classList.remove('dark')
   }, [])
 
   // A "What we build" card opens the enquiry with its kind of work chosen.
   const choose = (type: string) => {
     setPlan((p) => ({ ...p, type }))
     goTo('#quote')
-    toast.show(`${typeLabel(type)}: tell us a little more`)
+    toast.show(`${typeLabel(type, content.SITE.plan.types)}: tell us a little more`)
+  }
+
+  // Each section of the page, drawn in the order Settings -> Website gives them.
+  const SECTIONS: Record<PageSection, () => React.ReactNode> = {
+    hero: () => <Hero />,
+    proof: () => <Proof live={live} />,
+    about: () => <About />,
+    build: () => <Capabilities choose={choose} />,
+    process: () => <HowWeBuild />,
+    projects: () => <LiveProjects live={live} />,
+    story: () => <Timeline />,
+    credentials: () => <Credentials />,
+    safety: () => <QualitySafety live={live} />,
+    quote: () => <Planner plan={plan} setPlan={setPlan} toast={toast.show} />,
+    careers: () => <Careers companyId={live?.company_id} openings={live?.openings ?? []} />,
+    contact: () => <Contact toast={toast.show} />,
   }
 
   // Reveals: sections fade up as they arrive.
@@ -55,25 +80,16 @@ export default function SitePage() {
   }, [])
 
   return (
+    <ContentProvider value={content}>
     <div ref={root}>
       <a className="skip" href="#main">Skip to Content</a>
       <Nav />
       <main id="main">
-        <Hero />
-        <Proof live={live} />
-        <About />
-        <Capabilities choose={choose} />
-        <HowWeBuild />
-        <LiveProjects live={live} />
-        <Timeline />
-        <Credentials />
-        <QualitySafety live={live} />
-        <Planner plan={plan} setPlan={setPlan} toast={toast.show} />
-        <Careers companyId={live?.company_id} />
-        <Contact toast={toast.show} />
+        {content.SITE.layout.filter((s) => s.shown && SECTIONS[s.id]).map((s) => <Fragment key={s.id}>{SECTIONS[s.id]()}</Fragment>)}
       </main>
       <Footer />
       <div className={`toast${toast.on ? ' on' : ''}`} id="toast" role="status" aria-live="polite">{toast.text}</div>
     </div>
+    </ContentProvider>
   )
 }

@@ -298,8 +298,10 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     # A PDF may be shown inside the app's own pages - so what is on screen is
     # the document that prints - but never framed by anybody else's site.
-    response.headers["X-Frame-Options"] = (
-        "SAMEORIGIN" if response.headers.get("content-type", "").startswith("application/pdf") else "DENY")
+    # So may the company website, when Settings -> Website shows it as the preview of its draft (/?preview=1).
+    framed = response.headers.get("content-type", "").startswith("application/pdf") or (
+        path in ("/", "/next/site") and request.query_params.get("preview") == "1")
+    response.headers["X-Frame-Options"] = "SAMEORIGIN" if framed else "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     # Only our own pages may frame ours (the PDF beside a bill), whatever an old browser makes of X-Frame-Options.

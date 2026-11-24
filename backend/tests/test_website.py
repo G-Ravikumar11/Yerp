@@ -20,11 +20,18 @@ def job(tenant, name, status="in_progress"):
     return res.json()
 
 
+def put_on_website(tenant, job_id, **card):
+    """A project's card drafted in Settings -> Website, and published."""
+    card = dict({"show": True, "sector": "", "location": "", "scope": ""}, **card)
+    res = tenant.put("/api/website/sections/projects", json={"draft": {str(job_id): card}})
+    assert res.status_code == 200, res.text
+    assert tenant.post("/api/website/publish", json={}).status_code == 200
+
+
 def test_only_ticked_projects_show_and_only_what_their_card_says(tenant, client, ours):
     shown = job(tenant, "Vanya City STP", status="complete")
     job(tenant, "Not on the website")
-    res = tenant.put("/api/jobs/%d/website" % shown["id"], json={"show": True, "sector": "Water", "location": "Hyderabad", "scope": "295 KLD STP"})
-    assert res.status_code == 200, res.text
+    put_on_website(tenant, shown["id"], sector="Water", location="Hyderabad", scope="295 KLD STP")
     assert tenant.get("/api/jobs/%d" % shown["id"]).json()["website"] == {"show": True, "sector": "Water", "location": "Hyderabad", "scope": "295 KLD STP"}
 
     site = client.get("/api/public/site").json()
@@ -37,7 +44,7 @@ def test_only_ticked_projects_show_and_only_what_their_card_says(tenant, client,
 
 def test_a_photo_is_served_only_for_a_project_on_the_website(tenant, client, ours):
     on, off = job(tenant, "Shown"), job(tenant, "Hidden")
-    tenant.put("/api/jobs/%d/website" % on["id"], json={"show": True})
+    put_on_website(tenant, on["id"])
     with database.SessionLocal() as s:
         ids = []
         for j in (on, off):

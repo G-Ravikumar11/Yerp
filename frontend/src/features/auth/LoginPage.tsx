@@ -140,6 +140,11 @@ export default function LoginPage() {
         </>
       )}
       {!native && <p className="mt-6 text-center text-[15px]"><a className="text-foreground hover:text-primary" href="/">&larr; Back to website</a></p>}
+      {/* The legal pages belong to the ERP, so they are linked from its door, not from the company website. */}
+      <nav aria-label="Legal" className="mt-4 flex justify-center gap-5 text-sm text-muted-foreground">
+        <a className="hover:text-foreground" href={appUrl('terms')}>Terms of Service</a>
+        <a className="hover:text-foreground" href={appUrl('privacy')}>Privacy Policy</a>
+      </nav>
     </LoginScene>
   )
 }
