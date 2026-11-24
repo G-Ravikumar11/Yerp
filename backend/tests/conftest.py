@@ -333,3 +333,13 @@ def owner_places(tenant, wo_id, note="Approved"):
     res = tenant.post("/api/erp/work-orders/%d/decide" % wo_id, json={"decision": "approve", "note": note})
     assert res.status_code == 200, res.text
     return res.json()
+
+
+def budget_all(tenant, job_id, per_unit=10_000_000):
+    """Budget every priced BOQ line of a project (labour at `per_unit`, far above any test's contractor rate), so a work
+    order on it can be sent: an order is sent only once its lines are budgeted."""
+    rows = tenant.get("/api/jobs/%d/budget" % job_id).json().get("rows", [])
+    for r in rows:
+        res = tenant.put("/api/jobs/%d/budget/lines/%s" % (job_id, r["key"]), json={"items": [
+            {"kind": "LABOUR", "description": "Labour", "uom": "unit", "coefficient": 1, "rate": per_unit}]})
+        assert res.status_code == 200, res.text

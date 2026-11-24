@@ -130,7 +130,7 @@ def attachment_target(db, client_id, attached_type, attached_id):
         return i.job_id, False
     plant = {"equipment": (models.DBAsset, "Machine"), "plant_rental": (models.DBPlantRental, "Rental"),
              "plant_maintenance": (models.DBAssetService, "Maintenance job"), "plant_fuel": (models.DBPlantFuel, "Fuel entry"),
-             "plant_expense": (models.DBPlantExpense, "Expense")}
+             "plant_expense": (models.DBPlantExpense, "Expense"), "plant_rental_invoice": (models.DBPlantRentalInvoice, "Rental bill")}
     if t in plant:
         model, what = plant[t]
         r = db.query(model).filter(model.id == attached_id, model.client_id == client_id).first()

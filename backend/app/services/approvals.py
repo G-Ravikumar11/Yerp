@@ -503,6 +503,12 @@ def sub_bill_owner_signs(db, client_id):
     return (tenant_setting(db, client_id, SUB_BILL_OWNER_SIGNS_KEY, "1") or "1") != "0"
 
 
+# The HO Coordinator signs on the way up only where the Master has put them in somebody's reporting line - never picked by
+# rank for a route nobody drew through them.
+def by_reporting_line_only(emp):
+    return (getattr(emp, "permission_role", "") or "").lower() == "ho_coordinator"
+
+
 def holders_of(db, client_id, permission, exclude=()):
     """Every active member of staff whose access includes this right - by
     their department or by what HR ticked for them on top of it, less what
@@ -544,7 +550,7 @@ def ladder_approver(db, client_id, submitted_by, entity_type, job_id=None):
     best = None
     for emp in holders_of(db, client_id, right, exclude={submitted_by}):
         rank = role_rank(emp)
-        if rank <= mine:
+        if rank <= mine or by_reporting_line_only(emp):
             continue
         theirs = employee_site_ids(db, emp)
         same_site = theirs is None or not my_sites or bool(theirs & my_sites)
@@ -704,6 +710,8 @@ def approval_inbox(db, client, emp):
                     notes.append("Amends %s - its %d measurement%s and %d RA bill%s move to this order on approval"
                                  % (prev.wo_number, n_mb, "" if n_mb == 1 else "s",
                                     n_bills, "" if n_bills == 1 else "s"))
+            if (o.over_budget_reason or "").strip():
+                notes.append("Priced above the budget - the Master signs it too. Reason given: " + o.over_budget_reason.strip())
             items.append(_row(
                 "subcontract_order", "Subcontract work order", o.id, o.wo_number, o.net_order_value or o.gross_amount,
                 party=(("%s (%s)" % (con.company_name, con.vendor_code) if con.vendor_code else con.company_name) if con else ""),
@@ -970,14 +978,16 @@ def hierarchy_chain(db, client_id, submitter_id, right, job_id=None, owner_signs
             if boss and boss.id not in seen and employee_can(boss, right):
                 chain.append(boss)
                 seen.add(boss.id)
-    floor = max([raising_rank(me) if me else 0] + [role_rank(e) for e in chain])
+    # The HO Coordinator signs because somebody reports to them, not as a rung of the ladder: their rank does not
+    # lift the floor, or the project manager and HO QS the paper still has to climb through would be passed over.
+    floor = max([raising_rank(me) if me else 0] + [role_rank(e) for e in chain if not by_reporting_line_only(e)])
     sites = (employee_site_ids(db, me) if me else None) or set()
     if job_id:
         sites = set(sites) | {job_id}
     by_rank = {}
     for emp in holders_of(db, client_id, right, exclude=seen):
         rank = role_rank(emp)
-        if rank <= floor:
+        if rank <= floor or by_reporting_line_only(emp):
             continue
         theirs = employee_site_ids(db, emp)
         same = theirs is None or not sites or bool(theirs & sites)

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { fileNameFor, isDownloadLink } from './download'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { canView, fileNameFor, isDownloadLink } from './download'
 
 const BASE = 'https://localhost/projects/drawings' // where the phone app's pages live
 
@@ -39,5 +39,48 @@ describe('what the saved file is called', () => {
 
   it('never lets a path or odd character into the name', () => {
     expect(fileNameFor('../../secret/x:y.pdf', null, '/api/x.pdf')).not.toMatch(/[\/:]/)
+  })
+})
+
+describe('the name a saved copy is given', () => {
+  it('keeps the file\'s own name when it is free, and numbers it when it is not', async () => {
+    const { savedName } = await import('./download')
+    expect(savedName('registration.pdf', new Set())).toBe('registration.pdf')
+    expect(savedName('registration.pdf', new Set(['registration.pdf']))).toBe('registration (2).pdf')
+    expect(savedName('registration.pdf', new Set(['registration.pdf', 'registration (2).pdf']))).toBe('registration (3).pdf')
+    expect(savedName('notes', new Set(['notes']))).toBe('notes (2)')
+  })
+})
+
+describe('buttons that point at the full server address', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('are caught when the address is the app server (a button made with apiUrl)', () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://yerp.example.com')
+    expect(isDownloadLink('https://yerp.example.com/api/bbs/export.xlsx?job_id=0', null, BASE)).toBe(true)
+    expect(isDownloadLink('https://yerp.example.com/api/bbs/schedule.pdf?job_id=2', null, BASE)).toBe(true)
+    expect(isDownloadLink('/api/ra-bills/3/document.pdf', null, BASE)).toBe(true)   // the plain kind still works
+  })
+
+  it('still leaves other servers, and the server data, alone', () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://yerp.example.com')
+    expect(isDownloadLink('https://other.example.com/api/bbs/export.xlsx', null, BASE)).toBe(false)
+    expect(isDownloadLink('https://yerp.example.com/api/jobs/3/schedule', null, BASE)).toBe(false)
+    expect(isDownloadLink('https://yerp.example.com/projects/bbs', null, BASE)).toBe(false)
+  })
+
+  it('does nothing extra when the app and server share an origin', () => {
+    vi.stubEnv('VITE_API_BASE_URL', '')
+    expect(isDownloadLink('https://yerp.example.com/api/bbs/export.xlsx', null, BASE)).toBe(false)
+  })
+})
+
+describe('what the app can show itself', () => {
+  it('opens PDFs and .xlsx sheets to look at, and sends anything else to Save / Share', () => {
+    expect(canView('bill.pdf')).toBe(true)
+    expect(canView('Register.XLSX')).toBe(true)
+    expect(canView('old.xls')).toBe(false)
+    expect(canView('list.csv')).toBe(false)
+    expect(canView('letter.docx')).toBe(false)
   })
 })

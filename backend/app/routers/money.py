@@ -239,10 +239,17 @@ def project_accounts(job_id: int, request: Request, db: Session = Depends(get_db
     is still to pay, with the bills, payments and receipts behind each figure. Everything here is read from the same
     places as the company-wide screens, only narrowed to this project."""
     client = require_items_access(request, db, "bills.view_all")
+    # About a hundred statements to add up, so it is remembered between visits like the company-wide panels, until anything
+    # is written: choosing the same project again, or coming back to it, costs nothing.
+    return cached_read(("project-accounts", client.id, job_id, scope_key(db)), lambda: _project_accounts(job_id, request, db, client))
+
+
+def _project_accounts(job_id, request, db, client):
     from app.services.journals import debit_notes_by_job, journal_costs_by_job
     detail = costs_for_project(job_id, request, db)
-    to_receive = [r for r in receivables_payload(db, client)["invoices"] if r.get("job_id") == job_id]
-    to_pay = [r for r in payables_payload(db, client)["bills"] if r.get("job_id") == job_id]
+    # The two company-wide lists are the ones the Pay & Receive page already remembers: read from there, not worked out again.
+    to_receive = [r for r in cached_read(("receivables", client.id, scope_key(db)), lambda: receivables_payload(db, client))["invoices"] if r.get("job_id") == job_id]
+    to_pay = [r for r in cached_read(("payables", client.id, scope_key(db)), lambda: payables_payload(db, client))["bills"] if r.get("job_id") == job_id]
     entries = list_money(request, "", "", job_id, "", "", db)["entries"]
     live = [e for e in entries if not e["voided"] and e["doc_type"] != "contra"]
     adv = advances(request, job_id, db)
@@ -889,6 +896,14 @@ def record_money(body: MoneyIn, request: Request, db: Session = Depends(get_db))
         if not party_name:
             raise HTTPException(400, "Who is this from or to?")
         party_id, job_id, doc_number = None, owned_or_404(db, models.DBJob, client.id, body.job_id, "Project"), ""
+
+    # A sub contractor whose registration - or a change to their bank account, PAN or GST - waits for approval is not paid,
+    # by hand any more than by the bank file: a changed account number is how money goes to the wrong person.
+    if direction == "OUT" and party_type == "contractor":
+        from app.services.payouts import contractor_payment_hold
+        held = contractor_payment_hold(db, client.id, party_id, party_name)
+        if held:
+            raise HTTPException(409, held)
 
     if mode == "Cheque" and direction == "OUT":
         refuse_duplicate_cheque(db, client.id, account.id if account else None, body.reference)

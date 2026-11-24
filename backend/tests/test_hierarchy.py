@@ -7,9 +7,9 @@ from conftest import make_employee
 def test_level_catalogue_is_served(tenant):
     data = tenant.get("/api/hr/levels").json()
     codes = [l["code"] for l in data["levels"]]
-    assert codes == ["L%d" % i for i in range(1, 20)]
+    assert codes == ["L%d" % i for i in range(1, 21)]
     roles = {r["code"]: r for r in data["roles"]}
-    assert roles["project_manager"]["level"] == "L5"
+    assert roles["project_manager"]["level"] == "L6"
     assert roles["store_assistant"]["reports_to"] == "store_executive"
 
 
@@ -80,17 +80,18 @@ def test_reporting_line_builds_a_tree(tenant):
 
 
 def test_role_fills_in_its_level_when_none_is_given(tenant):
-    assert make_employee(tenant, role="site_engineer")["level"] == "L8"
+    assert make_employee(tenant, role="site_engineer")["level"] == "L9"
 
 
-def test_manager_cannot_sit_below_the_employee(tenant):
-    junior = make_employee(tenant, level="L13")
+def test_the_master_may_put_anybody_over_anybody(tenant):
+    """Who reports to whom is the Master's decision (a coordinator between a site and the heads, say): any level may be
+    chosen. Only a loop is refused."""
+    other = make_employee(tenant, level="L13")
     res = tenant.post("/api/employees", json={
         "first_name": "A", "last_name": "B", "email": "senior@example.com",
-        "level": "L5", "reports_to": junior["id"],
+        "level": "L5", "reports_to": other["id"],
     })
-    assert res.status_code == 400
-    assert "same level or higher" in res.json()["detail"]
+    assert res.status_code == 200, res.text
 
 
 def test_employee_cannot_report_to_themselves(tenant):

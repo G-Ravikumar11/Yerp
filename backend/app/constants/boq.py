@@ -62,3 +62,12 @@ BV_TRANSITIONS = {
     "APPROVED":  {},
     "CANCELLED": {},
 }
+
+
+
+def boq_grade(value):
+    """A line's material or grade as kept: M25, Fe500, OPC 53, 1:2:4. A bare decimal (0.028, 0.0357) is not one - a client's
+    sheet that heads a factor or a share of cost "Material" would otherwise list every such number as a grade."""
+    import re
+    text = (value or "").strip()[:60]
+    return "" if re.fullmatch(r"[-+]?\d*\.\d+\s*%?", text) else text

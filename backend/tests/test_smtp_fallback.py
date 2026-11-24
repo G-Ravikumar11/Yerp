@@ -64,3 +64,88 @@ def test_without_any_mail_account_it_says_so(monkeypatch):
     monkeypatch.delenv("SMTP_HOST")
     ok, msg = notifications.send_email_background("to@example.com", "Reset", "text", "Y ERP <a@b.c>", "<p>hi</p>")
     assert not ok and "not configured" in msg
+
+
+# --- Zoho Mail over SMTP --------------------------------------------------------------------------------------------
+
+class FakeSSL(FakeSMTP):
+    used = False
+
+    def __init__(self, host, port, context=None, timeout=None):
+        FakeSSL.used = True
+        super().__init__(host, port, timeout)
+
+
+def zoho(monkeypatch, sender="smtp"):
+    send(monkeypatch, host="smtp.zoho.in")
+    FakeSSL.used = False
+    monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSSL)
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.setenv("SMTP_USER", "erp@yalavarti.example")
+    monkeypatch.setenv("SMTP_FROM", "Yalavarti Infra Projects <erp@yalavarti.example>")
+    monkeypatch.setenv("EMAIL_SENDER", sender)
+
+
+def headers(raw):
+    import email
+    return email.message_from_string(raw.decode() if isinstance(raw, bytes) else raw)
+
+
+def test_smtp_chosen_sends_everything_from_the_mailbox_with_replies_to_the_writer(monkeypatch):
+    """Zoho refuses mail "from" any address but the signed-in mailbox: the name stays, the address is the mailbox's,
+    and Reply-To keeps the original writer. Chosen as the sender, it is used even with a Gmail connected."""
+    zoho(monkeypatch)
+    monkeypatch.setattr(notifications, "get_stored_refresh_token", lambda db, client_id=None: "a-gmail-token")
+    ok, _ = notifications.send_email_background("to@example.com", "Work order", "text", "Site Office <site@company.example>")
+    assert ok and FakeSSL.used                                     # port 465: SSL from the start
+    frm, to, raw = FakeSMTP.sent[0]
+    msg = headers(raw)
+    assert frm == "erp@yalavarti.example" and to == ["to@example.com"]
+    assert "erp@yalavarti.example" in msg["From"] and "Site Office" in msg["From"]
+    assert "site@company.example" in msg["Reply-To"] and msg["Message-ID"]
+
+
+def test_auto_falls_back_to_smtp_when_gmail_fails(monkeypatch):
+    zoho(monkeypatch, sender="auto")
+    monkeypatch.setattr(notifications, "get_stored_refresh_token", lambda db, client_id=None: "a-gmail-token")
+
+    def broken(**k):
+        raise RuntimeError("Google is down")
+    monkeypatch.setattr(notifications, "get_gmail_credentials", broken)
+    ok, msg = notifications.send_email_background("to@example.com", "Alert", "text", "Y ERP <a@b.c>")
+    assert ok and "SMTP" in msg and FakeSMTP.sent
+
+
+def test_smtp_chosen_but_not_set_up_says_so(monkeypatch):
+    zoho(monkeypatch)
+    monkeypatch.delenv("SMTP_HOST")
+    ok, msg = notifications.send_email_background("to@example.com", "Alert", "text", "Y ERP <a@b.c>")
+    assert not ok and "SMTP_HOST" in msg and FakeSMTP.sent == []
+
+
+def test_settings_shows_the_smtp_mailbox_never_its_password_and_sends_a_test_by_it(monkeypatch, tenant):
+    zoho(monkeypatch)
+    monkeypatch.setenv("SMTP_PASSWORD", "zoho-app-password-123")
+    status = tenant.get("/api/gmail/status").json()
+    assert status["sender"] == "smtp" and status["smtp_ready"] and "erp@yalavarti.example" in status["smtp_from"]
+    assert "zoho-app-password-123" not in str(status)
+    res = tenant.post("/api/gmail/test", json={"to": "someone@example.com"})
+    assert res.status_code == 200 and "by SMTP" in res.json()["message"], res.text
+    assert FakeSMTP.sent and FakeSMTP.sent[-1][1] == ["someone@example.com"]
+
+
+def test_a_refused_test_email_says_why_on_the_same_screen(monkeypatch, tenant):
+    """The page stays; the reason is named (sign-in refused, address not allowed, server not reached) - never the password."""
+    zoho(monkeypatch)
+    monkeypatch.setenv("SMTP_PASSWORD", "zoho-app-password-123")
+    FakeSMTP.fail = True                                         # Zoho refuses the sign-in
+    res = tenant.post("/api/gmail/test", json={"to": "someone@example.com"})
+    assert res.status_code == 409 and "refused the sign-in" in res.json()["detail"], res.text
+    assert "zoho-app-password-123" not in res.text
+
+    class Unreachable(FakeSSL):
+        def __init__(self, *a, **k):
+            raise OSError("no route")
+    monkeypatch.setattr(smtplib, "SMTP_SSL", Unreachable)
+    res = tenant.post("/api/gmail/test", json={"to": "someone@example.com"})
+    assert res.status_code == 409 and "could not be reached" in res.json()["detail"], res.text

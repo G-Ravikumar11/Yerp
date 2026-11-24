@@ -55,10 +55,21 @@ def draft(tenant, department="STP", **over):
             "commencement_date": "2026-05-01", "completion_date": "2026-11-30",
             "duration_months": 7, "defect_liability_months": 12,
             "gst_rate": 18, "tds_rate": 1}
+    # The department is decided, not chosen: an order the Master raises takes its kind of work's. So the department these
+    # tests ask for comes through a kind of work filed under it.
+    if department and "work_type" not in over:
+        body["work_type"] = dept_work_type(tenant, department)
     body.update(over)
     res = tenant.post("/api/wo/orders", json=body)
     assert res.status_code == 200, res.text
     return res.json()["order"]
+
+
+def dept_work_type(tenant, department):
+    """A kind of work filed under `department` (made the first time), for an order to take that department from."""
+    name = "%s works" % department
+    tenant.post("/api/wo/work-types", json={"name": name, "department": department})
+    return name
 
 
 BOQ = {"lines": [
@@ -105,11 +116,15 @@ def test_the_financial_year_runs_april_to_march(tenant):
 
 
 def test_changing_the_discipline_on_a_draft_reissues_the_number(tenant):
-    """The discipline is in the number, so it cannot quietly disagree with it."""
+    """The discipline is in the number, so it cannot quietly disagree with it. On an order the Master raised it follows
+    the kind of work; one typed into the request is not taken."""
     order = draft(tenant, department="STP")
     res = tenant.put("/api/wo/orders/%d" % order["id"],
-                     json={"department": "Electrical", "subject": order["subject"]})
+                     json={"work_type": dept_work_type(tenant, "Electrical"), "subject": order["subject"]})
     assert res.json()["order"]["wo_number"].split("/")[2] == "ELECTR"
+    res = tenant.put("/api/wo/orders/%d" % order["id"], json={"department": "Plumbing", "subject": order["subject"],
+                                                             "work_type": "Electrical works"})
+    assert res.json()["order"]["department"] == "Electrical"
 
 
 # --- What it is worth -------------------------------------------------------

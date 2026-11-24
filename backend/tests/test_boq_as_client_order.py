@@ -1,4 +1,5 @@
 """The BOQ is the client's order: the store's consumption report and the programme's measured progress read it."""
+from conftest import budget_all
 from datetime import date, timedelta
 
 from test_boq import contractor_order, make_boq, saved
@@ -58,6 +59,7 @@ def test_an_activity_tied_to_a_boq_line_moves_with_the_contractors_measurements(
     jid, _, lines = boq_with_lines(tenant)                      # EXC: 500 cum in the BOQ
     order, _, _ = contractor_order(tenant, lines, [(lines["EXC"], 500, 150)])
     fund_order(tenant, order)
+    budget_all(tenant, order["job_id"])
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
     assert tenant.post("/api/wo/orders/%d/approve" % order["id"], json={}).status_code == 200
     item = tenant.get("/api/sub-mb/%d" % order["id"]).json()["lines"][0]["item_id"]
@@ -111,6 +113,7 @@ def test_an_order_on_a_boq_project_needs_no_cost_centre(tenant):
     order, _, _ = contractor_order(tenant, lines, [(lines["EXC"], 100, 150)])
     got = tenant.get("/api/wo/orders/%d" % order["id"]).json()
     assert (got.get("order") or got).get("on_boq") is True
+    budget_all(tenant, order["job_id"])
     res = tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     assert res.status_code == 200, res.text
 
@@ -118,6 +121,7 @@ def test_an_order_on_a_boq_project_needs_no_cost_centre(tenant):
 def test_the_tracker_shows_what_is_left_to_give_and_to_do(tenant):
     _, boq, lines = boq_with_lines(tenant)                      # EXC: 500 cum
     order, _, _ = contractor_order(tenant, lines, [(lines["EXC"], 300, 150)])
+    budget_all(tenant, order["job_id"])
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
     assert tenant.post("/api/wo/orders/%d/approve" % order["id"], json={}).status_code == 200
     item = tenant.get("/api/sub-mb/%d" % order["id"]).json()["lines"][0]["item_id"]

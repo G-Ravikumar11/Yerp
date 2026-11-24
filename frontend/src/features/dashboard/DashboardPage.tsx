@@ -7,6 +7,7 @@ import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitl
 import { useInbox } from '@/api/approvals'
 import { attentionHref, useAttention, useCashFlow, usePayables, useProjectPnl, useReceivables, useRetention, type AttentionItem } from '@/api/dashboard'
 import { Figure } from './Figure'
+import { SetupCheck } from './SetupCheck'
 import { useCosts } from '@/api/costs'
 import { useSafety } from '@/api/safety'
 import { useSession } from '@/lib/session'
@@ -193,6 +194,7 @@ export default function DashboardPage() {
         }
       />
 
+      <SetupCheck />
 
       <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-5 lg:grid-cols-3">
         <motion.div variants={rise} className="grid grid-cols-2 gap-3 lg:col-span-3 lg:grid-cols-3 xl:grid-cols-6">

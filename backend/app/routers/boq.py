@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db, get_read_db
 
-from app.constants.boq import BOQ_IMPORT_ALIASES, BOQ_PRICED, BOQ_RATE_ONLY_WORDS, BV_TRANSITIONS
+from app.constants.boq import BOQ_IMPORT_ALIASES, BOQ_PRICED, BOQ_RATE_ONLY_WORDS, BV_TRANSITIONS, boq_grade
 from app.core.audit import log_audit
-from app.core.auth import require_erp_read, require_items_access, wo_actor
+from app.core.auth import require_erp_read, require_items_access, session_can, wo_actor
 from app.core.currency import inr, money, qty3, sheet_number, unit_rate
 from app.core.notifications import notify, notify_employee
 from app.core.serials import next_sequence_number
@@ -158,7 +158,7 @@ def boq_get_summary(boq_id: int, request: Request, rev: Optional[int] = None, gs
 @router.put("/api/boqs/{boq_id}/lines")
 def boq_set_lines(boq_id: int, body: ProjectBoqLinesIn, request: Request, db: Session = Depends(get_db)):
     """Save the BOQ as it is on screen: the lines are replaced as a whole, as the grid holds them."""
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "boq.create")   # the client's order: HO QS and the Master only
     boq = boq_or_404(db, client.id, boq_id)
     rev = boq_revision_of(db, boq)
     if rev.status != "OPEN":
@@ -177,7 +177,7 @@ def boq_set_lines(boq_id: int, body: ProjectBoqLinesIn, request: Request, db: Se
 @router.post("/api/boqs/{boq_id}/revisions")
 def boq_new_revision(boq_id: int, body: dict, request: Request, db: Session = Depends(get_db)):
     """Issue the revision being worked on (locking it) and open the next one as a copy."""
-    client, _, actor_name = wo_actor(request, db)
+    client, _, actor_name = wo_actor(request, db, "boq.create")   # the client's order: HO QS and the Master only
     boq = boq_or_404(db, client.id, boq_id)
     cur = boq_revision_of(db, boq)
     if cur.status == "OPEN":
@@ -233,7 +233,7 @@ async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...)
                      db: Session = Depends(get_db)):
     """Read the client's BOQ sheet as they sent it and hand it back as lines, without saving: they land in the grid to be
     read against the file, and the ordinary save commits them. The sheet's own amounts are checked against its lines."""
-    client, _, _ = wo_actor(request, db)
+    client, _, _ = wo_actor(request, db, "boq.create")   # the client's order: HO QS and the Master only
     boq = boq_or_404(db, client.id, boq_id)
     if boq_revision_of(db, boq).status != "OPEN":
         raise HTTPException(409, "Open a new revision first: the current one is issued.")
@@ -285,7 +285,7 @@ async def boq_import(boq_id: int, request: Request, file: UploadFile = File(...)
                       "uom": (row.get("uom") or "").strip() if kind in BOQ_PRICED else "", "quantity": qty if kind in BOQ_PRICED else 0,
                       "rate": rate if kind in BOQ_PRICED else 0, "amount": money(qty * rate) if kind in BOQ_PRICED else 0,
                       "item_code": (row.get("item_code") or "").strip().upper()[:40] if kind in BOQ_PRICED else "", "remarks": (row.get("remarks") or "").strip(),
-                      "material": (row.get("material") or "").strip()[:60] if kind in BOQ_PRICED else "", "rate_only": rate_only})
+                      "material": boq_grade(row.get("material")) if kind in BOQ_PRICED else "", "rate_only": rate_only})
     if not any(l["kind"] in BOQ_PRICED for l in lines):
         raise HTTPException(400, "Nothing on that sheet read as a priced line." + sheet_note())
     return {"lines": lines[:5000], "read_as": mapping_report(header, mapping), "ignored_columns": unmapped,
@@ -366,6 +366,9 @@ def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
     heads, path, _place = boq_outline(lines)
     grades = line_materials(lines, heads, path)
     suggest = rate_suggestions(db, client.id, boq.job_id, {l.key for l in lines if l.kind in BOQ_PRICED})
+    # The client's rate is the selling price: beside a contractor rate it is the margin, so only those who see the budget
+    # get it. Everybody building an order sees what the budget allows a contractor, or that a line is not budgeted.
+    sees_rates = session_can(request, db, "budget.view") or session_can(request, db, "budget.edit")
     rows = []
     for l in lines:
         if l.kind == "section":
@@ -377,10 +380,11 @@ def boq_available(boq_id: int, request: Request, db: Session = Depends(get_db)):
             rate, source = suggest.get(l.key, (0.0, ""))
             rows.append({"kind": l.kind, "key": l.key, "item_no": l.item_no or "", "group_code": l.group_code or "",
                          "description": l.description, "uom": l.uom or "", "material": grades.get(l.key, ""), "remarks": l.remarks or "",
-                         "item_code": l.item_code or "", "quantity": qty3(l.quantity), "rate": unit_rate(l.rate),
+                         "item_code": l.item_code or "", "quantity": qty3(l.quantity), "rate": unit_rate(l.rate) if sees_rates else None,
+                         "budget_rate": rate if source == "budget" else 0.0, "budgeted": source == "budget",
                          "given": qty3(g["qty"]), "left": qty3(max(0.0, (l.quantity or 0) - g["qty"])),
                          "path": path.get(l.key, []), "suggested_rate": rate, "rate_from": source})
-    return {"boq": boq_head(db, boq, rev), "lines": rows}
+    return {"boq": boq_head(db, boq, rev), "lines": rows, "rates_hidden": not sees_rates}
 
 
 @router.get("/api/boqs/{boq_id}/tracker")

@@ -1,11 +1,11 @@
-import { useState } from 'react'
-import { Paperclip, Plus, Trash2, Users } from 'lucide-react'
+import { useDeferredValue, useState } from 'react'
+import { Download, Paperclip, Plus, Trash2, Users } from 'lucide-react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilesModal } from '@/components/data/FilesModal'
 import { Badge, Button, Card, ConfirmDialog, Field, Input, Modal, NumField, Select, Textarea } from '@/components/ui'
 import {
-  addRentalInvoice, createRental, decideExpense, extendRental, payRentalInvoice, plantKeys, removeExpense, returnRental, saveExpense, saveProvider,
-  useExpenses, useProviders, useRentals, type Expense, type Provider, type Rental, type RentalInvoice,
+  addRentalInvoice, createRental, decideExpense, expensesExport, extendRental, payExpense, payRentalInvoice, plantKeys, removeExpense, returnRental, saveExpense, saveProvider,
+  submitExpense, useExpenseHistory, useExpenses, useProvider, useProviders, useRentals, type Expense, type Provider, type Rental, type RentalInvoice, type ReturnDetails,
 } from '@/api/plant'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
@@ -14,12 +14,14 @@ import { formatINR } from '@/lib/utils'
 import { FormFoot, LoadError, MachineSelect, RangeBar, usePaged } from './plantParts'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 import { RentalVerification } from './PlantChecks'
+import { billLabel, billTone, PAYMENT_TONE } from './rentalLabels'
 
-const rentTone = (s: string) => (s === 'Overdue' ? 'danger' : s === 'Returned' ? 'neutral' : s === 'Upcoming' ? 'info' : s === 'Extended' ? 'warning' : 'success') as 'danger' | 'neutral' | 'info' | 'warning' | 'success'
+// Returned is waiting to be closed (bills complete and approved); Closed is done.
+const rentTone = (s: string) => (s === 'Overdue' ? 'danger' : s === 'Returned' ? 'warning' : s === 'Closed' ? 'neutral' : s === 'Upcoming' ? 'info' : s === 'Extended' ? 'warning' : 'success') as 'danger' | 'neutral' | 'info' | 'warning' | 'success'
 
 // ---- rentals ---------------------------------------------------------------------------------------
 
-export function Rentals() {
+export function Rentals({ initialOpen = null }: { initialOpen?: number | null }) {
   const { can } = useSession()
   const manage = can('stores.manage|workorders.manage')
   const [status, setStatus] = useState('')
@@ -28,7 +30,7 @@ export function Rentals() {
   const prov = useProviders()
   const [adding, setAdding] = useState(false)
   const [providers, setProviders] = useState(false)
-  const [open, setOpen] = useState<number | null>(null)
+  const [open, setOpen] = useState<number | null>(initialOpen)
   const current = q.data?.rentals.find((r) => r.id === open) ?? null
   const { shown, pager } = usePaged(q.data?.rentals)
   const s = q.data?.summary
@@ -46,9 +48,9 @@ export function Rentals() {
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="w-40"><Select aria-label="Status" value={status} placeholder="Any status" onChange={(e) => setStatus(e.target.value)} options={['Upcoming', 'Active', 'Extended', 'Overdue', 'Returned'].map((x) => ({ value: x, label: x }))} /></div>
+        <div className="w-40"><Select aria-label="Status" value={status} placeholder="Any status" onChange={(e) => setStatus(e.target.value)} options={['Upcoming', 'Active', 'Extended', 'Overdue', 'Returned', 'Closed'].map((x) => ({ value: x, label: x }))} /></div>
         <div className="w-52"><Select aria-label="Provider" value={provider || ''} placeholder="Every provider" onChange={(e) => setProvider(Number(e.target.value) || 0)} options={(prov.data?.providers ?? []).map((p) => ({ value: p.id, label: p.name }))} /></div>
-        {s && <span className="text-[13px] text-muted-foreground">{s.Active + s.Extended} on hire - {s.Overdue} overdue - <strong className="text-foreground">{formatINR(s.outstanding)}</strong> owed</span>}
+        {s && <span className="text-[13px] text-muted-foreground">{s.Active + s.Extended} on hire - {s.Overdue} overdue{s.Returned ? ` - ${s.Returned} returned, not yet closed` : ''} - <strong className="text-foreground">{formatINR(s.outstanding)}</strong> owed</span>}
         <span className="ml-auto flex gap-2">
           {manage && <Button variant="outline" onClick={() => setProviders(true)}><Users /> Providers</Button>}
           {manage && <Button onClick={() => setAdding(true)}><Plus /> Hire agreement</Button>}
@@ -108,27 +110,33 @@ function RentalDetail({ rental: r, manage, onClose }: { rental: Rental | null; m
   const [billing, setBilling] = useState(false)
   const [paying, setPaying] = useState<RentalInvoice | null>(null)
   const [files, setFiles] = useState(false)
-  const back = useAction((on: string) => returnRental(r!.id, on), { invalidate: [plantKeys.all], success: (x) => x.message, onSuccess: () => setReturning(false) })
+  const [billFiles, setBillFiles] = useState<RentalInvoice | null>(null)
+  const back = useAction((b: ReturnDetails) => returnRental(r!.id, b), { invalidate: [plantKeys.all], success: (x) => x.message, onSuccess: () => setReturning(false) })
   const live = r && !r.actual_return
   return (
     <Modal open={!!r} onOpenChange={(o) => !o && onClose()} title={r ? `${r.number} - ${r.code} ${r.machine}` : ''} description={r ? `${r.provider?.name ?? ''}, agreement ${r.agreement_no}` : ''} size="xl">
       {r && (
         <div className="grid gap-4">
-          <div className="flex flex-wrap items-center gap-2"><Badge tone={rentTone(r.status)} dot>{r.status}</Badge>{r.fuel_included && <Badge>Fuel included</Badge>}{r.operator_included && <Badge>Operator included</Badge>}</div>
+          <div className="flex flex-wrap items-center gap-2"><Badge tone={rentTone(r.status)} dot>{r.status}</Badge><Badge tone={PAYMENT_TONE[r.payment_status] ?? 'neutral'}>{r.payment_status}</Badge>{r.fuel_included && <Badge>Fuel included</Badge>}{r.operator_included && <Badge>Operator included</Badge>}</div>
+          {r.status === 'Returned' && r.closing_gaps.length > 0 && (
+            <div role="status" className="rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-[13px]"><strong>To close this agreement:</strong><ul className="ml-4 list-disc">{r.closing_gaps.map((g) => <li key={g}>{g}</li>)}</ul></div>
+          )}
           <dl className="grid grid-cols-2 gap-3 text-[13px] sm:grid-cols-4">
             {([['Start', formatDate(r.start_date)], ['Return due', formatDate(r.expected_return)], ['Returned', r.actual_return ? formatDate(r.actual_return) : '-'], ['Rate', `${formatINR(r.rate)} ${r.billing.toLowerCase()}`],
               ['Minimum billable', r.min_billable_hours ? `${r.min_billable_hours} h` : '-'], ['Overtime rate', r.overtime_rate ? formatINR(r.overtime_rate) : '-'], ['Transport', formatINR(r.transport_charges)], ['Deposit / advance', `${formatINR(r.deposit)} / ${formatINR(r.advance)}`],
-              ['Provider contact', `${r.provider?.contact_person ?? ''} ${r.provider?.mobile ?? ''}`], ['Hours used', `${r.used_hours} h`], ['Hours billed', `${r.billed_hours} h`], ['Outstanding', formatINR(r.outstanding)]] as [string, string][]).map(([k, v]) => <div key={k}><dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{k}</dt><dd>{v}</dd></div>)}
+              ['Provider contact', `${r.provider?.contact_person ?? ''} ${r.provider?.mobile ?? ''}`], ['Hours used', `${r.used_hours} h`], ['Hours billed', `${r.billed_hours} h`], ['Outstanding', formatINR(r.outstanding)],
+              ['Expected by the agreement', formatINR(r.expected_total)], ['Billed', formatINR(r.billed)], ['Paid', formatINR(r.paid)], ['Days not billed', String(r.unbilled_days)],
+              ...(r.return ? ([['Final meter', r.return.meter != null ? String(r.return.meter) : '-'], ['Condition at return', r.return.condition || '-'], ['Extra / damage charges', r.return.charges ? `${formatINR(r.return.charges)}${r.return.note ? ` - ${r.return.note}` : ''}` : '-'], ['Return confirmed by', r.return.by || '-']] as [string, string][]) : [])] as [string, string][]).map(([k, v]) => <div key={k}><dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{k}</dt><dd>{v}</dd></div>)}
           </dl>
           {r.notes && <p className="text-[13px] text-muted-foreground">{r.notes}</p>}
           <section><h3 className="mb-2 text-sm font-semibold">Invoices</h3>
             {r.invoices.length === 0 ? <p className="text-[13px] text-muted-foreground">No invoice yet.</p> : (
-              <div className="overflow-x-auto rounded-lg border border-border"><table aria-label="Rental invoices" className="w-full text-[13px]"><thead className="bg-surface text-left text-xs text-muted-foreground"><tr><th className="px-3 py-2">Invoice</th><th className="px-3">Period</th><th className="px-3 text-right">Hours</th><th className="px-3 text-right">Amount</th><th className="px-3 text-right">Paid</th><th className="px-3 text-right">Outstanding</th><th /></tr></thead>
-                <tbody>{r.invoices.map((i) => <tr key={i.id} className="border-t border-border"><td className="px-3 py-2">{i.invoice_no}<div className="text-xs text-muted-foreground">{formatDate(i.invoice_date)}</div></td><td className="px-3">{i.period_from && `${formatDate(i.period_from)} - ${formatDate(i.period_to)}`}</td><td className="px-3 text-right tabular">{i.billed_hours}</td><td className="px-3 text-right tabular">{formatINR(i.amount)}</td><td className="px-3 text-right tabular">{formatINR(i.paid)}{i.paid_on && <div className="text-xs text-muted-foreground">{formatDate(i.paid_on)} {i.payment_ref}</div>}</td><td className="px-3 text-right tabular font-semibold">{formatINR(i.outstanding)}</td><td className="px-3 text-right">{manage && i.outstanding > 0 && <Button size="sm" variant="outline" onClick={() => setPaying(i)}>Pay</Button>}</td></tr>)}</tbody></table></div>
+              <div className="overflow-x-auto rounded-lg border border-border"><table aria-label="Rental invoices" className="w-full text-[13px]"><thead className="bg-surface text-left text-xs text-muted-foreground"><tr><th className="px-3 py-2">Invoice</th><th className="px-3">Period</th><th className="px-3 text-right">Hours</th><th className="px-3 text-right">Amount</th><th className="px-3">Check</th><th className="px-3 text-right">Paid</th><th className="px-3 text-right">Outstanding</th><th /></tr></thead>
+                <tbody>{r.invoices.map((i) => <tr key={i.id} className="border-t border-border"><td className="px-3 py-2">{i.invoice_no}<div className="text-xs text-muted-foreground">{formatDate(i.invoice_date)}</div></td><td className="px-3">{i.period_from && `${formatDate(i.period_from)} - ${formatDate(i.period_to)}`}</td><td className="px-3 text-right tabular">{i.billed_hours}</td><td className="px-3 text-right tabular">{formatINR(i.amount)}{i.expected != null && <div className="text-xs text-muted-foreground">expected {formatINR(i.expected)}</div>}</td><td className="px-3"><Badge tone={billTone(billLabel(i.check, i.verification_status))} dot>{billLabel(i.check, i.verification_status)}</Badge>{i.verified_by && <div className="text-xs text-muted-foreground">{i.verified_by}, {formatDate(i.verified_on)}</div>}<div className="text-xs text-muted-foreground">{i.payment_status}</div></td><td className="px-3 text-right tabular">{formatINR(i.paid)}{i.paid_on && <div className="text-xs text-muted-foreground">{formatDate(i.paid_on)} {i.payment_ref}</div>}</td><td className="px-3 text-right tabular font-semibold">{formatINR(i.outstanding)}</td><td className="px-3 text-right"><span className="inline-flex gap-1"><Button size="sm" variant="ghost" aria-label={`Invoice copy and documents for ${i.invoice_no}`} onClick={() => setBillFiles(i)}><Paperclip /></Button>{manage && i.outstanding > 0 && <Button size="sm" variant="outline" onClick={() => setPaying(i)}>Pay</Button>}</span></td></tr>)}</tbody></table></div>
             )}
           </section>
           <section><h3 className="mb-2 text-sm font-semibold">Agreement history</h3>
-            <ul className="grid gap-1 text-[13px]"><li>Agreed from {formatDate(r.start_date)} to {formatDate(r.extensions[0]?.from ?? r.expected_return)}</li>{r.extensions.map((x, i) => <li key={i}>Extended {formatDate(x.from)} to <strong>{formatDate(x.to)}</strong>{x.reason && ` - ${x.reason}`} <span className="text-muted-foreground">({x.by})</span></li>)}{r.actual_return && <li>Returned {formatDate(r.actual_return)}</li>}</ul>
+            <ul className="grid gap-1 text-[13px]"><li>Agreed from {formatDate(r.start_date)} to {formatDate(r.extensions[0]?.from ?? r.expected_return)}</li>{r.extensions.map((x, i) => <li key={i}>Extended {formatDate(x.from)} to <strong>{formatDate(x.to)}</strong>{x.reason && ` - ${x.reason}`} <span className="text-muted-foreground">({x.by})</span></li>)}{r.actual_return && <li>Returned {formatDate(r.actual_return)}{r.return?.by && ` - confirmed by ${r.return.by}`}</li>}{r.status === 'Closed' && <li>Closed: every day on hire billed and every bill approved</li>}</ul>
           </section>
           <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
             <Button variant="outline" onClick={() => setFiles(true)}><Paperclip /> Agreement and documents</Button>
@@ -139,24 +147,44 @@ function RentalDetail({ rental: r, manage, onClose }: { rental: Rental | null; m
           <ExtendModal open={extending} rental={r} onClose={() => setExtending(false)} />
           <InvoiceModal open={billing} rental={r} onClose={() => setBilling(false)} />
           <PayModal invoice={paying} onClose={() => setPaying(null)} />
-          <ReturnModal open={returning} rental={r} busy={back.isPending} error={back.error?.message} onClose={() => setReturning(false)} onReturn={(on) => back.mutate(on)} />
+          <ReturnModal open={returning} rental={r} busy={back.isPending} error={back.error?.message} onClose={() => setReturning(false)} onReturn={(b) => back.mutate(b)} />
           {files && <FilesModal type="plant_rental" id={r.id} title={`${r.number} agreement and documents`} onClose={() => setFiles(false)} />}
+          {billFiles && <FilesModal type="plant_rental_invoice" id={billFiles.id} title={`Invoice ${billFiles.invoice_no} copy and documents`} onClose={() => setBillFiles(null)} />}
         </div>
       )}
     </Modal>
   )
 }
 
-function ReturnModal({ open, rental: r, busy, error, onClose, onReturn }: { open: boolean; rental: Rental; busy: boolean; error?: string; onClose: () => void; onReturn: (on: string) => void }) {
+/** Exported for its test only. */
+export { ReturnModal as ReturnModalForTest }
+
+function ReturnModal({ open, rental: r, busy, error, onClose, onReturn }: { open: boolean; rental: Rental; busy: boolean; error?: string; onClose: () => void; onReturn: (b: ReturnDetails) => void }) {
   const [on, setOn] = useState(today())
+  const [meter, setMeter] = useState('')
+  const [condition, setCondition] = useState('')
+  const [charges, setCharges] = useState(0)
+  const [note, setNote] = useState('')
+  const dateError = on < r.start_date ? 'Not before it arrived.' : on > today() ? 'Not in the future.' : ''
+  const meterValue = meter.trim() === '' ? null : Number(meter)
+  const meterError = meterValue != null && (Number.isNaN(meterValue) || meterValue < 0) ? 'A reading of 0 or more.' : ''
+  const noteError = charges > 0 && !note.trim() ? 'Say what the charges are for.' : ''
+  const bad = !!(dateError || meterError || noteError || charges < 0)
   return (
-    <Modal open={open} onOpenChange={(o) => !o && onClose()} title={`Return ${r.code} to ${r.provider?.name ?? 'its owner'}?`} description="It comes off its site, anyone allocated to it is taken off, and it can no longer be allocated.">
+    <Modal open={open} onOpenChange={(o) => !o && onClose()} title={`Return ${r.code} to ${r.provider?.name ?? 'its owner'}?`} description={`Due back ${formatDate(r.expected_return)}. It comes off its site, anyone allocated to it is taken off, and it can no longer be allocated.`} size="lg">
       {open && <>
-        <Field label="Returned on" htmlFor="rt-on" error={on < r.start_date ? 'Not before it arrived.' : on > today() ? 'Not in the future.' : ''}><Input id="rt-on" type="date" min={r.start_date} max={today()} value={on} onChange={(e) => setOn(e.target.value)} /></Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Returned on" htmlFor="rt-on" error={dateError}><Input id="rt-on" type="date" min={r.start_date} max={today()} value={on} onChange={(e) => setOn(e.target.value)} /></Field>
+          <Field label="Final meter reading" htmlFor="rt-m" error={meterError} hint="Hours or km, if the machine has a meter"><Input id="rt-m" inputMode="decimal" value={meter} onChange={(e) => setMeter(e.target.value)} /></Field>
+          <Field label="Condition" htmlFor="rt-c"><Select id="rt-c" value={condition} placeholder="Not recorded" onChange={(e) => setCondition(e.target.value)} options={['Good', 'Fair', 'Poor'].map((x) => ({ value: x, label: x }))} /></Field>
+          <Field label="Extra or damage charges" htmlFor="rt-x" hint="Agreed with the provider; part of the last bill expected"><NumField id="rt-x" value={charges} onValue={setCharges} /></Field>
+          <Field label="Note" htmlFor="rt-n" error={noteError} className="sm:col-span-2"><Textarea id="rt-n" rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+        </div>
+        <p className="mt-3 text-[11px] text-muted-foreground">Attach the return note or photos under Agreement and documents.</p>
         <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
           {error && <p role="alert" className="mr-auto text-[13px] text-danger">{error}</p>}
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button loading={busy} disabled={on < r.start_date || on > today()} onClick={() => onReturn(on)}>Yes</Button>
+          <Button loading={busy} disabled={bad} onClick={() => onReturn({ returned_on: on, final_meter: meterValue, condition, extra_charges: charges, note })}>Confirm the return</Button>
         </div>
       </>}
     </Modal>
@@ -204,15 +232,40 @@ function PayModal({ invoice: i, onClose }: { invoice: RentalInvoice | null; onCl
 function ProvidersModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const q = useProviders()
   const [edit, setEdit] = useState<Provider | 'new' | null>(null)
+  const [viewing, setViewing] = useState(0)
+  const close = () => { setEdit(null); setViewing(0); onClose() }
   return (
-    <Modal open={open} onOpenChange={(o) => !o && onClose()} title="Rental providers" description="Whoever machines are hired from." size="lg">
-      {open && (edit ? <ProviderForm p={edit === 'new' ? null : edit} suppliers={q.data?.suppliers ?? []} onDone={() => setEdit(null)} /> : (
+    <Modal open={open} onOpenChange={(o) => !o && close()} title="Rental providers" description="Whoever machines are hired from." size="lg">
+      {open && (edit ? <ProviderForm p={edit === 'new' ? null : edit} suppliers={q.data?.suppliers ?? []} onDone={() => setEdit(null)} /> : viewing ? <ProviderView id={viewing} onBack={() => setViewing(0)} /> : (
         <div>
           <div className="mb-3 flex justify-end"><Button size="sm" onClick={() => setEdit('new')}><Plus /> Provider</Button></div>
-          {(q.data?.providers ?? []).length === 0 ? <p className="text-[13px] text-muted-foreground">None yet.</p> : <ul className="grid gap-2">{q.data!.providers.map((p) => <li key={p.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-[13px]"><div className="min-w-0 flex-1"><p className="font-medium">{p.name}</p><p className="text-xs text-muted-foreground">{[p.contact_person, p.mobile, p.email].filter(Boolean).join(' - ')}</p></div><Button size="sm" variant="outline" onClick={() => setEdit(p)}>Edit</Button><MasterDelete kind="rental_provider" id={p.id} label={p.name} noun="rental provider" /></li>)}</ul>}
+          {(q.data?.providers ?? []).length === 0 ? <p className="text-[13px] text-muted-foreground">None yet.</p> : <ul className="grid gap-2">{q.data!.providers.map((p) => <li key={p.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-[13px]"><div className="min-w-0 flex-1"><button type="button" className="font-medium text-primary hover:underline" onClick={() => setViewing(p.id)}>{p.name}</button><p className="text-xs text-muted-foreground">{[p.contact_person, p.mobile, p.email].filter(Boolean).join(' - ')}</p></div><Button size="sm" variant="outline" onClick={() => setEdit(p)}>Edit</Button><MasterDelete kind="rental_provider" id={p.id} label={p.name} noun="rental provider" /></li>)}</ul>}
         </div>
       ))}
     </Modal>
+  )
+}
+
+/** One provider: who they are, what is hired from them now and before, and what has been billed, paid and is owed. */
+function ProviderView({ id, onBack }: { id: number; onBack: () => void }) {
+  const q = useProvider(id)
+  const d = q.data
+  const list = (rows: NonNullable<typeof d>['open'], empty: string) => rows.length === 0 ? <p className="text-[13px] text-muted-foreground">{empty}</p> : (
+    <ul className="grid gap-1.5 text-[13px]">{rows.map((r) => <li key={r.id} className="flex flex-wrap items-center gap-x-2"><span className="font-mono font-semibold">{r.number}</span><span>{r.code} {r.machine}</span><span className="text-muted-foreground">{formatDate(r.start_date)} - {formatDate(r.actual_return || r.expected_return)}</span><Badge tone={rentTone(r.status)} dot>{r.status}</Badge><span className="ml-auto tabular">{formatINR(r.billed)} billed, {formatINR(r.outstanding)} owed</span></li>)}</ul>
+  )
+  return (
+    <div className="grid gap-4">
+      <div><Button size="sm" variant="ghost" onClick={onBack}>&larr; All providers</Button></div>
+      {q.isError ? <LoadError message={q.error.message} retry={() => q.refetch()} /> : !d ? <p className="text-[13px] text-muted-foreground">Loading...</p> : <>
+        <div className="text-[13px]"><p className="text-base font-semibold">{d.provider.name}</p><p className="text-muted-foreground">{[d.provider.contact_person, d.provider.mobile, d.provider.email].filter(Boolean).join(' - ')}</p>{d.provider.address && <p className="text-muted-foreground">{d.provider.address}</p>}</div>
+        <dl className="grid grid-cols-2 gap-3 text-[13px] sm:grid-cols-5">
+          {([['Agreements', String(d.totals.agreements)], ['Billed (spend)', formatINR(d.totals.billed)], ['Paid', formatINR(d.totals.paid)], ['Outstanding', formatINR(d.totals.outstanding)], ['Approved, unpaid', formatINR(d.totals.approved_outstanding)]] as [string, string][]).map(([k, v]) => <div key={k}><dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{k}</dt><dd className="font-semibold tabular">{v}</dd></div>)}
+        </dl>
+        <section><h3 className="mb-2 text-sm font-semibold">On hire now</h3>{list(d.open, 'Nothing on hire from them now.')}</section>
+        <section><h3 className="mb-2 text-sm font-semibold">Completed</h3>{list(d.completed, 'No finished agreements yet.')}</section>
+        <section><h3 className="mb-2 text-sm font-semibold">Payments</h3>{d.payments.length === 0 ? <p className="text-[13px] text-muted-foreground">No payments recorded.</p> : <ul className="grid gap-1 text-[13px]">{d.payments.map((x, i) => <li key={i}>{formatDate(x.paid_on)} - <strong>{formatINR(x.paid)}</strong> on invoice {x.invoice_no} ({x.rental}){x.payment_ref && <span className="text-muted-foreground"> - {x.payment_ref}</span>}</li>)}</ul>}</section>
+      </>}
+    </div>
   )
 }
 
@@ -243,29 +296,46 @@ const SOURCE: Record<string, string> = { expense: 'Entered here', fuel: 'Fuel re
 export function Expenses() {
   const { can } = useSession()
   const manage = can('stores.manage|workorders.manage')
+  const approver = can('site.signoff')
+  const payer = can('stores.manage|workorders.manage|accounts.manage|bills.pay')
   const [r, setR] = useState({ from: '', to: '', asset: 0, category: '' })
-  const q = useExpenses({ date_from: r.from, date_to: r.to, asset_id: r.asset, category: r.category })
+  const [search, setSearch] = useState('')
+  const q = useDeferredValue(search.trim())
+  const range = { date_from: r.from, date_to: r.to, asset_id: r.asset, category: r.category, q }
+  const badRange = !!(r.from && r.to && r.to < r.from)
+  const list = useExpenses(badRange ? { ...range, date_to: '' } : range)
   const [edit, setEdit] = useState<Expense | 'new' | null>(null)
   const [removing, setRemoving] = useState<Expense | null>(null)
   const [rejecting, setRejecting] = useState<Expense | null>(null)
+  const [paying, setPaying] = useState<Expense | null>(null)
+  const [history, setHistory] = useState<Expense | null>(null)
   const [files, setFiles] = useState<Expense | null>(null)
   const decide = useAction((v: { e: Expense; d: 'approve' | 'reject'; remarks: string }) => decideExpense(v.e.id, v.d, v.remarks), { invalidate: [plantKeys.all], success: (x) => x.message, onSuccess: () => setRejecting(null) })
+  const send = useAction((e: Expense) => submitExpense(e.id), { invalidate: [plantKeys.all], success: (x) => x.message })
   const del = useAction((e: Expense) => removeExpense(e.id), { invalidate: [plantKeys.all], success: (x) => x.message, onSuccess: () => setRemoving(null) })
-  const { shown, pager } = usePaged(q.data?.expenses)
+  const { shown, pager } = usePaged(list.data?.expenses)
+  const busy = (e: Expense) => (decide.isPending && decide.variables?.e.id === e.id) || (send.isPending && send.variables?.id === e.id)
   const cols: TableColumn<Expense>[] = [
-    { id: 'n', header: 'ID', cell: (e) => <div><span className="font-mono text-[13px]">{e.number}</span><div className="text-xs text-muted-foreground">{SOURCE[e.source]}</div></div> },
+    { id: 'n', header: 'ID', cell: (e) => <div>{e.source === 'expense' ? <button type="button" title="History" aria-label={`History of ${e.number}`} className="font-mono text-[13px] font-semibold text-primary hover:underline" onClick={() => setHistory(e)}>{e.number}</button> : <span className="font-mono text-[13px]">{e.number}</span>}<div className="text-xs text-muted-foreground">{SOURCE[e.source]}</div></div> },
     { id: 'd', header: 'Date', sort: (e) => e.spent_on, cell: (e) => formatDate(e.spent_on) },
     { id: 'm', header: 'Machine', cell: (e) => <div><span className="font-mono text-[13px]">{e.code}</span> {e.machine}</div> },
     { id: 'c', header: 'Category', cell: (e) => <div>{e.category}<div className="max-w-56 truncate text-xs text-muted-foreground" title={e.description}>{e.description}</div></div> },
     { id: 'a', header: 'Amount', align: 'right', sort: (e) => e.amount, cell: (e) => <div>{formatINR(e.amount)}{e.quantity > 0 && e.unit_rate > 0 && <div className="text-xs text-muted-foreground">{e.quantity} x {e.unit_rate}</div>}</div> },
     { id: 'v', header: 'Vendor / invoice', hideBelow: 'md', cell: (e) => <div>{e.vendor || '-'}<div className="text-xs text-muted-foreground">{e.invoice_no}</div></div> },
-    { id: 'p', header: 'Payment', hideBelow: 'lg', cell: (e) => e.payment_status || '-' },
-    { id: 's', header: 'Approval', cell: (e) => <Badge tone={e.approval_status === 'Approved' ? 'success' : e.approval_status === 'Rejected' ? 'danger' : e.approval_status === 'Pending' ? 'warning' : 'neutral'} dot>{e.approval_status}</Badge> },
+    {
+      id: 'p', header: 'Payment', hideBelow: 'lg',
+      cell: (e) => e.remaining === null ? <span className="text-xs text-muted-foreground">{e.payment_note || 'Not tracked'}</span> : e.approval_status === 'Rejected' ? <span className="text-muted-foreground">-</span> : (
+        <div>{e.payment_status || '-'}{e.remaining > 0 && e.payment_status !== 'Paid' && <div className="text-xs text-muted-foreground">{formatINR(e.remaining)} left{e.legacy_payment && ' (earlier payment not recorded)'}</div>}{e.source === 'rental' && e.payment_note && <div className="text-xs text-muted-foreground">{e.payment_note}</div>}</div>
+      ),
+    },
+    { id: 's', header: 'Approval', cell: (e) => <div><Badge tone={APPROVAL_TONE[e.approval_label] ?? 'neutral'} dot>{e.approval_label}</Badge>{e.approved_by && e.source === 'expense' && e.approval_status !== 'Pending' && e.approval_status !== 'Recorded' && <div className="text-xs text-muted-foreground">{e.approved_by}{e.approved_on && `, ${formatDate(e.approved_on.slice(0, 10))}`}</div>}{e.decision_note && <div className="max-w-48 truncate text-xs text-muted-foreground" title={e.decision_note}>{e.decision_note}</div>}</div> },
     {
       id: 'act', header: '', align: 'right',
       cell: (e) => e.source !== 'expense' ? null : (
-        <div className="flex justify-end gap-1">
-          {can('site.signoff') && e.approval_status === 'Pending' && <><Button size="sm" onClick={() => decide.mutate({ e, d: 'approve', remarks: '' })}>Approve</Button><Button size="sm" variant="ghost" className="text-danger" onClick={() => setRejecting(e)}>Reject</Button></>}
+        <div className="flex flex-wrap justify-end gap-1">
+          {manage && e.approval_status === 'Recorded' && <Button size="sm" loading={send.isPending && send.variables?.id === e.id} disabled={busy(e)} onClick={() => send.mutate(e)}>Submit</Button>}
+          {approver && e.approval_status === 'Pending' && <><Button size="sm" disabled={busy(e)} loading={decide.isPending && decide.variables?.e.id === e.id} onClick={() => decide.mutate({ e, d: 'approve', remarks: '' })}>Approve</Button><Button size="sm" variant="ghost" className="text-danger" onClick={() => setRejecting(e)}>Reject</Button></>}
+          {payer && e.approval_status === 'Approved' && (e.remaining ?? 0) > 0 && <Button size="sm" variant="outline" onClick={() => setPaying(e)}>Pay</Button>}
           {manage && e.approval_status !== 'Approved' && <Button size="sm" variant="outline" onClick={() => setEdit(e)}>Edit</Button>}
           <Button size="sm" variant="ghost" aria-label={`Attachments for ${e.number}`} onClick={() => setFiles(e)}><Paperclip /></Button>
           {manage && e.approval_status !== 'Approved' && <Button size="sm" variant="ghost" className="text-danger" aria-label={`Delete ${e.number}`} onClick={() => setRemoving(e)}><Trash2 /></Button>}
@@ -273,24 +343,86 @@ export function Expenses() {
       ),
     },
   ]
-  const d = q.data
+  const d = list.data
+  const pick = (category: string) => setR((x) => ({ ...x, category: x.category === category ? '' : category }))
   return (
     <div>
       <RangeBar from={r.from} to={r.to} onChange={(from, to) => setR((x) => ({ ...x, from, to }))}>
         <div className="w-52"><MachineSelect id="ex-fm" value={r.asset} onChange={(asset) => setR((x) => ({ ...x, asset }))} placeholder="Every machine" /></div>
         <div className="w-52"><Select aria-label="Category" value={r.category} placeholder="Every category" onChange={(e) => setR((x) => ({ ...x, category: e.target.value }))} options={(d?.all_categories ?? []).map((c) => ({ value: c, label: c }))} /></div>
-        {manage && <Button className="ml-auto" onClick={() => setEdit('new')}><Plus /> Expense</Button>}
+        <div className="w-56"><Input aria-label="Search expenses" placeholder="ID, vendor or invoice no." value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+        <span className="ml-auto flex gap-2">
+          <Button variant="outline" asChild><a href={expensesExport(range)} download><Download /> Excel</a></Button>
+          {manage && <Button onClick={() => setEdit('new')}><Plus /> Expense</Button>}
+        </span>
       </RangeBar>
-      {d && <div className="mb-3 flex flex-wrap gap-2 text-[13px]">{Object.entries(d.by_category).map(([k, v]) => <span key={k} className="rounded-md border border-border px-3 py-1">{k}: <strong>{formatINR(v)}</strong></span>)}<span className="rounded-md bg-primary-soft px-3 py-1 font-semibold">Total {formatINR(d.total)}</span></div>}
-      {q.isError ? <LoadError message={q.error.message} retry={() => q.refetch()} /> : (
-        <Card className="overflow-hidden"><DataTable label="Equipment expenses" className="rounded-none border-0 shadow-none" rows={shown} columns={cols} rowKey={(e) => `${e.source}-${e.id}`} loading={q.isPending} empty="No expenses for these filters." />{!q.isPending && pager}</Card>
+      {badRange && <p role="alert" className="mb-2 text-[13px] text-danger">The to date is before the from date.</p>}
+      {d && (
+        <div className="mb-3 flex flex-wrap gap-2 text-[13px]" aria-label="Expenses by category">
+          {Object.entries(d.by_category).map(([k, v]) => (
+            <button key={k} type="button" aria-pressed={r.category === k} onClick={() => pick(k)} className={`rounded-md border px-3 py-1 transition-colors hover:border-primary/50 ${r.category === k ? 'border-primary bg-primary-soft' : 'border-border'}`}>{k}: <strong>{formatINR(v)}</strong></button>
+          ))}
+          <button type="button" aria-pressed={!r.category} onClick={() => setR((x) => ({ ...x, category: '' }))} className={`rounded-md px-3 py-1 font-semibold ${!r.category ? 'bg-primary-soft ring-1 ring-primary/40' : 'bg-primary-soft'}`}>Total {formatINR(d.total_all)}</button>
+          {r.category && <span className="self-center text-muted-foreground">Showing {r.category}: {formatINR(d.total)}</span>}
+        </div>
       )}
-      <p className="mt-2 text-[11px] text-muted-foreground">Fuel, maintenance and rental bills come from their own registers and are shown here once. Spares, wages, transport, insurance and other costs are entered here. A rejected expense is not counted.</p>
+      {list.isError ? <LoadError message={list.error.message} retry={() => list.refetch()} /> : (
+        <Card className="overflow-hidden"><DataTable label="Equipment expenses" className="rounded-none border-0 shadow-none" rows={shown} columns={cols} rowKey={(e) => `${e.source}-${e.id}`} loading={list.isPending} empty={q ? `Nothing matches "${q}".` : 'No expenses for these filters.'} />{!list.isPending && pager}</Card>
+      )}
+      <p className="mt-2 text-[11px] text-muted-foreground">Fuel, maintenance and rental bills come from their own registers and are shown here once. Spares, wages, transport, insurance and other costs are entered here: recorded, submitted, approved, then paid. A rejected expense is not counted.</p>
       <ExpenseModal edit={edit} categories={d?.categories ?? []} onClose={() => setEdit(null)} />
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title={removing ? `Delete ${removing.number}?` : ''} description="Do you want to delete this? It cannot be undone." confirmLabel="Yes" cancelLabel="Cancel" tone="danger" loading={del.isPending} onConfirm={() => { if (removing) del.mutate(removing) }} />
-      <ConfirmDialog open={!!rejecting} onOpenChange={(o) => !o && setRejecting(null)} title="Reject this expense?" reason={{ label: 'Why', required: true }} confirmLabel="Reject" cancelLabel="Cancel" tone="danger" loading={decide.isPending} onConfirm={(remarks) => { if (rejecting) decide.mutate({ e: rejecting, d: 'reject', remarks }) }} />
+      <ConfirmDialog open={!!rejecting} onOpenChange={(o) => !o && setRejecting(null)} title={rejecting?.approval_status === 'Approved' ? `Reverse the approval of ${rejecting.number}?` : 'Reject this expense?'} reason={{ label: 'Why', required: true }} confirmLabel="Reject" cancelLabel="Cancel" tone="danger" loading={decide.isPending} onConfirm={(remarks) => { if (rejecting) decide.mutate({ e: rejecting, d: 'reject', remarks }) }} />
+      {paying && <PayExpenseModal expense={paying} onClose={() => setPaying(null)} />}
+      {history && <ExpenseHistoryModal expense={history} onClose={() => setHistory(null)} />}
       {files && <FilesModal type="plant_expense" id={files.id} title={`${files.number} invoice and documents`} onClose={() => setFiles(null)} />}
     </div>
+  )
+}
+
+const APPROVAL_TONE: Record<string, 'success' | 'danger' | 'warning' | 'neutral' | 'info'> = { Approved: 'success', Verified: 'success', Rejected: 'danger', Disputed: 'danger', Submitted: 'warning', Recorded: 'neutral' }
+
+/** One payment against an approved expense. Its key is made when the form opens, so it is recorded once however often it is sent. */
+export function PayExpenseModal({ expense: e, onClose }: { expense: Expense; onClose: () => void }) {
+  const left = e.remaining ?? 0
+  const [amount, setAmount] = useState(left)
+  const [on, setOn] = useState(today())
+  const [ref, setRef] = useState('')
+  const [key] = useState(() => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`))
+  const save = useAction(() => payExpense(e.id, { amount, paid_on: on, reference: ref }, key), { invalidate: [plantKeys.all], success: (x) => x.message, onSuccess: onClose })
+  const error = amount <= 0 ? 'The amount paid.' : amount > left + 0.009 ? `Only ${formatINR(left)} is left.` : on > today() ? 'Not in the future.' : on < e.spent_on ? 'Not before the expense.' : ''
+  return (
+    <Modal open onOpenChange={(o) => !o && onClose()} title={`Pay ${e.number}`} description={`${formatINR(e.amount)} approved, ${formatINR(e.paid ?? 0)} paid, ${formatINR(left)} left.`}>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="Amount" htmlFor="xp-a" error={amount > left + 0.009 ? error : ''}><NumField id="xp-a" value={amount} onValue={setAmount} /></Field>
+        <Field label="Paid on" htmlFor="xp-d"><Input id="xp-d" type="date" min={e.spent_on} max={today()} value={on} onChange={(ev) => setOn(ev.target.value)} /></Field>
+        <Field label="Reference" htmlFor="xp-r" hint="UTR, cheque or voucher"><Input id="xp-r" value={ref} onChange={(ev) => setRef(ev.target.value)} /></Field>
+      </div>
+      <FormFoot error={save.error?.message || (error && amount > 0 && amount <= left ? error : '')} busy={save.isPending} label="Record payment" onClose={onClose} onSave={() => !error && !save.isPending && save.mutate()} />
+    </Modal>
+  )
+}
+
+const STEP: Record<string, string> = { recorded: 'Recorded', updated: 'Changed', submitted: 'Submitted', approved: 'Approved', rejected: 'Rejected', paid: 'Paid', removed: 'Removed' }
+
+function ExpenseHistoryModal({ expense: e, onClose }: { expense: Expense; onClose: () => void }) {
+  const h = useExpenseHistory(e.id)
+  return (
+    <Modal open onOpenChange={(o) => !o && onClose()} title={`${e.number} history`} description={`${e.category} - ${formatINR(e.amount)}`} size="lg">
+      {h.isError ? <LoadError message={h.error.message} retry={() => h.refetch()} /> : !h.data ? <p className="text-[13px] text-muted-foreground">Loading...</p> : (
+        <div className="grid gap-4 text-[13px]">
+          <section><h3 className="mb-2 text-sm font-semibold">Payments</h3>
+            {h.data.payments.length === 0 ? <p className="text-muted-foreground">{h.data.legacy_payment ? 'Marked paid before payments were recorded here.' : 'No payment yet.'}</p> : (
+              <ul className="grid gap-1">{h.data.payments.map((p, i) => <li key={i}>{formatDate(p.paid_on)} - <strong>{formatINR(p.amount)}</strong>{p.reference && ` - ${p.reference}`} <span className="text-muted-foreground">({p.by})</span></li>)}</ul>
+            )}
+            <p className="mt-1 text-muted-foreground">Paid {formatINR(h.data.paid)}, {formatINR(h.data.remaining)} left.</p>
+          </section>
+          <section><h3 className="mb-2 text-sm font-semibold">Steps</h3>
+            <ul className="grid gap-1">{h.data.history.map((x, i) => <li key={i}><span className="text-muted-foreground">{x.at}</span> <strong>{STEP[x.action] ?? x.action}</strong>{x.who && ` by ${x.who}`}{x.details && <span className="text-muted-foreground"> - {x.details}</span>}</li>)}</ul>
+          </section>
+        </div>
+      )}
+    </Modal>
   )
 }
 
@@ -300,7 +432,7 @@ function ExpenseModal({ edit, categories, onClose }: { edit: Expense | 'new' | n
 }
 
 function ExpenseForm({ e, categories, onClose }: { e: Expense | null; categories: string[]; onClose: () => void }) {
-  const [f, setF] = useState({ asset_id: e?.asset_id ?? 0, category: e?.category ?? categories[0] ?? 'Other', spent_on: e?.spent_on ?? today(), description: e?.description ?? '', vendor: e?.vendor ?? '', invoice_no: e?.invoice_no ?? '', payment_status: e?.payment_status ?? 'Unpaid', payment_ref: e?.payment_ref ?? '' })
+  const [f, setF] = useState({ asset_id: e?.asset_id ?? 0, category: e?.category ?? categories[0] ?? 'Other', spent_on: e?.spent_on ?? today(), description: e?.description ?? '', vendor: e?.vendor ?? '', invoice_no: e?.invoice_no ?? '' })
   const [n, setN] = useState({ quantity: e?.quantity ?? 0, unit_rate: e?.unit_rate ?? 0, amount: e?.amount ?? 0 })
   const [tried, setTried] = useState(false)
   const set = (k: keyof typeof f) => (ev: { target: { value: string } }) => setF((x) => ({ ...x, [k]: ev.target.value }))
@@ -320,10 +452,9 @@ function ExpenseForm({ e, categories, onClose }: { e: Expense | null; categories
         <Field label="Total amount" htmlFor="xe-a" error={tried ? errors.amount : ''} hint={n.quantity > 0 && n.unit_rate > 0 ? 'Quantity x rate' : undefined}><NumField id="xe-a" value={computed} disabled={n.quantity > 0 && n.unit_rate > 0} onValue={(v) => setN((x) => ({ ...x, amount: v }))} /></Field>
         <Field label="Vendor or payee" htmlFor="xe-v"><Input id="xe-v" value={f.vendor} onChange={set('vendor')} /></Field>
         <Field label="Invoice or voucher no." htmlFor="xe-i" hint="Each is recorded once"><Input id="xe-i" value={f.invoice_no} onChange={set('invoice_no')} /></Field>
-        <Field label="Payment" htmlFor="xe-p"><Select id="xe-p" value={f.payment_status} onChange={set('payment_status')} options={['Unpaid', 'Part paid', 'Paid'].map((x) => ({ value: x, label: x }))} /></Field>
-        <Field label="Payment reference" htmlFor="xe-pr" className="sm:col-span-2"><Input id="xe-pr" value={f.payment_ref} onChange={set('payment_ref')} /></Field>
       </div>
-      <FormFoot error={save.error?.message} busy={save.isPending} label={e ? 'Save' : 'Record the expense'} onClose={onClose} onSave={() => (bad ? setTried(true) : save.mutate())} />
+      <p className="mt-3 text-[11px] text-muted-foreground">Payments are recorded against it once it is approved. Attach the bill from the paperclip in the list.</p>
+      <FormFoot error={save.error?.message} busy={save.isPending} label={e ? 'Save' : 'Record the expense'} onClose={onClose} onSave={() => (bad ? setTried(true) : !save.isPending && save.mutate())} />
     </div>
   )
 }

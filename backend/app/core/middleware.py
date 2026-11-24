@@ -126,19 +126,6 @@ app.add_middleware(
 )
 app.add_middleware(SessionCookieLifetimeMiddleware)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    # The phone app is another origin, so a header it adds is asked about first (the preflight) and refused if it is not listed:
-    # the browser then reports an ordinary network failure, which the offline queue reads as "no signal". Idempotency-Key is sent
-    # with every change that may be kept for later (stores/offline.ts), X-Base-Version with an edit sent from the queue.
-    allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Base-Version"],
-    # The installed phone app talks to the server from another origin; these are read by lib/freshness.ts.
-    expose_headers=["X-App-Build", "X-Client-Reset"],
-)
-
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 
@@ -421,3 +408,20 @@ from app.core.login_guard import ClientAddressMiddleware  # noqa: E402
 app.add_middleware(HeavyMiddleware)
 app.add_middleware(FloodMiddleware)
 app.add_middleware(ClientAddressMiddleware)
+
+# Added after every other layer, so it is the outermost: a reply made by an inner layer - the idempotency one rebuilds
+# the answer and keeps only its type, a replay never reaches the inner layers at all, the body limit and the flood
+# guard answer for themselves - still carries the Access-Control headers. Without them the phone app's browser refuses
+# to hand the answer over and reports a dropped connection, though the server did the work.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    # The phone app is another origin, so a header it adds is asked about first (the preflight) and refused if it is not listed:
+    # the browser then reports an ordinary network failure, which the offline queue reads as "no signal". Idempotency-Key is sent
+    # with every change that may be kept for later (stores/offline.ts), X-Base-Version with an edit sent from the queue.
+    allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Base-Version"],
+    # The installed phone app talks to the server from another origin; these are read by lib/freshness.ts.
+    expose_headers=["X-App-Build", "X-Client-Reset"],
+)

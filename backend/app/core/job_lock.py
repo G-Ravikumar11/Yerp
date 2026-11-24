@@ -82,9 +82,18 @@ def _jobs_of_row(session, table, values, steps):
         parent = list(c.foreign_keys)[0].column.table
         if parent.name in ("clients", "employees", "erp_items", "contractors", "suppliers", "users", "team_members"):
             continue
+        # The projects of a parent, worked out once per save: two hundred BOQ lines saved together have the same BOQ, and
+        # asking for it two hundred times was a round trip each - a minute on a database far from the server.
+        memo = session.info.get("job_lock_parents")
+        key = (parent.name, values[c.name])
+        if memo is not None and key in memo:
+            found |= memo[key]
+            continue
         row = session.execute(select(*_trail_columns(parent)).where(parent.c.id == values[c.name])).mappings().first()
-        if row is not None:
-            found |= _jobs_of_row(session, parent, dict(row), steps + 1)
+        theirs = _jobs_of_row(session, parent, dict(row), steps + 1) if row is not None else set()
+        if memo is not None:
+            memo[key] = theirs
+        found |= theirs
     return found
 
 
@@ -134,7 +143,11 @@ def _refuse_on_locked(session, flush_context, instances):
         locked = _locked_ids(session)
         if not locked:
             return
-        for obj, deleted in pending:
-            for job_id in _jobs_of(session, obj, deleted):
-                if job_id in locked:
-                    raise LockedProject(session.get(models.DBJob, job_id))
+        session.info["job_lock_parents"] = {}
+        try:
+            for obj, deleted in pending:
+                for job_id in _jobs_of(session, obj, deleted):
+                    if job_id in locked:
+                        raise LockedProject(session.get(models.DBJob, job_id))
+        finally:
+            session.info.pop("job_lock_parents", None)

@@ -147,7 +147,11 @@ export interface AvailableLine {
   remarks?: string
   item_code?: string
   quantity?: number
-  rate?: number
+  /** The client's rate - null for whoever does not see budgets and margins. */
+  rate?: number | null
+  /** What the budget allows a contractor per unit (labour + plant & other), and whether the line is budgeted at all. */
+  budget_rate?: number
+  budgeted?: boolean
   given?: number
   left?: number
   /** A contractor rate to start from: the budget's labour and plant per unit, else the rate last given. */
@@ -197,7 +201,7 @@ export const useBoqSummary = (id: number, gst: number, enabled: boolean, rev?: n
 export const useBoqMaterials = () => useQuery({ queryKey: ['boq', 'materials'], queryFn: () => get<{ materials: string[] }>('/api/boqs/materials') })
 // Read afresh each time the picker opens: the BOQ, what other orders have taken and the budget all change elsewhere.
 export const useAvailable = (id: number) =>
-  useQuery({ queryKey: boqKeys.available(id), enabled: id > 0, staleTime: 0, gcTime: 0, queryFn: () => get<{ boq: BoqHead; lines: AvailableLine[] }>(`/api/boqs/${id}/available`) })
+  useQuery({ queryKey: boqKeys.available(id), enabled: id > 0, staleTime: 0, gcTime: 0, queryFn: () => get<{ boq: BoqHead; lines: AvailableLine[]; rates_hidden?: boolean }>(`/api/boqs/${id}/available`) })
 export const useBoqChanges = (id: number, from: number, enabled: boolean) => useQuery({ queryKey: ['boq', 'changes', id, from], enabled: enabled && id > 0, queryFn: () => get<BoqChanges>(`/api/boqs/${id}/changes?frm=${from}`) })
 
 export const createBoq = (jobId: number, title: string) => post<{ boq: BoqHead; message: string }>('/api/boqs', { job_id: jobId, title })

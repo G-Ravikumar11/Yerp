@@ -31,7 +31,7 @@ const type = (el: HTMLElement, value: string) => fireEvent.change(el, { target: 
 
 beforeEach(() => { sent.calls.length = 0 })
 
-describe('the journal voucher will not be sent until it is balanced, has an amount and says what it is for', () => {
+describe('the journal voucher will not be sent until it has an amount and says what it is for; one that is out is still sent', () => {
   const send = () => screen.getByRole('button', { name: 'Send to the Master' })
   const open = () => wrap(<JournalModal ledgers={[{ key: 'a', label: 'A' }]} defaultJob={0} onClose={() => undefined} />)
   const narrate = (text: string) => type(screen.getByPlaceholderText('What it is for - this goes in the books'), text)
@@ -42,17 +42,17 @@ describe('the journal voucher will not be sent until it is balanced, has an amou
     for (const b of screen.getAllByRole('button', { name: 'Remove line' })) expect(b).toBeDisabled()
   })
 
-  it('says how far out it is, and sends only when debit equals credit', () => {
+  it('says how far out it is and still sends: Tally gets the difference in Suspense A/c', () => {
     open()
     narrate('Rent booked to the wrong site')
     const [dr1] = screen.getAllByLabelText('Debit')
     const [, cr2] = screen.getAllByLabelText('Credit')
     type(dr1, '1000')
-    expect(screen.getByText(/out by/)).toBeInTheDocument()
-    expect(send()).toBeDisabled()
+    expect(screen.getByText(/out by .*1,000.*Suspense A\/c/)).toBeInTheDocument()
+    expect(send()).toBeEnabled()                                   // debit with no credit yet: kept, the whole of it in suspense
     type(cr2, '900')
-    expect(screen.getByText(/out by/)).toBeInTheDocument()
-    expect(send()).toBeDisabled()
+    expect(screen.getByText(/out by .*100.*Suspense A\/c/)).toBeInTheDocument()
+    expect(send()).toBeEnabled()
     type(cr2, '1000')
     expect(screen.queryByText(/out by/)).not.toBeInTheDocument()
     expect(send()).toBeEnabled()
@@ -71,7 +71,7 @@ describe('the journal voucher will not be sent until it is balanced, has an amou
     expect(send()).toBeEnabled()
     type(dr1, '0')
     type(cr2, '0')
-    expect(send()).toBeDisabled()          // balanced at nothing
+    expect(send()).toBeDisabled()          // nothing at all
   })
 
   it('lets a third line be added and then removed again', () => {

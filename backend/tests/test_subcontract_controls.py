@@ -5,6 +5,7 @@ guarantee, and the budget an order is held against.
 Each was a figure somebody could read and nothing stopped. Here each is shown to stop what it should, to say why
 in words, and - where the Master may sign past it - to keep the reason on the record.
 """
+from conftest import budget_all
 from datetime import date, timedelta
 
 from conftest import fund_order
@@ -231,6 +232,7 @@ def test_an_order_past_the_boq_needs_an_override_to_be_approved(tenant):
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"]}
     _, _, res = contractor_order(tenant, lines, [(lines["EXC"], 600, 150), (lines["RCC"], 100, 9000)])
     order = fund_order(tenant, res["order"])
+    budget_all(tenant, order["job_id"])
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200
     detail = tenant.get("/api/wo/orders/%d" % order["id"]).json()["order"]
     assert len(detail["boq_warnings"]) == 2
@@ -253,6 +255,7 @@ def test_a_bill_that_takes_contractors_past_the_boq_needs_the_masters_reason(ten
     pulled[0]["tolerance_percent"] = 20
     order = tenant.put("/api/wo/orders/%d/boq" % order["id"], json={"lines": pulled}).json()["order"]
     order = fund_order(tenant, order)
+    budget_all(tenant, order["job_id"])
     tenant.post("/api/wo/orders/%d/submit" % order["id"], json={})
     assert tenant.post("/api/wo/orders/%d/approve" % order["id"], json={}).status_code == 200
     item = book(tenant, order["id"])["lines"][0]["item_id"]

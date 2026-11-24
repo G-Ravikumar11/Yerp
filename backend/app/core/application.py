@@ -19,6 +19,7 @@ from app.core.lifecycle import (
     _boot_step,
     backfill_entry_codes,
     carry_reorder_levels_into_hub,
+    clear_number_grades,
     convert_legacy_holds_all,
     fill_document_names,
 )
@@ -46,6 +47,7 @@ async def lifespan(app: FastAPI):
         convert_legacy_holds_all()
         _boot_step("number the entries of the measurement book", backfill_entry_codes)
         _boot_step("one reorder level per item, the Store Hub's", carry_reorder_levels_into_hub)
+        _boot_step("no number taken for a material grade", clear_number_grades)
         from app.services.hr import apply_india_onboarding_all
         _boot_step("onboarding documents", apply_india_onboarding_all)
         _boot_step("the website's first content", _seed_website)

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SitePage from './SitePage'
@@ -9,7 +9,12 @@ beforeEach(() => {
   vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {} }))
 })
-afterEach(() => vi.unstubAllGlobals())
+// The page is taken down while the stand-ins are still there: its counters start watching a moment after the data arrives, and on a
+// slow runner that was after the stand-ins had gone ("IntersectionObserver is not defined").
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 const live = { company_id: 7, numbers: { projects_delivered: 12, ongoing_sites: 3, safe_man_hours: 0 }, projects: [] }
 const stubFetch = () => {

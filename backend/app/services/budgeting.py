@@ -143,6 +143,25 @@ def unit_costs(db, client_id, job_id):
     return out
 
 
+# Orders that commit money to a contractor: sent for approval, approved, running or finished.
+COMMITTED_ORDER_STATES = ("PROVISIONAL", "APPROVED", "EXECUTED", "CLOSED")
+
+
+def given_out_by_line(db, client_id, job_id):
+    """{BOQ key: amount} given to sub contractors on this project's committed work orders - a line made of several BOQ
+    lines shared out by their quantities."""
+    from app.services.boq import boq_shares_of
+    out = {}
+    for it in db.query(models.DBSubcontractItem).join(
+            models.DBSubcontractOrder, models.DBSubcontractOrder.id == models.DBSubcontractItem.order_id).filter(
+            models.DBSubcontractOrder.client_id == client_id, models.DBSubcontractOrder.job_id == job_id,
+            models.DBSubcontractOrder.status.in_(COMMITTED_ORDER_STATES), models.DBSubcontractItem.is_header.isnot(True)).all():
+        amount = money(it.total_amount or (it.quantity or 0) * (it.unit_rate or 0))
+        for key, share in boq_shares_of(it):
+            out[key] = out.get(key, 0.0) + amount * share
+    return out
+
+
 def budget_view(db, client_id, job):
     """The whole budget for a project: every priced BOQ line with its cost and profit, and the totals."""
     boq = boq_of_job(db, client_id, job.id)
@@ -173,7 +192,9 @@ def budget_view(db, client_id, job):
         current = standing_over.get(l.key, current)
         under[l.key] = current
 
-    rows, tot = [], {"revenue": 0.0, "material": 0.0, "labour": 0.0, "other": 0.0, "unbudgeted_value": 0.0, "budgeted": 0}
+    given = given_out_by_line(db, client_id, job.id)
+    rows, tot = [], {"revenue": 0.0, "material": 0.0, "labour": 0.0, "other": 0.0, "unbudgeted_value": 0.0, "budgeted": 0,
+                     "given_out": 0.0, "lines_over_given": 0}
     sections = {}
     for l in lines:
         got = items.get(l.key, [])
@@ -199,7 +220,14 @@ def budget_view(db, client_id, job):
             "unit_material": round(unit["MATERIAL"], 4), "unit_labour": round(unit["LABOUR"], 4), "unit_other": round(unit["OTHER"], 4),
             "unit_cost": round(sum(unit.values()), 4), "material": mat, "labour": lab, "other": oth, "direct": direct,
             "overheads": overheads, "contingency": contingency, "cost": cost, "profit": profit,
-            "margin": round(profit / revenue * 100, 1) if budgeted and revenue else None})
+            "margin": round(profit / revenue * 100, 1) if budgeted and revenue else None,
+            # Work orders against the budget: what contractors have been given on this line, and whether that is more than
+            # the budget's labour + plant & other for it.
+            "given_out": money(given.get(l.key, 0.0)),
+            "given_over": bool(given.get(l.key)) and money(given.get(l.key, 0.0)) > money(lab + oth) + 0.5})
+        tot["given_out"] += given.get(l.key, 0.0)
+        if rows[-1]["given_over"]:
+            tot["lines_over_given"] += 1
         tot["revenue"] += revenue
         if budgeted:
             tot["budgeted"] += 1
@@ -222,6 +250,7 @@ def budget_view(db, client_id, job):
         "overheads": overheads, "contingency": contingency, "cost": cost, "profit": profit,
         "margin": round(profit / budgeted_revenue * 100, 1) if budgeted_revenue else None,
         "lines": len(rows), "lines_budgeted": tot["budgeted"],
+        "given_out": money(tot["given_out"]), "lines_over_given": tot["lines_over_given"],
         # Materials whose budget wastage % differs from the store's norm (the norm is the one used). A warning, never a stop.
         "wastage_mismatches": sum(r["wastage_mismatches"] for r in rows),
         "losing": len([r for r in rows if r["profit"] is not None and r["profit"] < 0]),

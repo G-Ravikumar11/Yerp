@@ -25,6 +25,14 @@ export interface Recurring {
   account: string
   mode: string
   note: string
+  /** As on an expense voucher: taxable or non_taxable, local or non_local from a state, the GST rate, and where a bank transfer goes. */
+  tax?: string
+  supply?: string
+  supply_state?: string
+  gst_rate?: number
+  payee_bank?: string
+  payee_account?: string
+  payee_ifsc?: string
   raised_count: number
   last_raised_on: string
   /** Why the last attempt to raise it failed, until one works. */
@@ -44,6 +52,13 @@ export interface RecurringInput {
   account_id: number | null
   mode: string
   note: string
+  tax?: string
+  supply?: string
+  supply_state?: string
+  gst_rate?: number
+  payee_bank?: string
+  payee_account?: string
+  payee_ifsc?: string
 }
 
 export interface RecurringList {

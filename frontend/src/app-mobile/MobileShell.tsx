@@ -11,6 +11,7 @@ import { useNativeTabBar } from '@/lib/glassTabBar'
 import { ShellTitle } from '@/lib/shellTitle'
 import { markScreensGood, registerPush } from '@/lib/mobile'
 import { trailFor } from '@/lib/nav'
+import { REFUSED_TEXT, useRefusedNotOffline } from '@/lib/blocked'
 import { appUrl } from '@/lib/paths'
 import { useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
@@ -28,6 +29,8 @@ export default function MobileShell() {
   const { pathname } = useLocation()
   const go = useNavigate()
   const { isLoading, isAnonymous, error, user } = useSession()
+  // Asked again, a server that answers means the phone is online and it was the request that was refused.
+  const refused = useRefusedNotOffline(error)
   const [adding, setAdding] = useState(false)
   const isTab = TABS.has(pathname)
   // The iPhone app draws the bar natively (lib/glassTabBar.ts); everywhere else the web bar below is the one.
@@ -89,9 +92,13 @@ export default function MobileShell() {
           <div className="space-y-4" role="status" aria-label="Loading"><Skeleton className="h-9 w-48" /><Skeleton className="h-48 w-full rounded-lg" /></div>
         ) : isAnonymous || error ? (
           <div className="py-24 text-center">
-            <h1 className="text-2xl font-semibold">{error ? 'Could not reach the server' : 'Please sign in'}</h1>
-            <p className="mt-2 text-[15px] text-muted-foreground">{error ? 'Check the connection and try again.' : 'Your session has ended, or you have not signed in yet.'}</p>
-            <Button asChild className="mt-6"><a href={appUrl('login')}>Go to sign in</a></Button>
+            <h1 className="text-2xl font-semibold">{refused ? 'The server did not take that' : error ? 'Could not reach the server' : 'Please sign in'}</h1>
+            <p className="mt-2 text-[15px] text-muted-foreground">{refused ? REFUSED_TEXT : error ? 'Check the connection and try again.' : 'Your session has ended, or you have not signed in yet.'}</p>
+            {error ? (
+              <Button className="mt-6" onClick={() => window.location.reload()}>Try again</Button>
+            ) : (
+              <Button asChild className="mt-6"><a href={appUrl('login')}>Go to sign in</a></Button>
+            )}
           </div>
         ) : (
           <PageErrorBoundary resetKey={pathname}>

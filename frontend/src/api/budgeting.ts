@@ -40,6 +40,10 @@ export type SavedBudgetItem = BudgetItem & Partial<WastageAnswer>
 
 export interface BudgetRow {
   key: string
+  /** Given to sub contractors on this project's work orders (sent or approved) against this line. */
+  given_out?: number
+  /** More given out than the budget's labour + plant & other for the line. */
+  given_over?: boolean
   /** The key of the BOQ heading this line is under ('' before the first heading). */
   under: string
   item_no: string
@@ -87,6 +91,8 @@ export interface BudgetTotal {
   margin: number | null
   lines: number
   lines_budgeted: number
+  given_out?: number
+  lines_over_given?: number
   losing: number
   projected_profit: number | null
   wastage_mismatches?: number

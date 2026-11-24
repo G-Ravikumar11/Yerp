@@ -126,6 +126,24 @@ def erp_wo_delete_report(db, client, wo):
     }
 
 
+def wo_department_for(db, client_id, raised_by, work_type=""):
+    """The department a work order is filed under - and so its number series - decided for it, not chosen: the department
+    of the person who raises it. The Master belongs to none, so an order the Master raises goes under the department its
+    kind of work is filed under (Recoveries & Work Types), and with neither it is a general order (GEN)."""
+    if raised_by:
+        emp = db.query(models.DBEmployee).filter(models.DBEmployee.id == raised_by,
+                                                 models.DBEmployee.client_id == client_id).first()
+        dept = db.query(models.DBDepartment).filter(models.DBDepartment.id == emp.department_id).first()             if emp is not None and emp.department_id else None
+        if dept is not None and (dept.name or "").strip():
+            return dept.name.strip()
+    if (work_type or "").strip():
+        wt = db.query(models.DBWorkType).filter(models.DBWorkType.client_id == client_id,
+                                                models.DBWorkType.name == work_type.strip()).first()
+        if wt is not None and (wt.department or "").strip():
+            return wt.department.strip()
+    return ""
+
+
 def wo_department_choices(db, client_id):
     """The departments an order can be raised for: the ones the owner has added to a site.
 
@@ -449,6 +467,8 @@ def wo_dict(db, order, detail=False):
         owner_client = db.query(models.DBClient).filter(models.DBClient.id == order.client_id).first()
         row["pending_with"] = wo_waiting_names(db, owner_client, order)
         row["approval_route"] = wo_route(db, order)
+        # For the people inside Y ERP who prepare and approve it - the order's PDF and the contractor never carry it.
+        row["over_budget_reason"] = order.over_budget_reason or ""
         row["revision_blockers"] = wo_revision_blockers(db, order)
         row["advance_outstanding"] = advance_outstanding(db, order)
         # What approving it would run into, said before the approver presses the button.
@@ -902,6 +922,45 @@ def wo_ready_to_submit(db, order):
     return missing
 
 
+def wo_line_budgets(db, order):
+    """[(line, budgeted rate or None)] for each priced line of an order on a BOQ project: what the Budgeting tab plans one
+    unit to cost in labour and in plant and other - the part a contractor is paid for. A line made of several BOQ lines
+    is budgeted only when every one of them is, at their rates weighted by quantity. None: not budgeted."""
+    if not on_boq_budget(db, order):
+        return []
+    from app.services.boq import boq_shares_of
+    from app.services.budgeting import unit_costs
+    costs = unit_costs(db, order.client_id, order.job_id)
+    out = []
+    for it in db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id == order.id).order_by(
+            models.DBSubcontractItem.display_order, models.DBSubcontractItem.id).all():
+        if it.is_header or not (it.item_description or "").strip():
+            continue
+        total, budgeted = 0.0, True
+        shares = boq_shares_of(it)
+        for key, share in shares:
+            c = costs.get(key)
+            per_unit = (c["LABOUR"] + c["OTHER"]) if c else 0.0
+            if per_unit <= 0:
+                budgeted = False
+                break
+            total += share * per_unit
+        out.append((it, unit_rate(total) if shares and budgeted else None))
+    return out
+
+
+def wo_over_budget(db, order, lines=None):
+    """The lines priced above their budgeted rate, as approvers read them, and how much more the order costs for it."""
+    rows, extra = [], 0.0
+    for it, budget in (lines if lines is not None else wo_line_budgets(db, order)):
+        if budget is not None and unit_rate(it.unit_rate or 0) > budget + 0.005:
+            more = money((unit_rate(it.unit_rate or 0) - budget) * (it.quantity or 0))
+            extra += more
+            rows.append("%s at %s against a budget of %s (%s more)" % (
+                (it.activity_no or (it.item_description or "")[:30]).strip(), inr(it.unit_rate or 0), inr(budget), inr(more)))
+    return rows, money(extra)
+
+
 def on_boq_budget(db, order):
     """Whether the order's project has a BOQ, so its budget is the BOQ's and not a cost centre's."""
     return bool(order.job_id) and boq_of_job(db, order.client_id, order.job_id) is not None
@@ -1164,6 +1223,25 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
         if missing:
             raise HTTPException(
                 400, "This order still needs " + ", ".join(missing) + ".")
+        # Budget first: every line given out on a BOQ project is costed on the Budgeting tab before the order is sent, and
+        # a line priced above its budget is sent only with the reason, which its approvers read and the Master signs.
+        lines = wo_line_budgets(db, order)
+        unbudgeted = [it for it, budget in lines if budget is None]
+        if unbudgeted:
+            first = (unbudgeted[0].activity_no or "") + " " + (unbudgeted[0].item_description or "").split(chr(10))[0][:40]
+            raise HTTPException(400, "Budget %s first: %d line%s of this order %s no labour or plant & other cost on the "
+                                     "project's Budgeting tab (first: %s)." % (
+                                         "it" if len(unbudgeted) == 1 else "them", len(unbudgeted),
+                                         "" if len(unbudgeted) == 1 else "s", "has" if len(unbudgeted) == 1 else "have",
+                                         first.strip()))
+        over, extra = wo_over_budget(db, order, lines)
+        if over and not (comments or "").strip():
+            raise HTTPException(409, "%d line%s %s priced above the budget, %s more in all: %s. Say why to send it; the "
+                                     "Master then signs it as well." % (
+                                         len(over), "" if len(over) == 1 else "s", "is" if len(over) == 1 else "are",
+                                         inr(extra), "; ".join(over[:5])))
+        order.over_budget_reason = ("%s (%s more: %s)" % ((comments or "").strip()[:500], inr(extra), "; ".join(over[:20]))
+                                    if over else "")
         too_big = unregistered_vendor_breach(db, order)
         if too_big:
             raise HTTPException(409, too_big)
@@ -1196,6 +1274,20 @@ def wo_apply(db, client, order, action, actor_id, actor_name, comments="",
                      "Approve it in Approvals first." % (
                          con.company_name, con.vendor_code or "no code",
                          "waiting for approval" if con.registration_status == "PENDING" else "sent back"))
+        # Still within the budget: it can have been lowered, or a line taken out of it, since the order was sent.
+        lines_now = wo_line_budgets(db, order)
+        gone = [it for it, budget in lines_now if budget is None]
+        over_now, extra_now = wo_over_budget(db, order, lines_now)
+        if (gone or over_now) and not (order.over_budget_reason or "").strip():
+            what = ("%d line%s no longer budgeted" % (len(gone), "" if len(gone) == 1 else "s") if gone else
+                    "%s above the budget: %s" % (inr(extra_now), "; ".join(over_now[:5])))
+            if actor_id is not None:
+                raise HTTPException(409, "The budget has changed since this order was sent - %s. Send it back so it is "
+                                         "sent again with the reason, or ask the Master to approve it." % what)
+            if not (comments or "").strip():
+                raise HTTPException(409, "The budget has changed since this order was sent - %s. Say why to approve it "
+                                         "anyway." % what)
+            order.over_budget_reason = "Approved by the Master past the budget: %s (%s)" % ((comments or "").strip()[:500], what)
         # Still complete: an allocation can have been changed since the order was sent.
         missing = wo_budget_missing(db, order) + bank_guarantee_missing(order)
         if missing:
@@ -1813,8 +1905,9 @@ def wo_start_chain(db, client, order, submitter_id):
     db.query(models.DBApprovalChain).filter(
         models.DBApprovalChain.entity_type == "subcontract_order",
         models.DBApprovalChain.entity_id == order.id).delete(synchronize_session=False)
+    # Priced above the budget: the Master signs it too, whatever the setting for orders within it.
     rungs = hierarchy_chain(db, client.id, submitter_id, "subcontracts.approve", order.job_id,
-                            owner_signs=wo_owner_signs(db, client.id)) or [chain_rung(None, db, client.id)]
+                            owner_signs=wo_owner_signs(db, client.id) or bool((order.over_budget_reason or "").strip()))         or [chain_rung(None, db, client.id)]
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for i, rung in enumerate(rungs, 1):
         db.add(models.DBApprovalChain(

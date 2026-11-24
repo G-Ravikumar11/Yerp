@@ -52,7 +52,8 @@ function Form({ onClose }: { onClose: () => void }) {
   const set = (k: keyof EmployeeInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((s) => ({ ...s, [k]: e.target.value }))
   // The reporting line runs up the levels: somebody can report to the same level or above, never below. People with no level yet are not ruled out.
   const rank = (code: string) => cat.data?.levels.find((l) => l.code === code)?.rank ?? 0
-  const managers = (people.data ?? []).filter((p) => !f.level || !p.level || rank(p.level) >= rank(f.level))
+  // Everybody, senior first: the Master decides who reports to whom (a coordinator between a site and the heads, say).
+  const managers = [...(people.data ?? [])].sort((a, b) => rank(b.level ?? '') - rank(a.level ?? '') || a.full_name.localeCompare(b.full_name))
   // Choosing a role fills in its level. The reporting line follows the role too: the Master sees who it will be and may pick somebody else; for everyone else the server sets it when the employee is saved.
   // Access follows the role and the level, so the Master does not tick it all again: the access level the role carries is
   // chosen and its rights ticked at once, and can still be changed below. Only the Master gives access; for anybody else the server's default stands.
@@ -184,7 +185,7 @@ function Form({ onClose }: { onClose: () => void }) {
         <Field label="Job title" htmlFor="ef-title"><Input id="ef-title" value={f.job_title} onChange={set('job_title')} /></Field>
         <Field label="Level" htmlFor="ef-level"><Select id="ef-level" value={f.level} onChange={(e) => pickLevel(e.target.value)} placeholder="Not set" options={(cat.data?.levels ?? []).map((l) => ({ value: l.code, label: l.label }))} /></Field>
         <Field label="Department" htmlFor="ef-dept"><Input id="ef-dept" disabled={!canManage} value={deptName} onChange={(e) => setDeptName(e.target.value)} placeholder="e.g. Civil" autoComplete="off" /></Field>
-        <Field label="Reports to" htmlFor="ef-mgr"><Select id="ef-mgr" disabled={!canManage} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="None" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
+        <Field label="Reports to" htmlFor="ef-mgr"><Select id="ef-mgr" disabled={!canManage} value={f.reports_to ?? ''} onChange={(e) => setF((s) => ({ ...s, reports_to: e.target.value ? Number(e.target.value) : null }))} placeholder="The Master" options={managers.map((p) => ({ value: p.id, label: p.level ? `${p.full_name} (${p.level})` : p.full_name }))} /></Field>
         <Field label="Reporting role" htmlFor="ef-role"><Select id="ef-role" value={f.role} onChange={(e) => pickRole(e.target.value)} placeholder="Not set" options={(cat.data?.roles ?? []).filter((r) => !f.level || r.level === f.level).map((r) => ({ value: r.code, label: r.label }))} /></Field>
         <Field label="Start date" htmlFor="ef-start"><Input id="ef-start" type="date" value={f.start_date} onChange={set('start_date')} /></Field>
         <Field label="Type" htmlFor="ef-type"><Select id="ef-type" value={f.employment_type} onChange={set('employment_type')} options={[['full_time', 'Full time'], ['part_time', 'Part time'], ['contract', 'Contract'], ['intern', 'Intern']].map(([v, l]) => ({ value: v, label: l }))} /></Field>

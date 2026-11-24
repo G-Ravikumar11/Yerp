@@ -10,6 +10,7 @@ import { useSession } from '@/lib/session'
 import { formatDate } from '@/lib/format'
 import { formatINR } from '@/lib/utils'
 import { LoadError, usePaged } from './plantParts'
+import { billLabel, billTone } from './rentalLabels'
 
 const th = 'px-3 py-2 text-left text-xs font-medium text-muted-foreground'
 const REVIEW = 'site.signoff|stores.manage|workorders.manage'
@@ -125,7 +126,6 @@ export function FuelMonitor({ from, to, asset }: { from: string; to: string; ass
 
 // ---- rental bills --------------------------------------------------------------------------------
 
-const BILL_TONE: Record<string, 'danger' | 'warning' | 'success' | 'neutral'> = { Matched: 'success', Mismatch: 'danger', Duplicate: 'danger', Missing: 'danger', Incomplete: 'warning', 'In progress': 'neutral' }
 const money = (v: number | null) => (v === null ? '-' : formatINR(v))
 
 /** Each bill beside what its agreement comes to, and the months with no bill. Actual amounts are never changed here. */
@@ -144,11 +144,12 @@ export function RentalVerification() {
     { id: 'rt', header: 'Rate', align: 'right', hideBelow: 'lg', cell: (r) => <div>{formatINR(r.rate)}<div className="text-xs text-muted-foreground">{r.billing}</div></div> },
     { id: 'e', header: 'Expected', align: 'right', cell: (r) => formatINR(r.expected) },
     { id: 'a', header: 'Invoice', align: 'right', cell: (r) => money(r.actual) },
-    { id: 'df', header: 'Difference', align: 'right', cell: (r) => <span className={r.status === 'Mismatch' ? 'font-semibold text-danger' : ''}>{money(r.difference)}</span> },
-    { id: 's', header: 'Status', cell: (r) => <div><Badge tone={BILL_TONE[r.status] ?? 'neutral'} dot>{r.status}</Badge>{r.detail && <div className="mt-0.5 text-xs text-muted-foreground">{r.detail}</div>}{r.verification_status && <div className="mt-0.5 text-xs">{r.verification_status} by {r.verified_by}{r.verification_note && `: ${r.verification_note}`}</div>}</div> },
+    { id: 'df', header: 'Difference', align: 'right', cell: (r) => <div className={r.status === 'Mismatch' ? 'font-semibold text-danger' : ''}>{money(r.difference)}{r.difference_percent != null && <div className="text-xs font-normal">{r.difference_percent > 0 ? '+' : ''}{r.difference_percent}%</div>}</div> },
+    { id: 'days', header: 'Days', align: 'right', hideBelow: 'md', cell: (r) => <div>{r.billed_days} billed{r.unbilled_days > 0 && <div className="text-xs font-semibold text-danger">{r.unbilled_days} not billed</div>}</div> },
+    { id: 's', header: 'Status', cell: (r) => <div><Badge tone={billTone(billLabel(r.status, r.verification_status))} dot>{billLabel(r.status, r.verification_status)}</Badge>{r.detail && <div className="mt-0.5 text-xs text-muted-foreground">{r.detail}</div>}{r.verification_status && <div className="mt-0.5 text-xs">{r.verification_status} by {r.verified_by}{r.verification_note && `: ${r.verification_note}`}</div>}</div> },
     {
       id: 'act', header: '', align: 'right',
-      cell: (r) => r.invoice_id && can(FINANCE) && !r.verification_status && r.status !== 'Matched' ? (
+      cell: (r) => r.invoice_id && can(FINANCE) && !r.verification_status ? (
         <div className="flex flex-wrap justify-end gap-1">
           <Button size="sm" variant="outline" onClick={() => setOpen({ r, decision: 'approve' })}>Approve</Button>
           <Button size="sm" variant="ghost" className="text-danger" onClick={() => setOpen({ r, decision: 'dispute' })}>Dispute</Button>
@@ -172,10 +173,10 @@ export function RentalVerification() {
 
 // ---- alerts --------------------------------------------------------------------------------------
 
-const KIND_LABEL: Record<string, string> = { weekly: 'Weekly', emergency: 'Emergency', unbilled: 'Unbilled rental' }
+const KIND_LABEL: Record<string, string> = { weekly: 'Weekly', emergency: 'Emergency', unbilled: 'Unbilled rental', bill_difference: 'Bill differs', bill_duplicate: 'Duplicate bill', bill_unpaid: 'Bill unpaid' }
 const ALERT_TONE: Record<string, 'danger' | 'warning' | 'success'> = { Open: 'danger', Reviewed: 'warning', Resolved: 'success' }
 
-export function PlantAlerts() {
+export function PlantAlerts({ onOpenRental }: { onOpenRental?: (rentalId: number) => void }) {
   const { can } = useSession()
   const [kind, setKind] = useState('')
   const [status, setStatus] = useState('')
@@ -186,7 +187,7 @@ export function PlantAlerts() {
   const { shown, pager } = usePaged(q.data?.alerts)
   const cols: TableColumn<AlertRow>[] = [
     { id: 'w', header: 'Raised', sort: (a) => a.created_at, cell: (a) => <div>{formatDate(a.created_at.slice(0, 10))}<div className="text-xs text-muted-foreground">{KIND_LABEL[a.kind] ?? a.kind} - {a.period}</div></div> },
-    { id: 'm', header: 'Alert', cell: (a) => <div><strong>{a.title}</strong><div className="whitespace-pre-line text-xs text-muted-foreground">{a.body}</div></div> },
+    { id: 'm', header: 'Alert', cell: (a) => <div><strong>{a.title}</strong><div className="whitespace-pre-line text-xs text-muted-foreground">{a.body}</div>{a.rental_id && onOpenRental && <Button size="sm" variant="ghost" className="mt-1 h-7 px-2 text-primary" onClick={() => onOpenRental(a.rental_id!)}>Open the agreement</Button>}</div> },
     { id: 'd', header: 'Delivery', hideBelow: 'md', cell: (a) => <div><Badge tone={a.delivery_status === 'Delivered' ? 'success' : 'danger'} dot>{a.delivery_status}</Badge><div className="text-xs text-muted-foreground">{a.sent_to || 'Bell only'}</div></div> },
     { id: 's', header: 'Status', cell: (a) => <div><Badge tone={ALERT_TONE[a.status] ?? 'warning'} dot>{a.status}</Badge>{a.reviewed_by && <div className="mt-0.5 text-xs text-muted-foreground">{a.reviewed_by}{a.review_note && `: ${a.review_note}`}</div>}</div> },
     {
@@ -207,7 +208,7 @@ export function PlantAlerts() {
         {q.data && <span className="text-[13px] text-muted-foreground">{q.data.open} open</span>}
         {can('stores.manage|workorders.manage') && <Button className="ml-auto" variant="outline" onClick={() => setSettings(true)}>Alert settings</Button>}
       </div>
-      <p className="mb-2 text-[13px] text-muted-foreground">Checked once a week per machine, once a month for unbilled hire. Emergency breakdowns are sent as soon as they are reported.</p>
+      <p className="mb-2 text-[13px] text-muted-foreground">Checked once a week per machine, once a month for unbilled hire, and daily for rental bills that differ, repeat or are approved but unpaid after a month. Emergency breakdowns are sent as soon as they are reported.</p>
       {q.isError ? <LoadError message={q.error.message} retry={() => q.refetch()} /> : <Card className="overflow-hidden"><DataTable label="Plant alerts" className="rounded-none border-0 shadow-none" rows={shown} columns={cols} rowKey={(a) => a.id} loading={q.isPending} empty="No plant alerts." />{!q.isPending && pager}</Card>}
       <ConfirmDialog open={!!open} onOpenChange={(o) => !o && setOpen(null)} title={open?.a.title ?? ''} description={`Mark it ${open?.status.toLowerCase()}.`} reason={{ label: 'Note', required: false }} confirmLabel="Save" cancelLabel="Cancel" loading={act.isPending} onConfirm={(note) => { if (open) act.mutate({ id: open.a.id, status: open.status, note: note ?? '' }) }} />
       {settings && <AlertSettings onClose={() => setSettings(false)} />}

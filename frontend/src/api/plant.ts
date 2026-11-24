@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { del, get, post, put } from '@/lib/api'
+import { api, del, get, post, put } from '@/lib/api'
 
 /** Everything Equipment & Plant reads lives under the equipment keys, so any change refreshes every screen of it. */
 export const plantKeys = { all: ['equipment'] as const }
@@ -23,18 +23,35 @@ export interface Maint {
   next_service_on: string; next_service_meter: number | null; approval_status: string; approved_by: string; overdue: boolean
 }
 export interface Provider { id: number; name: string; contact_person: string; mobile: string; email: string; address: string; supplier_id: number | null }
-export interface RentalInvoice { id: number; invoice_no: string; invoice_date: string; period_from: string; period_to: string; billed_hours: number; amount: number; paid: number; outstanding: number; paid_on: string; payment_ref: string }
+export interface RentalInvoice {
+  id: number; invoice_no: string; invoice_date: string; period_from: string; period_to: string; billed_hours: number; amount: number; paid: number; outstanding: number; paid_on: string; payment_ref: string
+  /** The bill check (Matched / Mismatch / Duplicate), finance's decision and the payment state - three separate things. */
+  check: string; expected: number | null; verification_status: string; verified_by: string; verified_on: string; payment_status: string
+}
+export interface RentalReturn { meter: number | null; condition: string; charges: number; note: string; by: string }
 export interface Rental {
   id: number; number: string; asset_id: number; code: string; machine: string; category: string; reg_no: string; provider: Provider | null; agreement_no: string
   start_date: string; expected_return: string; actual_return: string; rate: number; billing: string; min_billable_hours: number; overtime_rate: number
   transport_charges: number; deposit: number; advance: number; fuel_included: boolean; operator_included: boolean; notes: string; status: string; days_left: number | null
   extensions: { from: string; to: string; reason: string; by: string; at: string }[]; invoices: RentalInvoice[]
   billed: number; paid: number; outstanding: number; used_hours: number; billed_hours: number; hours_gap: number
+  closing_gaps: string[]; return: RentalReturn | null; payment_status: string; expected_total: number; unbilled_days: number
 }
 export interface Expense {
   id: number; number: string; source: 'expense' | 'fuel' | 'maintenance' | 'rental'; asset_id: number; code: string; machine: string; project: string; category: string
   spent_on: string; description: string; quantity: number; unit_rate: number; amount: number; vendor: string; invoice_no: string; payment_status: string
   payment_ref: string; approval_status: string; approved_by: string; recorded_by: string
+  /** Recorded, Submitted, Approved or Rejected for an expense entered here; a rental bill reads Verified once approved. */
+  approval_label: string; approved_on: string; decision_note: string
+  /** Paid and still owed; null for fuel and maintenance, which are paid where they are recorded. */
+  paid: number | null; remaining: number | null; legacy_payment: boolean; payments: number
+  /** Where the payment stands in the register that keeps it: a rental bill's last payment, or that fuel and maintenance keep none. */
+  payment_note: string
+}
+export interface ExpenseHistory {
+  number: string; amount: number; paid: number; remaining: number; legacy_payment: boolean
+  payments: { amount: number; paid_on: string; reference: string; by: string; at: string }[]
+  history: { at: string; who: string; action: string; details: string }[]
 }
 export interface CostRow {
   asset_id: number; code: string; name: string; ownership: string; operating_hours: number; idle_hours: number; breakdown_hours: number; fuel_litres: number
@@ -58,7 +75,7 @@ const qs = (o: Record<string, string | number | boolean | undefined>) => {
   const s = p.toString()
   return s ? `?${s}` : ''
 }
-export type Range = { date_from?: string; date_to?: string; asset_id?: number; employee_id?: number; status?: string; category?: string; provider_id?: number }
+export type Range = { date_from?: string; date_to?: string; asset_id?: number; employee_id?: number; status?: string; category?: string; provider_id?: number; q?: string }
 
 export const useDashboard = (r: Range) => useQuery({ queryKey: ['equipment', 'dashboard', r], queryFn: () => get<Dashboard>(`/api/plant/dashboard${qs(r)}`) })
 export const useCosts = (r: Range) => useQuery({ queryKey: ['equipment', 'costs', r], queryFn: () => get<{ machines: CostRow[]; totals: Record<string, number> }>(`/api/plant/costs${qs(r)}`) })
@@ -68,8 +85,18 @@ export const useLogs = (r: Range) => useQuery({ queryKey: ['equipment', 'logs', 
 export const useFuel = (r: Range) => useQuery({ queryKey: ['equipment', 'fuel', r], queryFn: () => get<{ fuel: FuelRow[]; fuel_types: string[]; by_machine: { asset_id: number; code: string; name: string; litres: number; amount: number; operating_hours: number; litres_per_hour: number; cost_per_hour: number }[]; by_day: { day: string; litres: number; amount: number }[]; totals: { litres: number; amount: number } }>(`/api/plant/fuel${qs(r)}`) })
 export const useMaintenance = (r: Range) => useQuery({ queryKey: ['equipment', 'maintenance', r], queryFn: () => get<{ maintenance: Maint[]; kinds: string[]; priorities: string[] }>(`/api/plant/maintenance${qs(r)}`) })
 export const useProviders = () => useQuery({ queryKey: ['equipment', 'providers'], queryFn: () => get<{ providers: Provider[]; suppliers: { id: number; name: string }[] }>('/api/plant/rental-providers') })
+export interface ProviderRental { id: number; number: string; agreement_no: string; code: string; machine: string; start_date: string; expected_return: string; actual_return: string; status: string; billed: number; paid: number; outstanding: number; payment_status: string }
+export interface ProviderDetail {
+  provider: Provider; open: ProviderRental[]; completed: ProviderRental[]
+  totals: { agreements: number; billed: number; paid: number; outstanding: number; approved_outstanding: number }
+  payments: { invoice_no: string; rental: string; paid: number; paid_on: string; payment_ref: string }[]
+}
+export const useProvider = (id: number) => useQuery({ queryKey: ['equipment', 'provider', id], enabled: id > 0, queryFn: () => get<ProviderDetail>(`/api/plant/rental-providers/${id}`) })
 export const useRentals = (r: Range) => useQuery({ queryKey: ['equipment', 'rentals', r], queryFn: () => get<{ rentals: Rental[]; billing: string[]; summary: Record<string, number> }>(`/api/plant/rentals${qs(r)}`) })
-export const useExpenses = (r: Range) => useQuery({ queryKey: ['equipment', 'expenses', r], queryFn: () => get<{ expenses: Expense[]; categories: string[]; all_categories: string[]; by_category: Record<string, number>; total: number }>(`/api/plant/expenses${qs(r)}`) })
+export const useExpenses = (r: Range) => useQuery({ queryKey: ['equipment', 'expenses', r], queryFn: () => get<{ expenses: Expense[]; categories: string[]; all_categories: string[]; by_category: Record<string, number>; total: number; total_all: number }>(`/api/plant/expenses${qs(r)}`) })
+export const useExpenseHistory = (id: number) => useQuery({ queryKey: ['equipment', 'expense-history', id], enabled: id > 0, queryFn: () => get<ExpenseHistory>(`/api/plant/expenses/${id}/history`) })
+/** The same filters as the register, for the Excel export. */
+export const expensesExport = (r: Range) => `/api/plant/reports/expenses.xlsx${qs(r)}`
 
 type Msg = { message: string; id?: number }
 export const allocate = (b: Record<string, unknown>) => post<Msg>('/api/plant/allocations', b)
@@ -89,8 +116,9 @@ export interface RentalCheck {
   rental_id: number; number: string; agreement_no: string; code: string; machine: string; supplier: string; project: string; billing: string; rate: number; overtime_rate: number; min_billable_hours: number
   kind: 'invoice' | 'missing'; invoice_id: number | null; invoice_no: string; month: string; period_from: string; period_to: string; days_on_hire: number; minimum_hours: number; actual_hours: number; overtime_hours: number
   expected: number; actual: number | null; difference: number | null; status: string; detail: string; verification_status: string; verified_by: string; verification_note: string
+  invoice_date: string; difference_percent: number | null; billed_days: number; unbilled_days: number; billed_hours: number; return_charges: number
 }
-export interface AlertRow { id: number; kind: string; period: string; asset_id: number | null; code: string; machine: string; title: string; body: string; severity: string; status: string; delivery_status: string; sent_to: string; reviewed_by: string; review_note: string; created_at: string }
+export interface AlertRow { id: number; kind: string; period: string; asset_id: number | null; rental_id: number | null; code: string; machine: string; title: string; body: string; severity: string; status: string; delivery_status: string; sent_to: string; reviewed_by: string; review_note: string; created_at: string }
 export interface PlantCostLine { category: string; source: string; ref: string; date: string; code: string; machine: string; description: string; amount: number }
 export interface PlantCostRow { job_id: number; project: string; fuel: number; rental: number; hire: number; maintenance: number; expenses: number; total: number; duplicates_excluded: number; unbilled_hire_estimate: number; lines: PlantCostLine[] }
 export interface PlantSettings { regular_hours: number; document_alert_days: number; fuel_tolerance_percent: number; rental_tolerance_percent: number }
@@ -115,12 +143,17 @@ export const approveMaint = (id: number) => post<Msg>(`/api/plant/maintenance/${
 export const saveProvider = (id: number | null, b: Record<string, unknown>) => (id ? put<Msg>(`/api/plant/rental-providers/${id}`, b) : post<Msg>('/api/plant/rental-providers', b))
 export const createRental = (b: Record<string, unknown>) => post<Msg>('/api/plant/rentals', b)
 export const extendRental = (id: number, to_date: string, reason: string) => post<Msg>(`/api/plant/rentals/${id}/extend`, { to_date, reason })
-export const returnRental = (id: number, returned_on: string) => post<Msg>(`/api/plant/rentals/${id}/return`, { returned_on })
+export interface ReturnDetails { returned_on: string; final_meter?: number | null; condition?: string; extra_charges?: number; note?: string }
+export const returnRental = (id: number, b: ReturnDetails) => post<Msg>(`/api/plant/rentals/${id}/return`, b)
 export const addRentalInvoice = (id: number, b: Record<string, unknown>) => post<Msg>(`/api/plant/rentals/${id}/invoices`, b)
 export const payRentalInvoice = (id: number, amount: number, paid_on: string, payment_ref: string) => post<Msg>(`/api/plant/rental-invoices/${id}/payment`, { amount, paid_on, payment_ref })
 export const saveExpense = (id: number | null, b: Record<string, unknown>) => (id ? put<Msg>(`/api/plant/expenses/${id}`, b) : post<Msg>('/api/plant/expenses', b))
 export const decideExpense = (id: number, decision: 'approve' | 'reject', remarks: string) => post<Msg>(`/api/plant/expenses/${id}/decision`, { decision, remarks })
 export const removeExpense = (id: number) => del<Msg>(`/api/plant/expenses/${id}`)
+export const submitExpense = (id: number) => post<Msg>(`/api/plant/expenses/${id}/submit`)
+/** One payment. The key is made once per payment form, so a second click or a retry after no answer records it once. */
+export const payExpense = (id: number, b: { amount: number; paid_on: string; reference: string }, key: string) =>
+  api<Msg>(`/api/plant/expenses/${id}/payments`, { method: 'POST', body: b, headers: { 'Idempotency-Key': key } })
 export const reportUrl = (kind: string, r: Range, pdf = false) => `/api/plant/reports/${kind}.${pdf ? 'pdf' : 'xlsx'}${qs(r)}`
 
 /** The status as it is shown: what the register stores, in the words a site uses. */

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -20,7 +20,15 @@ export default function EmployeesPage() {
   const qc = useQueryClient()
   // Everybody in one read; the tabs filter it here, so switching tab is instant rather than another trip.
   const q = useEmployees('')
-  const rows = useMemo(() => (tab ? q.data?.filter((e) => e.status === tab) : q.data), [q.data, tab])
+  // Those who report to nobody: whatever they send for approval comes straight to the Master.
+  // Opened from the setup check's "Set their Reports to": already showing only them.
+  const [params] = useSearchParams()
+  const [noManager, setNoManager] = useState(() => params.get('no_manager') === '1')
+  const unassigned = useMemo(() => (q.data ?? []).filter((e) => !e.reports_to && e.status !== 'terminated'), [q.data])
+  const rows = useMemo(() => {
+    const byTab = tab ? q.data?.filter((e) => e.status === tab) : q.data
+    return noManager ? byTab?.filter((e) => !e.reports_to && e.status !== 'terminated') : byTab
+  }, [q.data, tab, noManager])
   const stats = useHrStats()
   const [creating, setCreating] = useState(false)
   const filters = useListFilters(rows, { search: (e) => [e.full_name, e.email, e.employee_id, e.job_title, e.department_name].join(' ') })
@@ -31,6 +39,7 @@ export default function EmployeesPage() {
     { id: 'id', header: 'ID', hideBelow: 'lg', cell: (e) => <span className="font-mono text-[13px]">{e.employee_id || '-'}</span> },
     { id: 'dept', header: 'Department', hideBelow: 'md', sort: (e) => e.department_name, cell: (e) => e.department_name || <span className="text-subtle">none</span> },
     { id: 'title', header: 'Title', hideBelow: 'lg', cell: (e) => e.job_title || '-' },
+    { id: 'boss', header: 'Reports to', hideBelow: 'md', sort: (e) => e.manager_name, cell: (e) => e.manager_name || <span className="text-subtle">The Master</span> },
     { id: 'start', header: 'Started', hideBelow: 'xl', sort: (e) => e.start_date, cell: (e) => formatDate(e.start_date) },
     { id: 'status', header: 'Status', cell: (e) => <Badge tone={EMPLOYEE_TONE[e.status] ?? 'neutral'}>{e.status}</Badge> },
     { id: 'act', header: '', align: 'right', cell: (e) => <Button size="sm" variant="outline" onClick={() => nav(`/people/employees/${e.id}`)}>View</Button> },
@@ -47,6 +56,14 @@ export default function EmployeesPage() {
         <Stat label="Departments" value={s?.departments ?? 0} loading={stats.isPending} />
       </StatGrid>
       <div className="mb-4"><Tabs label="Status" value={tab} onChange={setTab} items={[{ value: '', label: 'All' }, { value: 'active', label: 'Active' }, { value: 'onboarding', label: 'Onboarding' }, { value: 'offboarding', label: 'Offboarding' }, { value: 'terminated', label: 'Terminated' }]} /></div>
+      {unassigned.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg bg-warning-soft p-3 text-[13px] text-warning" role="note">
+          <span>
+            <strong>{unassigned.length === 1 ? '1 person reports' : `${unassigned.length} people report`} to nobody</strong> - what they send for approval comes straight to the Master. Open each one and set their Reports to.
+          </span>
+          <Button size="sm" variant="outline" onClick={() => setNoManager((v) => !v)}>{noManager ? 'Show everybody' : 'Show only them'}</Button>
+        </div>
+      )}
       <FilterBar filters={filters} placeholder="Search by name, email, ID, title or department..." />
       <DataTable label="Employees" rows={filters.filtered} columns={columns} rowKey={(e) => e.id} loading={q.isPending} onRowClick={(e) => nav(`/people/employees/${e.id}`)} onRowHover={(e) => prefetchEmployee(qc, e.id)} empty={filters.active ? 'Nothing matches those filters.' : 'No employees found.'} />
       <EmployeeFormModal open={creating} onClose={() => setCreating(false)} />

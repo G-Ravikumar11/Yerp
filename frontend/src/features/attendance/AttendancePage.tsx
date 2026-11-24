@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Tabs } from '@/components/ui'
 import { AnalyticsTab } from './AnalyticsTab'
@@ -21,7 +22,9 @@ const TABS = [
 ] as const
 
 export default function AttendancePage() {
-  const [tab, setTab] = useState<Tab>('today')
+  // ?tab=biometric (from the setup check, say) opens on that tab.
+  const [params] = useSearchParams()
+  const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => t.value === params.get('tab')) ? (params.get('tab') as Tab) : 'today'))
   return (
     <>
       <PageHeader eyebrow="People" title="Attendance" description="Who is in today, the record of every day, overtime, and the rules that decide who counts as late." />
