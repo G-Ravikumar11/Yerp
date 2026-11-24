@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { App } from '@capacitor/app'
 import { Browser } from '@capacitor/browser'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
@@ -190,6 +190,16 @@ export async function takePhoto(fallback: HTMLInputElement | null, onFiles: (fil
 }
 
 let pushStarted = false
+
+const PushGuard = registerPlugin<{ available(): Promise<{ available: boolean }> }>('PushGuard')
+/**
+ * Whether this build can do push at all. A build made without Firebase's settings file makes the push plugin throw where
+ * JavaScript cannot catch it, and the app closes: on sign-in (register) and on sign-out (unregister). Builds that do not
+ * have the guard (older ones) are taken as able, as they always were.
+ */
+async function pushAvailable() {
+  try { return (await PushGuard.available()).available } catch { return true }
+}
 let pushToken = ''
 const TOKEN_KEY = 'yerp.push.token'
 
@@ -211,7 +221,7 @@ export async function forgetPush() {
   if (token) await api(`/api/devices/${encodeURIComponent(token)}`, { method: 'DELETE', quiet: true }).catch(() => undefined)
   await PushNotifications.removeAllDeliveredNotifications().catch(() => undefined)
   // A new token is issued when the next person registers.
-  await PushNotifications.unregister().catch(() => undefined)
+  if (await pushAvailable()) await PushNotifications.unregister().catch(() => undefined)
   pushToken = ''
   pushStarted = false
   try { localStorage.removeItem(TOKEN_KEY) } catch { /* nothing kept */ }
@@ -224,6 +234,7 @@ export async function forgetPush() {
 export async function registerPush() {
   if (!Capacitor.isNativePlatform() || pushStarted) return
   try {
+    if (!(await pushAvailable())) return
     const { enabled } = await get<{ enabled: boolean }>('/api/devices/status')
     if (!enabled) return
     pushStarted = true
