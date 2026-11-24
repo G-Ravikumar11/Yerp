@@ -17,7 +17,7 @@ from app import models
 from app.core.config import logger
 from app.constants.common import PAYROLL_EXCLUDED_STATUSES
 from app.core.dates import _parse_date
-from app.core.scheduler import scheduled_job
+from app.core.scheduler import each_active_client, scheduled_job
 
 KINDS = ("annual", "sick")
 ENABLED_KEY = "leave_accrual"
@@ -187,7 +187,7 @@ def month_key(now=None):
 @scheduled_job("leave_accrual", month_key)
 def job_leave_accrual(db, now):
     done, failed = [], []
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    for client in each_active_client(db):
         if not enabled(db, client.id):
             continue
         try:

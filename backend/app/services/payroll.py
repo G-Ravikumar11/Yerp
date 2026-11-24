@@ -9,7 +9,7 @@ from app.constants.common import ORDINARY_HOURS_PER_MONTH, OVERTIME_MULTIPLIER, 
 from app.core.currency import money
 from app.core.serials import next_sequence_number
 from app.core.dates import _parse_date
-from app.core.scheduler import scheduled_job
+from app.core.scheduler import each_active_client, scheduled_job
 from app.services.employee_portal import attendance_settings_for, leave_balance_for, working_days_between
 from app.services.hr import resolve_basic_pay
 from app.services.salary_revisions import employee_on, salaries_on
@@ -366,7 +366,7 @@ def job_monthly_payroll(db, now):
 
     start, end = last_month_bounds(now)
     done = []
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    for client in each_active_client(db):
         if not auto_payroll_enabled(db, client.id):
             continue
         label = datetime.strptime(start, "%Y-%m-%d").strftime("%B %Y")

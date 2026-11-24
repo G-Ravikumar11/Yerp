@@ -25,7 +25,7 @@ from app.core.auth import get_client_user
 from app.core.config import logger
 from app.core.files import attachment_target
 from app.core.notifications import notify
-from app.core.scheduler import digest_key, scheduled_job
+from app.core.scheduler import digest_key, each_active_client, scheduled_job
 from app.documents.letterhead import letterhead
 from app.services.projects import attention_items
 from app.validators.common import valid_hex_colour
@@ -220,7 +220,7 @@ def job_morning_digest(db, now):
     if now.hour < 7:
         return "too early"
     sent = 0
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    for client in each_active_client(db):
         try:
             from app.services.attention_buying import buying_items, money_lines
             from app.services.accounts_watch import accounts_items

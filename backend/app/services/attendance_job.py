@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from app import models
 from app.constants.common import PAYROLL_EXCLUDED_STATUSES
 from app.core.dates import _parse_date
-from app.core.scheduler import daily_key, scheduled_job
+from app.core.scheduler import daily_key, each_active_client, scheduled_job
 from app.services.employee_portal import (attendance_settings_for, end_shift, is_late, is_working_day, minutes_late,
                                           shift_limit_hours)
 from app.services.holidays import custom_holidays
@@ -173,7 +173,7 @@ def job_nightly_attendance(db, now):
     from app.core.config import logger
     day = (now - timedelta(days=1)).date()
     done, failed = [], []
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    for client in each_active_client(db):
         try:
             r = nightly_for_client(db, client, day, now)
         except Exception as exc:

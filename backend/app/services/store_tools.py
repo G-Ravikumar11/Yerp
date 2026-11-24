@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from fastapi import HTTPException
 
 from app import models
-from app.core.scheduler import scheduled_job
+from app.core.scheduler import each_active_client, scheduled_job
 from app.models.store_core import DBStore, DBStoreItemSettings
 from app.models.store_extras import (
     TOOL_AVAILABLE, TOOL_IN_SERVICE, TOOL_ISSUED, TOOL_LOST, TOOL_RETIRED, DBStoreReminder, DBStoreTool, DBStoreToolEvent,
@@ -216,7 +216,7 @@ def send_reminders(db, client_id):
 @scheduled_job("store_reminders")
 def job_store_reminders(db, now):
     sent = 0
-    for client in db.query(models.DBClient).filter(models.DBClient.is_active.is_(True)).all():
+    for client in each_active_client(db):
         try:
             sent += send_reminders(db, client.id)
         except Exception as exc:
