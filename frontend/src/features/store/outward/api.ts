@@ -178,6 +178,8 @@ export interface Indent {
   project_id: number; project: string; work_order_id: number | null; work_order: string; boq_item_id: number | null; boq_item: string; activity: string; remarks: string; requested_by: string
   approved_by: string; approved_at: string; approver_remarks: string; cancel_reason: string; short_closed: boolean; line_count: number; fulfilled_pct: number; overdue: boolean
   lines?: IndentLine[]; history?: HistoryRow[]; issues?: { id: number; number: string; status: string }[]
+  /** Items asked for past what the project's BOQ needs of them, by its Item sheet - a warning, never a block. */
+  sheet_warnings?: string[]
 }
 export interface IndentPending {
   indent: { id: number; number: string; status: string; store_id: number; project_id: number; work_order_id: number | null; boq_item_id: number | null; boq_item: string }

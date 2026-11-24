@@ -586,6 +586,9 @@ def indent_dict(db, indent, detail=False):
                          "purpose": l.purpose or "", "reason": notes[l.id].reason or "" if l.id in notes else "", "substitute_for_line_id": notes[l.id].substitute_for_line_id if l.id in notes else None,
                          **_shortfall(l, done, spare, buying.get(l.id))}
                         for l in lines]
+        # The project's Item sheet: more of an item asked for than its BOQ needs (a warning, never a block).
+        from app.services.item_sheet import indent_warnings
+        out["sheet_warnings"] = indent_warnings(db, indent, lines) if indent.status not in ("CANCELLED", "CLOSED") else []
         out["history"] = [{"action": h.action, "from": h.from_status, "to": h.to_status, "by": h.user_name, "at": h.at.isoformat(timespec="seconds") if h.at else "", "note": h.note or ""}
                           for h in db.query(DBStoreOutwardLog).filter(DBStoreOutwardLog.doc_type == INDENT, DBStoreOutwardLog.doc_id == indent.id).order_by(DBStoreOutwardLog.id).all()]
         out["issues"] = [{"id": i.id, "number": i.number, "status": i.status} for i in db.query(DBStoreIssue).filter(DBStoreIssue.indent_id == indent.id).order_by(DBStoreIssue.id).all()]

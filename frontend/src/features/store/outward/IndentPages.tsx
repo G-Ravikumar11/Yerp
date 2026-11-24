@@ -160,6 +160,13 @@ export function IndentPage() {
       {d.status === 'CANCELLED' && <p role="status" className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Cancelled: {d.cancel_reason}.</p>}
       {d.short_closed && <p role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Closed short: {d.cancel_reason}.</p>}
       {short.length > 0 && <p role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">{d.store_code} cannot fill {short.length === 1 ? '1 line' : `${short.length} lines`} from what it holds{can('purchase.manage') ? ' - press Buy the short items to raise a purchase enquiry for the rest.' : '. Ask purchasing to buy the rest.'}</p>}
+      {(d.sheet_warnings ?? []).length > 0 && (
+        <div role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
+          <p className="font-medium">More than the BOQ needs - check before approving</p>
+          <ul className="mt-1 list-disc pl-5">{(d.sheet_warnings ?? []).map((w, i) => <li key={i}>{w}</li>)}</ul>
+          <Link className="mt-1 inline-block font-medium underline" to={`/projects/item-sheet?job=${d.project_id}`}>Open the project's Item sheet</Link>
+        </div>
+      )}
       {d.status === 'SUBMITTED' && <p role="status" className="mb-4 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">Waiting for the project manager. They can reduce the quantities when they approve.</p>}
       <dl className="mb-5 grid gap-x-6 gap-y-2 rounded-xl border border-border bg-card p-4 text-sm sm:grid-cols-2 lg:grid-cols-3">{facts.map(([k, v]) => <div key={k}><dt className="text-xs uppercase tracking-wide text-muted-foreground">{k}</dt><dd className="font-medium">{v}</dd></div>)}</dl>
       <DataTable label="Indent lines" rows={d.lines ?? []} columns={columns} rowKey={(l) => l.id} />

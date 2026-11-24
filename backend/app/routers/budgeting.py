@@ -195,3 +195,40 @@ def job_budget_export(job_id: int, request: Request, db: Session = Depends(get_r
          "%s per unit" % KIND_LABEL["LABOUR"], "%s per unit" % KIND_LABEL["OTHER"], "Material", "Labour", "Plant & other",
          "Overheads and contingency", "Budget cost", "Profit", "Margin %", "Budgeted"),
         rows, "budget_%s.xlsx" % (job.number or "project"), preamble=preamble, closing=closing)
+
+
+# The project's Item sheet (services/item_sheet.py): every material the BOQ needs, from the budget, beside what has been
+# indented, ordered, issued and is at site. HO QS, purchase and the store all read it.
+ITEM_SHEET = ("budget.view", "budget.edit", "purchase.manage", "stores.manage", "stores.receive", "store.reports.view", "store.outward.view")
+
+
+@router.get("/api/jobs/{job_id}/item-sheet")
+def job_item_sheet(job_id: int, request: Request, db: Session = Depends(get_read_db)):
+    from app.services.item_sheet import item_sheet
+    client = require_items_access(request, db, ITEM_SHEET)
+    return item_sheet(db, client.id, job_or_404(db, client.id, job_id))
+
+
+@router.get("/api/jobs/{job_id}/item-sheet.xlsx")
+def job_item_sheet_export(job_id: int, request: Request, db: Session = Depends(get_read_db)):
+    from app.services.item_sheet import item_sheet
+    client = require_items_access(request, db, ITEM_SHEET)
+    job = job_or_404(db, client.id, job_id)
+    s = item_sheet(db, client.id, job)
+    t = s["totals"] or {}
+    preamble = [("ITEM SHEET - MATERIALS THE BOQ NEEDS", client.company_name or ""),
+                ("Project", "%s %s" % (job.number or "", job.name or "")),
+                ("Materials", t.get("items", 0), "To arrange", t.get("to_arrange", 0), "Budget value", t.get("value", 0),
+                 "Value still to arrange", t.get("to_arrange_value", 0)),
+                ("Required = BOQ quantity x quantity per unit in the budget x (1 + wastage %). To arrange = required - issued - at site - on its way.",),
+                ()]
+    rows = []
+    for r in s["rows"]:
+        rows.append((r["item_code"], r["item_name"] + ("" if r["in_master"] else "  (not in the item master)"), r["uom"], r["without_wastage"], r["required"],
+                     r["indented"], r["ordered"], r["on_way"], r["issued"], r["at_site"], r["to_arrange"], r["value"], r["status"]))
+        for l in r["lines"]:
+            rows.append(("", "    %s%s" % (l["item_no"] + " " if l["item_no"] else "", l["description"][:100]), "%g %s x %g %s, %g%% wastage" % (
+                l["boq_qty"], l["boq_unit"], l["per_unit"], l["budget_unit"], l["wastage_percent"]), "", l["required"], "", "", "", l["issued"], "", "", "", ""))
+    return sheet_response(("Code", "Material / BOQ line", "Unit", "Without wastage", "Required", "Indented", "Ordered", "On its way", "Issued",
+                           "At site", "To arrange", "Budget value", "Status"),
+                          rows, "item_sheet_%s.xlsx" % (job.number or "project"), preamble=preamble)
