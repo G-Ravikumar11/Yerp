@@ -311,5 +311,6 @@
 
 /* While a field is being typed in on a phone, room under the form (the keyboard is drawn over the page) so the fields can scroll above it. */
 html.kb-open .login-scene {
+  padding-bottom: 60vh;
   padding-bottom: 60dvh;
 }
