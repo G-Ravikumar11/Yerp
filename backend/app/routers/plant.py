@@ -596,7 +596,8 @@ def list_fuel(request: Request, date_from: str = "", date_to: str = "", asset_id
         d = by_day.setdefault(f.filled_at[:10], {"day": f.filled_at[:10], "litres": 0.0, "amount": 0.0})
         d["litres"] += f.litres or 0
         d["amount"] += f.amount or 0
-    return {"fuel": [fuel_dict(f, assets, jobs_of(db, client.id)) for f in rows], "fuel_types": list(FUEL_TYPES),
+    jobs = jobs_of(db, client.id)                     # once for the list, not once a row
+    return {"fuel": [fuel_dict(f, assets, jobs) for f in rows], "fuel_types": list(FUEL_TYPES),
             "by_machine": sorted(by_machine, key=lambda x: -x["amount"]), "by_day": sorted(by_day.values(), key=lambda x: x["day"], reverse=True),
             "totals": {"litres": round(sum(f.litres or 0 for f in rows), 2), "amount": money(sum(f.amount or 0 for f in rows))}}
 

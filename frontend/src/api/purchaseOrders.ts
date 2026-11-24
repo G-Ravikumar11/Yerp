@@ -10,6 +10,8 @@ interface PoLine {
   price: number
   tax_rate: string
   received_qty?: number
+  /** Ordered less what posted receipts brought in. */
+  pending_qty?: number
   /** The BOQ line or heading of the project it buys for: its budget is checked. */
   boq_key?: string
 }
@@ -40,6 +42,8 @@ export interface PurchaseOrder {
   billed_total: number
   billed_count: number
   received_total?: number
+  /** Worked out from posted receipts, beside the approval status (which stays Approved so further GRNs can be made). */
+  receipt_status?: 'Not received' | 'Partially received' | 'Fully received' | 'Short-closed'
   line_items: PoLine[]
 }
 

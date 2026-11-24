@@ -150,6 +150,7 @@ class DBStoreOpeningLine(Base):
 class DBStoreInwardLog(Base):
     """Every change of status of an inward document: who, when, from what to what."""
     __tablename__ = "store_inward_log"
+    __table_args__ = (Index("ix_store_inward_log_doc", "doc_type", "doc_id"),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)

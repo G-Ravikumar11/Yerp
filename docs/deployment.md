@@ -16,6 +16,27 @@ and every ERP screen). The old `*.html` addresses (`/login.html`, `/portal.html`
 forwarded to their React pages by `backend/app/core/static.py`, so links already sent in emails keep
 working. `backend/app/static/` holds the two files phones that installed the old app still ask for.
 
+## Nothing deploys unless the backend checks pass
+
+Every push and pull request - so every merge - runs `.github/workflows/ci.yml`:
+
+- **Backend tests**: the whole backend suite, split into six shares that together run every test exactly once.
+- **Database migrations (Postgres)**: start-up's schema steps on Postgres, on an empty database and on one the
+  previous commit set up; afterwards every table and column the models define must exist
+  (`backend/scripts/check_migrations.py`, which you can also run against any throwaway database).
+- **Backend checks (PASS/FAIL)**: one check that is PASS only when the conflict-marker check, every test share
+  and the migrations all passed, with a summary table on the run's page. This is the check to require.
+
+Two settings make a failure stop a merge and a deploy (both are set outside the repository, once):
+
+1. **GitHub** > repository Settings > Branches > add a rule for `master`: *Require status checks to pass before
+   merging*, and choose **Backend checks (PASS/FAIL)**. A pull request into `master` cannot be merged while it fails.
+2. **Railway** > the service > Settings > enable **Wait for CI**. Railway then waits for the GitHub checks on the
+   commit and skips the deploy if any fail, keeping the previous version running. (It waits for every workflow run
+   on that commit - the mobile build too, when a push to `master` changes `frontend/` or `mobile/`.)
+
+Never make it pass by skipping, deleting or loosening a test: find why it fails, fix that, and run the whole suite again.
+
 ## What Railway needs from you
 
 Create the service from the repo, add a **Postgres** database to the project,

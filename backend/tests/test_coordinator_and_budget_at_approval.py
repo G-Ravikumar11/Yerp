@@ -3,6 +3,7 @@ again when it is approved, and shown against it on the Budgeting page."""
 from app import db as database
 from app import models
 from app.services.approvals import hierarchy_chain
+from conftest import budget_all
 from test_boq import contractor_order, make_boq, saved
 from test_budgeting import put_line
 from test_subcontract_orders import staff
@@ -23,6 +24,7 @@ def over_after_sending(tenant):
     jid, boq = make_boq(tenant)
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"] if l["kind"] == "item"}
     order, _, _ = contractor_order(tenant, lines, [(lines["EXC"], 100, 150)])
+    budget_all(tenant, jid, skip={lines["EXC"]["key"]})       # the rest of the project; EXC's budget is the test's
     labour = lambda rate: put_line(tenant, jid, lines["EXC"]["key"], [{"kind": "LABOUR", "description": "Gang", "uom": "cum", "coefficient": 1, "rate": rate}])
     assert labour(200).status_code == 200
     assert tenant.post("/api/wo/orders/%d/submit" % order["id"], json={}).status_code == 200

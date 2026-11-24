@@ -29,8 +29,7 @@ export const STORE_SECTIONS: StoreSection[] = [
   { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all', block: 'purchase', hint: 'Orders to suppliers and what has arrived' },
   { label: 'Rate Contracts', path: '/store/rate-contracts', perm: 'purchase.manage', block: 'purchase', hint: 'Rates agreed with suppliers for the year' },
   { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all', block: 'purchase', hint: "Suppliers' bills checked against what came" },
-  // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are kept as records,
-  // reached from the Hub (routes.tsx sends their old addresses there).
+  // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are removed.
   { label: 'Full store (Hub)', path: '/store/hub', perm: STORE_ANY, block: 'more', hint: 'Transfers, counts, quality, returns, gate passes, reports' },
   { label: 'Item Master', path: '/store/items', perm: 'items.manage', block: 'more', hint: 'Every material with its unit, code and rate' },
   { label: 'E-way Bills', path: '/store/eway', perm: 'accounts.manage|stores.manage|stores.receive|bills.view_all|store.inward.view|store.outward.view', block: 'more', hint: 'Goods on the road and their validity' },

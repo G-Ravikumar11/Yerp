@@ -5,6 +5,13 @@ import { CircleCheck, ListChecks, TriangleAlert } from 'lucide-react'
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui'
 import { get } from '@/lib/api'
 import { useSession } from '@/lib/session'
+import { formatINR } from '@/lib/utils'
+
+/** The budget item's own figures: the whole BOQ of every live project, and what is left on each (services/setup_check.py). */
+interface BudgetBreakdown {
+  totals: { lines: number; budgeted: number; partial: number; unbudgeted: number; approved_value: number; budgeted_value: number; remaining_value: number; completion_percent: number; value_percent: number }
+  projects: { job_id: number; code: string; name: string; lines: { key: string; item_no: string; description: string; unit: string; status: string; quantity: number; value: number }[] }[]
+}
 
 interface SetupItem {
   key: string
@@ -14,6 +21,7 @@ interface SetupItem {
   link: string
   fix: string
   ok: boolean
+  budget?: BudgetBreakdown
 }
 
 export const useSetupCheck = (enabled: boolean) =>
@@ -45,6 +53,7 @@ export function SetupCheck() {
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">{i.title}</p>
               <p className="text-[13px] text-muted-foreground">{i.detail}</p>
+              {i.budget && <BudgetDetail b={i.budget} />}
             </div>
             {!i.ok && (
               <Button size="sm" asChild>
@@ -58,5 +67,28 @@ export function SetupCheck() {
         </button>
       </CardContent>
     </Card>
+  )
+}
+
+/** The BOQ budget in figures, and each project with lines still to budget, linked to its HO QS control view. */
+function BudgetDetail({ b }: { b: BudgetBreakdown }) {
+  const t = b.totals
+  return (
+    <div className="mt-1.5 text-[13px]">
+      <p className="text-muted-foreground">
+        {t.lines} lines: {t.budgeted} budgeted, {t.partial} partly, {t.unbudgeted} not at all ({t.completion_percent}%). Value {formatINR(t.budgeted_value)} of {formatINR(t.approved_value)} budgeted, {formatINR(t.remaining_value)} to go.
+      </p>
+      {b.projects.length > 0 && (
+        <ul className="mt-1 space-y-0.5">
+          {b.projects.slice(0, 6).map((p) => (
+            <li key={p.job_id}>
+              <Link className="font-medium text-primary hover:underline" to={`/projects/budgeting?job=${p.job_id}`}>{[p.code, p.name].filter(Boolean).join(' ')}</Link>
+              <span className="text-muted-foreground"> - {p.lines.length} line{p.lines.length === 1 ? '' : 's'} to budget: {p.lines.slice(0, 3).map((l) => `${l.item_no ? l.item_no + ' ' : ''}${l.description.split('\n')[0].slice(0, 40)}`).join('; ')}{p.lines.length > 3 ? '; ...' : ''}</span>
+            </li>
+          ))}
+          {b.projects.length > 6 && <li className="text-muted-foreground">and {b.projects.length - 6} more projects</li>}
+        </ul>
+      )}
+    </div>
   )
 }

@@ -42,12 +42,13 @@ def list_batches(request: Request, q: str = "", hold_status: str = "", page: int
         query = query.filter(DBStoreBatch.batch_no.ilike(like) | DBStoreBatch.item_id.in_(ids or [0]))
     rows = query.order_by(DBStoreBatch.on_hold.desc(), DBStoreBatch.id.desc()).all()
     hold_status = {"ON_HOLD": "On Hold", "AVAILABLE": "Available", "EXPIRED": "Expired", "REJECTED": "Rejected"}.get(hold_status, hold_status)
-    views = [sh.batch_view(db, b) for b in rows] if hold_status else None
+    # A lot's status is worked out, not stored, so a status filter looks at every lot - read together, in a fixed number of queries.
+    views = sh.batch_views(db, rows) if hold_status else None
     if views is not None:
         views = [v for v in views if v["hold_status"] == hold_status]
     per_page = max(1, min(per_page, 100))
     start = (max(1, page) - 1) * per_page
-    shown = views[start:start + per_page] if views is not None else [sh.batch_view(db, b) for b in rows[start:start + per_page]]
+    shown = views[start:start + per_page] if views is not None else sh.batch_views(db, rows[start:start + per_page])
     return {"batches": shown, "total": len(views if views is not None else rows), "page": page, "per_page": per_page}
 
 

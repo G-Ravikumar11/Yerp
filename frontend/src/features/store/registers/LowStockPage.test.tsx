@@ -9,10 +9,10 @@ const calls: { url: string; body?: unknown }[] = []
 const row = (over: Partial<LowRow>): LowRow => ({
   key: '1-9', alert_id: 5, store_id: 1, store_code: 'CS1', store_name: 'Central', project_id: null, project: '', item_id: 9, item_code: 'CEM-1', item_name: 'Cement OPC', category: 'CONSUMABLE', base_uom: 'kg',
   on_hand: '3000.000', unusable: '500.000', reserved: '0.000', available: '2500.000', reorder_level: '3000.000', min_qty: '0.000', max_qty: '8000.000', target_level: '8000.000', suggest_basis: 'Up to the maximum stock level (8000)',
-  suggested_qty: '5500.000', on_order: '1000.000', to_order: '4500.000', alerted_at: '2026-11-10T07:00:00', last_checked_at: '2026-11-16T07:00:00', times_raised: 1, status: 'LOW_STOCK', action: '', action_ref: '',
+  suggested_qty: '5500.000', on_order: '1000.000', to_order: '4500.000', alerted_at: '2026-11-10T07:00:00', last_checked_at: '2026-11-16T07:00:00', times_raised: 1, status: 'LOW_STOCK', stage: 'ALERT ACTIVE', shortage: '500.000', action: '', action_ref: '',
   action_doc_id: null, action_doc_status: '', action_live: false, action_qty: null, action_by: '', action_at: '', ...over,
 })
-const rows = [row({}), row({ key: '1-10', alert_id: 6, item_id: 10, item_code: 'SND-1', item_name: 'River sand', available: '10.000', on_hand: '10.000', suggested_qty: '90.000', to_order: '90.000', on_order: '0.000', status: 'INDENT_RAISED', action: 'INDENT', action_ref: 'IND-0007', action_doc_status: 'SUBMITTED', action_live: true, action_qty: '90.000' })]
+const rows = [row({}), row({ key: '1-10', alert_id: 6, item_id: 10, item_code: 'SND-1', item_name: 'River sand', available: '10.000', on_hand: '10.000', suggested_qty: '90.000', to_order: '90.000', on_order: '0.000', shortage: '2990.000', status: 'INDENT_RAISED', stage: 'INDENT RAISED', action: 'INDENT', action_ref: 'IND-0007', action_doc_status: 'SUBMITTED', action_live: true, action_qty: '90.000' })]
 
 vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
@@ -49,6 +49,21 @@ describe('Low stock list', () => {
     expect(screen.getByText('1,000 already coming')).toBeTruthy()
     expect(screen.getByText('0 selected')).toBeTruthy()
     expect((screen.getByRole('button', { name: /Raise Indent \/ Enquiry for All Selected/ }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('shows how far each alert has got to replenishment and how far under its level it stands', async () => {
+    rows.push(row({ key: '1-11', alert_id: 8, item_id: 11, item_code: 'STL-8', item_name: 'TMT 8mm', status: 'INDENT_RAISED', stage: 'GOODS RECEIVED', shortage: '120.000', action: 'INDENT', action_ref: 'IND-0003', action_doc_status: 'APPROVED', action_live: true }))
+    mount()
+    const cement = (await screen.findByText('Cement OPC')).closest('tr') as HTMLElement
+    expect(within(cement).getByText('ALERT ACTIVE')).toBeTruthy()
+    expect(within(cement).getByText('500 short')).toBeTruthy()
+    const steel = screen.getByText('TMT 8mm').closest('tr') as HTMLElement
+    expect(within(steel).getByText('INDENT RAISED')).toBeTruthy()                   // the alert's status stays until stock recovers
+    expect(within(steel).getByText('GOODS RECEIVED')).toBeTruthy()                  // a receipt is waiting for posting: not resolved yet
+    const sand = screen.getByText('River sand').closest('tr') as HTMLElement
+    expect(within(sand).getAllByText('INDENT RAISED')).toHaveLength(1)             // the stage is not repeated when it says the same
+    expect(within(sand).getByText('2,990 short')).toBeTruthy()
+    rows.pop()
   })
 
   it('selects every row, previews with the quantity to order filled in, and shows each line own result', async () => {

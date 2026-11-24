@@ -18,6 +18,10 @@ import { PurchaseSettingsButton } from './PurchaseSettings'
 import { MasterDelete } from '@/features/deleteorder/MasterDelete'
 import { MsmeBadge } from '@/components/data/MsmeBadge'
 
+const RECEIPT_TONE = { 'Not received': 'neutral', 'Partially received': 'warning', 'Fully received': 'success', 'Short-closed': 'info' } as const
+/** What is still to come on an approved order, line by line, for the receipt badge's tooltip. */
+const pendingTip = (o: PurchaseOrder) => o.line_items.filter((l) => (l.pending_qty ?? 0) > 0).map((l) => `${l.description || l.item_code}: ${l.pending_qty} ${l.uom} pending`).join(' · ')
+
 const tone = (o: PurchaseOrder) => (o.approval_status === 'pending' ? 'warning' : o.status === 'Approved' || o.status === 'Received' ? 'success' : o.status === 'Rejected' ? 'danger' : 'neutral') as 'warning' | 'success' | 'danger' | 'neutral'
 
 /** Purchase orders: spend agreed before it is committed. Staff raise them for approval; the owner's are agreed by approving here. */
@@ -32,7 +36,7 @@ export default function PurchaseOrdersPage() {
   const [emailing, setEmailing] = useState<PurchaseOrder | null>(null)
   const [supplierOf, setSupplierOf] = useState<string | null>(null)
   const suppliers = useSuppliers()
-  const approve = useAction((o: PurchaseOrder) => savePo(o.id, { supplier_name: o.supplier_name, amount: o.amount, tax_amount: o.tax_amount, total: o.total, issue_date: o.issue_date, needed_by: o.needed_by, notes: o.notes, job_id: o.job_id, status: 'Approved', line_items: o.line_items.map(({ id: _id, received_qty: _r, ...l }) => l) }, false), { invalidate: [poKeys.all, ['approvals'], ['stock']], success: (_r, o) => `${o.number} approved. Receive the goods under Store, Goods Receipt.`, onSuccess: () => setApproving(null) })
+  const approve = useAction((o: PurchaseOrder) => savePo(o.id, { supplier_name: o.supplier_name, amount: o.amount, tax_amount: o.tax_amount, total: o.total, issue_date: o.issue_date, needed_by: o.needed_by, notes: o.notes, job_id: o.job_id, status: 'Approved', line_items: o.line_items.map(({ id: _id, received_qty: _r, pending_qty: _p, ...l }) => l) }, false), { invalidate: [poKeys.all, ['approvals'], ['stock']], success: (_r, o) => `${o.number} approved. Receive the goods under Store, Goods Receipt.`, onSuccess: () => setApproving(null) })
   const resend = useAction((o: PurchaseOrder) => resendPo(o.id), { invalidate: [poKeys.all], success: 'Sent for approval' })
 
   const rows = q.data ?? []
@@ -46,7 +50,7 @@ export default function PurchaseOrdersPage() {
     { id: 'date', header: 'Date', hideBelow: 'xl', sort: (o) => o.issue_date, cell: (o) => formatDate(o.issue_date) },
     { id: 'total', header: 'Total', align: 'right', sort: (o) => o.total, cell: (o) => formatINR(o.total) },
     { id: 'billed', header: 'Billed', hideBelow: 'md', align: 'right', cell: (o) => (o.billed_count ? <>{formatINR(o.billed_total)} <span className="text-xs text-muted-foreground">({o.billed_count})</span></> : '-') },
-    { id: 'status', header: 'Status', cell: (o) => <div><Badge tone={tone(o)}>{o.status}</Badge>{!!o.rate_flags?.length && <Badge tone="warning" className="ml-1.5" title={o.rate_flags.map((f) => `${f.description || f.item_code}: ${f.rate} is ${f.why}`).join(' · ')}>{o.rate_flags.some((f) => f.contract_rate != null && f.rate > f.contract_rate) ? 'Above contract' : 'Rate alert'}</Badge>}{o.rejection_reason && <div className="mt-1 max-w-56 text-xs text-muted-foreground">{o.rejection_reason}</div>}</div> },
+    { id: 'status', header: 'Status', cell: (o) => <div><Badge tone={tone(o)}>{o.status}</Badge>{o.receipt_status && o.status === 'Approved' && <Badge tone={RECEIPT_TONE[o.receipt_status]} className="ml-1.5" title={pendingTip(o) || undefined}>{o.receipt_status}</Badge>}{!!o.rate_flags?.length && <Badge tone="warning" className="ml-1.5" title={o.rate_flags.map((f) => `${f.description || f.item_code}: ${f.rate} is ${f.why}`).join(' · ')}>{o.rate_flags.some((f) => f.contract_rate != null && f.rate > f.contract_rate) ? 'Above contract' : 'Rate alert'}</Badge>}{o.rejection_reason && <div className="mt-1 max-w-56 text-xs text-muted-foreground">{o.rejection_reason}</div>}</div> },
     {
       id: 'act',
       header: '',

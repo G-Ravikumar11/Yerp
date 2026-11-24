@@ -3,6 +3,7 @@ reporting line: site -> project manager -> HO Coordinator, and HO QS -> HO Coord
 somebody reports to them - and being there does not push the project manager or HO QS off the route."""
 from app import db as database
 from app import models
+from conftest import budget_all
 from test_boq import contractor_order, make_boq, saved
 from test_budgeting import put_line
 from test_subcontract_orders import sign_in, staff
@@ -33,6 +34,7 @@ def test_a_work_order_from_ho_qs_goes_coordinator_project_manager_head_projects_
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"] if l["kind"] == "item"}
     put_line(tenant, jid, lines["EXC"]["key"], [{"kind": "LABOUR", "description": "Gang", "uom": "cum",
                                                  "coefficient": 1, "rate": 200}])
+    budget_all(tenant, jid, skip={lines["EXC"]["key"]})       # an order is sent only once the whole BOQ is budgeted (HO QS control)
     order, _, _ = contractor_order(tenant, lines, [(lines["EXC"], 100, 150)])
     res = as_(portal, p["qs"]).post("/api/wo/orders/%d/submit" % order["id"], json={})
     assert res.status_code == 200, res.text

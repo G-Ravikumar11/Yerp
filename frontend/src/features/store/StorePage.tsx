@@ -6,7 +6,6 @@ import { Button, Card, Input } from '@/components/ui'
 import { get } from '@/lib/api'
 import { useSession } from '@/lib/session'
 import { storePerm } from '@/api/store'
-import { OldStoreCard } from './OldStore'
 import { OverviewBudgets, OverviewMovements, OverviewStats, OverviewWork, useStoreDashboard } from './Overview'
 import { SLICES, StoreShell } from './StoreShell'
 
@@ -29,7 +28,6 @@ export default function StorePage() {
   const dash = useStoreDashboard(any)
   return (
     <StoreShell slice={null}>
-      <OldStoreCard />
       <div className="space-y-8">
         <QuickFind allowed={can(storePerm('enquiry'))} />
         {any && (dash.isError
