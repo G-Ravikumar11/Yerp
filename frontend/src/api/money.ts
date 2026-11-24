@@ -8,6 +8,8 @@ export interface Outstanding {
   outstanding: number
   /** A supplier bill that claims more than has been received on its order: paying it needs an override reason. */
   ahead_of_goods?: { verdict: 'OVER_BILLED' | 'AWAITING_RECEIPT'; note: string } | null
+  /** Said when the contractor's bank or tax details wait for approval: nothing can be paid to them until they are approved. */
+  payee_hold?: string
   entries: { paid_on: string; number: string; amount: number; mode: string; reference: string; voided: boolean }[]
 }
 

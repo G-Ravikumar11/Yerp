@@ -295,3 +295,50 @@ def test_a_draft_supplier_bill_is_not_owed_until_accepted(tenant):
                                           "tax_amount": 9000, "total": 59000, "status": "Draft"})
     assert res.status_code == 200, res.text
     assert not [b for b in tenant.get("/api/money/payables").json()["bills"] if b["number"] == "DRAFT-9"]
+
+
+# --- a contractor whose bank or tax details wait for approval is not paid, by hand or by request -------------------------------
+
+def _hold_contractor(sub_bill, status="PENDING"):
+    from app import models
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        bill = db.get(models.DBSubBill, sub_bill["id"])
+        con = db.get(models.DBContractor, bill.contractor_id)
+        con.registration_status = status
+        db.commit()
+
+
+def test_a_contractor_whose_details_wait_for_approval_is_not_paid_by_hand(tenant):
+    b = certified_sub(tenant)
+    _hold_contractor(b)
+    told = tenant.get("/api/money/outstanding/sub_bill/%d" % b["id"]).json()
+    assert "waiting for approval" in told["payee_hold"]
+    r = money_in(tenant, doc_type="sub_bill", doc_id=b["id"], amount=1000)
+    assert r.status_code == 409 and "waiting for approval" in r.json()["detail"], r.text
+    # Nothing was recorded; the bill still owes all it did.
+    row = [x for x in tenant.get("/api/money/payables").json()["bills"] if x.get("doc_type") == "sub_bill"][0]
+    assert row["outstanding"] == b["net_payable"]
+    # A request to pay them is stopped too, so it is not approved only to fail.
+    asked = tenant.post("/api/payment-requests", json={"doc_type": "sub_bill", "doc_id": b["id"], "amount": 1000})
+    assert asked.status_code == 409 and "waiting for approval" in asked.json()["detail"]
+    # And money on account to the same contractor.
+    con_name = row["party"]
+    on_acct = money_in(tenant, doc_type="on_account", direction="OUT", party_type="contractor", party_name=con_name, amount=500)
+    assert on_acct.status_code == 409
+
+
+def test_once_the_change_is_approved_the_contractor_is_paid_again(tenant):
+    b = certified_sub(tenant)
+    _hold_contractor(b)
+    assert money_in(tenant, doc_type="sub_bill", doc_id=b["id"], amount=1000).status_code == 409
+    _hold_contractor(b, "APPROVED")
+    assert tenant.get("/api/money/outstanding/sub_bill/%d" % b["id"]).json()["payee_hold"] == ""
+    assert money_in(tenant, doc_type="sub_bill", doc_id=b["id"], amount=1000).status_code == 200
+
+
+def test_a_supplier_or_a_settled_contractor_is_not_held(tenant):
+    s = supplier_bill(tenant)
+    assert money_in(tenant, doc_type="supplier_bill", doc_id=s["id"], amount=500).status_code == 200
+    c = certified_sub(tenant)
+    assert tenant.get("/api/money/outstanding/sub_bill/%d" % c["id"]).json()["payee_hold"] == ""

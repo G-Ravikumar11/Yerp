@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Button, Field, Input, Modal, NumField, Select, Skeleton } from '@/components/ui'
 import { PAY_MODES, recordPayment, useBankAccounts, useOutstanding } from '@/api/money'
 import { mustAsk, paymentKeys, raisePaymentRequest, usePaymentRules } from '@/api/payments'
@@ -71,6 +72,8 @@ function PayForm({
   const [note, setNote] = useState('')
   // A supplier bill billed ahead of the goods: no money goes out on it without a reason, which is kept with the payment.
   const ahead = owed.ahead_of_goods
+  // A contractor whose bank or tax details wait for approval is not paid; the server refuses it too, this says so first.
+  const hold = owed.payee_hold
   const [override, setOverride] = useState('')
   const needsReason = !!ahead && verb === 'Pay' && override.trim().length < 5
 
@@ -99,6 +102,11 @@ function PayForm({
           </ul>
         )}
       </div>
+      {hold && verb === 'Pay' && (
+        <div role="alert" className="rounded-lg border border-danger/40 bg-danger-soft p-3 text-[13.5px]">
+          <strong className="text-danger">Not paid yet.</strong> {hold} <Link to="/approvals" className="font-medium text-primary underline">Open Approvals</Link>
+        </div>
+      )}
       {ahead && verb === 'Pay' && (
         <div role="alert" className="grid gap-3 rounded-lg border border-danger/40 bg-danger-soft p-3 text-[13.5px]">
           <p><strong className="text-danger">{ahead.verdict === 'AWAITING_RECEIPT' ? 'Nothing received on this order yet.' : 'Billed for more than was received.'}</strong> {ahead.note}</p>
@@ -135,7 +143,7 @@ function PayForm({
           Cancel
         </Button>
         {save.error && <p role="alert" className="mr-auto self-center text-[13px] text-danger">{save.error.message}</p>}
-        <Button loading={save.isPending} disabled={amount <= 0 || (needsReason && !ask)} onClick={() => save.mutate()}>
+        <Button loading={save.isPending} disabled={amount <= 0 || (needsReason && !ask) || (!!hold && verb === 'Pay')} onClick={() => save.mutate()}>
           {ask ? `Send ${formatINR(amount)} for approval` : `${verb} ${formatINR(amount)}`}
         </Button>
       </div>

@@ -52,6 +52,8 @@ export interface ProjectAccountsData {
   site_cash: { box: string; custodian: string; in_hand: number; pending: number }[]
   journal_cost: number
   debit_notes: number
+  /** Each money figure beside what the ledgers say for this project, with what explains the difference. */
+  ledger_check?: { label: string; dashboard: number; ledger: number; difference: number; explained: { label: string; amount: number }[]; unexplained: number }[]
 }
 
 /** The page keeps what it last read between visits, so what comes back may be from before a field was added: fill every list and
@@ -62,7 +64,7 @@ const withDefaults = (d: ProjectAccountsData): ProjectAccountsData => ({
   request_summary: d.request_summary ?? { with_accounts: 0, with_md: 0, to_pay: 0, open: 0 },
   advances: d.advances ?? { contractors: 0, suppliers: 0, on_account_contractors: 0, staff: 0, other: 0 },
   receive_total: d.receive_total ?? 0, pay_total: d.pay_total ?? 0, overdue_receive: d.overdue_receive ?? 0, overdue_pay: d.overdue_pay ?? 0,
-  received: d.received ?? 0, paid: d.paid ?? 0, journal_cost: d.journal_cost ?? 0, debit_notes: d.debit_notes ?? 0,
+  received: d.received ?? 0, paid: d.paid ?? 0, journal_cost: d.journal_cost ?? 0, debit_notes: d.debit_notes ?? 0, ledger_check: d.ledger_check ?? [],
   project: { ...d.project, categories: d.project?.categories ?? [], bill_list: d.project?.bill_list ?? [], purchase_order_list: d.project?.purchase_order_list ?? [], subcontract_list: d.project?.subcontract_list ?? [], work_order_list: d.project?.work_order_list ?? [] },
 })
 
@@ -219,6 +221,28 @@ export function ProjectAccounts({ id }: { id: number }) {
             {papers('Work orders from the client', p.work_order_list, (r) => r.value ?? 0)}
           </CardContent></Card>
       </div>
+      {(d.ledger_check ?? []).length > 0 && (
+        <Card><CardHeader><CardTitle>How these tie to the ledgers</CardTitle><CardDescription>The same figures read from the party ledgers and the entries for this project, and what explains any difference.</CardDescription></CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto"><table className="w-full text-[13px]" aria-label="Ledger check">
+              <thead><tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground"><th className="py-2 pr-3">Figure</th><th className="px-3 text-right">Dashboard</th><th className="px-3 text-right">Ledgers</th><th className="px-3 text-right">Difference</th><th className="pl-3">Status</th></tr></thead>
+              <tbody>
+                {(d.ledger_check ?? []).map((l) => (
+                  <tr key={l.label} className="border-b border-border align-top last:border-0">
+                    <td className="py-2 pr-3 font-medium">{l.label}</td>
+                    <td className="px-3 text-right tabular">{formatINR(l.dashboard)}</td>
+                    <td className="px-3 text-right tabular">{formatINR(l.ledger)}</td>
+                    <td className="px-3 text-right tabular">{formatINR(l.difference)}</td>
+                    <td className="pl-3">
+                      {Math.abs(l.unexplained) < 0.01 ? <Badge tone="success">{Math.abs(l.difference) < 0.01 ? 'agrees' : 'explained'}</Badge> : <Badge tone="danger">{formatINR(l.unexplained)} unexplained</Badge>}
+                      {l.explained.map((e) => <div key={e.label} className="mt-1 max-w-md text-xs text-muted-foreground">{formatINR(e.amount)}: {e.label}</div>)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table></div>
+          </CardContent></Card>
+      )}
       {d.site_cash.length > 0 && (
         <Card><CardHeader><CardTitle>Site cash</CardTitle><CardDescription>Cash held on site for this project.</CardDescription></CardHeader>
           <CardContent><ul className="grid gap-1 text-sm">{d.site_cash.map((c) => <li key={c.box} className="flex justify-between"><span>{c.box} <span className="text-muted-foreground">with {c.custodian}</span></span><span className="tabular">{formatINR(c.in_hand)}</span></li>)}</ul></CardContent></Card>
