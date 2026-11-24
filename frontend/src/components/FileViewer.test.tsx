@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 const sheets = vi.hoisted(() => ({ read: vi.fn(), names: vi.fn() }))
@@ -102,5 +102,69 @@ describe('the file viewer', () => {
     await screen.findByText('x')
     await userEvent.keyboard('{Escape}')
     expect(useFileSheet.getState().viewing).toBeNull()
+  })
+
+  it('zooms with the + and - buttons, one step at a time, and Reset goes back to 100%', async () => {
+    workbook(['S'], { 1: [['x']] })
+    useFileSheet.getState().view(xlsx())
+    render(<FileViewer />)
+    await screen.findByText('x')
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('100%')
+    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('150%')
+    await userEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('400%')
+    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('300%')
+    await userEvent.click(screen.getByRole('button', { name: 'Reset zoom' }))
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('100%')
+  })
+
+  it('starts each file at 100%', async () => {
+    workbook(['S'], { 1: [['x']] })
+    useFileSheet.getState().view(xlsx('a.xlsx'))
+    render(<FileViewer />)
+    await screen.findByText('x')
+    await userEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    useFileSheet.getState().view(xlsx('b.xlsx'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('100%'))
+  })
+
+  it('zooms when two fingers spread apart, and back out when they pinch in', async () => {
+    workbook(['S'], { 1: [['x']] })
+    useFileSheet.getState().view(xlsx())
+    render(<FileViewer />)
+    await screen.findByText('x')
+    const box = document.querySelector('[data-viewer-scroll]') as HTMLElement
+    const two = (gap: number) => [{ clientX: 100 - gap, clientY: 100 }, { clientX: 100 + gap, clientY: 100 }]
+    fireEvent.touchStart(box, { touches: two(20) })
+    fireEvent.touchMove(box, { touches: two(40) })
+    fireEvent.touchEnd(box, { touches: [] })
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('200%')
+    fireEvent.touchStart(box, { touches: two(40) })
+    fireEvent.touchMove(box, { touches: two(20) })
+    fireEvent.touchEnd(box, { touches: [] })
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('100%')
+  })
+
+  it('does not zoom past 400% or below 100% however far the fingers go', async () => {
+    workbook(['S'], { 1: [['x']] })
+    useFileSheet.getState().view(xlsx())
+    render(<FileViewer />)
+    await screen.findByText('x')
+    const box = document.querySelector('[data-viewer-scroll]') as HTMLElement
+    const two = (gap: number) => [{ clientX: 100 - gap, clientY: 100 }, { clientX: 100 + gap, clientY: 100 }]
+    fireEvent.touchStart(box, { touches: two(5) })
+    fireEvent.touchMove(box, { touches: two(300) })
+    fireEvent.touchEnd(box, { touches: [] })
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('400%')
+    fireEvent.touchStart(box, { touches: two(300) })
+    fireEvent.touchMove(box, { touches: two(2) })
+    fireEvent.touchEnd(box, { touches: [] })
+    expect(screen.getByRole('button', { name: 'Reset zoom' })).toHaveTextContent('100%')
   })
 })

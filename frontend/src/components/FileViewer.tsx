@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Download, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { Download, Minus, Plus, X } from 'lucide-react'
 import { useFileSheet, type HeldFile } from '@/stores/fileSheet'
 import { toast } from '@/stores/toast'
 
@@ -16,9 +16,94 @@ function bytesOf(base64: string): Uint8Array<ArrayBuffer> {
   return out
 }
 
+const MIN_ZOOM = 1
+const MAX_ZOOM = 4
+const STEPS = [1, 1.5, 2, 3, 4]
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
+
+/**
+ * Zoom by pinching, or with the + and - buttons. While the fingers are down the whole page is only scaled on screen (cheap, a little
+ * soft); when they lift the new zoom is committed, so the PDF is drawn again sharp and a sheet laid out again, and the scroll position
+ * is set so the point that was under the fingers stays under them.
+ */
+function useZoom(scroller: RefObject<HTMLDivElement | null>, inner: RefObject<HTMLDivElement | null>, zoom: number, setZoom: (z: number) => void, open: boolean) {
+  const keep = useRef<{ ratio: number; px: number; py: number; cx: number; cy: number } | null>(null)
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
+
+  useLayoutEffect(() => {
+    const k = keep.current
+    const s = scroller.current
+    if (!k || !s) return
+    keep.current = null
+    s.scrollLeft = k.px * k.ratio - k.cx
+    s.scrollTop = k.py * k.ratio - k.cy
+  }, [zoom, scroller])
+
+  // `open`: the viewer draws nothing until a file is held, so the boxes below exist only from then on.
+  useEffect(() => {
+    const s = scroller.current
+    const el = inner.current
+    if (!open || !s || !el) return
+    let g: { dist: number; zoom: number; cx: number; cy: number; px: number; py: number; k: number } | null = null
+    const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return
+      const r = s.getBoundingClientRect()
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top
+      g = { dist: dist(e.touches), zoom: zoomRef.current, cx, cy, px: s.scrollLeft + cx, py: s.scrollTop + cy, k: 1 }
+      el.style.transformOrigin = `${g.px}px ${g.py}px`
+    }
+    const onMove = (e: TouchEvent) => {
+      if (!g || e.touches.length !== 2) return
+      e.preventDefault()
+      g.k = clampZoom((g.zoom * dist(e.touches)) / g.dist) / g.zoom
+      el.style.transform = `scale(${g.k})`
+    }
+    const onEnd = (e: TouchEvent) => {
+      if (!g || e.touches.length >= 2) return
+      const done = g
+      g = null
+      el.style.transform = ''
+      el.style.transformOrigin = ''
+      const next = clampZoom(done.zoom * done.k)
+      if (Math.abs(next - done.zoom) < 0.02) return
+      keep.current = { ratio: next / done.zoom, px: done.px, py: done.py, cx: done.cx, cy: done.cy }
+      setZoom(next)
+    }
+    s.addEventListener('touchstart', onStart, { passive: true })
+    s.addEventListener('touchmove', onMove, { passive: false })
+    s.addEventListener('touchend', onEnd)
+    s.addEventListener('touchcancel', onEnd)
+    return () => {
+      s.removeEventListener('touchstart', onStart)
+      s.removeEventListener('touchmove', onMove)
+      s.removeEventListener('touchend', onEnd)
+      s.removeEventListener('touchcancel', onEnd)
+    }
+  }, [scroller, inner, setZoom, open])
+
+  /** Zoom to a level from the buttons, about the middle of what is on screen. */
+  return (next: number) => {
+    const s = scroller.current
+    const to = clampZoom(next)
+    if (!s || to === zoomRef.current) return
+    const cx = s.clientWidth / 2
+    const cy = s.clientHeight / 2
+    keep.current = { ratio: to / zoomRef.current, px: s.scrollLeft + cx, py: s.scrollTop + cy, cx, cy }
+    setZoom(to)
+  }
+}
+
 export function FileViewer() {
   const { viewing, closeView, show } = useFileSheet()
+  const [zoom, setZoom] = useState(1)
+  const scroller = useRef<HTMLDivElement>(null)
+  const inner = useRef<HTMLDivElement>(null)
+  const zoomTo = useZoom(scroller, inner, zoom, setZoom, viewing != null)
 
+  useEffect(() => { setZoom(1) }, [viewing])
   useEffect(() => {
     if (!viewing) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeView() }
@@ -27,8 +112,11 @@ export function FileViewer() {
   }, [viewing, closeView])
 
   if (!viewing) return null
+  const isPdf = /\.pdf$/i.test(viewing.name)
   // Whatever cannot be shown here is not lost: it goes to the Save / Share box instead.
   const cannotShow = () => { closeView(); toast.error('This file could not be shown here. You can save or share it instead.'); show(viewing) }
+  const stepUp = STEPS.find((z) => z > zoom + 0.01) ?? MAX_ZOOM
+  const stepDown = [...STEPS].reverse().find((z) => z < zoom - 0.01) ?? MIN_ZOOM
   return (
     <div className="fixed inset-0 z-[90] flex flex-col bg-background" role="dialog" aria-modal="true" aria-label={viewing.name}>
       <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-2" style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}>
@@ -38,14 +126,23 @@ export function FileViewer() {
         </button>
         <button type="button" onClick={closeView} aria-label="Close" className="grid size-10 place-items-center rounded-md border border-border"><X className="size-5" /></button>
       </div>
-      <div data-viewer-scroll className="min-h-0 flex-1 overflow-auto bg-muted" style={{ touchAction: 'pan-x pan-y pinch-zoom' }}>
-        {/\.pdf$/i.test(viewing.name) ? <PdfBody file={viewing} onFail={cannotShow} /> : <SheetBody file={viewing} onFail={cannotShow} />}
+      <div className="relative min-h-0 flex-1">
+        <div ref={scroller} data-viewer-scroll className="absolute inset-0 overflow-auto bg-muted" style={{ touchAction: 'pan-x pan-y' }}>
+          <div ref={inner} data-viewer-inner style={isPdf ? { width: `${zoom * 100}%` } : { zoom, width: 'max-content', minWidth: '100%' }}>
+            {isPdf ? <PdfBody file={viewing} zoom={zoom} onFail={cannotShow} /> : <SheetBody file={viewing} onFail={cannotShow} />}
+          </div>
+        </div>
+        <div className="absolute bottom-4 right-4 flex items-center overflow-hidden rounded-full border border-border bg-card shadow-md" style={{ marginBottom: 'env(safe-area-inset-bottom)' }}>
+          <button type="button" aria-label="Zoom out" disabled={zoom <= MIN_ZOOM + 0.01} onClick={() => zoomTo(stepDown)} className="grid size-11 place-items-center disabled:opacity-40"><Minus className="size-5" /></button>
+          <button type="button" aria-label="Reset zoom" onClick={() => zoomTo(1)} className="min-w-12 px-1 text-center text-sm font-semibold tabular-nums">{Math.round(zoom * 100)}%</button>
+          <button type="button" aria-label="Zoom in" disabled={zoom >= MAX_ZOOM - 0.01} onClick={() => zoomTo(stepUp)} className="grid size-11 place-items-center disabled:opacity-40"><Plus className="size-5" /></button>
+        </div>
       </div>
     </div>
   )
 }
 
-function PdfBody({ file, onFail }: { file: HeldFile; onFail: () => void }) {
+function PdfBody({ file, zoom, onFail }: { file: HeldFile; zoom: number; onFail: () => void }) {
   const [pages, setPages] = useState<number | null>(null)
   // Each page's height over its width, learned in the background so pages of different shapes (a landscape sheet among portrait ones) hold their places.
   const [ratios, setRatios] = useState<number[]>([])
@@ -79,7 +176,7 @@ function PdfBody({ file, onFail }: { file: HeldFile; onFail: () => void }) {
 
   if (pages === null) return <p className="p-6 text-center text-sm text-muted-foreground">Opening...</p>
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-3 p-2">
+    <div className="mx-auto flex flex-col gap-3 p-2" style={{ maxWidth: `${48 * zoom}rem` }}>
       {Array.from({ length: pages }, (_, i) => <PdfPage key={i} doc={docRef.current as PdfDoc} number={i + 1} ratio={ratios[i] ?? ratios[0] ?? 1.414} />)}
     </div>
   )
@@ -122,7 +219,10 @@ function PdfPage({ doc, number, ratio }: { doc: PdfDoc; number: number; ratio: n
     ;(async () => {
       const page = await doc.getPage(number)
       const base = page.getViewport({ scale: 1 })
-      const scale = (width / base.width) * Math.min(window.devicePixelRatio || 1, 2)
+      // Sharp, but within what the phone can hold: a page zoomed in a long way is drawn with fewer pixels per screen pixel.
+      const cssHeight = (width * base.height) / base.width
+      const pixelRatio = Math.max(1, Math.min(window.devicePixelRatio || 1, 2, 3200 / width, Math.sqrt(8_000_000 / (width * cssHeight))))
+      const scale = (width / base.width) * pixelRatio
       const viewport = page.getViewport({ scale })
       if (dead) return
       c.width = viewport.width

@@ -45,8 +45,6 @@
   position: relative;
   min-height: 100dvh;
   overflow: hidden;
-  /* The phone's keyboard (its height is set by the sign-in page): room under the form so the fields can scroll above it. */
-  padding-bottom: var(--kb, 0px);
   box-sizing: content-box;
   background-color: #f1eadd;
   color: var(--foreground);
@@ -309,4 +307,9 @@
   .login-scene .ls-form {
     animation: none;
   }
+}
+
+/* While a field is being typed in on a phone, room under the form (the keyboard is drawn over the page) so the fields can scroll above it. */
+html.kb-open .login-scene {
+  padding-bottom: 60dvh;
 }

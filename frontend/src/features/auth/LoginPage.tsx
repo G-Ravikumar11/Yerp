@@ -1,7 +1,7 @@
 import { forgetLocalData } from '@/lib/query'
 import { useEffect, useState } from 'react'
 import { Button, Field, Input } from '@/components/ui'
-import { Capacitor, registerPlugin } from '@capacitor/core'
+import { Capacitor } from '@capacitor/core'
 import { Eye, EyeOff } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { Notice, YahooMark, nextTarget } from './AuthLayout'
@@ -74,31 +74,35 @@ export default function LoginPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // The phone's keyboard is drawn over the page without shrinking it. The native Keyboard plugin says how tall it is: that much
-  // room is added under the form so the page can scroll, and the field being typed in (with the button below it) is brought into view.
+  // The phone's keyboard is drawn over the page, and on some phones the page is not shrunk to fit above it. So while a field is being
+  // typed in, room is made under the form (the "kb-open" class, see login-scene.css) so the page can scroll, and the field is
+  // brought to the upper part of the screen with the fields after it and the button still in sight. It also runs when the page opens
+  // with the keyboard already up (the email field is focused at once), which a keyboard-height message would arrive too late for.
   useEffect(() => {
+    if (!native) return // a browser deals with its own keyboard
     const root = document.documentElement
-    const keepInView = () => {
+    const bringUp = () => {
       const el = document.activeElement
-      if (el instanceof HTMLInputElement) {
-        // Placed in the upper part of what the keyboard leaves visible, so the field after it and the button are also in sight.
-        window.setTimeout(() => {
-          const kb = parseFloat(root.style.getPropertyValue('--kb')) || 0
-          window.scrollBy({ top: el.getBoundingClientRect().top - (window.innerHeight - kb) * 0.25, behavior: 'smooth' })
-        }, 120)
-      }
+      if (!(el instanceof HTMLInputElement)) return
+      window.scrollBy({ top: el.getBoundingClientRect().top - window.innerHeight * 0.12, behavior: 'smooth' })
     }
-    const handles: Promise<{ remove: () => Promise<void> }>[] = []
-    if (native) {
-      const kb = registerPlugin<{ addListener: (event: string, fn: (e: { keyboardHeight?: number }) => void) => Promise<{ remove: () => Promise<void> }> }>('Keyboard')
-      handles.push(kb.addListener('keyboardWillShow', (e) => { root.style.setProperty('--kb', `${e.keyboardHeight ?? 0}px`); keepInView() }))
-      handles.push(kb.addListener('keyboardWillHide', () => root.style.removeProperty('--kb')))
+    const onFocusIn = (e: FocusEvent) => {
+      if (!(e.target instanceof HTMLInputElement)) return
+      root.classList.add('kb-open')
+      // The keyboard takes a moment to slide up and the page to settle; ask again once it has.
+      for (const ms of [60, 350, 800]) window.setTimeout(bringUp, ms)
     }
-    document.addEventListener('focusin', keepInView)
+    const onFocusOut = () => window.setTimeout(() => { if (!(document.activeElement instanceof HTMLInputElement)) root.classList.remove('kb-open') }, 150)
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
+    window.addEventListener('resize', bringUp)
+    // Already focused when this ran (autofocus).
+    if (document.activeElement instanceof HTMLInputElement) onFocusIn({ target: document.activeElement } as unknown as FocusEvent)
     return () => {
-      document.removeEventListener('focusin', keepInView)
-      root.style.removeProperty('--kb')
-      handles.forEach((h) => void h.then((x) => x.remove()).catch(() => undefined))
+      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusout', onFocusOut)
+      window.removeEventListener('resize', bringUp)
+      root.classList.remove('kb-open')
     }
   }, [])
 
