@@ -273,7 +273,8 @@ def test_the_master_connects_gmail_from_settings_and_sends_a_test_to_a_yahoo_add
     assert "rt-company" not in r.text and "at-secret" not in r.text
     monkeypatch.setattr("app.routers.email.send_email_background", lambda *a, **k: (False, "Gmail API error: invalid_grant token=rt-company"))
     r = tenant.post("/api/gmail/test", json={"to": "someone@yahoo.com"})
-    assert r.status_code == 502 and "rt-company" not in r.text                                          # the provider's words stay off the screen
+    # Refused by Gmail: 409 with what to do, on the Settings page (e671bdbc) - and the provider's words stay off the screen.
+    assert r.status_code == 409 and "Reconnect Gmail" in r.json()["detail"] and "rt-company" not in r.text
     assert tenant.post("/api/gmail/disconnect").status_code == 200
     assert tenant.post("/api/gmail/test", json={"to": "someone@yahoo.com"}).status_code == 409
 
