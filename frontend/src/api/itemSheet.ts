@@ -1,59 +1,77 @@
 import { useQuery } from '@tanstack/react-query'
-import { apiUrl, get } from '@/lib/api'
+import { api, apiUrl, get, post, put } from '@/lib/api'
 
-export type ItemSheetStatus = 'To arrange' | 'Issued past need' | 'Not budgeted' | 'Covered'
+export type ItemSheetStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED'
 
-/** One BOQ line a material comes from: its quantity, how much of the material one unit takes, and what that makes. */
+/** A material on the project's Item sheet, under one of its BOQ's group codes. HSN and unit come from the item master. */
 export interface ItemSheetLine {
-  key: string
-  boq_line_id: number
-  item_no: string
-  description: string
-  boq_qty: number
-  boq_unit: string
-  per_unit: number
-  budget_unit: string
-  wastage_percent: number
-  wastage_source: 'STORE_NORM' | 'BUDGETING'
-  required: number
-  issued: number
-}
-
-/** One material of the project: what its BOQ needs (services/item_sheet.py), and what the store and purchase have done about it. */
-export interface ItemSheetRow {
-  item_id: number | null
+  id: number
+  group_code: string
+  item_id: number
   item_code: string
   item_name: string
-  uom: string
-  in_master: boolean
-  required: number
-  without_wastage: number
-  value: number
+  hsn: string
+  unit: string
+  qty: number
+  remarks: string
+}
+
+/** By the approved sheet: how much of an item it allows, and what the project's live indents have asked for. */
+export interface ItemSheetUsage {
+  item_id: number
+  item_code: string
+  item_name: string
+  unit: string
+  sheet_qty: number
   indented: number
-  ordered: number
-  on_way: number
-  issued: number
-  at_site: number
-  to_arrange: number
-  to_arrange_value: number
-  status: ItemSheetStatus
-  unit_notes: string[]
-  lines: ItemSheetLine[]
+  on_sheet: boolean
 }
 
 export interface ItemSheet {
   job_id: number
   code: string
   name: string
-  boq: boolean
-  totals: { items: number; to_arrange: number; over_issued: number; not_in_master: number; not_budgeted: number; value: number; to_arrange_value: number; boq_lines: number; boq_lines_with_materials: number } | null
-  rows: ItemSheetRow[]
+  exists: boolean
+  status: ItemSheetStatus | null
+  /** The group codes on the project's BOQ: the only ones a line can be under. */
+  groups: string[]
+  lines: ItemSheetLine[]
+  approved: boolean
+  changed_since_approval: boolean
+  approved_by: string
+  approved_at: string
+  submitted_by: string
+  submitted_at: string
+  returned_note: string
+  updated_by: string
+  updated_at: string
+  usage: ItemSheetUsage[]
+  item_count: number
+  is_master: boolean
 }
 
+export interface ItemSheetSummary { job_id: number; code: string; name: string; status: ItemSheetStatus | null; approved: boolean; lines: number; updated_at: string }
+
+export interface ItemSheetLineIn { group_code: string; item_code: string; qty: number | null; remarks: string }
+
+const BASE = '/api/store/item-sheet'
+export const itemSheetKeys = { all: ['item-sheet'] as const, one: (job: number) => ['item-sheet', job] as const }
+
+export const useItemSheets = () => useQuery({ queryKey: itemSheetKeys.all, queryFn: () => get<{ items: ItemSheetSummary[]; is_master: boolean }>(BASE) })
 export const useItemSheet = (job: number) =>
-  useQuery({ queryKey: ['item-sheet', job], queryFn: () => get<ItemSheet>(`/api/jobs/${job}/item-sheet`), enabled: job > 0, staleTime: 0 })
+  useQuery({ queryKey: itemSheetKeys.one(job), enabled: job > 0, queryFn: () => get<ItemSheet>(`${BASE}/${job}`) })
 
-export const itemSheetFileUrl = (job: number) => apiUrl(`/api/jobs/${job}/item-sheet.xlsx`)
+export const saveItemSheet = (job: number, lines: ItemSheetLineIn[]) => put<ItemSheet>(`${BASE}/${job}`, { lines })
+export function uploadItemSheet(job: number, file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  return api<ItemSheet>(`${BASE}/${job}/upload`, { method: 'POST', body: form })
+}
+export const submitItemSheet = (job: number) => post<ItemSheet>(`${BASE}/${job}/submit`)
+export const approveItemSheet = (job: number) => post<ItemSheet>(`${BASE}/${job}/approve`)
+export const sendBackItemSheet = (job: number, note: string) => post<ItemSheet>(`${BASE}/${job}/send-back`, { note })
+export const itemSheetFileUrl = (job: number) => apiUrl(`${BASE}/${job}/template.xlsx`)
 
-/** The rights that open the Item sheet: HO QS (budget), purchase and the store. */
-export const ITEM_SHEET_PERM = 'budget.view|budget.edit|purchase.manage|stores.manage|stores.receive|store.reports.view|store.outward.view'
+/** Who sees the sheet, and who makes it (the storekeeper). Approving is the Master's alone. */
+export const ITEM_SHEET_VIEW = 'store.outward.view|store.inward.view|store.admin'
+export const ITEM_SHEET_EDIT = ['store.inward.post', 'store.outward.post', 'store.admin']

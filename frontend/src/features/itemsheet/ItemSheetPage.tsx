@@ -1,120 +1,233 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Download } from 'lucide-react'
+import { Check, Download, Pencil, Plus, Send, Trash2, Undo2, Upload } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
-import { Badge, Button, Card, Modal, Stat, StatGrid, Tabs } from '@/components/ui'
-import { itemSheetFileUrl, useItemSheet, type ItemSheetLine, type ItemSheetRow, type ItemSheetStatus } from '@/api/itemSheet'
+import { Badge, Button, Card, Field, Input, Modal, Select, Textarea } from '@/components/ui'
+import {
+  ITEM_SHEET_EDIT, approveItemSheet, itemSheetFileUrl, itemSheetKeys, saveItemSheet, sendBackItemSheet, submitItemSheet, uploadItemSheet,
+  useItemSheet, useItemSheets, type ItemSheet, type ItemSheetLine, type ItemSheetStatus, type ItemSheetSummary, type ItemSheetUsage,
+} from '@/api/itemSheet'
+import type { StoreItemOption } from '@/api/store'
+import { ItemPicker } from '@/features/store/shared'
+import { ApiError } from '@/lib/api'
+import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
-import { compactINR, formatINR } from '@/lib/utils'
 import { formatQty, plural } from '@/lib/format'
 
-type Show = 'all' | 'arrange' | 'over' | 'free'
-
-const TONE: Record<ItemSheetStatus, 'warning' | 'danger' | 'neutral' | 'success'> = {
-  'To arrange': 'warning', 'Issued past need': 'danger', 'Not budgeted': 'neutral', Covered: 'success',
+const STATUS: Record<ItemSheetStatus, { label: string; tone: 'neutral' | 'warning' | 'success' }> = {
+  DRAFT: { label: 'Draft', tone: 'neutral' },
+  SUBMITTED: { label: 'Waiting for the Master', tone: 'warning' },
+  APPROVED: { label: 'Approved', tone: 'success' },
 }
 
-const q = (v: number, uom: string) => (v ? `${formatQty(v)} ${uom}` : '-')
+/** A line being edited: the item is held whole so the box can show it without looking it up again. */
+interface Draft { group_code: string; item: StoreItemOption | null; qty: string; remarks: string; hsn: string }
+
+const asOption = (l: ItemSheetLine): StoreItemOption => ({ id: l.item_id, code: l.item_code, name: l.item_name, base_uom: l.unit, uoms: [], category: null })
+const blank = (group = ''): Draft => ({ group_code: group, item: null, qty: '', remarks: '', hsn: '' })
 
 /**
- * The project's Item sheet: every material its BOQ needs - from the budget's material rows, BOQ quantity x quantity per unit
- * x wastage - added up item by item, beside what has been indented, ordered, issued and is at site, and what is still to arrange.
+ * The project's Item sheet, in the Store: the materials the project will need, each under a group code of its BOQ, with the
+ * item's HSN and unit from the item master. Made here or uploaded from the Excel template; once the Master approves it, an
+ * indent for the project may ask only for what is on it.
  */
 export default function ItemSheetPage() {
   const { can } = useSession()
   const [params, setParams] = useSearchParams()
   const job = Number(params.get('job')) || 0
   const setJob = (id: number) => setParams((p) => { const n = new URLSearchParams(p); if (id) n.set('job', String(id)); else n.delete('job'); return n }, { replace: true })
-  const [show, setShow] = useState<Show>('all')
-  const [open, setOpen] = useState<ItemSheetRow | null>(null)
   const sheet = useItemSheet(job)
-  const s = sheet.data
-  const t = s?.totals
-  const loading = sheet.isPending && job > 0
-
-  const all = s?.rows ?? []
-  const rows = all.filter((r) => (show === 'arrange' ? r.status === 'To arrange' : show === 'over' ? r.status === 'Issued past need' : show === 'free' ? !r.in_master : true))
-  const cols: TableColumn<ItemSheetRow>[] = [
-    { id: 'item', header: 'Material', sort: (r) => r.item_name, cell: (r) => (
-      <div className="min-w-[10rem] max-w-[20rem]">
-        <p className="font-medium">{r.item_name}</p>
-        <p className="text-xs text-muted-foreground">
-          {r.in_master ? <span className="font-mono">{r.item_code}</span> : <span className="text-warning">Not in the item master</span>}
-          {r.lines.length > 0 && ` · ${plural(r.lines.length, 'BOQ line')}`}
-        </p>
-        {r.unit_notes.length > 0 && <p className="text-xs text-warning">{r.unit_notes[0]}</p>}
-      </div>) },
-    { id: 'req', header: 'Required', align: 'right', sort: (r) => r.required, cell: (r) => (
-      <div><p className="font-semibold">{q(r.required, r.uom)}</p>{r.required > r.without_wastage && <p className="text-xs text-muted-foreground">{formatQty(r.without_wastage)} + wastage</p>}</div>) },
-    { id: 'ind', header: 'Indented', align: 'right', hideBelow: 'lg', sort: (r) => r.indented, cell: (r) => q(r.indented, r.uom) },
-    { id: 'ord', header: 'Ordered', align: 'right', hideBelow: 'md', sort: (r) => r.ordered, cell: (r) => (
-      <div><p>{q(r.ordered, r.uom)}</p>{r.on_way > 0 && <p className="text-xs text-muted-foreground">{formatQty(r.on_way)} on its way</p>}</div>) },
-    { id: 'iss', header: 'Issued', align: 'right', sort: (r) => r.issued, cell: (r) => <span className={r.status === 'Issued past need' ? 'font-semibold text-danger' : ''}>{q(r.issued, r.uom)}</span> },
-    { id: 'site', header: 'At site', align: 'right', hideBelow: 'sm', sort: (r) => r.at_site, cell: (r) => q(r.at_site, r.uom) },
-    { id: 'left', header: 'To arrange', align: 'right', sort: (r) => r.to_arrange, cell: (r) => (
-      r.to_arrange > 0 ? <div><p className="font-semibold">{q(r.to_arrange, r.uom)}</p>{r.to_arrange_value > 0 && <p className="text-xs text-muted-foreground">{compactINR(r.to_arrange_value)}</p>}</div> : <span className="text-muted-foreground">-</span>) },
-    { id: 'status', header: 'Status', hideBelow: 'sm', sort: (r) => r.status, cell: (r) => <Badge tone={TONE[r.status]}>{r.status}</Badge> },
-  ]
+  const canEdit = ITEM_SHEET_EDIT.some((p) => can(p))
 
   return (
     <div>
-      <PageHeader eyebrow="Projects" title="Item sheet"
-        description="Every material the project's BOQ needs, worked out from the budget, beside what has been indented, ordered, issued and is at site."
-        actions={<Button variant="outline" disabled={!s?.boq} onClick={() => window.open(itemSheetFileUrl(job), '_blank')}><Download /> Excel</Button>} />
+      <PageHeader eyebrow="Store" title="Item sheet"
+        description="The materials each project needs, under its BOQ group codes, with HSN from the item master. Made here or uploaded from Excel, approved by the Master - then indents ask only for what is on it." />
       <div className="mb-4 flex flex-wrap items-end gap-4"><ProjectPicker value={job} onChange={setJob} id="item-sheet-job" /></div>
-      {job === 0 && <Card className="p-6 text-sm text-muted-foreground">Choose a project to see the materials its BOQ needs.</Card>}
+      {job === 0 && <Overview onOpen={setJob} />}
       {job > 0 && sheet.isError && <p role="alert" className="text-sm text-danger">Could not load the Item sheet.</p>}
-      {job > 0 && s && !s.boq && (
-        <Card className="p-6 text-sm text-muted-foreground">This project has no BOQ yet. Add one under Clients &gt; BOQ, then give each line its materials in Budgeting.</Card>
-      )}
-      {job > 0 && (loading || s?.boq) && (<>
-        <StatGrid>
-          <Stat label="Materials" value={t ? String(t.items) : '-'} sub={t ? `from ${t.boq_lines_with_materials} of ${plural(t.boq_lines, 'BOQ line')}` : undefined} loading={loading} />
-          <Stat label="To arrange" value={t ? String(t.to_arrange) : '-'} tone={t && t.to_arrange ? 'warning' : undefined} sub={t && t.to_arrange_value ? `${compactINR(t.to_arrange_value)} at budget rates` : undefined} loading={loading} />
-          <Stat label="Issued past need" value={t ? String(t.over_issued) : '-'} tone={t && t.over_issued ? 'danger' : undefined} loading={loading} />
-          <Stat label="Material budget" value={compactINR(t?.value)} loading={loading} />
-        </StatGrid>
-        {t && t.boq_lines_with_materials < t.boq_lines && (
-          <p role="status" className="mt-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
-            {plural(t.boq_lines - t.boq_lines_with_materials, 'BOQ line')} {t.boq_lines - t.boq_lines_with_materials === 1 ? 'has' : 'have'} no materials yet, so {t.boq_lines - t.boq_lines_with_materials === 1 ? 'its' : 'their'} needs are not on this sheet.
-            {can('budget.edit') && <> <Link className="font-medium underline" to={`/projects/budgeting?job=${job}`}>Add them in Budgeting</Link>.</>}
-          </p>
-        )}
-        {t && t.not_in_master > 0 && (
-          <p role="status" className="mt-2 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
-            {plural(t.not_in_master, 'material')} {t.not_in_master === 1 ? 'was' : 'were'} typed in the budget without picking {t.not_in_master === 1 ? 'it' : 'them'} from the item master, so the store cannot count {t.not_in_master === 1 ? 'it' : 'them'}. Pick the item on the BOQ line in Budgeting to link {t.not_in_master === 1 ? 'it' : 'them'}.
-          </p>
-        )}
-        <div className="my-4">
-          <Tabs label="Show" value={show} onChange={setShow} items={[
-            { value: 'all', label: `All (${all.length})` },
-            { value: 'arrange', label: `To arrange (${t?.to_arrange ?? 0})` },
-            { value: 'over', label: `Issued past need (${t?.over_issued ?? 0})` },
-            { value: 'free', label: `Not in item master (${t?.not_in_master ?? 0})` },
-          ]} />
-        </div>
-        <DataTable label="Item sheet" rows={rows} columns={cols} rowKey={(r) => r.item_id ?? `free:${r.item_name}:${r.uom}`} loading={loading} onRowClick={setOpen}
-          empty={show === 'all' ? 'No BOQ line has materials yet. Give each line its materials in Budgeting and they add up here.' : 'Nothing here.'} />
-      </>)}
-      {open && <LinesModal row={open} onClose={() => setOpen(null)} />}
+      {job > 0 && sheet.isPending && <Card className="p-6 text-sm text-muted-foreground">Loading...</Card>}
+      {job > 0 && sheet.data && <Sheet key={job} s={sheet.data} canEdit={canEdit} />}
     </div>
   )
 }
 
-/** Where a material's need comes from: each BOQ line, how much one unit takes, and what has been issued to it. */
-function LinesModal({ row, onClose }: { row: ItemSheetRow; onClose: () => void }) {
+/** Every project and where its sheet stands. */
+function Overview({ onOpen }: { onOpen: (job: number) => void }) {
+  const list = useItemSheets()
+  const cols: TableColumn<ItemSheetSummary>[] = [
+    { id: 'p', header: 'Project', sort: (r) => r.name, cell: (r) => <div><p className="font-medium">{r.name}</p>{r.code && <p className="font-mono text-xs text-muted-foreground">{r.code}</p>}</div> },
+    { id: 'l', header: 'Lines', align: 'right', sort: (r) => r.lines, cell: (r) => (r.status ? r.lines : '-') },
+    { id: 's', header: 'Item sheet', sort: (r) => r.status ?? '', cell: (r) => (r.status ? <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge> : <span className="text-muted-foreground">Not made yet</span>) },
+  ]
+  return <DataTable label="Projects' Item sheets" rows={list.data?.items ?? []} columns={cols} rowKey={(r) => r.job_id} loading={list.isPending} onRowClick={(r) => onOpen(r.job_id)}
+    empty="No projects yet." />
+}
+
+function Sheet({ s, canEdit }: { s: ItemSheet; canEdit: boolean }) {
+  const [editing, setEditing] = useState(false)
+  const [problems, setProblems] = useState<string[]>([])
+  const [sendingBack, setSendingBack] = useState(false)
+  const file = useRef<HTMLInputElement>(null)
+  const inval = [itemSheetKeys.one(s.job_id), itemSheetKeys.all]
+  const failed = (e: Error) => setProblems(e instanceof ApiError ? e.detail.split('\n').slice(1) : [])
+  const upload = useAction((f: File) => uploadItemSheet(s.job_id, f), { invalidate: inval, success: (r) => `Uploaded: ${plural(r.lines.length, 'line')}. Send it to the Master for approval.`, onSuccess: () => setProblems([]), onError: failed })
+  const submit = useAction(() => submitItemSheet(s.job_id), { invalidate: inval, success: 'Sent to the Master for approval.' })
+  const approve = useAction(() => approveItemSheet(s.job_id), { invalidate: inval, success: 'Approved. Indents for this project now go by it.' })
+  const noBoq = s.groups.length === 0
+  const status = s.status ? STATUS[s.status] : null
+
+  if (editing) return <Editor s={s} onDone={() => setEditing(false)} problems={problems} setProblems={setProblems} />
+
   const cols: TableColumn<ItemSheetLine>[] = [
-    { id: 'line', header: 'BOQ line', cell: (l) => <div className="min-w-[10rem] max-w-[18rem]"><p>{l.item_no && <span className="font-medium">{l.item_no} </span>}{l.description}</p><p className="text-xs text-muted-foreground">{formatQty(l.boq_qty)} {l.boq_unit}</p></div> },
-    { id: 'per', header: 'Per unit', align: 'right', cell: (l) => <div><p>{formatQty(l.per_unit, 4)} {l.budget_unit}</p>{l.wastage_percent > 0 && <p className="text-xs text-muted-foreground">+{l.wastage_percent}% wastage{l.wastage_source === 'STORE_NORM' ? ' (store norm)' : ''}</p>}</div> },
-    { id: 'req', header: 'Required', align: 'right', cell: (l) => q(l.required, row.uom) },
-    { id: 'iss', header: 'Issued to it', align: 'right', cell: (l) => <span className={l.issued > l.required ? 'font-semibold text-danger' : ''}>{q(l.issued, row.uom)}</span> },
+    { id: 'g', header: 'Group code', sort: (l) => s.groups.indexOf(l.group_code), cell: (l) => <span className="font-medium">{l.group_code}</span> },
+    { id: 'c', header: 'Item code', hideBelow: 'md', sort: (l) => l.item_code, cell: (l) => <span className="font-mono text-xs">{l.item_code}</span> },
+    { id: 'n', header: 'Item', sort: (l) => l.item_name, cell: (l) => <div className="min-w-[10rem] max-w-[22rem]"><p>{l.item_name}</p><p className="font-mono text-xs text-muted-foreground md:hidden">{l.item_code}</p></div> },
+    { id: 'h', header: 'HSN', hideBelow: 'sm', sort: (l) => l.hsn, cell: (l) => l.hsn || <span className="text-muted-foreground">-</span> },
+    { id: 'q', header: 'Quantity', align: 'right', sort: (l) => l.qty, cell: (l) => `${formatQty(l.qty)} ${l.unit}` },
+    { id: 'r', header: 'Remarks', hideBelow: 'lg', cell: (l) => <span className="text-muted-foreground">{l.remarks || '-'}</span> },
+  ]
+
+  return (
+    <div className="space-y-4">
+      <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
+        <div className="space-y-1 text-sm">
+          <p className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold">{s.name}</span>
+            {status ? <Badge tone={status.tone}>{status.label}</Badge> : <Badge tone="neutral">Not made yet</Badge>}
+            {s.exists && <span className="text-muted-foreground">{plural(s.lines.length, 'line')}, {plural(s.item_count, 'item')}</span>}
+          </p>
+          {s.approved && <p className="text-muted-foreground">Approved by {s.approved_by}{s.approved_at && ` on ${s.approved_at.slice(0, 10)}`}.</p>}
+          {s.status === 'SUBMITTED' && <p className="text-muted-foreground">Sent by {s.submitted_by}{s.submitted_at && ` on ${s.submitted_at.slice(0, 10)}`}.</p>}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => window.open(itemSheetFileUrl(s.job_id), '_blank')} disabled={noBoq}><Download /> {s.lines.length ? 'Download Excel' : 'Download template'}</Button>
+          {canEdit && <>
+            <input ref={file} type="file" accept=".xlsx" className="hidden" aria-label="Upload the Item sheet" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) upload.mutate(f) }} />
+            <Button variant="outline" onClick={() => file.current?.click()} loading={upload.isPending} disabled={noBoq}><Upload /> Upload Excel</Button>
+            <Button variant="outline" onClick={() => { setProblems([]); setEditing(true) }} disabled={noBoq}><Pencil /> {s.lines.length ? 'Edit' : 'Make it here'}</Button>
+            {s.status === 'DRAFT' && s.lines.length > 0 && <Button onClick={() => submit.mutate()} loading={submit.isPending}><Send /> Send for approval</Button>}
+          </>}
+          {s.is_master && s.status && s.status !== 'APPROVED' && s.lines.length > 0 && <>
+            {s.status === 'SUBMITTED' && <Button variant="outline" onClick={() => setSendingBack(true)}><Undo2 /> Send back</Button>}
+            <Button onClick={() => approve.mutate()} loading={approve.isPending}><Check /> Approve</Button>
+          </>}
+        </div>
+      </Card>
+
+      {noBoq && (
+        <p role="status" className="rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
+          This project's BOQ has no group codes yet{s.exists ? '' : ' (or it has no BOQ)'}. Every line of the Item sheet sits under a BOQ group code, so add the BOQ, with its group codes, first. <Link className="font-medium underline" to="/projects/boq">Open BOQs</Link>
+        </p>
+      )}
+      {s.returned_note && s.status === 'DRAFT' && (
+        <p role="status" className="rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning"><span className="font-medium">Sent back by the Master:</span> {s.returned_note}</p>
+      )}
+      {s.approved && s.changed_since_approval && (
+        <p role="status" className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
+          The sheet has been changed since the Master approved it. Indents still go by the approved one until the change is approved.
+        </p>
+      )}
+      {!s.approved && s.exists && (
+        <p role="status" className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">Not approved yet, so indents for this project are not held to it.</p>
+      )}
+      <Problems list={problems} />
+
+      {s.exists ? (
+        <DataTable label="Item sheet" rows={s.lines} columns={cols} rowKey={(l) => l.id} empty="No lines." />
+      ) : !noBoq && (
+        <Card className="p-6 text-sm text-muted-foreground">
+          No Item sheet for this project yet. {canEdit ? 'Download the template, fill it in Excel and upload it - or make it here.' : 'The storekeeper makes it.'}
+        </Card>
+      )}
+      {s.approved && s.usage.length > 0 && <Usage rows={s.usage} />}
+      {sendingBack && <SendBack job={s.job_id} onClose={() => setSendingBack(false)} />}
+    </div>
+  )
+}
+
+function Problems({ list }: { list: string[] }) {
+  if (!list.length) return null
+  return (
+    <div role="alert" className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+      <p className="font-medium">Nothing was saved. Put these right and try again:</p>
+      <ul className="mt-1 list-disc pl-5">{list.map((p, i) => <li key={i}>{p}</li>)}</ul>
+    </div>
+  )
+}
+
+/** By the approved sheet, item by item: what it allows and what the project's indents have asked for so far. */
+function Usage({ rows }: { rows: ItemSheetUsage[] }) {
+  const cols: TableColumn<ItemSheetUsage>[] = [
+    { id: 'n', header: 'Item', sort: (r) => r.item_name, cell: (r) => <div><p>{r.item_name}</p><p className="font-mono text-xs text-muted-foreground">{r.item_code}</p></div> },
+    { id: 's', header: 'On the sheet', align: 'right', sort: (r) => r.sheet_qty, cell: (r) => (r.on_sheet ? `${formatQty(r.sheet_qty)} ${r.unit}` : <span className="text-muted-foreground">Not on it</span>) },
+    { id: 'i', header: 'Indented', align: 'right', sort: (r) => r.indented, cell: (r) => <span className={r.indented > r.sheet_qty ? 'font-semibold text-danger' : ''}>{formatQty(r.indented)} {r.unit}</span> },
+    { id: 'l', header: 'Left', align: 'right', hideBelow: 'sm', sort: (r) => r.sheet_qty - r.indented, cell: (r) => `${formatQty(Math.max(0, r.sheet_qty - r.indented))} ${r.unit}` },
   ]
   return (
-    <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title={row.item_name}
-      description={`${formatQty(row.required)} ${row.uom} required${row.value ? `, ${formatINR(row.value)} in the budget` : ''}. Issued with no BOQ line named counts in the total only.`}>
-      <DataTable label={`BOQ lines needing ${row.item_name}`} rows={row.lines} columns={cols} rowKey={(l) => l.key} empty="No BOQ line's budget asks for this - it was indented, ordered or issued on its own." />
+    <div>
+      <h2 className="mb-2 mt-6 text-sm font-semibold">Indented against the approved sheet</h2>
+      <DataTable label="Indented against the sheet" rows={rows} columns={cols} rowKey={(r) => r.item_id} />
+    </div>
+  )
+}
+
+function SendBack({ job, onClose }: { job: number; onClose: () => void }) {
+  const [note, setNote] = useState('')
+  const back = useAction(() => sendBackItemSheet(job, note), { invalidate: [itemSheetKeys.one(job), itemSheetKeys.all], success: 'Sent back to the storekeeper.', onSuccess: onClose })
+  return (
+    <Modal open onOpenChange={(o) => !o && onClose()} title="Send the Item sheet back" description="Say what has to change. It goes back to draft."
+      footer={<><Button variant="ghost" onClick={onClose}>Not now</Button><Button onClick={() => back.mutate()} loading={back.isPending} disabled={!note.trim()}>Send back</Button></>}>
+      <Field label="What has to change" htmlFor="is-note"><Textarea id="is-note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} /></Field>
     </Modal>
+  )
+}
+
+/** Making or changing the sheet in the app: a group code from the BOQ, an item from the master, the quantity. */
+function Editor({ s, onDone, problems, setProblems }: { s: ItemSheet; onDone: () => void; problems: string[]; setProblems: (p: string[]) => void }) {
+  const [rows, setRows] = useState<Draft[]>(() => (s.lines.length
+    ? s.lines.map((l) => ({ group_code: l.group_code, item: asOption(l), qty: String(l.qty), remarks: l.remarks, hsn: l.hsn }))
+    : [blank(s.groups[0])]))
+  const set = (i: number, patch: Partial<Draft>) => setRows((r) => r.map((x, n) => (n === i ? { ...x, ...patch } : x)))
+  const save = useAction(
+    () => saveItemSheet(s.job_id, rows.map((r) => ({ group_code: r.group_code, item_code: r.item?.code ?? '', qty: r.qty === '' ? null : Number(r.qty), remarks: r.remarks }))),
+    { invalidate: [itemSheetKeys.one(s.job_id), itemSheetKeys.all],
+      success: (r) => (r.approved ? 'Saved. It needs the Master\'s approval again; the approved one stays in force till then.' : 'Saved. Send it to the Master for approval when it is complete.'),
+      onSuccess: () => { setProblems([]); onDone() },
+      onError: (e) => setProblems(e instanceof ApiError ? e.detail.split('\n').slice(1) : []) },
+  )
+  const groups = s.groups.map((g) => ({ value: g, label: g }))
+  return (
+    <div className="space-y-4">
+      <Card className="space-y-3 p-4">
+        <p className="text-sm text-muted-foreground">
+          Each line: a group code from the project's BOQ, an item from the item master (its HSN and unit come from there), and the quantity in the item's unit. The same item may be under more than one group code.
+        </p>
+        <Problems list={problems} />
+        <div className="space-y-3">
+          {rows.map((r, i) => (
+            <div key={i} className="grid gap-2 rounded-lg border border-border p-3 sm:grid-cols-[8rem_minmax(0,1fr)] xl:grid-cols-[8rem_minmax(18rem,2fr)_8rem_minmax(0,1fr)_auto]">
+              <Field label="Group code" htmlFor={`is-g-${i}`}><Select id={`is-g-${i}`} options={groups} placeholder="Choose" value={r.group_code} onChange={(e) => set(i, { group_code: e.target.value })} /></Field>
+              <Field label="Item" htmlFor={`is-i-${i}`}><ItemPicker id={`is-i-${i}`} value={r.item} onChange={(item) => set(i, { item, hsn: '' })} /></Field>
+              <Field label={`Quantity${r.item?.base_uom ? ` (${r.item.base_uom})` : ''}`} htmlFor={`is-q-${i}`}>
+                <Input id={`is-q-${i}`} inputMode="decimal" value={r.qty} onChange={(e) => set(i, { qty: e.target.value.replace(/[^\d.]/g, '') })} />
+              </Field>
+              <Field label="Remarks" htmlFor={`is-r-${i}`}><Input id={`is-r-${i}`} value={r.remarks} onChange={(e) => set(i, { remarks: e.target.value })} /></Field>
+              <div className="flex items-end justify-between gap-2 sm:col-span-2 xl:col-span-1">
+                {r.hsn && <span className="pb-2 text-xs text-muted-foreground">HSN {r.hsn}</span>}
+                <Button variant="ghost" size="icon" aria-label={`Remove line ${i + 1}`} onClick={() => setRows((x) => (x.length > 1 ? x.filter((_, n) => n !== i) : [blank(s.groups[0])]))}><Trash2 /></Button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <Button variant="outline" onClick={() => setRows((x) => [...x, blank(x[x.length - 1]?.group_code ?? s.groups[0])])}><Plus /> Add line</Button>
+      </Card>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button variant="ghost" onClick={() => { setProblems([]); onDone() }}>Cancel</Button>
+        <Button onClick={() => save.mutate()} loading={save.isPending}>Save</Button>
+      </div>
+    </div>
   )
 }

@@ -2,66 +2,76 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui'
-import type { ItemSheet, ItemSheetRow } from '@/api/itemSheet'
+import type { ItemSheet } from '@/api/itemSheet'
 
-const row = (over: Partial<ItemSheetRow>): ItemSheetRow => ({
-  item_id: 1, item_code: 'CEM-01', item_name: 'Cement OPC', uom: 'kg', in_master: true, required: 312, without_wastage: 300, value: 2496,
-  indented: 30, ordered: 50, on_way: 50, issued: 40, at_site: 60, to_arrange: 162, to_arrange_value: 1296, status: 'To arrange', unit_notes: [],
+let sheet: ItemSheet
+const base = (over: Partial<ItemSheet> = {}): ItemSheet => ({
+  job_id: 7, code: 'KOK', name: 'Kokapet Towers', exists: true, status: 'SUBMITTED', groups: ['PCC', 'RCC', 'MAS'],
   lines: [
-    { key: 'rcc', boq_line_id: 11, item_no: '1.2', description: 'M25 grade RCC in raft', boq_qty: 120, boq_unit: 'cum', per_unit: 2, budget_unit: 'kg', wastage_percent: 5, wastage_source: 'BUDGETING', required: 252, issued: 40 },
-    { key: 'mas', boq_line_id: 14, item_no: '2.1', description: 'Brick masonry in CM 1:6', boq_qty: 60, boq_unit: 'cum', per_unit: 1, budget_unit: 'kg', wastage_percent: 0, wastage_source: 'BUDGETING', required: 60, issued: 0 },
+    { id: 1, group_code: 'RCC', item_id: 11, item_code: 'CEM-01', item_name: 'Cement OPC 53', hsn: '2523', unit: 'kg', qty: 65000, remarks: 'Raft and columns' },
+    { id: 2, group_code: 'MAS', item_id: 12, item_code: 'BRK-01', item_name: 'Red brick', hsn: '6901', unit: 'Nos', qty: 30000, remarks: '' },
   ],
-  ...over,
+  approved: false, changed_since_approval: false, approved_by: '', approved_at: '', submitted_by: 'Ravi', submitted_at: '2026-11-25T10:00:00',
+  returned_note: '', updated_by: 'Ravi', updated_at: '', usage: [], item_count: 2, is_master: true, ...over,
 })
-const sheet: ItemSheet = {
-  job_id: 7, code: 'KOK', name: 'Kokapet Towers', boq: true,
-  totals: { items: 3, to_arrange: 1, over_issued: 1, not_in_master: 1, not_budgeted: 0, value: 120000, to_arrange_value: 1296, boq_lines: 4, boq_lines_with_materials: 2 },
-  rows: [
-    row({}),
-    row({ item_id: 2, item_code: 'STL-12', item_name: 'TMT 12 mm', status: 'Issued past need', required: 100, without_wastage: 100, issued: 130, to_arrange: 0, to_arrange_value: 0, lines: [] }),
-    row({ item_id: null, item_code: '', item_name: 'River sand', uom: 'cum', in_master: false, required: 60, without_wastage: 60, indented: 0, ordered: 0, on_way: 0, issued: 0, at_site: 0, to_arrange: 60, status: 'To arrange', lines: [] }),
-  ],
-}
+const approve = vi.fn()
 
-vi.mock('@/api/itemSheet', async (orig) => ({ ...(await orig<typeof import('@/api/itemSheet')>()), useItemSheet: () => ({ data: sheet, isPending: false, isError: false }) }))
+vi.mock('@/api/itemSheet', async (orig) => ({
+  ...(await orig<typeof import('@/api/itemSheet')>()),
+  useItemSheet: () => ({ data: sheet, isPending: false, isError: false }),
+  useItemSheets: () => ({ data: { items: [], is_master: true }, isPending: false }),
+  approveItemSheet: (...a: unknown[]) => { approve(...a); return Promise.resolve(sheet) },
+}))
 vi.mock('@/lib/session', () => ({ useSession: () => ({ can: () => true }) }))
 vi.mock('@/components/data/ProjectPicker', () => ({ ProjectPicker: () => <div>project picker</div> }))
+vi.mock('@/features/store/shared', () => ({ ItemPicker: ({ value }: { value: { name: string } | null }) => <div>{value?.name ?? 'pick an item'}</div> }))
 
 import ItemSheetPage from './ItemSheetPage'
 
-const wrap = () => render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><MemoryRouter initialEntries={['/projects/item-sheet?job=7']}><ItemSheetPage /></MemoryRouter></TooltipProvider></QueryClientProvider>)
+const wrap = () => render(<QueryClientProvider client={new QueryClient()}><TooltipProvider><MemoryRouter initialEntries={['/store/item-sheet?job=7']}><ItemSheetPage /></MemoryRouter></TooltipProvider></QueryClientProvider>)
 
 describe('Item sheet', () => {
-  it('shows each material with what is needed, done and still to arrange', () => {
+  beforeEach(() => { sheet = base(); approve.mockClear() })
+
+  it('lists each material under its BOQ group code with its HSN and quantity', () => {
     wrap()
-    const table = screen.getByRole('table', { name: 'Item sheet' })
-    const cement = within(table).getByText('Cement OPC').closest('tr')!
-    expect(cement).toHaveTextContent('312 kg')
-    expect(cement).toHaveTextContent('300 + wastage')
-    expect(cement).toHaveTextContent('162 kg')
-    expect(cement).toHaveTextContent('To arrange')
-    expect(within(table).getByText('Not in the item master')).toBeInTheDocument()
-    expect(screen.getByText(/2 BOQ lines have no materials yet/)).toBeInTheDocument()
+    const cement = within(screen.getByRole('table', { name: 'Item sheet' })).getByText('Cement OPC 53').closest('tr')!
+    expect(cement).toHaveTextContent('RCC')
+    expect(cement).toHaveTextContent('2523')
+    expect(cement).toHaveTextContent('65,000 kg')
+    expect(screen.getByText('Waiting for the Master')).toBeInTheDocument()
   })
 
-  it('filters to what is issued past its need', async () => {
+  it('lets the Master approve a sheet sent to them', async () => {
     const user = userEvent.setup()
     wrap()
-    await user.click(screen.getByRole('tab', { name: /Issued past need/ }))
-    const table = screen.getByRole('table', { name: 'Item sheet' })
-    expect(within(table).getByText('TMT 12 mm')).toBeInTheDocument()
-    expect(within(table).queryByText('Cement OPC')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Approve/ }))
+    expect(approve).toHaveBeenCalledWith(7)
   })
 
-  it('opens a material to show the BOQ lines its need comes from', async () => {
+  it('hides approving from anyone but the Master', () => {
+    sheet = base({ is_master: false })
+    wrap()
+    expect(screen.queryByRole('button', { name: /Approve/ })).not.toBeInTheDocument()
+  })
+
+  it('asks for the BOQ group codes first when the BOQ has none', () => {
+    sheet = base({ exists: false, status: null, groups: [], lines: [] })
+    wrap()
+    expect(screen.getByText(/BOQ has no group codes yet/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Upload Excel/ })).toBeDisabled()
+  })
+
+  it('edits lines in the app with the group codes of the BOQ', async () => {
     const user = userEvent.setup()
     wrap()
-    await user.click(within(screen.getByRole('table', { name: 'Item sheet' })).getByText('Cement OPC'))
-    const lines = await screen.findByRole('table', { name: 'BOQ lines needing Cement OPC' })
-    expect(within(lines).getByText(/M25 grade RCC in raft/)).toBeInTheDocument()
-    expect(within(lines).getByText('+5% wastage')).toBeInTheDocument()
-    expect(within(lines).getByText('252 kg')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Edit/ }))
+    const group = screen.getAllByLabelText('Group code')[0] as HTMLSelectElement
+    expect(group.value).toBe('RCC')
+    expect([...group.options].map((o) => o.value)).toEqual(['', 'PCC', 'RCC', 'MAS'])
+    await user.click(screen.getByRole('button', { name: /Add line/ }))
+    expect(screen.getAllByLabelText('Group code')).toHaveLength(3)
   })
 })

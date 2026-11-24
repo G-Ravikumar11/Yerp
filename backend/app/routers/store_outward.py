@@ -586,7 +586,6 @@ def indent_dict(db, indent, detail=False):
                          "purpose": l.purpose or "", "reason": notes[l.id].reason or "" if l.id in notes else "", "substitute_for_line_id": notes[l.id].substitute_for_line_id if l.id in notes else None,
                          **_shortfall(l, done, spare, buying.get(l.id))}
                         for l in lines]
-        # The project's Item sheet: more of an item asked for than its BOQ needs (a warning, never a block).
         from app.services.item_sheet import indent_warnings
         out["sheet_warnings"] = indent_warnings(db, indent, lines) if indent.status not in ("CANCELLED", "CLOSED") else []
         out["history"] = [{"action": h.action, "from": h.from_status, "to": h.to_status, "by": h.user_name, "at": h.at.isoformat(timespec="seconds") if h.at else "", "note": h.note or ""}
@@ -630,7 +629,11 @@ def _indent_values(db, actor, body):
     if needed is not None and needed < on:
         raise HTTPException(400, "The required-by date is before the indent date.")
     project, _wo = svc.check_indent_header(db, actor.client.id, body)
-    return store, on, needed, svc.build_indent_lines(db, actor.client.id, body.lines)
+    lines = svc.build_indent_lines(db, actor.client.id, body.lines)
+    # A project with an approved Item sheet is asked for only what is on it.
+    from app.services.item_sheet import check_indent
+    check_indent(db, actor.client.id, project.id, [l["item"] for l in lines])
+    return store, on, needed, lines
 
 
 @router.get("/indent")
@@ -739,6 +742,9 @@ def print_indent(indent_id: int, request: Request, db: Session = Depends(get_rea
 def submit_indent(indent_id: int, request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.outward.create")
     indent = _indent_or_404(db, actor, indent_id)
+    # A draft written before the project's Item sheet was approved is held to it now.
+    from app.services.item_sheet import check_indent
+    check_indent(db, actor.client.id, indent.project_id, list(_items(db, [l.item_id for l in svc.indent_lines(db, indent)]).values()))
     svc.indent_submit(db, actor, indent)
     log_audit(db, actor.client.id, "store_indent_submitted", "store_doc", indent.id, indent.number, "", request=request, **_who(actor))
     db.commit()

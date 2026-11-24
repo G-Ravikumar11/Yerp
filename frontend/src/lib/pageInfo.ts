@@ -39,7 +39,6 @@ export const PAGE_INFO: Record<string, string> = {
   '/projects/bbs': 'Every bar mark of a project: what it takes to cut, what the steel weighs, and who approved it.',
   '/store/items/duplicates': 'Items that may have been entered twice, and folding them into one.',
   '/projects/budgeting': "Our own cost for each line of the client's BOQ - material, labour and the rest - against what the BOQ pays, and the profit that leaves.",
-  '/projects/item-sheet': "Every material the project's BOQ needs - from each line's materials in Budgeting, with wastage - added up item by item, beside what is indented, ordered, issued and at site, and what is still to arrange.",
   '/projects/profit': 'What each project has earned against what it has cost, so you can see where money is made or lost.',
   '/projects/costs': 'The cost of each project by head - materials, labour, subcontract and plant. Open one for the lines behind it.',
   '/projects/costs/:id': 'The costs of one project, line by line, by head and by month.',
@@ -65,7 +64,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/subcontractors/compliance': 'Each subcontractor\'s statutory papers - registrations, insurance, licences - with expiry dates so nothing lapses unnoticed.',
 
   '/store/items': 'The Item Master: every material and consumable with its unit, code and rate. Orders, stock and costing all use this list.',
-  '/store/item-sheet': "Every material the project's BOQ needs - from each line's materials in Budgeting, with wastage - added up item by item, beside what is indented, ordered, issued and at site, and what is still to arrange.",
+  '/store/item-sheet': "Each project's materials under its BOQ group codes, with HSN from the Item Master. Make it here or upload the Excel template; once the Master approves it, indents ask only for items on it.",
   '/store/rate-contracts': 'Rates agreed with a supplier for chosen items, usually for a year. Orders to that supplier pick them up, and you are told before a contract ends.',
   '/store/enquiries': 'Send an enquiry to several suppliers and compare their quotes side by side before ordering.',
   '/store/enquiries/:id': 'One enquiry: the items asked for, the suppliers asked and their quotes side by side, and the award that makes the purchase orders.',

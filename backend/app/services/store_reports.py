@@ -242,15 +242,11 @@ def consumption(db, client_id, store_ids, project_id=0, start=None, end=None, gr
 
 def get_theoretical_requirement(db, boq_item_id, item_id) -> Optional[Decimal]:
     """What the BOQ item should consume of an item by its quantity and norms: BOQ quantity x quantity per unit x (1 + wastage %), in the
-    item's base unit. Where no norm is set for the pair, the project's budget for the BOQ item is read instead - its material
-    rows are the project's Item sheet (services/item_sheet.py). None when neither says anything (or the BOQ item does not exist)."""
+    item's base unit. None when no norm is set for the pair (or the BOQ item does not exist)."""
     norm = db.query(DBStoreMaterialNorm).filter(DBStoreMaterialNorm.boq_item_id == boq_item_id, DBStoreMaterialNorm.item_id == item_id).first()
-    line = db.get(models.DBBoqLine, boq_item_id)
-    if line is None:
+    line = db.get(models.DBBoqLine, boq_item_id) if norm is not None else None
+    if norm is None or line is None:
         return None
-    if norm is None:
-        from app.services.item_sheet import budget_requirement
-        return budget_requirement(db, line, db.get(models.DBItem, item_id))
     need = Decimal(str(line.quantity or 0)) * Decimal(str(norm.qty_per_unit)) * (1 + Decimal(str(norm.wastage_pct or 0)) / 100)
     return q3(need)
 

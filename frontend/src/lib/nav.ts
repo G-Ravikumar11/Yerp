@@ -27,7 +27,7 @@ export type StoreSection = { label: string; path: string; perm: string; hint: st
 export const STORE_SECTIONS: StoreSection[] = [
   { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage', block: 'purchase', hint: 'Ask suppliers for quotes and compare them' },
   { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all', block: 'purchase', hint: 'Orders to suppliers and what has arrived' },
-  { label: 'Item Sheet', path: '/store/item-sheet', perm: 'budget.view|budget.edit|purchase.manage|stores.manage|stores.receive|store.reports.view|store.outward.view', block: 'purchase', hint: "Materials each project's BOQ needs, and what is still to buy" },
+  { label: 'Item Sheet', path: '/store/item-sheet', perm: 'store.outward.view|store.inward.view|store.admin', block: 'purchase', hint: "Each project's materials under its BOQ group codes, approved by the Master" },
   { label: 'Rate Contracts', path: '/store/rate-contracts', perm: 'purchase.manage', block: 'purchase', hint: 'Rates agreed with suppliers for the year' },
   { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all', block: 'purchase', hint: "Suppliers' bills checked against what came" },
   // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are removed.
@@ -99,7 +99,6 @@ const NAV: NavEntry[] = [
       { label: 'Equipment & Plant', path: '/projects/equipment' },
       { label: 'Bar Bending Schedule', path: '/projects/bbs' },
       { label: 'Budgeting', path: '/projects/budgeting', perm: 'budget.view|budget.edit' },
-      { label: 'Item Sheet', path: '/projects/item-sheet', perm: 'budget.view|budget.edit|purchase.manage|stores.manage|stores.receive|store.reports.view|store.outward.view' },
       { label: 'Project Profit', path: '/projects/profit', perm: 'reports.view' },
       { label: 'Cost by Project', path: '/projects/costs', perm: 'reports.view' },
     ],
