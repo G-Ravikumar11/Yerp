@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(PushGuardPlugin.class);
         super.onCreate(savedInstanceState);
         // The app's pages are served from https://localhost and the API from Railway, so the sign-in cookie is a
         // third-party cookie to the WebView. Android drops those by default, which would sign everyone straight out.
