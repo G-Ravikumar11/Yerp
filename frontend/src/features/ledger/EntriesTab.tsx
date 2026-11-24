@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { FilterBar, useListFilters } from '@/components/data/filters'
-import { ArrowLeftRight, FileText, MinusCircle, PlusCircle } from 'lucide-react'
+import { ArrowLeftRight, Download, FileText, MinusCircle, PlusCircle } from 'lucide-react'
 import { Button, ConfirmDialog, Stat, StatGrid } from '@/components/ui'
 import { projectLabel, useProjects } from '@/api/projects'
 import { entryAgainst, ledgerKeys, PARTY_LABEL, useEntries, voidEntry, voucherUrl, type Entry } from '@/api/ledger'
@@ -53,13 +53,16 @@ export function EntriesTab({ job = 0 }: { job?: number }) {
 
   return (
     <>
-      {can('bills.pay') && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => setVoucher('expense')}><MinusCircle /> Expense voucher</Button>
-          <Button size="sm" variant="outline" onClick={() => setVoucher('income')}><PlusCircle /> Other receipt</Button>
-          <Button size="sm" variant="outline" onClick={() => setTransferring(true)}><ArrowLeftRight /> Bank / cash transfer</Button>
-        </div>
-      )}
+      <div className="mb-4 flex flex-wrap gap-2">
+        {can('bills.pay') && (
+          <>
+            <Button size="sm" onClick={() => setVoucher('expense')}><MinusCircle /> Expense voucher</Button>
+            <Button size="sm" variant="outline" onClick={() => setVoucher('income')}><PlusCircle /> Other receipt</Button>
+            <Button size="sm" variant="outline" onClick={() => setTransferring(true)}><ArrowLeftRight /> Bank / cash transfer</Button>
+          </>
+        )}
+        <Button size="sm" variant="outline" className="sm:ml-auto" asChild><a href="/api/money/entries.xlsx" target="_blank" rel="noreferrer"><Download /> Download (Excel)</a></Button>
+      </div>
       <StatGrid className="xl:grid-cols-5">
         <Stat label="Received" value={compactINR(s?.received)} loading={q.isPending} />
         <Stat label="Paid out" value={compactINR(s?.paid)} sub={s?.expenses ? `${compactINR(s.expenses)} of it expenses` : undefined} loading={q.isPending} />

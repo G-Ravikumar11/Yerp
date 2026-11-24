@@ -214,6 +214,11 @@ def raise_request(db, client, emp, actor_name, body, member=None):
         doc_number = doc.number or ""
     if not party_name:
         raise HTTPException(400, "Paid to whom?")
+    if party_type == "contractor":
+        from app.services.payouts import contractor_payment_hold
+        held = contractor_payment_hold(db, client.id, party_id, party_name)
+        if held:
+            raise HTTPException(409, held)
     if job_id and not db.query(models.DBJob.id).filter(models.DBJob.id == job_id,
                                                        models.DBJob.client_id == client.id).first():
         raise HTTPException(404, "Project not found")
