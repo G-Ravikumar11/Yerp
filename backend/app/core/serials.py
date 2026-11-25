@@ -180,15 +180,15 @@ def allocate_bill_number(db, client_id) -> str:
 # anything. Approved orders are committed cost on the job; when the bill turns
 # up it is matched to the order and any overspend is flagged.
 def allocate_po_number(db, client_id) -> str:
-    last = db.query(models.DBPurchaseOrder).filter(
-        models.DBPurchaseOrder.client_id == client_id).order_by(
-            models.DBPurchaseOrder.id.desc()).first()
-    if last and last.number:
-        try:
-            return f"PO-{int(str(last.number).replace('PO-', '').replace('PO', '')) + 1:04d}"
-        except (ValueError, TypeError):
-            pass
-    return "PO-0001"
+    """The next PO-0001 style number: one past the highest of the company's numbers in that form. Read from the newest
+    order alone, an order numbered any other way (imported, or typed) gave PO-0001 again - a number already taken - and
+    every new order was refused."""
+    highest = 0
+    for (num,) in db.query(models.DBPurchaseOrder.number).filter(models.DBPurchaseOrder.client_id == client_id).all():
+        m = re.fullmatch(r"PO-?(\d+)", str(num or "").strip(), re.IGNORECASE)
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return f"PO-{highest + 1:04d}"
 
 
 def next_wo_number(db, client_id, department, on_date=None):

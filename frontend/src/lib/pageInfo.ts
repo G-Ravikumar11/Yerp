@@ -64,7 +64,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/subcontractors/compliance': 'Each subcontractor\'s statutory papers - registrations, insurance, licences - with expiry dates so nothing lapses unnoticed.',
 
   '/store/items': 'The Item Master: every material and consumable with its unit, code and rate. Orders, stock and costing all use this list.',
-  '/store/item-sheet': "Each project's materials under its BOQ group codes, with HSN from the Item Master. Make it here or upload the Excel template; once the Master approves it, indents ask only for items on it.",
+  '/store/item-sheet': "Each project's BOQ lines under their group codes, with the store materials each needs. Once the Master approves it, raise orders, receipts, indents and issues for them here.",
   '/store/rate-contracts': 'Rates agreed with a supplier for chosen items, usually for a year. Orders to that supplier pick them up, and you are told before a contract ends.',
   '/store/enquiries': 'Send an enquiry to several suppliers and compare their quotes side by side before ordering.',
   '/store/enquiries/:id': 'One enquiry: the items asked for, the suppliers asked and their quotes side by side, and the award that makes the purchase orders.',

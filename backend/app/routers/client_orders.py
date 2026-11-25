@@ -1,4 +1,5 @@
 """The client orders endpoints."""
+import json
 import re
 from datetime import datetime
 
@@ -645,6 +646,11 @@ def raise_po_from_bom(wo_id: int, body: RaisePoIn, request: Request,
             order_id=order.id, description=r["item_name"] or r["item_code"],
             item_code=r["item_code"], uom=r["uom"],
             qty=r["to_buy"], price=r["rate"], tax_rate="18%"))
+    # The project's approved Item sheet holds here too: items off it are refused, buying past it is flagged.
+    from app.services.item_sheet import check_order_lines
+    flags = check_order_lines(db, client.id, order, [{"item_code": r["item_code"], "qty": r["to_buy"], "uom": r["uom"]} for r in rows])
+    if flags:
+        order.rate_flags = json.dumps(flags)
     log_audit(db, client.id, "po_raised_from_bom", "purchase_order", order.id,
               order.number or "", "%s - %d line(s) - %s"
               % (wo.number, len(rows), inr(amount)), request)
