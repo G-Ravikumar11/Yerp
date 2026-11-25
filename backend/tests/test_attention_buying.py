@@ -55,5 +55,6 @@ def test_the_morning_digest_opens_with_the_money(tenant):
         s.close()
     digest = [a for a in tenant.get("/api/alerts").json()["alerts"] if a["kind"] == "daily_digest"]
     body = digest[0]["body"]
-    assert body.startswith("Owed to us:") and "We owe: \u20b91,000.00" in body and "Cash in all accounts: \u20b92,50,000.00" in body
-    assert "Billed ahead of the goods" in body
+    assert body.startswith("Good morning,\n\nMONEY POSITION")
+    assert "Receivables" in body and "Payables       \u20b91,000.00" in body and "Bank balance   \u20b92,50,000.00" in body
+    assert "Bills received before the goods" in body

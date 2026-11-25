@@ -93,7 +93,8 @@ def test_the_morning_digest_waits_for_seven_and_goes_once(tenant, sent):
     finally:
         s.close()
     digest = [a for a in tenant.get("/api/alerts").json()["alerts"] if a["kind"] == "daily_digest"]
-    assert digest and "Built past the order" in digest[0]["body"]
+    assert digest and digest[0]["title"] == "Daily summary - 26 Sep 2026"
+    assert "Work done beyond the order quantity" in digest[0]["body"] and "Raise a variation or amend the order." in digest[0]["body"]
 
 
 def test_a_test_message_says_where_it_went(tenant, sent):
