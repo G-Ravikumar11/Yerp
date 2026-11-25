@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, Copy, Download, Pencil, Search, Trash2, Upload } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Copy, Download, Pencil, Search, Trash2, Upload, Wand2 } from 'lucide-react'
 import { Button, ConfirmDialog, Field, Input, Select } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { useProjects, projectLabel } from '@/api/projects'
@@ -10,6 +10,7 @@ import { ItemPicker } from '../shared'
 import { dmy, normTemplateHref, num, reportKeys, useBoqPicks, useNorms, type Norm } from './api'
 import { NormCopyDialog } from './NormCopy'
 import { NormImportDialog } from './NormImport'
+import { NormFromWorkDialog } from './NormFromWork'
 
 const blank = { boq_item_id: 0, item: null as StoreItemOption | null, qty_per_unit: '', wastage_pct: '', notes: '' }
 const PAGE = 25
@@ -25,7 +26,7 @@ export default function NormsPage() {
   const [f, setF] = useState(blank)
   const [editing, setEditing] = useState<Norm | null>(null)
   const [removing, setRemoving] = useState<Norm | null>(null)
-  const [dialog, setDialog] = useState<'import' | 'copy' | null>(null)
+  const [dialog, setDialog] = useState<'import' | 'copy' | 'work' | null>(null)
   const [search, setSearch] = useState('')
   const [material, setMaterial] = useState(0)
   const [page, setPage] = useState(0)
@@ -89,6 +90,7 @@ export default function NormsPage() {
           {canEdit && <Button variant="outline" disabled={!project} onClick={() => setDialog('import')}><Upload /> Import Excel</Button>}
           {project ? <Button variant="outline" asChild><a href={normTemplateHref(project)} download><Download /> Download template</a></Button> : <Button variant="outline" disabled><Download /> Download template</Button>}
           {canEdit && <Button variant="outline" disabled={!project} onClick={() => setDialog('copy')}><Copy /> Copy norms from another project</Button>}
+          {canEdit && <Button variant="outline" disabled={!project} onClick={() => setDialog('work')}><Wand2 /> From the work items' norms</Button>}
         </div>
       </div>
 
@@ -132,6 +134,7 @@ export default function NormsPage() {
       )}
       {dialog === 'import' && project > 0 && <NormImportDialog projectId={project} projectLabel={label} onClose={() => setDialog(null)} />}
       {dialog === 'copy' && project > 0 && <NormCopyDialog projectId={project} projectLabel={label} onClose={() => setDialog(null)} />}
+      {dialog === 'work' && project > 0 && <NormFromWorkDialog projectId={project} projectLabel={label} onClose={() => setDialog(null)} />}
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title="Remove this norm?" description={removing ? `${removing.item_name} for ${removing.boq_item}. The norms report and the wastage loss will no longer compare this material for that BOQ item.` : ''} confirmLabel="Remove" tone="danger" loading={drop.isPending} onConfirm={() => { if (removing) drop.mutate(removing); setRemoving(null) }} />
     </div>
   )

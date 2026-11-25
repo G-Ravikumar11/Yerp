@@ -8,6 +8,8 @@ left most BOQ items without one, so the wastage report had nothing to measure ag
     a project   the norms of another project of the company, each carried to the BOQ item of this project that is the same
                 work. A BOQ item id is never reused: lines are matched by number and description, and a line that could be
                 more than one is offered for a person to choose, never guessed.
+    work items  the company's norms on the work item each BOQ item is (Item Master; the Item sheet can name the work item
+                where the BOQ does not). Taken only where the BOQ item and the work item count in the same unit.
 
 Either way it goes in together or not at all, and the audit log says who did it, from where, and what it changed.
 """
@@ -422,3 +424,67 @@ def copy_commit(db, client_id, source_id, dest_id, mode, mappings, who):
             updated += 1
     db.flush()
     return {"copied": inserted, "updated": updated, "unchanged": unchanged, "skipped_existing": skipped, "not_chosen": len(found) - len(plan), "source_norms": len(found)}
+
+
+# --- the work items' norms (Item Master) ----------------------------------------------------------------------------------------
+
+def from_work_preview(db, client_id, job_id, mode):
+    """For each priced BOQ item of the project, the norms of the work item it is, as this project's norms would take them. Writes
+    nothing. (rows, lines): rows have status insert | update | unchanged | skip (already set here, kept) | unit (the BOQ item and the
+    work item count in different units) | no_material (no longer a stock item); lines = {no_work, no_norms} counts."""
+    from app.services.item_norms import norms_of, same_unit
+    from app.services.item_sheet import line_works, sheet_of
+    if mode not in COPY_MODES:
+        raise HTTPException(400, "Choose to add the missing norms or to replace the matching ones.")
+    lines = priced_lines(db, client_id, job_id)
+    works = line_works(db, client_id, sheet_of(db, client_id, job_id), lines)
+    norms = norms_of(db, client_id, [w.id for w, _src in works.values()])
+    items = ItemIndex(db, client_id).items
+    uoms = base_uoms(db, [items[n.material_id] for ns in norms.values() for n in ns if n.material_id in items])
+    have = existing_norms(db, client_id, [l.id for l in lines])
+    rows, counts = [], {"no_work": 0, "no_norms": 0}
+    for l in lines:
+        work = works.get(l.key, (None, ""))[0]
+        if work is None:
+            counts["no_work"] += 1
+            continue
+        if not norms.get(work.id):
+            counts["no_norms"] += 1
+            continue
+        unit_ok = not l.uom or not work.units_of_measure or same_unit(l.uom, work.units_of_measure)
+        for n in norms[work.id]:
+            it = items.get(n.material_id)
+            r = {"boq_item_id": l.id, "boq_item": boq_label(l), "boq_uom": l.uom or "", "work_item_id": work.id, "work_code": work.item_code,
+                 "work_name": work.item_name, "work_uom": work.units_of_measure or "", "item_id": n.material_id,
+                 "item_code": it.item_code if it else "", "item_name": it.item_name if it else "(no longer a stock item)", "base_uom": uoms.get(n.material_id, ""),
+                 "qty_per_unit": Decimal(str(round(float(n.qty_per_unit or 0), 6))), "wastage_pct": Decimal(str(round(float(n.wastage_pct or 0), 3))), "current": None}
+            if it is None or it.is_active is False or it.merged_into_id:
+                r["status"] = "no_material"
+            elif not unit_ok:
+                r["status"] = "unit"
+            else:
+                r["status"] = _copy_action(have.get((l.id, n.material_id)), r, mode)
+            rows.append(r)
+    return rows, counts
+
+
+def from_work_commit(db, client_id, job_id, mode, who):
+    """Set the project's norms from its work items' norms, as the preview says. The caller commits."""
+    rows, counts = from_work_preview(db, client_id, job_id, mode)
+    if not any(r["status"] in ("insert", "update") for r in rows):
+        raise HTTPException(400, "There is nothing to bring in: no BOQ item of this project has a work item with norms that are not set here already.")
+    have = existing_norms(db, client_id, {r["boq_item_id"] for r in rows})
+    now = datetime.now()
+    done = {"inserted": 0, "updated": 0}
+    for r in rows:
+        if r["status"] == "insert":
+            db.add(DBStoreMaterialNorm(client_id=client_id, boq_item_id=r["boq_item_id"], item_id=r["item_id"], qty_per_unit=r["qty_per_unit"],
+                                       wastage_pct=r["wastage_pct"], notes="From the norms of work item %s" % r["work_code"], updated_by_name=who, updated_at=now))
+            done["inserted"] += 1
+        elif r["status"] == "update":
+            n = have[(r["boq_item_id"], r["item_id"])]
+            n.qty_per_unit, n.wastage_pct, n.updated_by_name, n.updated_at = r["qty_per_unit"], r["wastage_pct"], who, now
+            done["updated"] += 1
+    db.flush()
+    count = lambda st: sum(1 for r in rows if r["status"] == st)
+    return {**done, "unchanged": count("unchanged"), "skipped_existing": count("skip"), "unit": count("unit"), "no_material": count("no_material"), **counts}

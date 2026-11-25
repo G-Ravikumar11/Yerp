@@ -834,8 +834,9 @@ def _history(db, client_id, job_id, skip_keys=()):
 
 
 def fill_from_norms(db, client_id, job_id, keys=None):
-    """What each BOQ line's materials would be from its work item's norms, or else from the same work on a sheet (this
-    project's other lines, or another project's): {proposals: {key: [material]}, skipped: [{key, why}]}. Nothing is saved."""
+    """What each BOQ line's materials would be from the project's own norms on the line, else its work item's norms, else the
+    same work on a sheet (this project's other lines, or another project's): {proposals: {key: [material]}, skipped: [{key, why}]}.
+    Nothing is saved."""
     from app.services.item_norms import material_unit, norms_of, same_unit
     lines, _ = boq_lines(db, client_id, job_id)
     keys = set(keys) if keys is not None else None
@@ -844,7 +845,13 @@ def fill_from_norms(db, client_id, job_id, keys=None):
     works = line_works(db, client_id, sheet, lines)
     norms = norms_of(db, client_id, [w.id for w, _ in works.values()])
     history = _history(db, client_id, job_id, skip_keys={l.key for l in want})
-    mat_ids = {n.material_id for ns in norms.values() for n in ns}
+    # The project's own norms (Store Hub > Reports > Norms) on a BOQ line come before its work item's: they were set for this site.
+    from app.models.store_reports import DBStoreMaterialNorm
+    own = {}
+    for n in (db.query(DBStoreMaterialNorm).filter(DBStoreMaterialNorm.client_id == client_id, DBStoreMaterialNorm.boq_item_id.in_([l.id for l in want] or [0]))
+              .order_by(DBStoreMaterialNorm.id).all()):
+        own.setdefault(n.boq_item_id, []).append(n)
+    mat_ids = {n.material_id for ns in norms.values() for n in ns} | {n.item_id for ns in own.values() for n in ns}
     for entries in history.values():
         for _where, per in entries:
             mat_ids |= {mid for mid, _x in per}
@@ -859,7 +866,15 @@ def fill_from_norms(db, client_id, job_id, keys=None):
             continue
         work = works.get(l.key, (None, ""))[0]
         rows = []
-        if work is not None and norms.get(work.id):
+        if own.get(l.id):
+            for n in own[l.id]:
+                m = mats.get(n.item_id)
+                if not usable(m):
+                    continue
+                per, waste = float(n.qty_per_unit or 0), float(n.wastage_pct or 0)
+                note = "Project norm: %g per %s%s" % (per, l.uom or "unit", " + %g%% wastage" % waste if waste else "")
+                rows.append((m, qty * per * (1 + waste / 100), note))
+        elif work is not None and norms.get(work.id):
             if l.uom and work.units_of_measure and not same_unit(l.uom, work.units_of_measure):
                 skipped.append({"key": l.key, "why": "%s: the BOQ counts it in %s, but the norms of %s are per %s." % (label, l.uom, work.item_code, work.units_of_measure)})
                 continue

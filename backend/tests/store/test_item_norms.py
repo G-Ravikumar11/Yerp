@@ -205,3 +205,50 @@ def test_the_sheet_offers_the_rate_last_paid_and_the_rate_contracts_in_force(ten
     p = _sheet(tenant, jid)["prices"][str(cement[0])]
     assert (p["last_rate"], p["last_supplier"], p["gst"]) == (410, "Supplier 1", "28"), "the newest approved order in the item's own unit"
     assert p["contracts"] == [{"supplier": "Shree Traders", "rate": 395, "valid_to": day(20)}]
+
+
+def _project_norms(jid):
+    from app.models.store_reports import DBStoreMaterialNorm
+    with database.SessionLocal() as db:
+        lines = {l.id: l.key for l in db.query(models.DBBoqLine).join(models.DBBoq, models.DBBoq.id == models.DBBoqLine.boq_id).filter(models.DBBoq.job_id == jid).all()}
+        return {(lines[n.boq_item_id], n.item_id): (float(n.qty_per_unit), float(n.wastage_pct or 0), n.notes)
+                for n in db.query(DBStoreMaterialNorm).filter(DBStoreMaterialNorm.boq_item_id.in_(list(lines))).all()}
+
+
+def test_a_projects_norms_are_brought_in_from_its_work_items_norms(tenant):
+    jid, k = keyed(tenant)
+    rcc = _line(_sheet(tenant, jid), k["RCC"])
+    cement, sand = _item(jid, "Cement for project norms"), _item(jid, "Sand for project norms", unit="cum")
+    ok(_norms(tenant, rcc["work"]["id"], (cement[0], 8.2, 2), (sand[0], 0.42, 5)))
+    odd = _item(jid, "RCC by the tonne", kind="FG", unit="MT")
+    ok(_norms(tenant, odd[0], (cement[0], 3, 0)))
+    ok(tenant.put("%s/%d/works" % (BASE, jid), json={"links": [{"boq_key": k["MAS"], "work_item_id": odd[0]}]}))
+    view = ok(tenant.get("/api/store/reports/norms/from-work/preview", params={"project_id": jid, "mode": "add"}))
+    assert view["summary"]["insert"] == 2 and view["summary"]["unit"] == 1, view["summary"]
+    assert {r["status"] for r in view["rows"] if r["work_item_id"] == odd[0]} == {"unit"}, "masonry counted in cum is not filled from a per-MT norm"
+    assert _project_norms(jid) == {}, "a preview writes nothing"
+    done = ok(tenant.post("/api/store/reports/norms/from-work", json={"project_id": jid, "mode": "add"}))
+    assert (done["inserted"], done["updated"]) == (2, 0)
+    got = _project_norms(jid)
+    assert got[(k["RCC"], cement[0])][:2] == (8.2, 2.0) and "From the norms of work item" in got[(k["RCC"], cement[0])][2]
+    # A changed work norm: "add" keeps what the project has, "replace" takes the new figure.
+    ok(_norms(tenant, rcc["work"]["id"], (cement[0], 8.5, 2), (sand[0], 0.42, 5)))
+    again = tenant.post("/api/store/reports/norms/from-work", json={"project_id": jid, "mode": "add"})
+    assert again.status_code == 400 and "nothing to bring in" in again.json()["detail"]
+    done = ok(tenant.post("/api/store/reports/norms/from-work", json={"project_id": jid, "mode": "replace"}))
+    assert (done["inserted"], done["updated"], done["unchanged"]) == (0, 1, 1)
+    assert _project_norms(jid)[(k["RCC"], cement[0])][0] == 8.5
+
+
+def test_the_sheet_fills_from_the_projects_own_norms_before_the_work_items(tenant):
+    from app.models.store_reports import DBStoreMaterialNorm
+    jid, k = keyed(tenant)
+    rcc = _line(_sheet(tenant, jid), k["RCC"])
+    cement = _item(jid, "Cement own norm")
+    ok(_norms(tenant, rcc["work"]["id"], (cement[0], 8.2, 2)))
+    with database.SessionLocal() as db:
+        cid = db.get(models.DBJob, jid).client_id
+        db.add(DBStoreMaterialNorm(client_id=cid, boq_item_id=rcc["line_id"], item_id=cement[0], qty_per_unit=7.5, wastage_pct=0))
+        db.commit()
+    row = ok(tenant.post("%s/%d/fill" % (BASE, jid), json={"keys": [k["RCC"]]}))["proposals"][k["RCC"]][0]
+    assert row["qty"] == 120 * 7.5 and row["remarks"].startswith("Project norm: 7.5 per")
