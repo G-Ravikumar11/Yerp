@@ -5,6 +5,7 @@ import { useItemSites, useWhereUsed, type MasterItem, type UsageGroup } from '@/
 import { formatINR, formatRate } from '@/lib/utils'
 import { purchaseRateOf, stockLabel } from './itemLogic'
 import { PriceHistorySection } from './PriceHistory'
+import { NormsSection } from './NormsSection'
 
 const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-4">
@@ -87,6 +88,8 @@ export function ItemDetailModal({ item, manage, onClose, onEdit, onCopy, onToggl
               <Row label="Remarks">{i.remarks}</Row>
             </dl>
           </section>
+
+          {i.kind === 'FG' && <NormsSection itemId={i.id} unit={i.units_of_measure} manage={manage} />}
 
           <section aria-labelledby="d-stock">
             <h3 id="d-stock" className="mb-2 border-b pb-1 text-sm font-semibold">In stock</h3>

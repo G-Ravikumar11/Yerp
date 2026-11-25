@@ -20,6 +20,7 @@ for the project in all.
 """
 import io
 import json
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -304,11 +305,25 @@ def sheet_dict(db, actor, job):
                 "ordered": _q(t.get("ordered")), "awaiting": _q(t.get("awaiting")), "received": _q(t.get("received")), "indented": _q(t.get("indented")),
                 "issued": _q(t.get("issued"))}
 
+    from app.services.item_norms import norm_counts
+    works = line_works(db, client_id, sheet, lines)
+    counts = norm_counts(db, client_id, {w.id for w, _ in works.values()})
+    done = work_done(db, client_id, job, lines)
+
+    def line(l):
+        mats_here = [material(m) for m in by_key.get(l.key, [])]
+        d = done.get(l.key)
+        for m in mats_here:
+            # What the work done so far should have used of it, by the sheet's own quantity for the whole line.
+            m["should_use"] = _q(m["qty"] * d[0] / float(l.quantity)) if d and float(l.quantity or 0) > 0 else None
+        w = works.get(l.key)
+        return {"key": l.key, "line_id": l.id, "item_no": l.item_no or "", "description": _first_line(l.description), "unit": l.uom or "",
+                "qty": _q(l.quantity), "boq_item_code": l.item_code or "", "work": work_dict(w[0], w[1], counts) if w else None,
+                "done_qty": d[0] if d else None, "done_from": d[1] if d else "", "materials": mats_here}
+
     groups = []
     for code, ls in _grouped(lines):
-        groups.append({"code": code, "lines": [{"key": l.key, "line_id": l.id, "item_no": l.item_no or "", "description": _first_line(l.description),
-                                                 "unit": l.uom or "", "qty": _q(l.quantity), "boq_item_code": l.item_code or "",
-                                                 "materials": [material(m) for m in by_key.get(l.key, [])]} for l in ls]})
+        groups.append({"code": code, "lines": [line(l) for l in ls]})
     # Materials under a line the BOQ no longer has (taken out in a revision): still on the sheet, shown apart, to move or remove.
     orphans = [material(m) for m in mats if m.boq_key not in keys]
 
@@ -344,7 +359,7 @@ def sheet_dict(db, actor, job):
             "submitted_by": sheet.submitted_by_name if sheet else "", "submitted_at": stamp(sheet.submitted_at) if sheet else "",
             "returned_note": sheet.returned_note if sheet else "", "updated_by": sheet.updated_by_name if sheet else "",
             "updated_at": stamp(sheet.updated_at) if sheet else "",
-            "totals": totals, "orders": orders, **_documents(db, client_id, job.id, key_of, {l.key: l for l in lines}),
+            "totals": totals, "prices": {str(k): v for k, v in prices(db, client_id, {i: items[i] for i in required if i in items}).items()}, "orders": orders, **_documents(db, client_id, job.id, key_of, {l.key: l for l in lines}),
             "stores": _stores(db, actor, job.id), "units": list(UNITS_OF_MEASURE), "is_master": actor.employee is None}
 
 
@@ -643,3 +658,340 @@ def read_upload(content: bytes):
     if cols is None or not ({"line ref", "boq item no"} & set(cols)):
         raise HTTPException(400, "The sheet has no 'Line ref' (or 'BOQ item no') and 'Item code' headings. Download the template and fill that.")
     return rows
+
+
+# --- which work each BOQ line is, and filling its materials from norms -------------------------------------------------
+#
+# A BOQ line says what work it is through its item code (a work item of the Item Master), when the BOQ was made with codes.
+# Where it does not, the sheet can say so for itself (DBItemSheetWork) - picked by hand, or accepted from a match on the
+# line's description. A work item with norms then fills the line's materials: BOQ qty x norm x (1 + wastage). Lines with
+# no norm can take what the same work has under it on another sheet, scaled to this line's quantity. Either way it is a
+# proposal shown in the editor, saved only when the person saves the sheet.
+
+def _works(db, client_id, ids=(), codes=()):
+    q = db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.kind == "FG")
+    out = {}
+    if ids:
+        for w in q.filter(models.DBItem.id.in_(list(ids))).all():
+            out[("id", w.id)] = w
+    if codes:
+        for w in q.filter(func.lower(func.trim(models.DBItem.item_code)).in_([_key(c) for c in codes])).all():
+            out[("code", _key(w.item_code))] = w
+    return out
+
+
+def line_works(db, client_id, sheet, lines):
+    """{BOQ key: (work item, 'sheet' | 'boq')} - the sheet's own choice first, then the work item the BOQ line names."""
+    from app.models.item_norms import DBItemSheetWork
+    chosen = {}
+    if sheet is not None:
+        chosen = {r.boq_key: r.work_item_id for r in db.query(DBItemSheetWork).filter(DBItemSheetWork.sheet_id == sheet.id).all()}
+    found = _works(db, client_id, ids=set(chosen.values()) | {l.item_id for l in lines if l.item_id},
+                   codes={l.item_code for l in lines if (l.item_code or "").strip() and not l.item_id})
+    out = {}
+    for l in lines:
+        w = found.get(("id", chosen[l.key])) if l.key in chosen else None
+        if w is not None:
+            out[l.key] = (w, "sheet")
+            continue
+        if l.item_id:
+            w = found.get(("id", l.item_id))
+        elif (l.item_code or "").strip():
+            w = found.get(("code", _key(l.item_code)))
+        if w is not None:
+            out[l.key] = (w, "boq")
+    return out
+
+
+def work_dict(w, source, counts):
+    return {"id": w.id, "code": w.item_code, "name": w.item_name, "unit": w.units_of_measure or "", "norms": counts.get(w.id, 0), "from": source}
+
+
+def set_line_work(db, client_id, job_id, boq_key, work_item_id, who):
+    """Say on the sheet which work item a BOQ line is (None: go back to what the BOQ says). Not a change of materials, so the
+    sheet's approval is not touched."""
+    from app.models.item_norms import DBItemSheetWork
+    lines, _ = boq_lines(db, client_id, job_id)
+    if boq_key not in {l.key for l in lines}:
+        raise HTTPException(404, "That BOQ line is not on the project's BOQ as it stands.")
+    w = None
+    if work_item_id is not None:
+        from app.services.item_norms import work_item_of
+        w = work_item_of(db, client_id, work_item_id)
+        if w.merged_into_id or w.is_active is False:
+            raise HTTPException(400, "%s %s is switched off in the Item Master." % (w.item_code, w.item_name))
+    sheet = sheet_of(db, client_id, job_id)
+    if sheet is None:
+        if w is None:
+            return
+        sheet = DBItemSheet(client_id=client_id, job_id=job_id, status=SHEET_DRAFT)
+        db.add(sheet)
+        db.flush()
+    row = db.query(DBItemSheetWork).filter(DBItemSheetWork.sheet_id == sheet.id, DBItemSheetWork.boq_key == boq_key).first()
+    if w is None:
+        if row is not None:
+            db.delete(row)
+    elif row is None:
+        db.add(DBItemSheetWork(sheet_id=sheet.id, boq_key=boq_key, work_item_id=w.id, set_by_name=who, set_at=datetime.now()))
+    else:
+        row.work_item_id, row.set_by_name, row.set_at = w.id, who, datetime.now()
+    db.flush()
+
+
+_STOP = {"and", "the", "of", "in", "for", "with", "to", "on", "at", "by", "as", "per", "or", "an", "including", "all", "etc",
+         "providing", "laying", "complete", "specified", "wherever", "required", "using", "work", "works", "nos"}
+
+
+def _words(text):
+    return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 1 and w not in _STOP}
+
+
+def suggest_works(db, client_id, job_id):
+    """For BOQ lines with no work item, the work item of the Item Master whose name reads most like the line - only where
+    one clearly does (most of its words in the line, the same unit, and ahead of the next best): [{key, work, score}]."""
+    from app.services.item_norms import norm_counts, same_unit
+    lines, _ = boq_lines(db, client_id, job_id)
+    have = line_works(db, client_id, sheet_of(db, client_id, job_id), lines)
+    todo = [l for l in lines if l.key not in have]
+    works = (db.query(models.DBItem).filter(models.DBItem.client_id == client_id, models.DBItem.kind == "FG", models.DBItem.merged_into_id.is_(None),
+                                            models.DBItem.is_active.isnot(False)).all())
+    if not todo or not works:
+        return []
+    index, words_of = {}, {}
+    for w in works:
+        ws = _words("%s %s" % (w.item_name, w.description or ""))
+        words_of[w.id] = ws
+        for t in ws:
+            index.setdefault(t, []).append(w)
+    by_id = {w.id: w for w in works}
+    counts = norm_counts(db, client_id, list(by_id))
+    out = []
+    for l in todo:
+        lw = _words(l.description)
+        if not lw:
+            continue
+        cand = {}
+        for t in lw:
+            for w in index.get(t, ()):
+                cand[w.id] = cand.get(w.id, 0) + 1
+        best, best_score, second = None, 0.0, 0.0
+        for wid, hits in cand.items():
+            ww = words_of[wid]
+            if not ww:
+                continue
+            if l.uom and by_id[wid].units_of_measure and not same_unit(l.uom, by_id[wid].units_of_measure):
+                continue
+            # How much of the work item's name is in the line, weighed with how much of the line it covers.
+            score = hits / len(ww) * 0.75 + hits / len(lw) * 0.25
+            if score > best_score:
+                best, best_score, second = by_id[wid], score, best_score
+            elif score > second:
+                second = score
+        if best is not None and best_score >= 0.6 and best_score - second >= 0.05:
+            out.append({"key": l.key, "item_no": l.item_no or "", "description": _first_line(l.description), "unit": l.uom or "",
+                        "work": work_dict(best, "suggested", counts), "score": round(min(best_score, 1.0), 2)})
+    return out
+
+
+def _signatures(line, work):
+    """How the same work is recognised on another sheet: by its work item, else by its description word for word."""
+    out = []
+    if work is not None:
+        out.append(("work", work.id))
+    d = _key(line.description)
+    if d:
+        out.append(("text", d))
+    return out
+
+
+def _history(db, client_id, job_id, skip_keys=()):
+    """Materials per unit of work on the company's sheets: {signature: [((where, unit), [(material id, qty per unit)])]}, this
+    project's own lines first, then the most recently changed sheets. `skip_keys`: this project's lines being filled."""
+    from app.services.boq import boq_lines_of_job
+    sheets = (db.query(DBItemSheet).filter(DBItemSheet.client_id == client_id)
+              .order_by((DBItemSheet.job_id != job_id), DBItemSheet.updated_at.desc()).limit(40).all())
+    out = {}
+    for sh in sheets:
+        mats = materials_of(db, sh)
+        if not mats:
+            continue
+        lines = {l.key: l for l in boq_lines_of_job(db, client_id, sh.job_id)}
+        works = line_works(db, client_id, sh, list(lines.values()))
+        job = db.get(models.DBJob, sh.job_id)
+        name = (job.number or job.name) if job else "another project"
+        by_key = {}
+        for m in mats:
+            by_key.setdefault(m.boq_key, []).append(m)
+        for key, ms in by_key.items():
+            l = lines.get(key)
+            if l is None or not float(l.quantity or 0) > 0 or (sh.job_id == job_id and key in skip_keys):
+                continue
+            per = [(m.item_id, float(m.qty or 0) / float(l.quantity)) for m in ms if m.qty]
+            where = ("%s %s" % (name, l.item_no or "")).strip()
+            for sig in _signatures(l, works.get(key, (None, ""))[0]):
+                out.setdefault(sig, []).append(((where, l.uom or ""), per))
+    return out
+
+
+def fill_from_norms(db, client_id, job_id, keys=None):
+    """What each BOQ line's materials would be from its work item's norms, or else from the same work on a sheet (this
+    project's other lines, or another project's): {proposals: {key: [material]}, skipped: [{key, why}]}. Nothing is saved."""
+    from app.services.item_norms import material_unit, norms_of, same_unit
+    lines, _ = boq_lines(db, client_id, job_id)
+    keys = set(keys) if keys is not None else None
+    want = [l for l in lines if keys is None or l.key in keys]
+    sheet = sheet_of(db, client_id, job_id)
+    works = line_works(db, client_id, sheet, lines)
+    norms = norms_of(db, client_id, [w.id for w, _ in works.values()])
+    history = _history(db, client_id, job_id, skip_keys={l.key for l in want})
+    mat_ids = {n.material_id for ns in norms.values() for n in ns}
+    for entries in history.values():
+        for _where, per in entries:
+            mat_ids |= {mid for mid, _x in per}
+    mats = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_(mat_ids or {0})).all()}
+    usable = lambda m: m is not None and m.kind == "RM" and m.is_active is not False and not m.merged_into_id
+    proposals, skipped = {}, []
+    for l in want:
+        label = ("%s %s" % (l.item_no or "", _first_line(l.description)[:60])).strip()
+        qty = float(l.quantity or 0)
+        if qty <= 0:
+            skipped.append({"key": l.key, "why": "%s: the BOQ has no quantity on it." % label})
+            continue
+        work = works.get(l.key, (None, ""))[0]
+        rows = []
+        if work is not None and norms.get(work.id):
+            if l.uom and work.units_of_measure and not same_unit(l.uom, work.units_of_measure):
+                skipped.append({"key": l.key, "why": "%s: the BOQ counts it in %s, but the norms of %s are per %s." % (label, l.uom, work.item_code, work.units_of_measure)})
+                continue
+            for n in norms[work.id]:
+                m = mats.get(n.material_id)
+                if not usable(m):
+                    continue
+                per, waste = float(n.qty_per_unit or 0), float(n.wastage_pct or 0)
+                note = "Norm of %s: %g per %s%s" % (work.item_code, per, work.units_of_measure or "unit", " + %g%% wastage" % waste if waste else "")
+                rows.append((m, qty * per * (1 + waste / 100), note))
+        else:
+            for sig in _signatures(l, work):
+                for (where, unit), per in history.get(sig, []):
+                    if unit and l.uom and not same_unit(unit, l.uom):
+                        continue
+                    rows = [(mats.get(mid), qty * p, "As on %s, scaled to this quantity" % where) for mid, p in per if usable(mats.get(mid))]
+                    if rows:
+                        break
+                if rows:
+                    break
+        rows = [r for r in rows if r[1] > 0]
+        if not rows:
+            why = ("%s %s has no norms yet." % (work.item_code, work.item_name)) if work is not None else "no work item, and the same work is on no sheet yet."
+            skipped.append({"key": l.key, "why": "%s: %s" % (label, why)})
+            continue
+        proposals[l.key] = [{"item_id": m.id, "item_code": m.item_code, "item_name": m.item_name, "hsn": m.hsn_code or "", "unit": material_unit(db, m),
+                             "qty": round(need, 3), "remarks": note[:300]} for m, need, note in rows]
+    return {"proposals": proposals, "skipped": skipped}
+
+
+def line_norm_rows(db, client_id, job_id, boq_key):
+    """A BOQ line's saved materials as a norm of its work item: (work item, rows) - each quantity over the line's quantity."""
+    from app.services.item_norms import same_unit
+    lines, _ = boq_lines(db, client_id, job_id)
+    line = next((l for l in lines if l.key == boq_key), None)
+    if line is None:
+        raise HTTPException(404, "That BOQ line is not on the project's BOQ as it stands.")
+    sheet = sheet_of(db, client_id, job_id)
+    work = line_works(db, client_id, sheet, [line]).get(boq_key, (None, ""))[0]
+    if work is None:
+        raise HTTPException(400, "Say which work item this BOQ line is first.")
+    if line.uom and work.units_of_measure and not same_unit(line.uom, work.units_of_measure):
+        raise HTTPException(400, "The BOQ counts this line in %s, but %s is per %s: the quantities would not be per unit of it." % (line.uom, work.item_code, work.units_of_measure))
+    qty = float(line.quantity or 0)
+    if qty <= 0:
+        raise HTTPException(400, "The BOQ line has no quantity to divide by.")
+    mats = [m for m in materials_of(db, sheet) if m.boq_key == boq_key and m.qty]
+    if not mats:
+        raise HTTPException(400, "Save the line's materials on the sheet first.")
+    return work, [{"material_id": m.item_id, "qty_per_unit": round(float(m.qty) / qty, 6), "wastage_pct": 0, "remarks": ""} for m in mats]
+
+
+# --- how much work is done, for the consumption check ------------------------------------------------------------------
+
+def work_done(db, client_id, job, lines):
+    """{BOQ key: (quantity done, 'measured' | 'programme')}: the contractors' measured work on the line, where their order's
+    line is counted in the BOQ's unit; else the programme's progress on the line times its BOQ quantity."""
+    from app.services.earned_value import LIVE_ORDERS, line_progress
+    from app.services.item_norms import same_unit
+    by_key = {l.key: l for l in lines}
+    measured = {}
+    orders = [o for (o,) in db.query(models.DBSubcontractOrder.id).filter(models.DBSubcontractOrder.client_id == client_id,
+                                                                           models.DBSubcontractOrder.job_id == job.id,
+                                                                           models.DBSubcontractOrder.status.in_(LIVE_ORDERS)).all()]
+    if orders:
+        items = {i.id: i for i in db.query(models.DBSubcontractItem).filter(models.DBSubcontractItem.order_id.in_(orders)).all()}
+        got = {}
+        for item_id, qty in db.query(models.DBSubMeasurement.item_id, models.DBSubMeasurement.quantity).filter(
+                models.DBSubMeasurement.order_id.in_(orders), (models.DBSubMeasurement.kind == "") | models.DBSubMeasurement.kind.is_(None)).all():
+            got[item_id] = got.get(item_id, 0.0) + (qty or 0.0)
+        for item_id, qty in got.items():
+            i = items.get(item_id)
+            if i is None or i.is_header:
+                continue
+            try:
+                parts = [p for p in json.loads(i.boq_parts or "[]") if p.get("key")]
+            except (ValueError, TypeError, AttributeError):
+                parts = []
+            if not parts and (i.boq_key or "").strip():
+                parts = [{"key": i.boq_key.strip(), "qty": 0}]
+            whole = sum(float(p.get("qty") or 0) for p in parts)
+            for p in parts:
+                l = by_key.get(p["key"])
+                if l is None or not same_unit(l.uom, i.uom):
+                    continue
+                share = (float(p.get("qty") or 0) / whole) if whole else 1.0 / len(parts)
+                measured[p["key"]] = measured.get(p["key"], 0.0) + qty * share
+    out = {k: (round(q, 3), "measured") for k, q in measured.items() if q > 0}
+    try:
+        progress = line_progress(db, client_id, job)
+    except Exception:
+        progress = {}
+    for k, (_planned, done) in progress.items():
+        l = by_key.get(k)
+        if k not in out and l is not None and done and float(l.quantity or 0) > 0:
+            out[k] = (round(float(l.quantity) * done / 100.0, 3), "programme")
+    return out
+
+
+# --- what to pay: for the purchase order raised from the sheet ----------------------------------------------------------
+
+def prices(db, client_id, items):
+    """{item id: {last_rate, last_supplier, last_date, gst, contracts}} - the rate the company last paid on an approved order,
+    per the item's own unit (orders in another unit are passed over), its GST, and the rate contracts in force today."""
+    from datetime import date
+    from app.services.item_norms import same_unit
+    out = {}
+    if not items:
+        return out
+    by_code = {_key(i.item_code): i for i in items.values()}
+    for it in items.values():
+        gst = re.sub(r"[^\d.]", "", it.item_tax_type or "")
+        out[it.id] = {"last_rate": None, "last_supplier": "", "last_date": "", "gst": gst if gst in ("0", "5", "12", "18", "28") else "",
+                      "contracts": []}
+    rows = (db.query(models.DBPurchaseOrderLineItem, models.DBPurchaseOrder)
+            .join(models.DBPurchaseOrder, models.DBPurchaseOrder.id == models.DBPurchaseOrderLineItem.order_id)
+            .filter(models.DBPurchaseOrder.client_id == client_id, models.DBPurchaseOrder.status.in_(PO_PLACED),
+                    (models.DBPurchaseOrderLineItem.item_id.in_(list(items))) | (func.lower(func.trim(models.DBPurchaseOrderLineItem.item_code)).in_(list(by_code))))
+            .order_by(models.DBPurchaseOrder.issue_date.desc(), models.DBPurchaseOrder.id.desc()).limit(2000).all())
+    for line, po in rows:
+        it = items.get(line.item_id) or by_code.get(_key(line.item_code))
+        if it is None or out[it.id]["last_rate"] is not None or not (line.price or 0) > 0:
+            continue
+        if line.uom and not same_unit(line.uom, _unit(db, it)):
+            continue
+        out[it.id].update(last_rate=round(float(line.price), 2), last_supplier=po.supplier_name or "", last_date=(po.issue_date or "")[:10])
+    today = date.today().isoformat()
+    for rc in db.query(models.DBRateContract).filter(models.DBRateContract.client_id == client_id,
+                                                     func.lower(func.trim(models.DBRateContract.item_code)).in_(list(by_code))).all():
+        if (rc.valid_from or "") > today or (rc.valid_to and rc.valid_to < today) or not (rc.rate or 0) > 0:
+            continue
+        it = by_code.get(_key(rc.item_code))
+        if it is not None:
+            out[it.id]["contracts"].append({"supplier": rc.supplier_name or "", "rate": round(float(rc.rate), 2), "valid_to": rc.valid_to or ""})
+    return out

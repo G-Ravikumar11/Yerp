@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Copy, Download, FileUp, ListTree, Pencil, Plus, Power, Search, SlidersHorizontal, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Copy, Download, FileUp, ListTree, Pencil, Plus, Power, Scale, Search, SlidersHorizontal, X } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge, Button, Card, ConfirmDialog, Field, Input, Select, Skeleton, Tabs } from '@/components/ui'
@@ -15,6 +15,7 @@ import { toast } from '@/stores/toast'
 import { BulkEditModal } from './BulkEditModal'
 import { CategoriesModal } from './CategoriesModal'
 import { ImportItemsModal } from './ImportItemsModal'
+import { NormsImportModal } from './NormsSection'
 import { ItemDetailModal, UsageList } from './ItemDetailModal'
 import { ItemFormModal, type FormMode } from './ItemFormModal'
 import { GAP_LABEL, NO_CATEGORY, buildChips, gapPhrase, clearAll, clearFilter, isFiltered, loadFilters, purchaseRateOf, saveFilters, stockLabel } from './itemLogic'
@@ -52,6 +53,7 @@ export default function ItemMasterPage() {
   const [picked, setPicked] = useState<Set<number>>(new Set())
   const [form, setForm] = useState<{ item: MasterItem | null; mode: FormMode | null }>({ item: null, mode: null })
   const [importing, setImporting] = useState(false)
+  const [norms, setNorms] = useState(false)
   const [managing, setManaging] = useState(false)
   const [detail, setDetail] = useState<MasterItem | null>(null)
   const [toggling, setToggling] = useState<MasterItem | null>(null)
@@ -137,6 +139,7 @@ export default function ItemMasterPage() {
               <>
                 <Button variant="outline" onClick={() => setManaging(true)}><ListTree /> Categories</Button>
                 <Button variant="outline" onClick={() => setImporting(true)}><FileUp /> Import from Excel</Button>
+                <Button variant="outline" onClick={() => setNorms(true)}><Scale /> Material norms</Button>
                 <Button onClick={() => setForm({ item: null, mode: 'create' })}><Plus /> New item</Button>
               </>
             )}
@@ -361,6 +364,7 @@ export default function ItemMasterPage() {
       <ItemDetailModal item={detail} manage={manage} onClose={() => setDetail(null)} onEdit={(i) => { setDetail(null); setForm({ item: i, mode: 'edit' }) }}
         onCopy={(i) => { setDetail(null); setForm({ item: i, mode: 'duplicate' }) }} onToggle={(i) => setToggling(i)} />
       <ImportItemsModal open={importing} onOpenChange={setImporting} vocab={vocab.data} />
+      {norms && <NormsImportModal onClose={() => setNorms(false)} />}
       <CategoriesModal open={managing} onOpenChange={setManaging} />
       <BulkEditModal open={editingMany} onOpenChange={setEditingMany} ids={ids} focus={f.missing} vocab={vocab.data} onDone={() => setPicked(new Set())} />
       <ConfirmDialog

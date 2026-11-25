@@ -35,15 +35,27 @@ function StoreField({ s, value, onChange, id }: { s: ItemSheet; value: number; o
 
 // --- purchase order ----------------------------------------------------------------------------------------------------
 
-interface PoRow { id: number; label: string; boq_key: string; item_code: string; item_name: string; unit: string; left: number; on: boolean; qty: string; price: string; gst: string }
+interface PoRow { id: number; item_id: number; label: string; boq_key: string; item_code: string; item_name: string; unit: string; left: number; on: boolean; qty: string; price: string; typed: boolean; gst: string }
+
+/** The rate to start a line at: the chosen supplier's rate contract, else what the company last paid; and where it came from. */
+function rateFor(s: ItemSheet, itemId: number, supplier: string): { rate: number | null; from: string } {
+  const p = s.prices?.[String(itemId)]
+  if (!p) return { rate: null, from: '' }
+  const who = supplier.trim().toLowerCase()
+  const rc = who ? p.contracts.find((c) => c.supplier.trim().toLowerCase() === who) : undefined
+  if (rc) return { rate: rc.rate, from: `rate contract${rc.valid_to ? ` to ${rc.valid_to}` : ''}` }
+  if (p.last_rate !== null) return { rate: p.last_rate, from: `last paid${p.last_supplier ? ` to ${p.last_supplier}` : ''}${p.last_date ? ` on ${p.last_date}` : ''}` }
+  return { rate: null, from: '' }
+}
 
 /** A purchase order for the sheet's materials, made by the usual route: its budget and rate checks and its approval apply. */
 export function PurchaseOrderModal({ s, onClose }: { s: ItemSheet; onClose: () => void }) {
   const suppliers = useSupplierNames()
   const [rows, setRows] = useState<PoRow[]>(() => s.groups.flatMap((g) => g.lines.flatMap((l) => l.materials.map((m) => {
     const left = Math.max(0, +(m.qty - m.ordered - m.awaiting).toFixed(3))
-    return { id: m.id, label: `${g.code ? `${g.code} · ` : ''}${l.item_no ? `${l.item_no} ` : ''}${l.description}`, boq_key: l.key, item_code: m.item_code, item_name: m.item_name,
-      unit: m.unit, left, on: left > 0, qty: left > 0 ? String(left) : '', price: '', gst: '18' }
+    const start = rateFor(s, m.item_id, '')
+    return { id: m.id, item_id: m.item_id, label: `${g.code ? `${g.code} · ` : ''}${l.item_no ? `${l.item_no} ` : ''}${l.description}`, boq_key: l.key, item_code: m.item_code, item_name: m.item_name,
+      unit: m.unit, left, on: left > 0, qty: left > 0 ? String(left) : '', price: start.rate !== null ? String(start.rate) : '', typed: false, gst: s.prices?.[String(m.item_id)]?.gst || '18' }
   }))))
   const [f, setF] = useState({ supplier_name: '', needed_by: '', notes: '', budget_reason: '' })
   const [overBudget, setOverBudget] = useState('')
@@ -68,7 +80,12 @@ export function PurchaseOrderModal({ s, onClose }: { s: ItemSheet; onClose: () =
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Supplier" htmlFor="po-sup" className="sm:col-span-2">
-            <Input id="po-sup" list="po-sup-list" value={f.supplier_name} onChange={(e) => setF({ ...f, supplier_name: e.target.value })} placeholder="Who it is ordered from" />
+            <Input id="po-sup" list="po-sup-list" value={f.supplier_name} placeholder="Who it is ordered from" onChange={(e) => {
+              const supplier = e.target.value
+              setF({ ...f, supplier_name: supplier })
+              // Rates nobody has typed over follow the supplier: its rate contract where it has one.
+              setRows((rs) => rs.map((r) => { if (r.typed) return r; const x = rateFor(s, r.item_id, supplier); return { ...r, price: x.rate !== null ? String(x.rate) : '' } }))
+            }} />
             <datalist id="po-sup-list">{(suppliers.data ?? []).map((x) => <option key={x.name} value={x.name} />)}</datalist>
           </Field>
           <Field label="Needed by" htmlFor="po-need"><Input id="po-need" type="date" value={f.needed_by} onChange={(e) => setF({ ...f, needed_by: e.target.value })} /></Field>
@@ -99,7 +116,10 @@ export function PurchaseOrderModal({ s, onClose }: { s: ItemSheet; onClose: () =
                   <td className="px-3 py-2"><p>{r.item_name} <span className="font-mono text-xs text-muted-foreground">{r.item_code}</span></p><p className="text-xs text-muted-foreground">{r.label}</p></td>
                   <td className="px-3 py-2 text-right tabular">{q(r.left, r.unit)}</td>
                   <td className="px-3 py-2"><Input aria-label={`Quantity of ${r.item_name} for ${r.label}`} inputMode="decimal" className="text-right" value={r.qty} disabled={!r.on} onChange={(e) => set(i, { qty: num(e.target.value) })} /></td>
-                  <td className="px-3 py-2"><Input aria-label={`Rate of ${r.item_name} for ${r.label}`} inputMode="decimal" className="text-right" value={r.price} disabled={!r.on} onChange={(e) => set(i, { price: num(e.target.value) })} placeholder="per unit" /></td>
+                  <td className="px-3 py-2">
+                    <Input aria-label={`Rate of ${r.item_name} for ${r.label}`} inputMode="decimal" className="text-right" value={r.price} disabled={!r.on} onChange={(e) => set(i, { price: num(e.target.value), typed: true })} placeholder="per unit" />
+                    {!r.typed && r.price && <p className="mt-0.5 text-right text-[11px] text-muted-foreground">{rateFor(s, r.item_id, f.supplier_name).from}</p>}
+                  </td>
                   <td className="px-3 py-2"><Select aria-label={`GST on ${r.item_name}`} value={r.gst} disabled={!r.on} onChange={(e) => set(i, { gst: e.target.value })} options={['0', '5', '12', '18', '28'].map((g) => ({ value: g, label: `${g}%` }))} /></td>
                 </tr>
               ))}

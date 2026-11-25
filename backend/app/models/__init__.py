@@ -57,6 +57,7 @@ from app.models.boq import (
 )
 from app.models.budgeting import DBBoqBudget, DBBoqBudgetItem
 from app.models.item_sheet import DBItemSheet, DBItemSheetLine, DBItemSheetMaterial
+from app.models.item_norms import DBItemNorm, DBItemSheetWork
 from app.models.client_orders import (
     DBWorkOrder,
     DBWorkOrderLine,

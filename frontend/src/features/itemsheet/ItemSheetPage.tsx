@@ -15,6 +15,7 @@ import { useSession } from '@/lib/session'
 import { plural } from '@/lib/format'
 import { MaterialsEditor, MaterialsView } from './MaterialsTab'
 import { DocumentsTab, IndentModal, IssueModal, PurchaseOrderModal, ReceiveModal, TrackingTab } from './Actions'
+import { ConsumptionTab } from './WorkTools'
 
 const STATUS: Record<ItemSheetStatus, { label: string; tone: 'neutral' | 'warning' | 'success' }> = {
   DRAFT: { label: 'Draft', tone: 'neutral' },
@@ -22,7 +23,7 @@ const STATUS: Record<ItemSheetStatus, { label: string; tone: 'neutral' | 'warnin
   APPROVED: { label: 'Approved', tone: 'success' },
 }
 
-type Tab = 'materials' | 'tracking' | 'documents'
+type Tab = 'materials' | 'tracking' | 'consumption' | 'documents'
 
 /**
  * The project's Item sheet, in the Store: the project's BOQ, line by line under its group codes, and under each line the
@@ -145,12 +146,14 @@ function Sheet({ s, canEdit }: { s: ItemSheet; canEdit: boolean }) {
           <Tabs label="Item sheet" value={tab} onChange={setTab} items={[
             { value: 'materials', label: 'Materials' },
             { value: 'tracking', label: 'Tracking' },
+            { value: 'consumption', label: 'Consumption' },
             { value: 'documents', label: `Orders & store (${s.orders.length + s.receipts.length + s.indents.length + s.issues.length})` },
           ]} />
           {canOrder && s.material_count > 0 && <Button onClick={() => setOrdering(true)}><ShoppingCart /> Raise purchase order</Button>}
         </div>
         {tab === 'materials' && <MaterialsView s={s} onIndent={canIndent ? setIndentFor : undefined} />}
         {tab === 'tracking' && <TrackingTab s={s} />}
+        {tab === 'consumption' && <ConsumptionTab s={s} />}
         {tab === 'documents' && <DocumentsTab s={s} onReceive={canReceive ? setReceiving : undefined} onIssue={can('store.outward.create|store.admin') ? setIssuing : undefined} />}
       </>)}
 

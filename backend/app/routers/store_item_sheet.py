@@ -193,3 +193,89 @@ def send_back(job_id: int, body: NoteIn, request: Request, db: Session = Depends
     log_audit(db, actor.client.id, "store_item_sheet_sent_back", "job", job.id, job.name, body.note, request=request, **_who(actor))
     db.commit()
     return svc.sheet_dict(db, actor, job)
+
+
+# --- the work each BOQ line is, and filling materials from norms ----------------------------------------------------------
+
+class WorkLinkIn(BaseModel):
+    boq_key: str
+    work_item_id: Optional[int] = None    # None: go back to the work item the BOQ line names, if any
+
+
+class WorkLinksIn(BaseModel):
+    links: List[WorkLinkIn]
+
+
+class FillIn(BaseModel):
+    keys: Optional[List[str]] = None       # the BOQ lines to fill; None for all of them
+
+
+@router.get("/{job_id}/work-items")
+def work_items(job_id: int, request: Request, q: str = "", db: Session = Depends(get_read_db)):
+    """Work items of the Item Master (what a BOQ line is), found by code or name, with how many materials their norms have."""
+    from app.services.item_norms import norm_counts
+    actor = store_actor(request, db, VIEW)
+    svc.job_of(db, actor.client.id, job_id)
+    query = db.query(models.DBItem).filter(models.DBItem.client_id == actor.client.id, models.DBItem.kind == "FG",
+                                           models.DBItem.merged_into_id.is_(None), models.DBItem.is_active.isnot(False))
+    term = (q or "").strip().replace("%", "").replace("_", "")
+    if term:
+        like = "%" + term + "%"
+        query = query.filter((models.DBItem.item_code.ilike(like)) | (models.DBItem.item_name.ilike(like)))
+    rows = query.order_by(models.DBItem.item_name).limit(30).all()
+    counts = norm_counts(db, actor.client.id, [r.id for r in rows])
+    return {"items": [svc.work_dict(r, "", counts) for r in rows]}
+
+
+@router.put("/{job_id}/works")
+def set_works(job_id: int, body: WorkLinksIn, request: Request, db: Session = Depends(get_db)):
+    """Say which work item each of these BOQ lines is. It does not change the sheet's materials, so not its approval either."""
+    actor = store_actor(request, db, EDIT)
+    job = svc.job_of(db, actor.client.id, job_id)
+    if not body.links or len(body.links) > 2000:
+        raise HTTPException(400, "Give between 1 and 2000 lines.")
+    for link in body.links:
+        svc.set_line_work(db, actor.client.id, job.id, link.boq_key, link.work_item_id, actor.name)
+    log_audit(db, actor.client.id, "store_item_sheet_works", "job", job.id, job.name, "%d BOQ lines" % len(body.links), request=request, **_who(actor))
+    db.commit()
+    return svc.sheet_dict(db, actor, job)
+
+
+@router.get("/{job_id}/work-suggestions")
+def work_suggestions(job_id: int, request: Request, db: Session = Depends(get_read_db)):
+    """For BOQ lines with no work item, the one whose name clearly matches the line, to accept or not."""
+    actor = store_actor(request, db, VIEW)
+    job = svc.job_of(db, actor.client.id, job_id)
+    return {"items": svc.suggest_works(db, actor.client.id, job.id)}
+
+
+@router.post("/{job_id}/fill")
+def fill(job_id: int, body: FillIn, request: Request, db: Session = Depends(get_read_db)):
+    """The materials these BOQ lines would have from their work items' norms (or the same work on another sheet). Nothing is
+    saved: the screen puts them in the editor, to look over and save."""
+    actor = store_actor(request, db, EDIT)
+    job = svc.job_of(db, actor.client.id, job_id)
+    return svc.fill_from_norms(db, actor.client.id, job.id, body.keys)
+
+
+@router.post("/{job_id}/lines/{boq_key}/save-norm")
+def save_norm(job_id: int, boq_key: str, request: Request, db: Session = Depends(get_db)):
+    """A BOQ line's saved materials, divided by its quantity, kept as the norm of its work item - for every later project."""
+    from app.services.item_norms import check_rows, replace_norms
+    actor = store_actor(request, db, EDIT)
+    if actor.employee is not None:
+        from app.core.permissions import permissions_for
+        if "items.manage" not in permissions_for(actor.employee):
+            raise HTTPException(403, "Saving a norm changes the Item Master: it needs the right to manage items.")
+    job = svc.job_of(db, actor.client.id, job_id)
+    work, rows = svc.line_norm_rows(db, actor.client.id, job.id, boq_key)
+    values, errors = check_rows(db, actor.client.id, rows)
+    if errors:
+        raise HTTPException(400, _problems("The norm was not saved.", errors))
+    replace_norms(db, actor.client.id, work, values, actor.name)
+    log_audit(db, actor.client.id, "item_norms_saved", "item", work.id, work.item_code, "%d materials, from the Item sheet of %s" % (len(values), job.name),
+              request=request, **_who(actor))
+    db.commit()
+    return {"message": "Saved as the norm of %s %s: %d material%s per %s." % (work.item_code, work.item_name, len(values), "" if len(values) == 1 else "s",
+                                                                             work.units_of_measure or "unit"),
+            "sheet": svc.sheet_dict(db, actor, job)}

@@ -295,6 +295,62 @@ def steel_missing_weights(request: Request, db: Session = Depends(get_read_db)):
                        "reason": steel.MISSING_TEXT} for i in rows]}
 
 
+class NormRowIn(BaseModel):
+    material_id: Optional[int] = None
+    item_code: Optional[str] = ""
+    qty_per_unit: Optional[float] = None
+    wastage_pct: Optional[float] = 0
+    remarks: Optional[str] = ""
+
+
+class NormsIn(BaseModel):
+    rows: List[NormRowIn]
+
+
+@router.get("/api/items/norms.xlsx")
+def item_norms_sheet(request: Request, db: Session = Depends(get_read_db)):
+    """Every work item with its material norms, to fill in and upload."""
+    from fastapi.responses import Response
+    from app.services import item_norms
+    client = require_erp_read(request, db)
+    return Response(item_norms.workbook(db, client.id), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="material-norms.xlsx"'})
+
+
+@router.post("/api/items/norms/upload")
+async def item_norms_upload(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    from app.services import item_norms
+    client, _, who = wo_actor(request, db, "items.manage")
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, "That file is over 10 MB.")
+    out = item_norms.read_upload(db, client.id, content, who)
+    log_audit(db, client.id, "item_norms_imported", "item", None, "", "%d work items, %d materials" % (out["work_items"], out["materials"]), request)
+    db.commit()
+    return {**out, "message": "Norms saved for %d work item%s." % (out["work_items"], "" if out["work_items"] == 1 else "s")}
+
+
+@router.get("/api/items/{item_id}/norms")
+def item_norms_get(item_id: int, request: Request, db: Session = Depends(get_read_db)):
+    from app.services import item_norms
+    client = require_erp_read(request, db)
+    work = _item(db, client.id, item_id)
+    rows = item_norms.norms_of(db, client.id, [work.id]).get(work.id, [])
+    return {"item_id": work.id, "item_code": work.item_code, "item_name": work.item_name, "unit": work.units_of_measure or "",
+            "is_work": work.kind == "FG", "norms": item_norms.norm_dicts(db, rows)}
+
+
+@router.put("/api/items/{item_id}/norms")
+def item_norms_put(item_id: int, body: NormsIn, request: Request, db: Session = Depends(get_db)):
+    """Replace a work item's norms: what one unit of it uses of each material, and the wastage on top."""
+    from app.services import item_norms
+    client, _, who = wo_actor(request, db, "items.manage")
+    work = item_norms.save_norms(db, client.id, item_id, [r.dict() for r in body.rows], who)
+    log_audit(db, client.id, "item_norms_saved", "item", work.id, work.item_code, "%d materials" % len(body.rows), request)
+    db.commit()
+    return item_norms_get(item_id, request, db)
+
+
 @router.get("/api/items/{item_id}")
 def item_get(item_id: int, request: Request, db: Session = Depends(get_read_db)):
     client = require_erp_read(request, db)

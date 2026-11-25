@@ -135,17 +135,17 @@ def clean_values(db, client_id, raw, categories):
         v["item_type"] = "Purchased" if kind == "RM" else "Work"
     cat = v["item_category"]
     if cat:
+        # A category (or subcategory) the business has not set up yet is added with the import, not refused: a migrated list
+        # brings its own categories, and setting up dozens by hand first was the whole of the work.
+        if len(cat) > 60:
+            problems.append("The category '%s...' is too long. Keep it to 60 characters." % cat[:30])
         found = categories.get(cat.lower())
-        if not found:
-            problems.append("The category '%s' is not set up. Add it under Categories, or choose one that is." % cat)
-        else:
+        if found:
             v["item_category"] = found["name"]
             if v["item_subcategory"]:
-                sub = found["subs"].get(v["item_subcategory"].lower())
-                if sub:
-                    v["item_subcategory"] = sub
-                else:
-                    problems.append("'%s' is not a subcategory of %s." % (v["item_subcategory"], found["name"]))
+                v["item_subcategory"] = found["subs"].get(v["item_subcategory"].lower(), v["item_subcategory"])
+        if len(v["item_subcategory"]) > 60:
+            problems.append("The subcategory '%s...' is too long. Keep it to 60 characters." % v["item_subcategory"][:30])
     elif v["item_subcategory"]:
         problems.append("A subcategory needs its category.")
     v["purchase_rate"] = _money(v["purchase_rate"], "The purchase rate", problems)
@@ -250,12 +250,43 @@ def classify(db, client_id, entries):
                        reason="Line %d has the same name. This repeat is left out." % seen_name[_name_key(v["item_name"])])
         else:
             row["reason"] = "Will be given the next free code." if not code else "A new item."
+        adds = new_categories(categories, v) if row["status"] in ("New", "Update") else []
+        if adds:
+            row["reason"] = (row["reason"] + " " + " ".join("New subcategory '%s' under %s will be added." % (b, a) if b else
+                                                           "New category '%s' will be added." % a for a, b in adds)).strip()
         if row["status"] not in ("Error",) and row["kind_of_duplicate"] != "code_in_file":
             if code:
                 seen_code.setdefault(code, line)
             seen_name.setdefault(_name_key(v["item_name"]), line)
         out.append(row)
     return out
+
+
+def new_categories(categories, v):
+    """What this row's category and subcategory would add to the business's list: [(category, subcategory or '')]."""
+    cat, sub = v.get("item_category") or "", v.get("item_subcategory") or ""
+    if not cat:
+        return []
+    found = categories.get(cat.lower())
+    out = [] if found else [(cat, "")]
+    if sub and not (found and sub.lower() in found["subs"]):
+        out.append((cat, sub))
+    return out
+
+
+def add_categories(db, client_id, categories, v):
+    """Set up the row's category and subcategory if the business does not have them yet (kept in `categories` as they are made)."""
+    for cat, sub in new_categories(categories, v):
+        if not sub:
+            row = models.DBItemCategory(client_id=client_id, name=cat)
+            db.add(row)
+            db.flush()
+            categories[cat.lower()] = {"id": row.id, "name": cat, "subs": {}}
+        else:
+            parent = categories[cat.lower()]
+            db.add(models.DBItemCategory(client_id=client_id, name=sub, parent_id=parent["id"]))
+            db.flush()
+            parent["subs"][sub.lower()] = sub
 
 
 def summarise(rows):
@@ -319,6 +350,7 @@ def commit(db, client_id, entries, who):
 
     Returns {created, updated, skipped, errors}; a row that is skipped or fails is listed with the reason."""
     rows = classify(db, client_id, entries)
+    categories = category_map(db, client_id)
     created = updated = skipped = 0
     problems = []
     taken = set()
@@ -340,10 +372,12 @@ def commit(db, client_id, entries, who):
                 skipped += 1
                 problems.append({"line": line, "code": v["item_code"], "name": v["item_name"], "reason": why})
                 continue
+            add_categories(db, client_id, categories, v)
             apply_update(db, item, v, who)
             updated += 1
             continue
         try:
+            add_categories(db, client_id, categories, v)
             item = im.create_master_item(db, client_id, new_item_body(v), who, taken)
             taken.add(item.item_code)
             created += 1

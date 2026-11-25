@@ -20,7 +20,12 @@ export interface SheetMaterial {
   received: number
   indented: number
   issued: number
+  /** What the work done so far should have used of it (the sheet's quantity x the share of the line done); null when nothing is done. */
+  should_use: number | null
 }
+
+/** The work item a BOQ line is: named by the BOQ, chosen on the sheet, or (in a suggestion) matched on its description. */
+export interface SheetWork { id: number; code: string; name: string; unit: string; norms: number; from: 'boq' | 'sheet' | 'suggested' | '' }
 
 /** A line of the project's BOQ as it stands, and the materials under it. */
 export interface SheetBoqLine {
@@ -31,6 +36,10 @@ export interface SheetBoqLine {
   unit: string
   qty: number
   boq_item_code: string
+  work: SheetWork | null
+  /** How much of the line is done: measured on the contractors' orders, or the programme's progress times the BOQ quantity. */
+  done_qty: number | null
+  done_from: 'measured' | 'programme' | ''
   materials: SheetMaterial[]
 }
 
@@ -55,6 +64,8 @@ export interface SheetTotal {
   to_order: number
   to_receive: number
 }
+
+export interface SheetPrice { last_rate: number | null; last_supplier: string; last_date: string; gst: string; contracts: { supplier: string; rate: number; valid_to: string }[] }
 
 export interface SheetOrderLine {
   po_line_id: number
@@ -99,6 +110,8 @@ export interface ItemSheet {
   updated_by: string
   updated_at: string
   totals: SheetTotal[]
+  /** By item id: the rate last paid on an approved order (in the item's unit), its GST, and rate contracts in force. */
+  prices: Record<string, SheetPrice>
   orders: SheetOrder[]
   receipts: SheetReceipt[]
   indents: SheetIndent[]
@@ -132,6 +145,18 @@ export const sendBackItemSheet = (job: number, note: string) => post<ItemSheet>(
 export const itemSheetFileUrl = (job: number) => apiUrl(`${BASE}/${job}/template.xlsx`)
 export const addSheetItem = (job: number, b: { item_name: string; units_of_measure: string; hsn_code: string; make: string }) =>
   post<{ item: StoreItemOption & { hsn: string }; message: string }>(`${BASE}/${job}/items`, b)
+
+// --- the work each line is, and filling its materials from norms ------------------------------------------------------
+
+export interface FilledMaterial { item_id: number; item_code: string; item_name: string; hsn: string; unit: string; qty: number; remarks: string }
+export interface FillResult { proposals: Record<string, FilledMaterial[]>; skipped: { key: string; why: string }[] }
+export interface WorkSuggestion { key: string; item_no: string; description: string; unit: string; work: SheetWork; score: number }
+
+export const searchWorkItems = (job: number, q: string) => get<{ items: SheetWork[] }>(`${BASE}/${job}/work-items?q=${encodeURIComponent(q)}`)
+export const setLineWorks = (job: number, links: { boq_key: string; work_item_id: number | null }[]) => put<ItemSheet>(`${BASE}/${job}/works`, { links })
+export const workSuggestions = (job: number) => get<{ items: WorkSuggestion[] }>(`${BASE}/${job}/work-suggestions`)
+export const fillFromNorms = (job: number, keys: string[] | null) => post<FillResult>(`${BASE}/${job}/fill`, { keys })
+export const saveLineAsNorm = (job: number, key: string) => post<{ message: string; sheet: ItemSheet }>(`${BASE}/${job}/lines/${encodeURIComponent(key)}/save-norm`)
 
 // --- the usual documents, raised from the sheet's screen ------------------------------------------------------------
 

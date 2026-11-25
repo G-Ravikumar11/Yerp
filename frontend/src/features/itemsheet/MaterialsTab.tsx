@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
-import { PackagePlus, Plus, Search, Trash2 } from 'lucide-react'
+import { BookmarkPlus, Link2, PackagePlus, Plus, Search, Trash2, Wand2 } from 'lucide-react'
 import { Button, Card, Field, Input, Modal, Select } from '@/components/ui'
-import { addSheetItem, itemSheetKeys, saveItemSheet, type ItemSheet, type SheetBoqLine, type SheetGroup, type SheetMaterial } from '@/api/itemSheet'
+import { addSheetItem, fillFromNorms, itemSheetKeys, saveItemSheet, saveLineAsNorm, type ItemSheet, type SheetBoqLine, type SheetGroup, type SheetMaterial } from '@/api/itemSheet'
 import type { StoreItemOption } from '@/api/store'
 import { ItemPicker } from '@/features/store/shared'
 import { ApiError } from '@/lib/api'
 import { formatQty, plural } from '@/lib/format'
 import { useAction } from '@/lib/mutate'
+import { useSession } from '@/lib/session'
+import { MatchWorksModal, WorkPicker, WorkTag } from './WorkTools'
 
 const q = (v: number, unit: string) => (v ? `${formatQty(v)} ${unit}` : '-')
 const lineLabel = (l: SheetBoqLine) => `${l.item_no ? `${l.item_no} ` : ''}${l.description}`
@@ -54,7 +56,8 @@ export function MaterialsView({ s, onIndent }: { s: ItemSheet; onIndent?: (line:
               <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border bg-muted/40 px-4 py-2.5">
                 <div className="min-w-0 text-sm">
                   <p className="font-medium">{lineLabel(l)}</p>
-                  <p className="text-xs text-muted-foreground">BOQ {formatQty(l.qty)} {l.unit}{l.boq_item_code && <> · <span className="font-mono">{l.boq_item_code}</span></>}</p>
+                  <p className="text-xs text-muted-foreground">BOQ {formatQty(l.qty)} {l.unit}</p>
+                  {l.work && <WorkTag w={l.work} />}
                 </div>
                 {onIndent && l.materials.length > 0 && <Button size="sm" variant="outline" onClick={() => onIndent(l)}>Ask for material</Button>}
               </div>
@@ -125,8 +128,11 @@ export function MaterialsEditor({ s, onDone, setProblems }: { s: ItemSheet; onDo
     for (const g of s.groups) for (const l of g.lines) out[l.key] = l.materials.map(asDraft)
     return out
   })
+  const { can } = useSession()
   const [dropOrphans, setDropOrphans] = useState(false)
-  const [adding, setAdding] = useState<{ key: string; index: number } | null>(null)
+  const [matching, setMatching] = useState(false)
+  const [skipped, setSkipped] = useState<{ key: string; why: string }[]>([])
+  const [adding, setAdding] = useState<{ key: string; index: number; name?: string } | null>(null)
   const { shown, bar } = useLineFilter(s.groups)
   const set = (key: string, i: number, patch: Partial<Draft>) => setDrafts((d) => ({ ...d, [key]: d[key].map((x, n) => (n === i ? { ...x, ...patch } : x)) }))
   const addRow = (key: string) => setDrafts((d) => ({ ...d, [key]: [...(d[key] ?? []), blank()] }))
@@ -135,6 +141,31 @@ export function MaterialsEditor({ s, onDone, setProblems }: { s: ItemSheet; onDo
 
   const rows = () => Object.entries(drafts).flatMap(([key, list]) => list.filter((r) => r.item || r.qty)
     .map((r) => ({ boq_key: key, item_code: r.item?.code ?? '', qty: r.qty === '' ? null : Number(r.qty), remarks: r.remarks })))
+  // Fill lines from their work items' norms (or the same work on another sheet): put in the editor, saved only with Save.
+  const empty = (key: string) => !(drafts[key] ?? []).some((r) => r.item)
+  const fill = useAction((keys: string[]) => fillFromNorms(s.job_id, keys), {
+    success: (r) => {
+      const n = Object.keys(r.proposals).length
+      return n ? `Filled ${plural(n, 'BOQ line')} from norms. Look them over, then Save.` : 'Nothing to fill from: see the lines listed.'
+    },
+    onSuccess: (r) => {
+      setDrafts((d) => {
+        const out = { ...d }
+        for (const [key, mats] of Object.entries(r.proposals)) {
+          const kept = (out[key] ?? []).filter((x) => x.item)
+          const have = new Set(kept.map((x) => x.item!.id))
+          out[key] = [...kept, ...mats.filter((m) => !have.has(m.item_id)).map((m): Draft => ({
+            item: { id: m.item_id, code: m.item_code, name: m.item_name, base_uom: m.unit, uoms: [], category: null }, qty: String(m.qty), remarks: m.remarks, hsn: m.hsn,
+          }))]
+        }
+        return out
+      })
+      setSkipped(r.skipped)
+    },
+  })
+  const emptyKeys = s.groups.flatMap((g) => g.lines.map((l) => l.key)).filter(empty)
+  const asNorm = useAction((key: string) => saveLineAsNorm(s.job_id, key), { invalidate: [itemSheetKeys.one(s.job_id)] })
+  const unmatched = s.groups.reduce((n, g) => n + g.lines.filter((l) => !l.work).length, 0)
   // Taking off the materials of lines the BOQ no longer has is its own choice, saved with the rest.
   const save = useAction((drop: boolean) => saveItemSheet(s.job_id, rows(), drop), {
     invalidate: [itemSheetKeys.one(s.job_id), itemSheetKeys.all],
@@ -148,7 +179,21 @@ export function MaterialsEditor({ s, onDone, setProblems }: { s: ItemSheet; onDo
       <Card className="space-y-3 p-4">
         <p className="text-sm text-muted-foreground">
           Under each BOQ line, add the store materials it needs: pick the item (its code, HSN and unit come from the Item Master) and the quantity in its unit. A material not in the Item Master yet can be added from here.
+          Lines whose work item has norms can be filled for you: BOQ quantity x norm, plus its wastage.
         </p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => fill.mutate(emptyKeys)} loading={fill.isPending} disabled={!emptyKeys.length}>
+            <Wand2 /> Fill {plural(emptyKeys.length, 'empty line')} from norms
+          </Button>
+          {unmatched > 0 && <Button variant="outline" onClick={() => setMatching(true)}><Link2 /> Match {plural(unmatched, 'line')} to work items</Button>}
+        </div>
+        {skipped.length > 0 && (
+          <details className="rounded-lg bg-muted px-3 py-2 text-sm">
+            <summary className="cursor-pointer">{plural(skipped.length, 'line')} had nothing to fill from</summary>
+            <ul className="mt-1 list-disc pl-5 text-muted-foreground">{skipped.slice(0, 50).map((x) => <li key={x.key}>{x.why}</li>)}</ul>
+            <p className="mt-1 text-xs text-muted-foreground">Give those work items norms in the Item Master, or fill one line here and use Save as norm on it.</p>
+          </details>
+        )}
         {bar}
       </Card>
       {shown.map((g) => (
@@ -156,14 +201,17 @@ export function MaterialsEditor({ s, onDone, setProblems }: { s: ItemSheet; onDo
           <h2 className="text-sm font-semibold"><span className="rounded-md bg-primary-soft px-2 py-0.5 font-mono text-primary">{g.code || 'No group code'}</span></h2>
           {g.lines.map((l) => (
             <Card key={l.key} className="space-y-3 p-4">
-              <div className="text-sm">
+              <div className="space-y-1 text-sm">
                 <p className="font-medium">{lineLabel(l)}</p>
                 <p className="text-xs text-muted-foreground">BOQ {formatQty(l.qty)} {l.unit}</p>
+                {l.work && <p><WorkTag w={l.work} /></p>}
+                <WorkPicker job={s.job_id} line={l} />
               </div>
               {(drafts[l.key] ?? []).map((r, i) => (
                 <div key={i} className="grid gap-2 rounded-lg border border-border p-3 md:grid-cols-[minmax(0,2fr)_8rem_minmax(0,1fr)_auto]">
                   <Field label="Material" htmlFor={`is-i-${l.key}-${i}`}>
-                    <ItemPicker id={`is-i-${l.key}-${i}`} value={r.item} onChange={(item) => set(l.key, i, { item, hsn: '' })} />
+                    <ItemPicker id={`is-i-${l.key}-${i}`} value={r.item} onChange={(item) => set(l.key, i, { item, hsn: '' })}
+                      onCreate={(typed) => setAdding({ key: l.key, index: i, name: typed })} />
                   </Field>
                   <Field label={`Quantity${r.item?.base_uom ? ` (${r.item.base_uom})` : ''}`} htmlFor={`is-q-${l.key}-${i}`}>
                     <Input id={`is-q-${l.key}-${i}`} inputMode="decimal" value={r.qty} onChange={(e) => set(l.key, i, { qty: e.target.value.replace(/[^\d.]/g, '') })} />
@@ -176,7 +224,19 @@ export function MaterialsEditor({ s, onDone, setProblems }: { s: ItemSheet; onDo
                   {!r.item && <button type="button" className="text-left text-xs font-medium text-primary hover:underline md:col-span-4" onClick={() => setAdding({ key: l.key, index: i })}>Not in the Item Master? Add it</button>}
                 </div>
               ))}
-              <Button size="sm" variant="outline" onClick={() => addRow(l.key)}><Plus /> Add material</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => addRow(l.key)}><Plus /> Add material</Button>
+                {l.work && l.work.norms > 0 && empty(l.key) && (
+                  <Button size="sm" variant="outline" onClick={() => fill.mutate([l.key])}><Wand2 /> Fill from norms</Button>
+                )}
+                {l.work && l.materials.length > 0 && can('items.manage') && (
+                  <Button size="sm" variant="ghost" loading={asNorm.isPending && asNorm.variables === l.key}
+                    title="The line's saved materials, divided by its BOQ quantity, become the norm of its work item for every later project."
+                    onClick={() => { if (!l.work!.norms || window.confirm(`Replace the ${plural(l.work!.norms, 'material')} in the norms of ${l.work!.name}?`)) asNorm.mutate(l.key) }}>
+                    <BookmarkPlus /> Save as norm
+                  </Button>
+                )}
+              </div>
             </Card>
           ))}
         </section>
@@ -193,8 +253,9 @@ export function MaterialsEditor({ s, onDone, setProblems }: { s: ItemSheet; onDo
         <Button variant="ghost" onClick={() => { setProblems([]); onDone() }}>Cancel</Button>
         <Button onClick={() => save.mutate(dropOrphans)} loading={save.isPending}>Save</Button>
       </div>
+      {matching && <MatchWorksModal job={s.job_id} onClose={() => setMatching(false)} />}
       {adding && (
-        <NewItemModal job={s.job_id} units={s.units} onClose={() => setAdding(null)}
+        <NewItemModal job={s.job_id} units={s.units} name={adding.name ?? ''} onClose={() => setAdding(null)}
           onAdded={(item) => { set(adding.key, adding.index, { item, hsn: item.hsn ?? '' }); setAdding(null) }} />
       )}
     </div>
@@ -202,8 +263,8 @@ export function MaterialsEditor({ s, onDone, setProblems }: { s: ItemSheet; onDo
 }
 
 /** A store material added to the Item Master from the sheet: it gets the next item code. */
-function NewItemModal({ job, units, onClose, onAdded }: { job: number; units: string[]; onClose: () => void; onAdded: (item: StoreItemOption & { hsn: string }) => void }) {
-  const [f, setF] = useState({ item_name: '', units_of_measure: '', hsn_code: '', make: '' })
+function NewItemModal({ job, units, name, onClose, onAdded }: { job: number; units: string[]; name: string; onClose: () => void; onAdded: (item: StoreItemOption & { hsn: string }) => void }) {
+  const [f, setF] = useState({ item_name: name, units_of_measure: '', hsn_code: '', make: '' })
   const add = useAction(() => addSheetItem(job, f), { onSuccess: (r) => onAdded(r.item) })
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title="Add a material to the Item Master" description="It is added as a store material with the next item code, and put on this line."
