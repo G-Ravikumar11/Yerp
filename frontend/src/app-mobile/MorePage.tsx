@@ -119,7 +119,7 @@ export default function MorePage() {
               return (
                 <button key={g.id} type="button" aria-expanded={on} onClick={() => setOpen(on ? null : g.id)} className={cn('flex flex-col items-start gap-2.5 rounded-2xl border bg-card p-3.5 text-left shadow-[var(--app-card-shadow)] active:scale-[0.98]', on ? 'border-primary' : 'border-border')}>
                   <span className="grid size-11 shrink-0 place-items-center rounded-[14px] text-white" style={{ background: `linear-gradient(135deg, ${from}, ${to})` }}><g.icon className="size-5" /></span>
-                  <span className="min-w-0 max-w-full leading-tight"><b className="block truncate text-[15px] font-semibold">{g.label}</b><span className="text-xs text-muted-foreground">{g.items.length} {g.items.length === 1 ? 'screen' : 'screens'}</span></span>
+                  <span className="min-w-0 max-w-full leading-tight"><b className="block truncate text-[15px] font-semibold">{g.label}</b><span className="text-xs text-muted-foreground">{g.items.filter((i) => !i.hidden).length} {g.items.filter((i) => !i.hidden).length === 1 ? 'screen' : 'screens'}</span></span>
                 </button>
               )
             })}
@@ -129,7 +129,7 @@ export default function MorePage() {
             <>
               <Label>{opened.label}</Label>
               <Sheet className="divide-y divide-border py-0.5">
-                {opened.items.map((i) => (
+                {opened.items.filter((i) => !i.hidden).map((i) => (
                   <Link key={i.path + i.label} to={i.path} className="flex min-h-12 items-center justify-between gap-3 py-2.5 text-[15px] font-medium active:opacity-70">
                     {i.label}<ChevronRight className="size-4 text-muted-foreground" />
                   </Link>

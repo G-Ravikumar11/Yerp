@@ -39,13 +39,13 @@ export function StoreSteps() {
 }
 
 /** The rest of the store, after the steps. */
-export function StoreMore() {
+export function StoreMore({ bare = false }: { bare?: boolean }) {
   const { can } = useSession()
   const more = STORE_MORE.filter((s) => can(s.perm))
-  if (!more.length) return null
+  if (!more.length) return bare ? <p className="text-sm text-muted-foreground">Nothing more here for you.</p> : null
   return (
-    <section aria-labelledby="store-more" className="mt-8">
-      <h2 id="store-more" className="mb-3 text-lg font-semibold">More in the store</h2>
+    <section aria-labelledby={bare ? undefined : 'store-more'} aria-label={bare ? 'More in the store' : undefined} className={bare ? '' : 'mt-8'}>
+      {!bare && <h2 id="store-more" className="mb-3 text-lg font-semibold">More in the store</h2>}
       <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {more.map((s) => (
           <li key={s.path}>

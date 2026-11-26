@@ -113,6 +113,7 @@ export const SCREENS: Screen[] = [
   { path: '/projects/profit', Component: page(() => import('@/features/projects/ProjectProfitPage')) },
   { path: '/store/hub', Component: page(() => import('@/features/store/StorePage')) },
   { path: '/store', Component: page(() => import('@/features/store/registers/StoreDeskPage')) },
+  { path: '/store/more', Component: page(() => import('@/features/store/registers/StoreMorePage')) },
   { path: '/store/stock-register', Component: page(() => import('@/features/store/registers/StockRegisterPage')) },
   { path: '/store/issue/*', Component: page(() => import('@/features/store/registers/IssueSection')) },
   { path: '/store/receive/*', Component: page(() => import('@/features/store/registers/ReceiveSection')) },

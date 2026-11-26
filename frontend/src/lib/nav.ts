@@ -70,7 +70,11 @@ export const STORE_MORE: { label: string; path: string; perm: string; say: strin
 ]
 
 /** notHeadOffice: left out for HO QS and HO Coordinator, whose front page is the HO portal. */
-type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
+/**
+ * hidden: not drawn in the menu (it would be too long to read), but still found by "Go to...", the phone's search and the
+ * path shown at the top. more: the menu item that stands for a group's hidden items, lit while one of them is open.
+ */
+export type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean; hidden?: boolean; more?: boolean }
 /** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
 /** perm: the right that puts the whole group in somebody's menu (a portal). Its items may ask for more on top. */
 export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean; perm?: string }
@@ -176,7 +180,9 @@ const NAV: NavEntry[] = [
     items: [
       { label: 'Store Home', path: '/store', perm: STORE_OPENS },
       ...STORE_STEPS.map((s) => ({ label: `${s.n}. ${s.label}`, path: s.path, perm: s.perm })),
-      ...STORE_MORE.map((s) => ({ label: s.label, path: s.path, perm: s.perm })),
+      // The menu stops at the steps: everything else is one click away on the More page, so the list stays short to read.
+      { label: 'More', path: '/store/more', perm: STORE_MORE.map((s) => s.perm).join('|'), more: true },
+      ...STORE_MORE.map((s) => ({ label: s.label, path: s.path, perm: s.perm, hidden: true })),
     ],
   },
   {
@@ -258,6 +264,12 @@ export function visibleNav(can: (perm: string) => boolean, staff = false, headOf
     const items = e.items.filter((i) => (!i.perm || can(i.perm)) && !(headOffice && i.notHeadOffice))
     return items.length ? [{ ...e, items }] : []
   })
+}
+
+/** The menu item a page sits under: its own, else the longest one its address starts with. */
+export function itemFor(items: NavItem[], pathname: string): NavItem | undefined {
+  return items.find((i) => i.path === pathname)
+    ?? items.filter((i) => i.path !== '/store' && pathname.startsWith(i.path + '/')).sort((a, b) => b.path.length - a.path.length)[0]
 }
 
 export function groupFor(pathname: string): string | null {

@@ -71,6 +71,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/store/purchase-orders': 'Purchase orders to suppliers: what was ordered, at what rate, what has arrived and what is billed.',
   '/store/eway': 'E-way bills for goods moving between places, with their validity so a load is never on the road without one.',
   '/store': "Everything in the store from one place: receive and issue material, what is in stock and running low, then purchase and the rest of the store below.",
+  '/store/more': 'The rest of the store, used less often: low stock, supplier quotes, moving and counting stock, gate passes, tools, reports and settings.',
   '/store/stock-register': 'Every material each store holds, its minimum and maximum, when it last came in and where it is kept.',
   '/store/issue/*': 'A material issue: make a new one, open one to submit, approve and post it, or edit a draft.',
   '/store/issue': 'Material issued to site and projects, line by line, with who issued it. New Issue opens the issue form.',

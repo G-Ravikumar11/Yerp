@@ -4,7 +4,7 @@ import { TILES } from '@/app-mobile/AddSheet'
 import { TABS, TAB_TITLES } from '@/app-mobile/tabs'
 import { SCREENS } from '@/routes'
 import { linkTarget } from './deepLink'
-import { trailFor, visibleNav } from './nav'
+import { itemFor, trailFor, visibleNav } from './nav'
 import { infoFor } from './pageInfo'
 
 const canWith = (...held: string[]) => (perm: string) => perm.split('|').some((p) => held.includes(p))
@@ -60,6 +60,16 @@ describe('the menu follows the portals a person holds', () => {
     const labels = store && store.kind === 'group' ? store.items.map((i) => i.label) : []
     expect(labels.slice(0, 9)).toEqual(['Store Home', '1. Items', '2. Item Sheet', '3. Buy (Purchase Order)', '4. Receive Material', '5. Material Request',
       '6. Issue Material', '7. Return Material', '8. Stock'])
+  })
+  it('keeps the store menu short: the steps and More, the rest on the More page but still found by name', () => {
+    const store = visibleNav(() => true, false).find((e) => e.kind === 'group' && e.id === 'store')
+    const items = store && store.kind === 'group' ? store.items : []
+    expect(items.filter((i) => !i.hidden).map((i) => i.label)).toEqual(['Store Home', '1. Items', '2. Item Sheet', '3. Buy (Purchase Order)',
+      '4. Receive Material', '5. Material Request', '6. Issue Material', '7. Return Material', '8. Stock', 'More'])
+    expect(items.filter((i) => i.hidden).map((i) => i.label)).toContain('Low Stock')
+    expect(itemFor(items, '/store/low-stock')?.hidden).toBe(true)
+    expect(itemFor(items, '/store/hub/outward/indent/7')?.label).toBe('5. Material Request')
+    expect(trailFor('/store/more').map((t) => t.label)).toEqual(['Home', 'Store', 'More'])
   })
   it('gives everybody the Feed, which holds the celebrations, whatever they hold and wherever they land', () => {
     const has = (entries: ReturnType<typeof visibleNav>) => entries.some((e) => e.kind === 'link' && e.path === '/feed')
