@@ -3,9 +3,9 @@ import { storeGet, type CostHead, type DocStatus } from '@/api/store'
 
 export type ControlKind = 'transfer' | 'count' | 'scrap'
 export const KINDS: { key: ControlKind; label: string; plural: string; blurb: string }[] = [
-  { key: 'transfer', label: 'Transfer', plural: 'Transfers', blurb: 'Stock sent from one store to another. It leaves the source when dispatched and arrives when the other store receives it.' },
-  { key: 'count', label: 'Stock count', plural: 'Stock counts', blurb: 'A physical count freezes the store, then adjusts the books to what was found.' },
-  { key: 'scrap', label: 'Wastage / scrap', plural: 'Wastage and scrap', blurb: 'Stock written off as wastage, or scrap that is sold or thrown away.' },
+  { key: 'transfer', label: 'Transfer', plural: 'Move stock', blurb: 'Stock sent from one store to another. It leaves the source when dispatched and arrives when the other store receives it.' },
+  { key: 'count', label: 'Stock count', plural: 'Count stock', blurb: 'A physical count freezes the store, then adjusts the books to what was found.' },
+  { key: 'scrap', label: 'Wastage / scrap', plural: 'Damaged / scrap', blurb: 'Stock written off as wastage, or scrap that is sold or thrown away.' },
 ]
 export const kindOf = (key: string | undefined) => KINDS.find((k) => k.key === key)
 

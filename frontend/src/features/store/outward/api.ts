@@ -3,8 +3,8 @@ import { storeGet, type CostHead, type DocStatus } from '@/api/store'
 
 export type OutwardKind = 'issue' | 'returns'
 export const KINDS: { key: OutwardKind; label: string; plural: string; blurb: string }[] = [
-  { key: 'issue', label: 'Issue', plural: 'Issues', blurb: 'Material leaving a store for a project, or handed to a subcontractor.' },
-  { key: 'returns', label: 'Return', plural: 'Returns', blurb: 'Issued material coming back to the store, or reported lost or damaged.' },
+  { key: 'issue', label: 'Issue', plural: 'Material issued', blurb: 'Material leaving a store for a project, or handed to a subcontractor.' },
+  { key: 'returns', label: 'Return', plural: 'Material returned', blurb: 'Issued material coming back to the store, or reported lost or damaged.' },
 ]
 export const kindOf = (key: string | undefined) => KINDS.find((k) => k.key === key)
 

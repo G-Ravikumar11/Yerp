@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowDownToLine, ArrowUpFromLine, Boxes, TriangleAlert } from 'lucide-react'
 import { STORE_DESK_PERM } from '@/lib/nav'
-import { StoreSections } from './StoreSections'
+import { StoreMore, StoreSteps } from './StoreSteps'
 import { Stat, StatGrid, Tabs } from '@/components/ui'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useSession } from '@/lib/session'
@@ -34,8 +34,9 @@ export default function StoreDeskPage() {
   const { can } = useSession()
   if (!can(STORE_DESK_PERM)) return (
     <div>
-      <PageHeader eyebrow="Store" title="Store" description="Purchase and the rest of the store, from one place." />
-      <StoreSections />
+      <PageHeader eyebrow="Store" title="Store" description="Buy, receive, give out and count material. Follow the steps." />
+      <StoreSteps />
+      <StoreMore />
     </div>
   )
   return <StoreDesk />
@@ -69,7 +70,9 @@ function StoreDesk() {
 
   return (
     <div>
-      <PageHeader eyebrow="Store" title="Store" description="Receive material, issue material and see what is in the store - and everything else in the store below." />
+      <PageHeader eyebrow="Store" title="Store" description="Buy, receive, give out and count material. Follow the steps below." />
+      <StoreSteps />
+      <h2 className="mb-3 text-lg font-semibold">Today in the store</h2>
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <label htmlFor="desk-store" className="text-sm font-medium">Store</label>
         <div className="w-full sm:w-72"><StorePicker id="desk-store" value={storeId || null} placeholder="All my stores" onChange={(id) => setStoreId(id ?? 0)} /></div>
@@ -78,13 +81,13 @@ function StoreDesk() {
         {can(storePerm('inward', 'create')) && (
           <Link to={`/store/receive/new${withStore}`} className="flex items-center gap-4 rounded-2xl border border-success/40 bg-success-soft p-5 text-success transition hover:border-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ArrowDownToLine className="size-9 shrink-0" />
-            <span><span className="block text-lg font-semibold">Receive material</span><span className="text-sm text-muted-foreground">Material has arrived at the store</span></span>
+            <span><span className="block text-lg font-semibold">Receive material</span><span className="text-sm text-muted-foreground">Material came to the store</span></span>
           </Link>
         )}
         {can(storePerm('outward', 'create')) && (
           <Link to={`/store/issue/new${withStore}`} className="flex items-center gap-4 rounded-2xl border border-primary/40 bg-primary/10 p-5 text-primary transition hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ArrowUpFromLine className="size-9 shrink-0" />
-            <span><span className="block text-lg font-semibold">Issue material</span><span className="text-sm text-muted-foreground">Material is going out to site</span></span>
+            <span><span className="block text-lg font-semibold">Issue material</span><span className="text-sm text-muted-foreground">Give material to the site</span></span>
           </Link>
         )}
       </div>
@@ -111,7 +114,7 @@ function StoreDesk() {
         <Boxes className="size-4" /> These lists update by themselves every minute.
         {low > 0 && <span className="flex items-center gap-1 text-danger"><TriangleAlert className="size-3.5" /> {low} low</span>}
       </p>
-      <div className="mt-8"><StoreSections /></div>
+      <StoreMore />
     </div>
   )
 }

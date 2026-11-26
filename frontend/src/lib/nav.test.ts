@@ -20,7 +20,7 @@ describe('the menu follows the portals a person holds', () => {
   })
   it('shows each portal on its own right', () => {
     expect(groups(['money.view', 'bills.view_all'])).toEqual(['money'])
-    expect(groups(['store.view', 'purchase.manage'])).toEqual([])
+    expect(groups(['store.view', 'purchase.manage'])).toEqual(['store'])
     expect(groups(['subcontractors.view'])).toEqual(['subcontractors'])
     expect(groups(['clients.view', 'customers.manage'])).toEqual(['clients'])
     expect(groups(['people.manage'])).toEqual(['people'])
@@ -38,22 +38,28 @@ describe('the menu follows the portals a person holds', () => {
   it('gives the Master every portal', () => {
     const everything = () => true
     const ids = visibleNav(everything, false).filter((e) => e.kind === 'group').map((e) => e.id)
-    expect(ids).toEqual(expect.arrayContaining(['projects', 'clients', 'subcontractors', 'money', 'people']))
-    expect(visibleNav(everything, false).some((e) => e.kind === 'link' && e.id === 'store')).toBe(true)
+    expect(ids).toEqual(expect.arrayContaining(['projects', 'clients', 'subcontractors', 'store', 'money', 'people']))
   })
-  it('gives the store one entry, shown to whoever has the Store portal and something to do in it', () => {
-    const store = (held: string[]) => visibleNav(canWith(...held), true).some((e) => e.kind === 'link' && e.id === 'store')
+  it('gives the store its numbered steps, shown to whoever has the Store portal and something to do in it', () => {
+    const store = (held: string[]) => visibleNav(canWith(...held), true).some((e) => e.kind === 'group' && e.id === 'store')
     expect(store(['store.view', 'purchase.manage'])).toBe(true)          // purchase
     expect(store(['store.view', 'store.inward.view'])).toBe(true)        // a storekeeper
     expect(store(['purchase.manage'])).toBe(false)                       // no Store portal
     expect(store(['store.view'])).toBe(false)                            // the portal, and nothing in it
   })
   it('keeps a store screen under Store in the path shown at the top', () => {
-    expect(trailFor('/store/purchase-orders').map((t) => t.label)).toEqual(['Home', 'Store', 'Purchase Orders'])
-    expect(trailFor('/store/enquiries/4').map((t) => t.label)).toEqual(['Home', 'Store', 'Enquiries & Comparison', 'Details'])
-    expect(trailFor('/store/hub/inward/grn').map((t) => t.label)).toEqual(['Home', 'Store', 'Full store (Hub)', 'Details'])
-    expect(trailFor('/store/receive').map((t) => t.label)).toEqual(['Home', 'Store', 'Material Receive'])
-    expect(trailFor('/store').map((t) => t.label)).toEqual(['Home', 'Store'])
+    expect(trailFor('/store/purchase-orders').map((t) => t.label)).toEqual(['Home', 'Store', '3. Buy (Purchase Order)'])
+    expect(trailFor('/store/enquiries/4').map((t) => t.label)).toEqual(['Home', 'Store', 'Supplier Quotes', 'Details'])
+    expect(trailFor('/store/hub/outward/indent/7').map((t) => t.label)).toEqual(['Home', 'Store', '5. Material Request', 'Details'])
+    expect(trailFor('/store/hub/inward/grn').map((t) => t.label)).toEqual(['Home', 'Store', 'All Store Screens', 'Details'])
+    expect(trailFor('/store/receive').map((t) => t.label)).toEqual(['Home', 'Store', '4. Receive Material'])
+    expect(trailFor('/store').map((t) => t.label)).toEqual(['Home', 'Store', 'Store Home'])
+  })
+  it('lists the store work as numbered steps in the order it is done', () => {
+    const store = visibleNav(() => true, false).find((e) => e.kind === 'group' && e.id === 'store')
+    const labels = store && store.kind === 'group' ? store.items.map((i) => i.label) : []
+    expect(labels.slice(0, 9)).toEqual(['Store Home', '1. Items', '2. Item Sheet', '3. Buy (Purchase Order)', '4. Receive Material', '5. Material Request',
+      '6. Issue Material', '7. Return Material', '8. Stock'])
   })
   it('gives everybody the Feed, which holds the celebrations, whatever they hold and wherever they land', () => {
     const has = (entries: ReturnType<typeof visibleNav>) => entries.some((e) => e.kind === 'link' && e.path === '/feed')
