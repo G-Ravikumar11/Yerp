@@ -44,11 +44,11 @@ describe('Low stock list', () => {
     expect(await screen.findByText('Cement OPC')).toBeTruthy()
     expect(screen.getByText('LOW STOCK')).toBeTruthy()
     expect(screen.getByText('INDENT RAISED')).toBeTruthy()                         // raised is not resolved: still on the list
-    expect(screen.getByText(/Indent IND-0007 - submitted for 90/)).toBeTruthy()
+    expect(screen.getByText(/Material request IND-0007 - submitted for 90/)).toBeTruthy()
     expect(screen.getByText('3,000 on hand')).toBeTruthy()                          // on hand differs from what is available
     expect(screen.getByText('1,000 already coming')).toBeTruthy()
     expect(screen.getByText('0 selected')).toBeTruthy()
-    expect((screen.getByRole('button', { name: /Raise Indent \/ Enquiry for All Selected/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /Ask to buy all selected/ }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('shows how far each alert has got to replenishment and how far under its level it stands', async () => {
@@ -72,7 +72,7 @@ describe('Low stock list', () => {
     await screen.findByText('Cement OPC')
     await user.click(screen.getByRole('checkbox', { name: 'Select every row' }))
     expect(screen.getByText('2 selected')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: /Raise Indent \/ Enquiry for All Selected/ }))
+    await user.click(screen.getByRole('button', { name: /Ask to buy all selected/ }))
     const dialog = await screen.findByRole('dialog')
     const cement = within(dialog).getByLabelText('Requested quantity of Cement OPC in CS1') as HTMLInputElement
     expect(cement.value).toBe('4500.000')                                           // the suggested quantity less what is coming

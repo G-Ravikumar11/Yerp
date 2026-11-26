@@ -32,7 +32,7 @@ export default function DocPage({ kindKey, base }: { kindKey?: InwardKind; base?
   const billState = useReceiptBill(-Number(id), (kindKey ?? key) === 'grn' && doc?.status === 'POSTED' && can(`${BILL_FROM_RECEIPT}|bills.view_all`))
   const run = useAction(({ action, reason }: { action: DocAction; reason?: string }) => storePost<Doc>('inward', `/${kind?.key}/${id}/${action}`, { reason: reason ?? '' }), {
     invalidate: [[...inwardKeys.all], ['store', 'enquiry'], ['store', 'lookup']],
-    success: (d, v) => ({ submit: 'Submitted', approve: 'Approved', post: 'Posted to stock', cancel: 'Cancelled' })[v.action] + (d.number ? ` - ${d.number}` : ''),
+    success: (d, v) => ({ submit: 'Submitted', approve: 'Approved', post: 'Saved to stock', cancel: 'Cancelled' })[v.action] + (d.number ? ` - ${d.number}` : ''),
   })
   const discard = useAction(() => storeDelete<{ message: string }>('inward', `/${kind?.key}/${id}`), {
     invalidate: [[...inwardKeys.all], ['store', 'enquiry']],

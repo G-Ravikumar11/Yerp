@@ -40,7 +40,7 @@ export default function ReturnForm({ doc }: { doc?: Doc }) {
     { id: 'cond', header: 'Condition', width: '12rem', cell: (l) => (
       <div className="grid gap-1">
         <Select aria-label={`Condition of ${l.item_name}`} value={cond[l.issue_line_id] ?? 'GOOD'} onChange={(e) => setCond((q) => ({ ...q, [l.issue_line_id]: e.target.value }))} options={[{ value: 'GOOD', label: 'Good' }, { value: 'DAMAGED', label: 'Damaged' }]} />
-        {cond[l.issue_line_id] === 'DAMAGED' && <Select aria-label={`Damaged bin for ${l.item_name}`} value={bin[l.issue_line_id] ?? ''} placeholder="Damaged bin" onChange={(e) => setBin((q) => ({ ...q, [l.issue_line_id]: e.target.value }))} options={(bins.data ?? []).map((b) => ({ value: b.id, label: b.code }))} />}
+        {cond[l.issue_line_id] === 'DAMAGED' && <Select aria-label={`Damaged bin for ${l.item_name}`} value={bin[l.issue_line_id] ?? ''} placeholder="Rack for damaged material" onChange={(e) => setBin((q) => ({ ...q, [l.issue_line_id]: e.target.value }))} options={(bins.data ?? []).map((b) => ({ value: b.id, label: b.code }))} />}
       </div>
     ) },
     { id: 'lost', header: 'Lost', width: '8rem', cell: (l) => (l.returnable ? <Input aria-label={`Quantity of ${l.item_name} lost or damaged`} inputMode="decimal" className="text-right" placeholder="0" value={lost[l.issue_line_id] ?? ''} onChange={(e) => setLost((q) => ({ ...q, [l.issue_line_id]: e.target.value }))} /> : <span className="text-xs text-muted-foreground">Consumable</span>) },
@@ -49,7 +49,7 @@ export default function ReturnForm({ doc }: { doc?: Doc }) {
   return (
     <form onSubmit={(e) => { e.preventDefault(); if (issueId && picked.length && !needsReason) save.mutate() }} className="grid gap-5">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="Issue it came from" htmlFor="rt-issue" hint="Only posted issues can have material returned.">
+        <Field label="Issue it came from" htmlFor="rt-issue" hint="Only issues already saved to stock.">
           <Select id="rt-issue" value={issueId || ''} placeholder="Choose an issue" disabled={!!doc} onChange={(e) => { setIssueId(Number(e.target.value) || 0); setBack({}); setLost({}); setWhy({}) }}
             options={(issues.data?.items ?? []).map((d) => ({ value: d.id, label: `${d.number} - ${d.holder_name || d.project || 'site use'}` }))} />
         </Field>

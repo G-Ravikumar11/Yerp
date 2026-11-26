@@ -4,7 +4,7 @@ import { storeGet, type DocStatus } from '@/api/store'
 /** The four inward documents. The key is the path under /api/store/inward and under /store/hub/inward. */
 export type InwardKind = 'grn' | 'returns' | 'client-supply' | 'opening'
 export const KINDS: { key: InwardKind; label: string; plural: string; blurb: string }[] = [
-  { key: 'grn', label: 'Goods receipt', plural: 'Material received', blurb: 'Deliveries received against purchase orders, with the quality check.' },
+  { key: 'grn', label: 'Material receipt', plural: 'Material received', blurb: 'Deliveries received against purchase orders, with the quality check.' },
   { key: 'returns', label: 'Purchase return', plural: 'Sent back to supplier', blurb: 'Goods sent back to the supplier from a posted receipt.' },
   { key: 'client-supply', label: 'Client supply', plural: 'Given by client', blurb: 'Material the client hands over for its own project.' },
   { key: 'opening', label: 'Opening stock', plural: 'Opening stock', blurb: 'Stock already held when a store starts being kept here.' },

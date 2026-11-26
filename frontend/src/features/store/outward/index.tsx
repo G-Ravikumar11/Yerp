@@ -76,7 +76,7 @@ function IndentFormPage({ editing }: { editing: boolean }) {
   const q = useIndent(editing ? Number(id) : 0)
   const back = backTo(editing ? `/store/hub/outward/indent/${id}` : '/store/hub/outward/indent', editing ? 'Back to the indent' : 'Indents')
   if (editing && q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
-  if (editing && (q.isError || !q.data)) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this indent.</p></div>
+  if (editing && (q.isError || !q.data)) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this material request.</p></div>
   if (editing && q.data && q.data.status !== 'DRAFT') return <div>{back}<p className="text-sm text-muted-foreground">Only a draft can be edited. Cancel it and raise a new one to correct it.</p></div>
   return <div>{back}<h2 className="mb-4 text-lg font-semibold">{editing ? `Edit ${q.data?.number}` : 'New indent'}</h2><IndentForm indent={editing ? q.data : undefined} /></div>
 }

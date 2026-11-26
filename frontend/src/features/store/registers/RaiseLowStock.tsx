@@ -37,7 +37,7 @@ export function RaiseLowStock({ rows, canIndent, canEnquire, onClose }: { rows: 
   const again = () => { submission.current = key(); setAnswer(null) }
 
   return (
-    <Modal open onOpenChange={(o) => !o && !send.isPending && onClose()} size="xl" title="Raise indent / enquiry for the selected materials"
+    <Modal open onOpenChange={(o) => !o && !send.isPending && onClose()} size="xl" title="Ask to buy the selected materials"
       description="The quantity to order starts at the suggested reorder quantity, less what is already on an open enquiry or order. Change what is needed; every line is checked again against the stock as it is now."
       footer={answer ? (
         <>
@@ -59,20 +59,20 @@ export function RaiseLowStock({ rows, canIndent, canEnquire, onClose }: { rows: 
             <ul className="mt-1.5 space-y-0.5">
               {answer.created.map((c) => (
                 <li key={`${c.type}-${c.id}`}>
-                  {c.type === 'INDENT' ? 'Indent' : 'Enquiry'} <strong>{c.number}</strong> - {c.lines} line{c.lines === 1 ? '' : 's'}{c.store_code ? ` in ${c.store_code}` : ''}{c.type === 'INDENT' ? ', waiting for approval' : ''}{' '}
+                  {c.type === 'INDENT' ? 'Material request' : 'Enquiry'} <strong>{c.number}</strong> - {c.lines} line{c.lines === 1 ? '' : 's'}{c.store_code ? ` in ${c.store_code}` : ''}{c.type === 'INDENT' ? ', waiting for approval' : ''}{' '}
                   <Link className="text-primary underline-offset-4 hover:underline" to={c.type === 'INDENT' ? `/store/hub/outward/indent/${c.id}` : `/store/enquiries/${c.id}`} onClick={onClose}>Open</Link>
                 </li>
               ))}
             </ul>
           )}
-          <p className="mt-1.5 text-xs text-muted-foreground">The alerts stay open until the stock is back above the reorder level. Raising an indent or enquiry does not add stock.</p>
+          <p className="mt-1.5 text-xs text-muted-foreground">The alert stays until the stock is enough again. Asking to buy does not add stock by itself.</p>
         </div>
       )}
       {!answer && (
         <div className="mb-4 grid gap-3 sm:grid-cols-4">
           <Field label="Raise" htmlFor="rl-action" className="sm:col-span-1">
             <Select id="rl-action" value={action} onChange={(e) => setAction(e.target.value as 'INDENT' | 'ENQUIRY')}
-              options={[{ value: 'INDENT', label: 'Indent (for approval)', disabled: !canIndent }, { value: 'ENQUIRY', label: 'Purchase enquiry', disabled: !canEnquire }]} />
+              options={[{ value: 'INDENT', label: 'Material request (for approval)', disabled: !canIndent }, { value: 'ENQUIRY', label: 'Purchase enquiry', disabled: !canEnquire }]} />
           </Field>
           <Field label={action === 'INDENT' ? 'Project (where a store has none)' : 'Project'} htmlFor="rl-proj" className="sm:col-span-2">
             <Select id="rl-proj" value={f.project_id || ''} placeholder="The store's own project" onChange={(e) => setF({ ...f, project_id: Number(e.target.value) || 0 })}
@@ -82,7 +82,7 @@ export function RaiseLowStock({ rows, canIndent, canEnquire, onClose }: { rows: 
           {action === 'ENQUIRY' && <Field label="Enquiry title" htmlFor="rl-title" className="sm:col-span-4"><Input id="rl-title" maxLength={120} placeholder="Low stock" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Field>}
         </div>
       )}
-      {needsProject && !answer && <p role="alert" className="mb-3 text-sm text-warning">One of these stores belongs to no project, so choose the project the indent is for.</p>}
+      {needsProject && !answer && <p role="alert" className="mb-3 text-sm text-warning">One of these stores has no project. Choose the project the request is for.</p>}
       <div className="max-h-[22rem] overflow-auto rounded-lg border border-border">
         <table className="w-full min-w-max text-[13px]">
           <thead className="sticky top-0 z-10 bg-surface text-left text-xs text-muted-foreground">
@@ -101,7 +101,7 @@ export function RaiseLowStock({ rows, canIndent, canEnquire, onClose }: { rows: 
                   <td className="px-2.5 py-2 font-mono text-xs">{r.item_code}</td>
                   <td className="px-2.5 py-2">{r.project || <span className="text-muted-foreground">-</span>}</td>
                   <td className="px-2.5 py-2">{r.store_code}<div className="text-xs text-muted-foreground">{r.store_name}</div></td>
-                  <td className="px-2.5 py-2 text-right tabular-nums text-danger">{n(r.available)}{Number(r.on_hand) !== Number(r.available) && <div className="text-[11px] text-muted-foreground" title="On hand, before what is on hold, rejected, expired or reserved for approved indents">{n(r.on_hand)} on hand</div>}</td>
+                  <td className="px-2.5 py-2 text-right tabular-nums text-danger">{n(r.available)}{Number(r.on_hand) !== Number(r.available) && <div className="text-[11px] text-muted-foreground" title="In the store now, before taking out what is held, rejected, expired or kept for approved requests">{n(r.on_hand)} on hand</div>}</td>
                   <td className="px-2.5 py-2 text-right tabular-nums">{n(r.reorder_level)}</td>
                   <td className="px-2.5 py-2 text-right tabular-nums" title={r.suggest_basis}>{n(r.suggested_qty)}{Number(r.on_order) > 0 && <div className="text-[11px] text-muted-foreground">{n(r.on_order)} coming</div>}</td>
                   <td className="px-2.5 py-2 text-right">

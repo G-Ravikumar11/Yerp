@@ -103,7 +103,7 @@ export function CountForm() {
           <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setItems((xs) => [...xs, null])}><Plus /> Add item</Button>
         </section>
       )}
-      <p className="text-xs text-muted-foreground">Starting a count freezes the store: nothing can be received, issued or transferred until the count is posted or cancelled.</p>
+      <p className="text-xs text-muted-foreground">While you count, the store is stopped: nothing can come in or go out until the count is saved or cancelled.</p>
       <Footer cancelTo="/store/hub/control/count" busy={save.isPending} disabled={!ready} label="Create count" />
     </form>
   )
@@ -157,7 +157,7 @@ export function ScrapForm({ doc }: { doc?: Doc }) {
                 {r.disposal === 'SCRAP' ? (
                   <label className="flex items-center gap-2 text-sm">Fetched <Input aria-label="Amount realised" inputMode="decimal" className="h-9 w-32 text-right" placeholder="0.00" value={r.realised} onChange={(e) => upd(r.key, { realised: e.target.value })} /></label>
                 ) : (
-                  <label className="flex items-center gap-2 text-sm">Charged to <Select aria-label="Cost head" className="h-9" value={r.head} placeholder="No cost head" onChange={(e) => upd(r.key, { head: e.target.value })} options={(meta.data?.cost_heads ?? []).map((h) => ({ value: h, label: headLabel(h) }))} /></label>
+                  <label className="flex items-center gap-2 text-sm">Charged to <Select aria-label="Expense type" className="h-9" value={r.head} placeholder="Not for a work item" onChange={(e) => upd(r.key, { head: e.target.value })} options={(meta.data?.cost_heads ?? []).map((h) => ({ value: h, label: headLabel(h) }))} /></label>
                 )}
                 {r.item && (requests.data ?? []).some((w) => w.item_id === r.item?.id) && (
                   <label className="flex items-center gap-2 text-sm" title="It left the store when it was issued, so no stock moves: the line only closes the request.">Deals with write-off request

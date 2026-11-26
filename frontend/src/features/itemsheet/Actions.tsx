@@ -190,7 +190,7 @@ export function IndentModal({ s, line, onClose }: { s: ItemSheet; line: SheetBoq
   }, { invalidate: [itemSheetKeys.one(s.job_id)], success: (i) => `${i.number} sent to the project manager for approval.`, onSuccess: onClose })
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} size="lg" title="Ask for material" description={`For ${line.item_no ? `${line.item_no} ` : ''}${line.description}`}
-      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button onClick={() => ask.mutate()} loading={ask.isPending} disabled={!store || !line.materials.some((m) => Number(qty[m.id]) > 0)}>Send the indent</Button></>}>
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button onClick={() => ask.mutate()} loading={ask.isPending} disabled={!store || !line.materials.some((m) => Number(qty[m.id]) > 0)}>Send the request</Button></>}>
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <StoreField s={s} value={store} onChange={setStore} id="ind-store" />

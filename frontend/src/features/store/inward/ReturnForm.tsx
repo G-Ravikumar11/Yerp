@@ -37,7 +37,7 @@ export default function ReturnForm({ doc }: { doc?: Doc }) {
   return (
     <form onSubmit={(e) => { e.preventDefault(); if (grnId && picked.length) save.mutate() }} className="grid gap-5">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="Receipt to return from" htmlFor="r-grn" hint="Only posted receipts can have goods returned.">
+        <Field label="Receipt to return from" htmlFor="r-grn" hint="Only receipts already saved to stock.">
           <Select id="r-grn" value={grnId || ''} placeholder="Choose a receipt" disabled={!!doc} onChange={(e) => { setGrnId(Number(e.target.value) || 0); setQty({}); setWhy({}) }}
             options={(grns.data?.items ?? []).map((g) => ({ value: g.id, label: `${g.number} - ${g.supplier_name || 'no supplier'}` }))} />
         </Field>
