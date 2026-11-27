@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { apiUrl, get, post, put } from '@/lib/api'
+import { api, apiUrl, get, post, put } from '@/lib/api'
 
 export type CostKind = 'MATERIAL' | 'LABOUR' | 'OTHER'
 
@@ -135,3 +135,23 @@ export const budgetFileUrl = (job: number) => apiUrl(`/api/jobs/${job}/budget.xl
 
 /** A margin to one decimal; zero is a real answer here, not a blank. */
 export const pct = (v: number) => `${Math.round(v * 10) / 10}%`
+
+/** One row of the filled budget sheet and what uploading it does: add it, keep the app's (already budgeted), leave it (empty), or skip it (a problem). */
+export interface BudgetUploadRow { row: number; item: string; key: string; status: 'add' | 'kept' | 'empty' | 'error'; message: string; unit: Record<CostKind, number> }
+export interface BudgetUploadPlan {
+  rows: BudgetUploadRow[]
+  counts: { add: number; kept: number; empty: number; error: number }
+  lines: number
+  budgeted_before: number
+  added?: number
+}
+
+function budgetUpload<T>(job: number, file: File, preview: boolean) {
+  const form = new FormData()
+  form.append('file', file)
+  return api<T>(`/api/jobs/${job}/budget/upload${preview ? '/preview' : ''}`, { method: 'POST', body: form })
+}
+/** What the filled sheet would do, saving nothing. */
+export const previewBudgetUpload = (job: number, file: File) => budgetUpload<BudgetUploadPlan>(job, file, true)
+/** Fill the lines not yet budgeted from the sheet (the Master only). */
+export const commitBudgetUpload = (job: number, file: File) => budgetUpload<BudgetUploadPlan & { added: number; budget: Budget }>(job, file, false)

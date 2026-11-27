@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { AlertTriangle, ChevronDown, ChevronRight, Download, Pencil } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, Download, Pencil, Upload } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProjectPicker } from '@/components/data/ProjectPicker'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
@@ -13,6 +13,7 @@ import { plural } from '@/lib/format'
 import { BudgetLineModal } from './BudgetLineModal'
 import { EarnedValueView } from './EarnedValue'
 import { BudgetControlView } from './BudgetControlView'
+import { BudgetUploadModal } from './BudgetUploadModal'
 
 type Show = 'all' | 'todo' | 'loss'
 /** A table row: a priced BOQ line, or one of the BOQ's section headings standing above the lines of its section. */
@@ -21,8 +22,10 @@ const headingRow = (h: Budget['headings'][number], lines: number): Row => ({ key
 
 /** Our own cost for every line of the client's BOQ - material, labour and the rest - against what the BOQ pays, and the profit between them. */
 export default function BudgetingPage() {
-  const { can } = useSession()
+  const { can, isOwner } = useSession()
   const [params, setParams] = useSearchParams()
+  // The budget filled in Excel, uploaded back: the Master only.
+  const [uploading, setUploading] = useState(false)
   const job = Number(params.get('job')) || 0
   const setJob = (id: number) => setParams((p) => { const q = new URLSearchParams(p); if (id) q.set('job', String(id)); else q.delete('job'); return q }, { replace: true })
   const [show, setShow] = useState<Show>('all')
@@ -82,7 +85,11 @@ export default function BudgetingPage() {
   return (
     <div>
       <PageHeader eyebrow="Projects" title="Budgeting" description="Price each line of the client's BOQ with our own cost - material, labour and the rest - and see the profit before the work is bought."
-        actions={<Button variant="outline" disabled={!b?.boq} onClick={() => window.open(budgetFileUrl(job), '_blank')}><Download /> Excel</Button>} />
+        actions={<>
+          <Button variant="outline" disabled={!b?.boq} onClick={() => window.open(budgetFileUrl(job), '_blank')}><Download /> Excel</Button>
+          {isOwner && <Button variant="outline" disabled={!b?.boq} onClick={() => setUploading(true)}><Upload /> Upload Excel</Button>}
+        </>} />
+      {uploading && job > 0 && <BudgetUploadModal job={job} onClose={() => setUploading(false)} />}
       <div className="mb-4 flex flex-wrap items-end gap-4"><ProjectPicker value={job} onChange={setJob} id="bud-job" /></div>
       {job > 0 && b?.boq && <div className="mb-4 max-w-md"><Tabs label="Budgeting views" value={view} onChange={setView} items={[{ value: 'budget', label: 'Budget' }, { value: 'actual', label: 'Against actual' }, { value: 'control', label: 'HO QS control' }]} /></div>}
       {job > 0 && b?.boq && view === 'actual' && <EarnedValueView job={job} />}

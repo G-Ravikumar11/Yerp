@@ -1,12 +1,12 @@
 """Project budgeting: our own cost for every BOQ line, against what the client's BOQ pays, and the profit between them."""
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.audit import log_audit
-from app.core.auth import require_items_access, wo_actor
+from app.core.auth import require_items_access, require_owner, wo_actor
 from app.core.currency import inr
 from app.core.notifications import notify
 from app.core.sheets import sheet_response
@@ -195,3 +195,36 @@ def job_budget_export(job_id: int, request: Request, db: Session = Depends(get_r
          "%s per unit" % KIND_LABEL["LABOUR"], "%s per unit" % KIND_LABEL["OTHER"], "Material", "Labour", "Plant & other",
          "Overheads and contingency", "Budget cost", "Profit", "Margin %", "Budgeted"),
         rows, "budget_%s.xlsx" % (job.number or "project"), preamble=preamble, closing=closing)
+
+
+async def _budget_upload(request, db, file, permission="budget.edit"):
+    """The Master, the project and the sheet. Only the Master uploads a budget: it fills many lines at once."""
+    client, _, who = wo_actor(request, db, permission)
+    require_owner(request, db)
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, "That file is over 10 MB.")
+    return client, who, content
+
+
+@router.post("/api/jobs/{job_id}/budget/upload/preview")
+async def job_budget_upload_preview(job_id: int, request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """What uploading the filled budget sheet would do, line by line. Saves nothing (services/budget_import.py)."""
+    from app.services import budget_import
+    client, _, content = await _budget_upload(request, db, file)
+    return budget_import.plan(db, client.id, job_or_404(db, client.id, job_id), content)
+
+
+@router.post("/api/jobs/{job_id}/budget/upload")
+async def job_budget_upload(job_id: int, request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Fill the lines not yet budgeted from the sheet; lines already budgeted are left as they are."""
+    from app.services import budget_import
+    client, who, content = await _budget_upload(request, db, file)
+    job = job_or_404(db, client.id, job_id)
+    out = budget_import.commit(db, client.id, job, content, who)
+    c = out["counts"]
+    log_audit(db, client.id, "budget_uploaded", "job", job.id, job.number or "",
+              "%d lines added from Excel by %s; %d already budgeted left as they were, %d left empty, %d skipped with a problem"
+              % (out["added"], who, c["kept"], c["empty"], c["error"]), request)
+    db.commit()
+    return {**out, "budget": budget_view(db, client.id, job)}
