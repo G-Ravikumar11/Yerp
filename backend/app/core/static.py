@@ -1,6 +1,7 @@
 """The React app (frontend/dist, served at /next/), the front page at /, and a few files at the root."""
 import os
 import re
+from html import escape as html_escape
 
 from fastapi import Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
@@ -56,19 +57,50 @@ def _forward(target: str):
 for _page, _target in LEGACY_PAGES.items():
     app.add_api_route("/" + _page, _forward(_target), methods=["GET"], include_in_schema=False)
 
-HOME_TITLE = "Yalavarti Infra Projects | Homes, Townships &amp; Civil Infrastructure"
+HOME_TITLE = "Yalavarti Infra Projects | Homes, Townships & Civil Infrastructure"
 HOME_DESCRIPTION = ("Yalavarti Infra Projects - civil engineering and construction: houses and villas, apartments, gated "
                     "townships, roads, drainage, water supply and sewerage, from the land and its approvals to handover.")
-HOME_HEAD = (
-    '<meta name="description" content="%s">'
-    '<meta property="og:type" content="website">'
-    '<meta property="og:site_name" content="Yalavarti Infra Projects">'
-    '<meta property="og:title" content="Yalavarti Infra Projects | Building homes, townships and the infrastructure around them">'
-    '<meta property="og:description" content="Houses and villas, apartments, gated townships, roads, drainage and water '
-    'works - one civil builder from the plot to the keys.">'
-    '<meta property="og:image" content="%%s/next/site/img/cat3.jpg">'
-    '<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">'
-    '<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">' % HOME_DESCRIPTION.replace("'", "&#39;"))
+HOME_IMAGE = "/next/site/img/sites/giddaluru-c2.jpg"
+# The site's paper or blueprint, set before the page is drawn so it never flashes the other: the visitor's own choice (the
+# top strip's switch), else their device's.
+THEME_SCRIPT = ("<script>(function(){try{var t=localStorage.getItem('yip-theme');if(t==='light'||t==='dark')"
+                "document.documentElement.setAttribute('data-theme',t)}catch(e){}})()</script>")
+PAGES = {"/": "", "/projects": "Projects | "}
+
+
+def _attr(text):
+    return html_escape(text or "", quote=True)
+
+
+def _seo():
+    """The search and sharing words as last published in Settings -> Website: {title, description, image}, empty where unset."""
+    try:
+        from app.db import SessionLocal
+        from app import models
+        from app.services import website_content
+        with SessionLocal() as db:
+            c = db.query(models.DBClient).filter(models.DBClient.is_onboarded.is_(True)).order_by(models.DBClient.id).first()
+            return (website_content.published(db, c.id).get("seo") or {}) if c else {}
+    except Exception:
+        return {}
+
+
+def home_head(base, seo, prefix=""):
+    """The front page's title and the lines a search engine and a shared link read."""
+    title = prefix + ((seo.get("title") or "").strip() or HOME_TITLE)
+    description = (seo.get("description") or "").strip() or HOME_DESCRIPTION
+    image = (seo.get("image") or "").strip()
+    image = (base + image) if image.startswith("/api/") else (base + "/next/" + image) if image.startswith("site/") else (base + HOME_IMAGE)
+    return title, (
+        '<meta name="description" content="%s">'
+        '<meta property="og:type" content="website">'
+        '<meta property="og:site_name" content="Yalavarti Infra Projects">'
+        '<meta property="og:title" content="%s">'
+        '<meta property="og:description" content="%s">'
+        '<meta property="og:image" content="%s">'
+        '<meta name="theme-color" content="#f7f9fb" media="(prefers-color-scheme: light)">'
+        '<meta name="theme-color" content="#0a2442" media="(prefers-color-scheme: dark)">%s'
+    ) % (_attr(description), _attr(title), _attr(description), _attr(image), THEME_SCRIPT)
 
 
 HOME_NOSCRIPT = ('<noscript><p style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center">'
@@ -87,30 +119,32 @@ def _public_base(request: Request):
 
 
 async def home(request: Request):
-    """The company's front page is a page of the React app. Its title and description are put into the HTML here, so a
-    search engine or a link preview sees them without running the app. The preview picture is a full address: WhatsApp
-    and Facebook skip one given as a path."""
+    """The company's front page (and its projects page) is a page of the React app. Its title and description are put into
+    the HTML here, so a search engine or a link preview sees them without running the app - as last published in Settings
+    -> Website, else the built-in ones. The preview picture is a full address: WhatsApp and Facebook skip one given as a path."""
     index = os.path.join(FRONTEND_DIST, "index.html")
     if not os.path.exists(index):
         return Response("Front page not built", status_code=404)
     with open(index, encoding="utf8") as f:
         html = f.read()
-    html = re.sub(r"<title>.*?</title>", "<title>%s</title>" % HOME_TITLE, html, count=1, flags=re.S)
+    title, head = home_head(_public_base(request), _seo(), PAGES.get(request.url.path, ""))
+    html = re.sub(r"<title>.*?</title>", "<title>%s</title>" % _attr(title), html, count=1, flags=re.S)
     html = re.sub(r'<meta name="(description|theme-color)"[^>]*>', "", html)
     # The ERP's own words stay on the ERP: a visitor without JavaScript, and a search engine, see the company's.
     html = re.sub(r"<noscript>.*?</noscript>", HOME_NOSCRIPT, html, count=1, flags=re.S)
-    html = html.replace("</head>", HOME_HEAD % _public_base(request) + "</head>", 1)
+    html = html.replace("</head>", head + "</head>", 1)
     return HTMLResponse(html)
 
 
-app.add_api_route("/", home, methods=["GET"], include_in_schema=False)
+for _path in PAGES:
+    app.add_api_route(_path, home, methods=["GET"], include_in_schema=False)
 
 
 # What a search engine is told: the front page and the careers page are for it; the ERP and its API are not. The front
 # page is drawn by the app's script, so the files it is drawn with - the scripts and styles, its photos, the logo and icons,
 # and the public figures it reads - stay open too: blocked, Google sees an empty page and keeps an old copy instead. The
 # longer rule wins, so these open their own folders and leave the rest of /next/ and /api/ closed.
-ROBOTS_OPEN = ("/$", "/next/jobs", "/next/assets/", "/next/site/", "/next/brand/", "/next/icons/", "/next/favicon",
+ROBOTS_OPEN = ("/$", "/projects", "/next/jobs", "/next/assets/", "/next/site/", "/next/brand/", "/next/icons/", "/next/favicon",
                "/next/logo.png", "/next/manifest.webmanifest", "/api/public/site")
 
 
@@ -123,9 +157,10 @@ async def robots(request: Request):
 
 async def sitemap(request: Request):
     base = _public_base(request)
-    # One page: the front page. The careers page needs the company's reference in its link, which the front page carries.
+    # The front page and its projects page. The careers page needs the company's reference in its link, which the front
+    # page carries.
     return Response('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-                    '<url><loc>%s/</loc></url></urlset>' % base,
+                    '<url><loc>%s/</loc></url><url><loc>%s/projects</loc></url></urlset>' % (base, base),
                     media_type="application/xml")
 
 

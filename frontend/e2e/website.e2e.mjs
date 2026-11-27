@@ -41,8 +41,9 @@ const visit = async ({ width = 390, height = 844, dark = false } = {}) => {
 const heading = (id) => site.$eval(`#${id} h2`, (e) => e.textContent).catch(() => null)
 
 await signIn(page)
-await open(page, '/settings?tab=website')
+await open(page, '/website')
 await page.waitForSelector('nav[aria-label="Parts of the website"]')
+check('the panel opens on its Overview checklist', !!(await page.$('[aria-label="Checklist"]')))
 await sleep(2500)                                          // the two preview frames load the site
 
 // --- 1. A heading and a picture, changed in the panel --------------------------------------------------------
@@ -134,10 +135,19 @@ await site.type('#enquire input[name=phone]', '9800000000')
 await site.type('#enquire input[name=city]', 'Hyderabad')
 await site.type('#enquire textarea[name=message]', 'A test enquiry from the website check. Please ignore.')
 await site.click('#enquire button[type=submit]')
-await site.waitForFunction(() => /we have your enquiry/i.test(document.querySelector('#enquire')?.textContent ?? ''), { timeout: 8000 })
+await site.waitForFunction(() => /we have your enquiry/i.test(document.querySelector('.enq__done')?.textContent ?? ''), { timeout: 8000 })
 const leads = (await api(page, 'GET', '/api/leads')).data.leads
 const lead = leads.find((l) => l.contact_person === who)
 check('the enquiry arrives as a new lead in the Tender Pipeline', !!lead && lead.source === 'Website enquiry' && lead.status === 'NEW', JSON.stringify(lead ?? {}).slice(0, 160))
+
+// --- 6b. The projects page, and the edit bar for whoever may edit ---------------------------------------------
+await site.goto(BASE + '/projects', { waitUntil: 'networkidle0' })
+check('the projects page draws every sheet', (await site.$$('.psheet')).length >= 2)
+const editor = await browser.newPage()
+await editor.goto(BASE + '/', { waitUntil: 'networkidle0' })          // signed in, as the Master
+check('the Master sees the edit bar on the public page', !!(await editor.$('.editbar a[href$="/website"]')))
+check('a visitor does not', !(await site.$('.editbar')))
+await editor.close()
 
 // --- 7. The site on a phone, light and dark --------------------------------------------------------------------
 for (const dark of [false, true]) {
@@ -145,7 +155,8 @@ for (const dark of [false, true]) {
   const mode = dark ? 'dark' : 'light'
   check(`on a phone (${mode}) nothing scrolls sideways`, await site.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
   const bg = await site.evaluate(() => getComputedStyle(document.body).backgroundColor)
-  check(`the page is ${mode}`, dark ? bg !== 'rgb(255, 255, 255)' : bg === 'rgb(255, 255, 255)', bg)
+  // Look B: paper (#f7f9fb) by day, blueprint (#0a2442) by night.
+  check(`the page is ${mode}`, bg === (dark ? 'rgb(10, 36, 66)' : 'rgb(247, 249, 251)'), bg)
   await shot(site, `5-phone-${mode}-full`)
 }
 await visit({ width: 1440, height: 900, dark: true })

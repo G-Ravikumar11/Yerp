@@ -1,85 +1,57 @@
 {
   "company": {
     "name": "Yalavarti Infra Projects",
+    "trade": "Civil engineering & construction",
+    "regions": "Andhra Pradesh · Telangana",
     "email": "info@yalavartiinfra.com",
     "phone": {
       "show": "040 4005 9348",
       "tel": "+914040059348"
     },
+    "whatsapp": "",
     "address": "Plot 1-109/21, Near RTA Office, Kondapur, Hyderabad 500084",
     "founded": null,
     "staff": null,
     "group": {
       "name": "Yalavarti Projects",
       "url": "https://www.yalavarti.com/",
-      "does": "building services (MEP)"
+      "does": "building services (electrical, fire and plumbing)"
+    },
+    "social": {
+      "linkedin": "",
+      "facebook": "",
+      "instagram": "",
+      "youtube": ""
     }
   },
   "hero": {
-    "title": "Building homes, townships and the infrastructure around them",
-    "sub": "Civil engineering and construction: houses and villas, apartments, gated townships, and the roads, drains and water lines that serve them."
+    "kicker": "Homes · Townships · Roads · Water",
+    "title": "Built to the drawing,",
+    "accent": "from the plot to the keys.",
+    "sub": "Civil engineering and construction: houses and villas, apartments, gated townships, and the roads, drains and water lines that serve them.",
+    "photo": {
+      "img": "site/img/sites/giddaluru-c2.jpg",
+      "label": "APTIDCO · Giddaluru",
+      "side": "Block C-2",
+      "calloutTitle": "On site now",
+      "callout": "C-2 block: staircase and kicker aluminium formwork being fixed."
+    },
+    "noteTitle": "One contractor",
+    "note": "Approvals, design, structure, finishing and handover, with our own engineers on site."
   },
-  "slides": [
-    {
-      "img": "site/img/cat3.jpg",
-      "t": "Apartments & townships",
-      "l": "Gated communities and residential blocks"
-    },
-    {
-      "img": "site/img/cat2.jpg",
-      "t": "Structure",
-      "l": "Foundations, frames and slabs"
-    },
-    {
-      "img": "site/img/gallery/g63.jpg",
-      "t": "Roads & layouts",
-      "l": "Internal roads, drains and open spaces"
-    },
-    {
-      "img": "site/img/banner3.jpg",
-      "t": "Commercial & institutional",
-      "l": "Offices, campuses and public buildings"
-    }
-  ],
-  "lead": "One builder from the plot to the keys: approvals, design, structure, finishing and handover.",
+  "clients": [],
   "about": [
     "Yalavarti Infra Projects builds houses, apartments and townships, and the civil infrastructure around them: roads, drainage, water supply and sewerage.",
-    "We take a project from the land and its approvals through design and construction to handover."
+    "We take a project from the land and its approvals through design and construction to handover.",
+    "Work is inspected against the drawings and the specification before it is covered up or poured."
   ],
   "capabilities": [
-    {
-      "id": "house",
-      "title": "Houses & villas",
-      "tag": "Your plot, your home",
-      "img": "site/img/cat2.jpg",
-      "intro": "Independent houses, villas and row houses, built on your plot to your drawings or to ours.",
-      "list": [
-        "Architectural and structural drawings",
-        "Building permission and approvals",
-        "Foundation, RCC frame and masonry",
-        "Plastering, flooring, painting and finishes",
-        "Sumps, overhead tanks and compound walls"
-      ]
-    },
-    {
-      "id": "apartment",
-      "title": "Apartments",
-      "tag": "Residential blocks",
-      "img": "site/img/cat3.jpg",
-      "intro": "Apartment blocks and residential towers, from the foundation to the finished flat.",
-      "list": [
-        "RCC framed structures",
-        "Stilt and basement parking",
-        "Staircases, lift wells and common areas",
-        "Finishes to the agreed specification",
-        "External works and landscaping"
-      ]
-    },
     {
       "id": "township",
       "title": "Gated townships & layouts",
       "tag": "Plots to communities",
-      "img": "site/img/gallery/g63.jpg",
+      "img": "site/img/cat3.jpg",
+      "line": false,
       "intro": "Plotted layouts and gated communities, with everything a township needs before the first family moves in.",
       "list": [
         "Site clearing, grading and levelling",
@@ -90,17 +62,42 @@
       ]
     },
     {
+      "id": "apartment",
+      "title": "Apartments",
+      "tag": "Residential blocks",
+      "img": "site/img/sites/nuzividu-a05.jpg",
+      "line": false,
+      "intro": "Apartment blocks and residential towers, from the foundation to the finished flat.",
+      "list": [
+        "RCC framed structures",
+        "Stilt and basement parking",
+        "Staircases, lift wells and common areas"
+      ]
+    },
+    {
+      "id": "house",
+      "title": "Houses & villas",
+      "tag": "Your plot, your home",
+      "img": "site/img/cat2.jpg",
+      "line": false,
+      "intro": "Independent houses, villas and row houses, built on your plot to your drawings or to ours.",
+      "list": [
+        "Drawings and building permission",
+        "Foundation, RCC frame and masonry",
+        "Finishes, sumps and compound walls"
+      ]
+    },
+    {
       "id": "road",
       "title": "Roads & drainage",
       "tag": "Roads, drains, culverts",
       "img": "site/img/gallery/g63.jpg",
+      "line": false,
       "intro": "Roads and the drains beside them, for layouts, campuses and public works.",
       "list": [
         "CC and bituminous roads",
-        "Granular sub-base and WBM",
         "Storm water and roadside drains",
-        "Culverts and cross drainage",
-        "Kerbs, footpaths and medians"
+        "Culverts and cross drainage"
       ]
     },
     {
@@ -108,26 +105,24 @@
       "title": "Water supply & sewerage",
       "tag": "Water in, water out",
       "img": "site/img/gallery/g112.jpg",
+      "line": false,
       "intro": "The civil works that bring water to a site and carry it away.",
       "list": [
-        "Water supply mains and distribution lines",
+        "Mains and distribution lines",
         "Sumps and overhead tanks",
-        "Sewer lines and manholes",
-        "Civil works for sewage treatment plants",
-        "Rainwater harvesting and recharge pits"
+        "Sewer lines, manholes, STP civil works"
       ]
     },
     {
       "id": "commercial",
-      "title": "Commercial & industrial buildings",
+      "title": "Commercial & industrial",
       "tag": "Places of work",
       "img": "site/img/banner3.jpg",
+      "line": false,
       "intro": "Offices, shops, schools, warehouses and industrial sheds.",
       "list": [
-        "Office and retail buildings",
-        "Schools and institutional buildings",
+        "Office, retail and school buildings",
         "Warehouses and industrial sheds",
-        "Foundations for pre-engineered buildings",
         "Hard standings and yards"
       ]
     },
@@ -135,15 +130,10 @@
       "id": "civil",
       "title": "Civil structures",
       "tag": "Walls, tanks, foundations",
-      "img": "site/img/cat2.jpg",
-      "intro": "The structures a site needs around its buildings.",
-      "list": [
-        "Retaining walls",
-        "Water tanks and reservoirs",
-        "Compound walls",
-        "Foundations for plant and equipment",
-        "Culverts"
-      ]
+      "img": "",
+      "line": true,
+      "intro": "including retaining walls, water tanks and reservoirs, compound walls, plant foundations and culverts.",
+      "list": []
     }
   ],
   "steps": [
@@ -174,96 +164,152 @@
   ],
   "sites": [
     {
-      "group": "APTIDCO sites",
-      "where": "Andhra Pradesh",
-      "names": [
-        "Nuzividu",
-        "Tiruvuru",
-        "Ongole",
-        "Addanki",
-        "Giddaluru"
-      ]
+      "site": "Nuzividu",
+      "client": "APTIDCO housing",
+      "town": "Nuzividu",
+      "state": "AP",
+      "work": "Housing blocks",
+      "status": "Ongoing"
     },
     {
-      "group": "High rise",
-      "where": "Andhra Pradesh",
-      "names": [
-        "Visakhapatnam"
-      ]
+      "site": "Tiruvuru",
+      "client": "APTIDCO housing",
+      "town": "Tiruvuru",
+      "state": "AP",
+      "work": "Housing blocks",
+      "status": "Ongoing"
     },
     {
-      "group": "Hyderabad",
-      "where": "Telangana",
-      "names": [
-        "Vision Anmaya",
-        "Vision Arusha",
-        "Steel Alpha"
-      ]
+      "site": "Ongole",
+      "client": "APTIDCO housing",
+      "town": "Ongole",
+      "state": "AP",
+      "work": "Housing blocks",
+      "status": "Ongoing"
+    },
+    {
+      "site": "Addanki",
+      "client": "APTIDCO housing",
+      "town": "Addanki",
+      "state": "AP",
+      "work": "Housing blocks",
+      "status": "Ongoing"
+    },
+    {
+      "site": "Giddaluru",
+      "client": "APTIDCO housing",
+      "town": "Giddaluru",
+      "state": "AP",
+      "work": "Housing blocks",
+      "status": "Ongoing"
+    },
+    {
+      "site": "Visakhapatnam",
+      "client": "",
+      "town": "Visakhapatnam",
+      "state": "AP",
+      "work": "High-rise structure",
+      "status": "Ongoing"
+    },
+    {
+      "site": "Vision Anmaya",
+      "client": "",
+      "town": "Hyderabad",
+      "state": "TS",
+      "work": "",
+      "status": "Ongoing"
+    },
+    {
+      "site": "Vision Arusha",
+      "client": "",
+      "town": "Hyderabad",
+      "state": "TS",
+      "work": "",
+      "status": "Ongoing"
+    },
+    {
+      "site": "Steel Alpha",
+      "client": "",
+      "town": "Hyderabad",
+      "state": "TS",
+      "work": "",
+      "status": "Ongoing"
     }
   ],
   "sitePhotos": [
     {
       "img": "site/img/sites/giddaluru-c2.jpg",
-      "site": "APTIDCO, Giddaluru",
-      "text": "C-2 block: staircase and kicker aluminium formwork being fixed."
+      "site": "APTIDCO housing, Giddaluru",
+      "ref": "S-05",
+      "block": "C-2",
+      "stage": "Structure",
+      "shown": "Staircase & kicker aluminium formwork"
     },
     {
       "img": "site/img/sites/nuzividu-a05.jpg",
-      "site": "APTIDCO, Nuzividu",
-      "text": "A-05 block: rebar fixing and Mivan formwork in progress."
+      "site": "APTIDCO housing, Nuzividu",
+      "ref": "S-01",
+      "block": "A-05",
+      "stage": "Structure",
+      "shown": "Rebar fixing & Mivan formwork"
     }
   ],
   "timeline": [],
   "headings": {
     "about": {
-      "eyebrow": "About Us",
+      "eyebrow": "About",
+      "code": "About",
       "title": "Civil works, start to finish",
+      "scale": "General notes · read with the projects register",
       "lede": ""
-    },
-    "build": {
-      "eyebrow": "What We Build",
-      "title": "Homes, townships and the works around them",
-      "lede": "From a single house on your plot to a gated township with its roads, drains and water lines."
-    },
-    "process": {
-      "eyebrow": "How We Build",
-      "title": "From the land to the keys",
-      "lede": "The six stages of a job, in the order they happen."
     },
     "projects": {
       "eyebrow": "Projects",
-      "title": "Recent & ongoing projects",
-      "lede": "Where we are building, and our projects with photos from site. Filter by type of work or city.",
-      "ledeEmpty": "Where we are building. Photos from site are being added here."
+      "code": "Projects",
+      "title": "Projects register",
+      "scale": "Sites in hand · Andhra Pradesh & Telangana",
+      "lede": "Every site we are building now, with photographs from site."
     },
-    "story": {
-      "eyebrow": "Our Story",
-      "title": "Milestones",
+    "build": {
+      "eyebrow": "What we build",
+      "code": "Scope",
+      "title": "What we build",
+      "scale": "Kinds of work · details 3.1 to 3.7",
+      "lede": "From a single house on your plot to a gated township with its roads, drains and water lines."
+    },
+    "process": {
+      "eyebrow": "How we build",
+      "code": "Method",
+      "title": "From the land to the keys",
+      "scale": "Six stages, in the order they happen",
       "lede": ""
     },
-    "credentials": {
-      "eyebrow": "Credentials",
-      "title": "Registered and accountable",
-      "lede": "The registrations and certificates a tender asks for. Copies go to evaluators who ask for them."
-    },
-    "safety": {
-      "eyebrow": "Quality & Safety",
+    "quality": {
+      "eyebrow": "Quality",
+      "code": "QA / HSE",
       "title": "Checked work, safe sites",
+      "scale": "Inspection, safety and the papers a tender asks for",
       "lede": ""
     },
     "quote": {
-      "eyebrow": "Start a Project",
-      "title": "Tell us about your project",
-      "lede": "Four questions. Your brief builds as you answer, and comes straight to our team."
+      "eyebrow": "Contact",
+      "code": "Enquiry",
+      "title": "Start a project",
+      "scale": "One form · it reaches our team directly",
+      "lede": ""
     },
     "careers": {
       "eyebrow": "Careers",
+      "code": "People",
       "title": "Build homes and townships with us",
-      "lede": ""
+      "scale": "Openings · posted from Recruitment",
+      "lede": "Engineers, supervisors and crew for our sites. Apply online. It takes a few minutes."
     },
-    "contact": {
-      "eyebrow": "Contact",
-      "title": "Let's build together",
+    "story": {
+      "eyebrow": "Our story",
+      "code": "Story",
+      "title": "Our story",
+      "scale": "Milestones, in the order they came",
       "lede": ""
     }
   },
@@ -273,11 +319,11 @@
       "shown": true
     },
     {
-      "id": "proof",
+      "id": "about",
       "shown": true
     },
     {
-      "id": "about",
+      "id": "projects",
       "shown": true
     },
     {
@@ -289,19 +335,7 @@
       "shown": true
     },
     {
-      "id": "projects",
-      "shown": true
-    },
-    {
-      "id": "story",
-      "shown": true
-    },
-    {
-      "id": "credentials",
-      "shown": true
-    },
-    {
-      "id": "safety",
+      "id": "quality",
       "shown": true
     },
     {
@@ -313,14 +347,27 @@
       "shown": true
     },
     {
-      "id": "contact",
+      "id": "story",
       "shown": true
     }
   ],
-  "footer": {
-    "tagline": "Civil Engineering & Construction",
-    "showGroupLink": true
-  },
+  "safety": [
+    {
+      "code": "HSE",
+      "title": "Health, safety & environment",
+      "text": "Our sites work to a written safety plan, and every incident and near miss is recorded and investigated."
+    },
+    {
+      "code": "QA",
+      "title": "Quality",
+      "text": "Work is inspected against the drawings and the specification before it is covered up or poured. Anything that does not pass is recorded and put right."
+    },
+    {
+      "code": "QC",
+      "title": "Materials",
+      "text": "Cement, steel, aggregates and concrete are checked when they arrive and tested as the work goes on. The records are kept with the project."
+    }
+  ],
   "credentials": [
     {
       "label": "Contractor registration",
@@ -339,28 +386,31 @@
       "value": ""
     },
     {
-      "label": "Safety record",
-      "value": "Safe man-hours counted live from our site records (see Quality & Safety)"
-    },
-    {
       "label": "Plant & machinery",
       "value": ""
     }
   ],
-  "safety": [
-    {
-      "title": "Health, safety & environment",
-      "text": "Our sites work to a written safety plan, and every incident and near miss is recorded and investigated."
-    },
-    {
-      "title": "Quality",
-      "text": "Work is inspected against the drawings and the specification before it is covered up or poured, and anything that does not pass is recorded and put right."
-    },
-    {
-      "title": "Materials",
-      "text": "Cement, steel, aggregates and concrete are checked when they arrive and tested as the work goes on, and the records are kept with the project."
-    }
-  ],
+  "options": {
+    "safeHoursFrom": 100000,
+    "showProgress": false
+  },
+  "enquiry": {
+    "next": [
+      {
+        "t": "You send the enquiry",
+        "d": "It reaches our tender team directly, with the type of work and site you chose."
+      },
+      {
+        "t": "We call you",
+        "d": "To understand the plot, the drawings you have and the timeline."
+      },
+      {
+        "t": "Site visit & estimate",
+        "d": "A costed bill of quantities you can check line by line."
+      }
+    ],
+    "note": "Your enquiry goes straight to our team."
+  },
   "plan": {
     "types": [
       {
@@ -385,7 +435,7 @@
       },
       {
         "id": "commercial",
-        "label": "Commercial or industrial",
+        "label": "Commercial",
         "hint": "Offices, schools, warehouses, sheds"
       },
       {
@@ -405,5 +455,15 @@
       "6 to 12 months",
       "Not decided yet"
     ]
+  },
+  "footer": {
+    "tagline": "Civil engineering & construction",
+    "showGroupLink": true,
+    "sheet": "YIP-WEB · 1 of 1"
+  },
+  "seo": {
+    "title": "",
+    "description": "",
+    "image": ""
   }
 }

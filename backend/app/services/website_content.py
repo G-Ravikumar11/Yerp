@@ -22,25 +22,28 @@ from app import models
 
 SEED_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "constants", "website_content.json")
 
-# The sections, with the name the Website tab uses.
+# The sections, with the name the Website tab uses. (Look B, 25 Nov 2026: the slideshow and the opening line went into the
+# opening's one framed photograph and its title block; the site list became the projects register.)
 SECTIONS = (
     ("layout", "Page layout"),
-    ("hero", "Opening banner"),
-    ("slides", "Banner photographs"),
-    ("lead", "Opening line"),
+    ("hero", "Opening"),
+    ("clients", "Building for"),
     ("headings", "Section headings"),
     ("about", "About us"),
     ("capabilities", "What we build"),
     ("steps", "How we build"),
-    ("sites", "Where we are building"),
-    ("sitePhotos", "Photographs from our sites"),
+    ("sites", "Projects register"),
+    ("sitePhotos", "Drawing sheets (photographs from site)"),
     ("projects", "Projects on the website"),
     ("timeline", "Our story"),
-    ("credentials", "Credentials"),
     ("safety", "Quality & safety"),
+    ("credentials", "Credentials"),
+    ("options", "Live figures"),
+    ("enquiry", "Start a project"),
     ("plan", "Enquiry form choices"),
     ("company", "Contact details"),
     ("footer", "Footer"),
+    ("seo", "Search & sharing"),
 )
 SECTION_KEYS = tuple(k for k, _ in SECTIONS)
 # Kept here, not shown on the site as they are.
@@ -48,12 +51,16 @@ PRIVATE_KEYS = ("projects",)
 # Where the first content of a section not in website_content.json comes from.
 EXTRA_SEED = {"projects": {}}
 
-PAGE_SECTIONS = ("hero", "proof", "about", "build", "process", "projects", "story", "credentials", "safety", "quote",
-                 "careers", "contact")
+PAGE_SECTIONS = ("hero", "about", "projects", "build", "process", "quality", "quote", "careers", "story")
+# The first content, before Look B: a section still exactly as it was is given Look B's; one that was changed is upgraded.
+V1_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "constants", "website_content_v1.json")
+# The page's sections before Look B, and where each went.
+V1_PAGE = {"proof": "hero", "credentials": "quality", "safety": "quality", "contact": "quote"}
 IMAGE_PATH = "/api/public/site/images/"
 MAX_TEXT, MAX_SECTION_BYTES, MAX_PROJECT_PHOTOS = 3000, 200_000, 6
 # Keys whose value is a picture, and keys whose value is a link a visitor follows.
-IMAGE_KEYS, LINK_KEYS = {"img"}, {"url", "href"}
+IMAGE_KEYS = {"img", "image"}
+LINK_KEYS = {"url", "href", "linkedin", "facebook", "instagram", "youtube"}
 
 
 @lru_cache(maxsize=1)
@@ -71,17 +78,121 @@ def seed():
     return {k: json.loads(v) for k, v in _seed_text().items()}
 
 
+@lru_cache(maxsize=1)
+def _v1_text():
+    try:
+        with open(V1_FILE, encoding="utf8") as f:
+            return {k: json.dumps(v, ensure_ascii=False, sort_keys=True) for k, v in json.load(f).items()}
+    except (OSError, ValueError):
+        return {}
+
+
+def _same(a, b):
+    return json.dumps(a, ensure_ascii=False, sort_keys=True) == json.dumps(b, ensure_ascii=False, sort_keys=True)
+
+
+def _fill(value, shape):
+    """`value` with whatever `shape` has that it lacks: a field added since it was saved gets its first content. What is
+    there stays as it is. A list's entries are each filled from the list's first entry, with its fields blanked."""
+    if isinstance(shape, dict) and isinstance(value, dict):
+        out = dict(value)
+        for k, v in shape.items():
+            out[k] = _fill(out[k], v) if k in out else v
+        return out
+    if isinstance(shape, list) and isinstance(value, list) and shape and isinstance(shape[0], dict):
+        blank = {k: (False if isinstance(v, bool) else [] if isinstance(v, list) else {} if isinstance(v, dict)
+                     else None if v is None or isinstance(v, (int, float)) else "") for k, v in shape[0].items()}
+        return [_fill(x, blank) if isinstance(x, dict) else x for x in value]
+    return value
+
+
+def upgrade(key, value):
+    """A section as saved before Look B, in Look B's shape. A section still exactly as first seeded takes Look B's content;
+    one the company changed keeps what it said, moved into the new fields."""
+    first = seed()[key] if key in SECTION_KEYS else None
+    if value is None or first is None:
+        return first
+    old = _v1_text().get(key)
+    if old is not None and json.dumps(value, ensure_ascii=False, sort_keys=True) == old:
+        return first
+    if key == "layout" and isinstance(value, list):
+        order, shown = [], {}
+        for row in value:
+            if not isinstance(row, dict):
+                continue
+            sid = V1_PAGE.get(row.get("id"), row.get("id"))
+            if sid in PAGE_SECTIONS:
+                if sid not in order:
+                    order.append(sid)
+                shown[sid] = shown.get(sid, False) or bool(row.get("shown"))
+        order += [s for s in PAGE_SECTIONS if s not in order]
+        return [{"id": s, "shown": shown.get(s, True)} for s in order]
+    if key == "hero" and isinstance(value, dict) and "kicker" not in value:
+        return _fill({"title": value.get("title") or first["title"], "accent": "", "sub": value.get("sub") or first["sub"]}, first)
+    if key == "sites" and isinstance(value, list) and any(isinstance(g, dict) and "names" in g for g in value):
+        rows = []
+        for g in value:
+            if not isinstance(g, dict):
+                continue
+            where = (g.get("where") or "").lower()
+            state = "AP" if "andhra" in where else "TS" if "telangana" in where else ""
+            for name in g.get("names") or []:
+                rows.append({"site": name, "client": "APTIDCO housing" if "aptidco" in (g.get("group") or "").lower() else "",
+                             "town": name if state == "AP" else (g.get("group") or ""), "state": state, "work": "", "status": "Ongoing"})
+        return rows
+    if key == "sitePhotos" and isinstance(value, list):
+        value = [{"img": p.get("img", ""), "site": p.get("site", ""), "ref": "", "block": "", "stage": "", "shown": p.get("text", "")}
+                 if isinstance(p, dict) and "text" in p else p for p in value]
+    if key == "safety" and isinstance(value, list):
+        codes = [x.get("code", "") for x in first]
+        value = [dict({"code": codes[i] if i < len(codes) else ""}, **p) if isinstance(p, dict) and "code" not in p else p
+                 for i, p in enumerate(value)]
+    if key == "capabilities" and isinstance(value, list):
+        value = [dict(p, line=p.get("id") == "civil") if isinstance(p, dict) and "line" not in p else p for p in value]
+    if key == "credentials" and isinstance(value, list):
+        # The safety record has its own box now, counted live.
+        value = [c for c in value if not (isinstance(c, dict) and c.get("label") == "Safety record")]
+    if key == "headings" and isinstance(value, dict):
+        value = dict(value)
+        if "quality" not in value and isinstance(value.get("safety"), dict):
+            value["quality"] = value["safety"]
+        value = {k: v for k, v in value.items() if k in first}
+    return _fill(value, first)
+
+
+def _upgraded(key, text):
+    """The section's stored text in Look B's shape - or the first content, if it will not go into it."""
+    value = upgrade(key, _load(text, None))
+    try:
+        check(None, None, key, value, deep=False)
+    except HTTPException:
+        value = seed()[key]
+    return json.dumps(value, ensure_ascii=False)
+
+
 def ensure_sections(db, client_id):
-    """Give the company a row for each section it lacks, draft and published both the first content. True if any was added."""
+    """Give the company a row for each section it lacks, draft and published both the first content, and put any saved before
+    Look B into its shape. True if anything changed."""
     S = models.DBWebsiteSection
-    have = {k for (k,) in db.query(S.key).filter(S.client_id == client_id).all()}
+    rows = db.query(S).filter(S.client_id == client_id).all()
+    have = {r.key for r in rows}
     text = _seed_text()
     added = [S(client_id=client_id, key=k, draft=text[k], published=text[k], updated_by="First content",
                published_by="First content") for k in SECTION_KEYS if k not in have]
     db.add_all(added)
-    if added:
+    moved = False
+    for r in rows:
+        if r.key not in SECTION_KEYS or r.key == "projects":
+            continue
+        for which in ("draft", "published"):
+            now = getattr(r, which)
+            new = _upgraded(r.key, now)
+            if not _same(_load(now, None), json.loads(new)):
+                setattr(r, which, new)
+                moved = True
+    if added or moved:
         db.flush()
-    return bool(added)
+    return bool(added) or moved
 
 
 def seed_all(db):
@@ -109,7 +220,8 @@ def _version(db, client_id, which):
     """Every section's `which` version ("draft" or "published"), the first content where a company has no row yet."""
     out = seed()
     for key, row in _rows(db, client_id).items():
-        out[key] = _load(getattr(row, which), out[key])
+        # Read in Look B's shape, should a row saved before it not have been put into it yet.
+        out[key] = _load(getattr(row, which), out[key]) if key == "projects" else json.loads(_upgraded(key, getattr(row, which)))
     return out
 
 
@@ -217,10 +329,13 @@ def _like(where, value, shape, key=""):
 
 
 def _free(item):
-    """The shape of an entry in a list that starts empty (the story's milestones): text fields, pictures and links only."""
+    """The shape of an entry in a list that starts empty: a line of text (the clients), or a set of text fields (the story's
+    milestones) - pictures and links among them, checked as such."""
+    if isinstance(item, str):
+        return ""
     if isinstance(item, dict) and all(isinstance(v, str) for v in item.values()):
         return {k: "" for k in item}
-    _bad("Entry", "should be a set of text fields")
+    _bad("Entry", "should be a line of text or a set of text fields")
 
 
 def _check_layout(value):
@@ -260,7 +375,8 @@ def _check_projects(db, client_id, value):
                 _bad("Projects", "a photo chosen is not one of that project's photos")
 
 
-def check(db, client_id, key, value):
+def check(db, client_id, key, value, deep=True):
+    """Refuse what is not this section's shape. `deep`: also check what it names in the records (a project's photos)."""
     if key not in SECTION_KEYS:
         raise HTTPException(404, "There is no such section of the website.")
     if len(json.dumps(value)) > MAX_SECTION_BYTES:
@@ -268,7 +384,10 @@ def check(db, client_id, key, value):
     if key == "layout":
         _check_layout(value)
     elif key == "projects":
-        _check_projects(db, client_id, value)
+        if deep:
+            _check_projects(db, client_id, value)
+        elif not isinstance(value, dict):
+            _bad("Projects", "should be a set of projects")
     else:
         _like(dict(SECTIONS)[key], value, seed()[key])
 
@@ -278,7 +397,10 @@ def _now():
 
 
 def save_draft(db, client_id, key, value, by):
-    """Keep `value` as the section's draft. Visitors see nothing of it until it is published."""
+    """Keep `value` as the section's draft. Visitors see nothing of it until it is published. A field it leaves out is given
+    its first content, so what is kept always has the section's whole shape."""
+    if key in SECTION_KEYS and key not in ("projects", "layout"):
+        value = _fill(value, seed()[key])
     check(db, client_id, key, value)
     ensure_sections(db, client_id)
     row = _rows(db, client_id)[key]
@@ -371,7 +493,8 @@ def restore(db, client_id, version_id, by):
     rows = _rows(db, client_id)
     for key, value in content.items():
         if key in rows and value is not None:
-            rows[key].draft = json.dumps(value, ensure_ascii=False)
+            # A version from before Look B is put back in Look B's shape.
+            rows[key].draft = json.dumps(value, ensure_ascii=False) if key == "projects" else _upgraded(key, json.dumps(value))
             rows[key].updated_at, rows[key].updated_by = _now(), by
     return publish(db, client_id, by, note="Restored version %d" % old.number)
 
@@ -379,3 +502,32 @@ def restore(db, client_id, version_id, by):
 def image_in_use(db, client_id, fid, which="published"):
     """Whether a picture uploaded here is used in the website's `which` version."""
     return ("%s%d\"" % (IMAGE_PATH, fid)) in json.dumps(_version(db, client_id, which))
+
+
+def programme_done(db, client_id, job):
+    """How much of the project is done, as a whole number per cent, from its programme: each activity's progress times its
+    share of the job, as the programme rolls it up. None when the project has no programme."""
+    from datetime import date
+    from app.services.projects import ScheduleContext
+    try:
+        ctx = ScheduleContext(db, client_id, job.id)
+        if not ctx.acts:
+            return None
+        weight, today = ctx.weight or {}, date.today()
+        done = sum(weight.get(a.id, 0) * ctx.actual(a, today) for a in ctx.leaves)
+        return max(0, min(100, int(round(done))))
+    except Exception:
+        return None
+
+
+def overview(db, client_id):
+    """What the Website tab's overview counts from the records: the website's enquiries this week, and the photographs on
+    the projects shown."""
+    from datetime import timedelta
+    week = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    L, J, F = models.DBLead, models.DBJob, models.DBFile
+    enquiries = db.query(L.id).filter(L.client_id == client_id, L.source == "Website enquiry", L.created_at >= week).count()
+    shown = [j for (j,) in db.query(J.id).filter(J.client_id == client_id, J.show_on_website.is_(True)).all()]
+    photos = db.query(F.id).filter(F.client_id == client_id, F.job_id.in_(shown or [0]), F.kind == "photo",
+                                   F.attached_type == "job").count() if shown else 0
+    return {"enquiries_this_week": enquiries, "project_photos": photos}

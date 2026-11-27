@@ -7,6 +7,10 @@ export const asset = (path: string) => import.meta.env.BASE_URL + path
  *  Settings -> Website, which the server keeps (/api/public/site/images/...). */
 export const imgSrc = (path: string) => (path.startsWith('/api/') ? (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '') + path : asset(path))
 
+/** An address of the company website itself: "/" and "/projects" when built; in development the staff app owns "/", and
+ *  the site is under /site. */
+export const sitePath = (page = '') => (import.meta.env.PROD ? '/' : '/site/') + page.replace(/^\//, '')
+
 export const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
 export const inr = (n: number) => new Intl.NumberFormat('en-IN').format(Math.round(n))

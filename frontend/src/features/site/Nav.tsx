@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
+import { appUrl } from '@/lib/paths'
 import { asset, reduceMotion } from './lib'
 import { useContent } from './siteContent'
-
-const LINKS: [string, string][] = [['about', 'About'], ['build', 'What We Build'], ['projects', 'Projects'], ['credentials', 'Credentials'], ['safety', 'Safety'], ['careers', 'Careers'], ['contact', 'Contact']]
-const WATCHED = ['about', 'build', 'process', 'projects', 'story', 'credentials', 'safety', 'quote', 'careers', 'contact']
+import { apiPath } from './siteApi'
+import type { PageSection } from './data/content'
 
 /** Scroll to a section and keep the address bar in step, as the page's own links do. */
 export function goTo(id: string) {
@@ -15,70 +15,93 @@ export function goTo(id: string) {
   return true
 }
 
-/** The top bar: clear over the photographs, solid once scrolled, hidden while reading downwards. Staff sign in from the
- *  footer, not from here. */
-export function Nav() {
-  const { SITE } = useContent()
-  const shown = new Set(SITE.layout.filter((s) => s.shown).map((s) => s.id as string))
-  const [open, setOpen] = useState(false)
-  const [solid, setSolid] = useState(false)
-  const [hide, setHide] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [active, setActive] = useState('')
+/** The sections the menu links to, in the menu's order. "Contact" is the enquiry section's. */
+const MENU: PageSection[] = ['projects', 'build', 'process', 'quality', 'careers', 'quote']
 
+/** For whoever may edit the website, signed in: a bar to the panel, with when it was last published. Nobody else sees it,
+ *  and it is never in the panel's own preview. */
+export function EditBar({ preview }: { preview: boolean }) {
+  const [info, setInfo] = useState<{ can_edit: boolean; last_published: string } | null>(null)
   useEffect(() => {
-    let lastY = 0
-    const onScroll = () => {
-      const y = scrollY
-      const heroH = innerHeight * 0.85
-      setSolid(y > heroH - 80)
-      // Worked out now: the updater below runs later, after lastY has moved on.
-      const up = y < lastY - 4
-      const down = y > heroH && y > lastY + 4
-      setHide((h) => (open || up ? false : down ? true : h))
-      lastY = y
-      const max = document.documentElement.scrollHeight - innerHeight
-      setProgress(max > 0 ? y / max : 0)
-    }
-    addEventListener('scroll', onScroll, { passive: true })
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
-    addEventListener('keydown', onKey)
-    return () => {
-      removeEventListener('scroll', onScroll)
-      removeEventListener('keydown', onKey)
-    }
-  }, [open])
+    if (preview) return
+    let gone = false
+    fetch(apiPath('/api/website/editor'), { credentials: 'include' }).then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!gone && d?.can_edit) setInfo(d) }).catch(() => undefined)
+    return () => { gone = true }
+  }, [preview])
+  if (!info) return null
+  const when = info.last_published ? new Date(info.last_published.replace(' ', 'T')).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''
+  return (
+    <div className="editbar" role="region" aria-label="Edit the website">
+      <div className="wrap"><a href={appUrl('website')}>Edit website</a>{when && <span>· last published {when}</span>}</div>
+    </div>
+  )
+}
+
+/** Paper (light) or blueprint (dark): the visitor's own choice, kept on this device, else their device's setting. */
+function useTheme() {
+  const dark = () => {
+    const t = document.documentElement.getAttribute('data-theme')
+    return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches
+  }
+  const [isDark, setDark] = useState(dark)
+  const flip = () => {
+    const next = dark() ? 'light' : 'dark'
+    document.documentElement.setAttribute('data-theme', next)
+    try { localStorage.setItem('yip-theme', next) } catch { /* private window: this visit only */ }
+    setDark(next === 'dark')
+  }
+  return { isDark, flip }
+}
+
+/** The blue strip: what we do, where, the phone, and the paper / blueprint switch. Then the menu bar. */
+export function Nav({ shown }: { shown: Set<PageSection> }) {
+  const { COMPANY, SITE } = useContent()
+  const { isDark, flip } = useTheme()
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState('')
+  const links = MENU.filter((id) => shown.has(id)).map((id) => [id, SITE.headings[id as Exclude<PageSection, 'hero'>]?.eyebrow ?? id] as const)
 
   useEffect(() => {
     const io = new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && setActive(e.target.id)), { rootMargin: '-45% 0px -50% 0px' })
-    WATCHED.forEach((id) => {
-      const el = document.getElementById(id)
-      if (el) io.observe(el)
-    })
-    return () => io.disconnect()
-  }, [])
+    MENU.forEach((id) => { const el = document.getElementById(id); if (el) io.observe(el) })
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    addEventListener('keydown', onKey)
+    return () => { io.disconnect(); removeEventListener('keydown', onKey) }
+  }, [shown])
 
   const click = (e: React.MouseEvent, id: string) => {
-    if (goTo(id)) {
-      e.preventDefault()
-      setOpen(false)
-    }
+    if (goTo(id)) { e.preventDefault(); setOpen(false) }
   }
-
   return (
-    <header className={`nav${solid ? ' solid' : ''}${hide && !open ? ' hide' : ''}${open ? ' open' : ''}`} id="nav" style={{ ['--p' as string]: progress.toFixed(4) }}>
-      <a href="#top" className="brand" aria-label="Yalavarti Infra Projects, home" onClick={(e) => click(e, '#top')}>
-        <img src={asset('site/img/mark.png')} alt="" width="36" height="36" />
-        <span translate="no">Yalavarti <small>Infra</small></span>
-      </a>
-      <nav className="nav__links" id="navlinks" aria-label="Primary">
-        {LINKS.filter(([id]) => shown.has(id)).map(([id, label]) => (
-          <a key={id} href={`#${id}`} className={active === id ? 'active' : undefined} aria-current={active === id ? 'true' : undefined} onClick={(e) => click(e, `#${id}`)}>{label}</a>
-        ))}
-        {shown.has('quote') && <a href="#quote" className="nav__m nav__m--quote" onClick={(e) => click(e, '#quote')}>Start a Project</a>}
-      </nav>
-      {shown.has('quote') && <a href="#quote" className="btn btn--primary btn--sm nav__cta" onClick={(e) => click(e, '#quote')}>Start a Project</a>}
-      <button className="nav__burger" id="burger" aria-label={open ? 'Close menu' : 'Open menu'} aria-expanded={open} aria-controls="navlinks" onClick={() => setOpen((o) => !o)}><span /><span /></button>
-    </header>
+    <>
+      <div className="strip"><div className="wrap">
+        <span>{COMPANY.trade}</span>
+        {COMPANY.regions && <span className="hide-s">{COMPANY.regions}</span>}
+        <span className="r">
+          {COMPANY.phone.show && <a href={`tel:${COMPANY.phone.tel}`} className="hide-s num">{COMPANY.phone.show}</a>}
+          <button type="button" onClick={flip} aria-label={isDark ? 'Switch to the paper (light) look' : 'Switch to the blueprint (dark) look'}>{isDark ? 'Paper' : 'Blueprint'}</button>
+        </span>
+      </div></div>
+      <header className="nav" id="nav">
+        <div className="wrap">
+          <a className="brand" href="#top" aria-label={`${COMPANY.name}, home`} onClick={(e) => click(e, '#top')}>
+            <img src={asset('site/img/mark.png')} alt="" width="38" height="38" />
+            <span><b translate="no">Yalavarti Infra</b><small>Civil · Hyderabad</small></span>
+          </a>
+          <nav className="links" aria-label="Primary">
+            {links.map(([id, label]) => <a key={id} href={`#${id}`} aria-current={active === id ? 'true' : undefined} onClick={(e) => click(e, `#${id}`)}>{label}</a>)}
+          </nav>
+          {shown.has('quote') && <a className="btn btn--solid" href="#quote" onClick={(e) => click(e, '#quote')}>Request a quote</a>}
+          <button className="menu" type="button" aria-expanded={open} aria-controls="mpanel" onClick={() => setOpen((o) => !o)}>{open ? 'Close' : 'Menu'}</button>
+        </div>
+        {open && (
+          <nav className="mpanel" id="mpanel" aria-label="Menu"><div className="wrap">
+            {links.map(([id, label]) => <a key={id} href={`#${id}`} onClick={(e) => click(e, `#${id}`)}>{label}</a>)}
+            {shown.has('quote') && <a className="btn btn--solid" href="#quote" onClick={(e) => click(e, '#quote')}>Request a quote</a>}
+          </div></nav>
+        )}
+      </header>
+    </>
   )
 }

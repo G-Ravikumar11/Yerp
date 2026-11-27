@@ -4,11 +4,12 @@ import type { Place } from '@/api/website'
 
 /** The shape each place on the website needs, and the size it is saved at: big enough for a wide screen, small enough
  *  for a phone on a slow connection. The server keeps them as they come (it makes nothing bigger). */
-export const SHAPES: Record<Place, { w: number; h: number; label: string }> = {
-  hero: { w: 1600, h: 900, label: 'Opening banner (wide, 16:9)' },
-  section: { w: 1200, h: 900, label: 'A section (4:3)' },
-  story: { w: 1200, h: 800, label: 'Our story (3:2)' },
-  project: { w: 1200, h: 900, label: 'A project (4:3)' },
+export const SHAPES: Record<Place, { w: number; h: number; min: number; label: string }> = {
+  hero: { w: 1600, h: 1100, min: 1600, label: 'The opening photograph (16:11)' },
+  section: { w: 1200, h: 800, min: 1000, label: 'A "What we build" tile (3:2)' },
+  sheet: { w: 1600, h: 1000, min: 1000, label: 'A drawing sheet (16:10)' },
+  story: { w: 1200, h: 800, min: 1000, label: 'Our story (3:2)' },
+  project: { w: 1600, h: 1000, min: 1000, label: 'A project photograph (16:10)' },
 }
 const QUALITY = 0.82
 
@@ -85,7 +86,8 @@ export function Cropper({ file, place, onCancel, onDone, busy }: { file: File; p
     setPos({ x: cx - (cx - view.x) * f, y: cy - (cy - view.y) * f })
     setZoom(nz)
   }
-  const small = img && (img.naturalWidth < w * 0.6 || img.naturalHeight < h * 0.6)
+  // The brief's floor: the opening's photograph at least 1600 px wide, tiles and sheets at least 1000.
+  const small = img && img.naturalWidth < SHAPES[place].min
 
   return (
     <Modal open onOpenChange={(o) => { if (!o) onCancel() }} title="Crop the picture" description={`${label}. Drag the picture to choose what shows; zoom to frame it closer. It is saved at ${w} × ${h} for the web.`} size="lg"
@@ -114,7 +116,7 @@ export function Cropper({ file, place, onCancel, onDone, busy }: { file: File; p
             <span className="w-12 text-muted-foreground">Zoom</span>
             <input type="range" min={1} max={4} step={0.01} value={zoom} onChange={(e) => setZoomAt(Number(e.target.value))} className="flex-1 accent-primary" aria-label="Zoom" />
           </label>
-          {small && <p className="text-[13px] text-warning">This picture is smaller than the place it goes. It may look soft on a large screen.</p>}
+          {small && img && <p className="text-[13px] text-warning">This photograph is {img.naturalWidth} px wide; this place needs at least {SHAPES[place].min} px. It will look soft on a large screen - use a larger original if there is one.</p>}
         </div>
       )}
     </Modal>

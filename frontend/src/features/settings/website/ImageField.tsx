@@ -11,7 +11,7 @@ import { Cropper, SHAPES } from './Cropper'
 /** The photographs the site was built with, so one taken out can be put back. */
 const builtIn = () => {
   const s = BUILT_IN.SITE
-  return [...new Set([...s.slides, ...s.capabilities, ...s.sitePhotos].map((x) => x.img).filter(Boolean))]
+  return [...new Set([s.hero.photo, ...s.capabilities, ...s.sitePhotos].map((x) => x.img).filter(Boolean))]
 }
 
 /** Choose a photo for the website and crop it to the place's shape, then upload it. Resolves to its path, or null. */

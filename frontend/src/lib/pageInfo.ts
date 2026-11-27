@@ -110,6 +110,7 @@ export const PAGE_INFO: Record<string, string> = {
   '/people/leave': 'Leave requests waiting for you, and the leave taken across the business. Approve or decline with a reason.',
   '/people/payroll': 'Run the month\'s payroll: working days, earnings and deductions for each person, then payslips.',
 
+  '/website': 'The company website: its words, pictures, projects and openings, drafted and published.',
   '/settings': 'The business\'s own settings: company details, numbering, approval rules, notifications and the Master\'s controls.',
 }
 

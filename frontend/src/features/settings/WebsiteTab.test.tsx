@@ -54,8 +54,18 @@ beforeEach(() => {
 })
 
 describe('Settings -> Website', () => {
-  it('edits the opening banner as a draft, and sends nothing until it is saved', async () => {
+  it('opens on the overview, with what still needs doing', async () => {
     mount()
+    const list = await screen.findByRole('list', { name: 'Checklist' })
+    expect(within(list).getByText('WhatsApp number')).toBeTruthy()
+    expect(within(list).getByText('Credentials with their values')).toBeTruthy()
+    await userEvent.click(within(within(list).getByText('WhatsApp number').closest('li')!).getByRole('button', { name: 'Put it right' }))
+    expect(await screen.findByLabelText('WhatsApp number')).toBeTruthy()
+  })
+
+  it('edits the opening as a draft, and sends nothing until it is saved', async () => {
+    mount()
+    await part('Opening')
     const headline = await screen.findByLabelText('Headline')
     expect((headline as HTMLTextAreaElement).value).toBe(BUILT_IN.SITE.hero.title)
     await userEvent.clear(headline)
@@ -71,7 +81,7 @@ describe('Settings -> Website', () => {
   it('publishes the draft, saving what is typed first, with a note for the history', async () => {
     mount()
     await part('Footer')
-    const tagline = screen.getByLabelText('Line after the company name')
+    const tagline = screen.getByLabelText('Line under the company name')
     await userEvent.clear(tagline)
     await userEvent.type(tagline, 'Civil works since 2012')
     await userEvent.click(screen.getByRole('button', { name: /^Publish$/ }))
@@ -82,7 +92,7 @@ describe('Settings -> Website', () => {
     const order = calls.filter((c) => c.method !== 'GET').map((c) => c.url)
     expect(order).toEqual(['/api/website/sections/footer', '/api/website/publish'])
     expect(calls.find((c) => c.url === '/api/website/publish')!.body).toEqual({ note: 'New footer' })
-    expect(published.footer).toEqual({ tagline: 'Civil works since 2012', showGroupLink: true })
+    expect(published.footer).toEqual({ ...BUILT_IN.SITE.footer, tagline: 'Civil works since 2012' })
   })
 
   it('hides and reorders the sections of the page', async () => {
@@ -94,7 +104,7 @@ describe('Settings -> Website', () => {
     await userEvent.click(screen.getByRole('button', { name: /Save draft/ }))
     await waitFor(() => expect(calls.some((c) => c.url === '/api/website/sections/layout')).toBe(true))
     const layout = drafts.layout as { id: string; shown: boolean }[]
-    expect(layout.slice(0, 3).map((s) => s.id)).toEqual(['hero', 'about', 'proof'])
+    expect(layout.slice(0, 3).map((s) => s.id)).toEqual(['about', 'hero', 'projects'])
     expect(layout.find((s) => s.id === 'careers')!.shown).toBe(false)
   })
 
@@ -125,6 +135,7 @@ describe('Settings -> Website', () => {
 
   it('shows the draft in a desktop and a phone preview of the site itself, as it is typed', { timeout: 20000 }, async () => {
     mount()
+    await part('Opening')
     // Waited for longer than usual: with the whole suite running, the panel's first draw can take more than a second.
     const desk = (await screen.findByTitle('Preview of the draft on a desktop screen', {}, { timeout: 5000 })) as HTMLIFrameElement
     const phone = screen.getByTitle('Preview of the draft on a phone') as HTMLIFrameElement
@@ -133,7 +144,8 @@ describe('Settings -> Website', () => {
     const sent = vi.fn()
     Object.defineProperty(desk, 'contentWindow', { value: { postMessage: sent } })
     await userEvent.type(await screen.findByLabelText('Line under the headline', {}, { timeout: 5000 }), '!')
-    await waitFor(() => expect(sent).toHaveBeenCalled(), { timeout: 5000 })
+    // The frame is sent the draft when the panel opens and again as it is typed: wait for the one with what was typed.
+    await waitFor(() => expect(sent.mock.calls.at(-1)?.[0]?.content?.hero?.sub).toBe(BUILT_IN.SITE.hero.sub + '!'), { timeout: 5000 })
     const [message, origin] = sent.mock.calls.at(-1)!
     expect(origin).toBe(location.origin)
     expect(message.type).toBe('website-preview')

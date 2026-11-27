@@ -29,11 +29,13 @@ describe('the menu follows the portals a person holds', () => {
     const money = visibleNav(canWith('money.view'), true).find((e) => e.kind === 'group' && e.id === 'money')
     expect(money).toBeUndefined() // every Money screen also needs View all bills
   })
-  it('opens Settings to staff only with "Manage website", and always to the Master', () => {
-    const settings = (can: (p: string) => boolean, staff: boolean) => visibleNav(can, staff).some((e) => e.kind === 'link' && e.id === 'settings')
-    expect(settings(canWith('people.manage', 'projects.view', 'bills.view_all'), true)).toBe(false)
-    expect(settings(canWith('website.manage'), true)).toBe(true)
-    expect(settings(() => true, false)).toBe(true)
+  it('shows the Website page to whoever has "Manage website", and Settings to the Master alone', () => {
+    const link = (can: (p: string) => boolean, staff: boolean, id: string) => visibleNav(can, staff).some((e) => e.kind === 'link' && e.id === id)
+    expect(link(canWith('people.manage', 'projects.view', 'bills.view_all'), true, 'website')).toBe(false)
+    expect(link(canWith('website.manage'), true, 'website')).toBe(true)
+    expect(link(canWith('website.manage'), true, 'settings')).toBe(false)
+    expect(link(() => true, false, 'website')).toBe(true)
+    expect(link(() => true, false, 'settings')).toBe(true)
   })
   it('gives the Master every portal', () => {
     const everything = () => true

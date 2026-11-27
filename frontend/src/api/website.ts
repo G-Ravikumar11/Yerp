@@ -21,7 +21,7 @@ export interface WebsiteVersion { id: number; number: number; note: string; publ
 export interface ProjectCard { show: boolean; sector: string; location: string; scope: string; photos: number[] | null }
 export interface WebsiteProject { id: number; number: string; name: string; client: string; status: string; published: ProjectCard; draft: ProjectCard; photos: number[] }
 
-export type Place = 'hero' | 'section' | 'story' | 'project'
+export type Place = 'hero' | 'section' | 'sheet' | 'story' | 'project'
 export interface WebsiteImage { id: number; name: string; place: Place; created_at: string; size: number; path: string; published: boolean; in_draft: boolean }
 
 export const websiteKeys = {
@@ -33,7 +33,7 @@ export const websiteKeys = {
 }
 
 export const useWebsiteSections = () =>
-  useQuery({ queryKey: websiteKeys.sections, queryFn: () => get<{ sections: WebsiteSection[]; latest: WebsiteVersion | null }>('/api/website/sections') })
+  useQuery({ queryKey: websiteKeys.sections, queryFn: () => get<{ sections: WebsiteSection[]; latest: WebsiteVersion | null; overview?: { enquiries_this_week: number; project_photos: number } }>('/api/website/sections') })
 export const useWebsiteVersions = () =>
   useQuery({ queryKey: websiteKeys.versions, queryFn: () => get<{ versions: WebsiteVersion[] }>('/api/website/versions') })
 export const useWebsiteProjects = () =>

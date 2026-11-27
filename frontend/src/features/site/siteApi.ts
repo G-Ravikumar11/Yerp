@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 
 /** What the site reads from our records: public totals and the projects ticked "show on website". Plain fetch - this page is its
  *  own bundle and never loads the staff app's API layer. */
-export interface LiveProject { id: number; name: string; client: string; sector: string; location: string; scope: string; status: 'Completed' | 'Ongoing'; year: string; photos: string[] }
+/** `progress`: its "% done" from the programme, only when the company shows it (null otherwise, or with no programme). */
+export interface LiveProject { id: number; name: string; client: string; sector: string; location: string; scope: string; status: 'Completed' | 'Ongoing'; year: string; photos: string[]; progress?: number | null }
 /** `content`: the website's sections as last published from Settings -> Website (siteContent.ts reads them). */
 /** An opening on the Careers section: Recruitment's open, published job, and the token its application form is opened with. */
 export interface Opening { id: number; title: string; location: string; experience: string; description: string; apply_token: string | null }

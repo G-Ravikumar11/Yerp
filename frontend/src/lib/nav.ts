@@ -11,6 +11,7 @@ import {
   Megaphone,
  
   Settings,
+  Globe,
   UserRound,
   Users,
   Wallet,
@@ -176,8 +177,9 @@ const NAV: NavEntry[] = [
       { label: 'Payroll', path: '/people/payroll', perm: 'payroll.manage' },
     ],
   },
-  // The Master's (who holds every right); a member of staff only with "Manage website", and then sees only the Website tab.
-  { kind: 'link', id: 'settings', label: 'Settings', icon: Settings, path: '/settings', perm: 'website.manage' },
+  // The company website: the Master (who holds every right), and staff given "Manage website".
+  { kind: 'link', id: 'website', label: 'Website', icon: Globe, path: '/website', perm: 'website.manage' },
+  { kind: 'link', id: 'settings', label: 'Settings', icon: Settings, path: '/settings', ownerOnly: true },
 ]
 
 export type Trail = { label: string; path?: string }[]

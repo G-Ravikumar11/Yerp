@@ -62,6 +62,7 @@ export const SCREENS: Screen[] = [
   { path: '/subcontractors/work-orders', Component: page(() => import('@/features/orders/OrdersPage')) },
   { path: '/subcontractors/measurement-book', Component: page(() => import('@/features/measurement/MeasurementBookPage')) },
   { path: '/settings', Component: page(() => import('@/features/settings/SettingsPage')) },
+  { path: '/website', Component: page(() => import('@/features/website/WebsitePage')) },
   { path: '/approvals', Component: page(() => import('@/features/approvals/ApprovalsPage')) },
   { path: '/subcontractors/vendors', Component: page(() => import('@/features/vendors/VendorsPage')) },
   { path: '/subcontractors/compliance', Component: page(() => import('@/features/compliance/CompliancePage')) },

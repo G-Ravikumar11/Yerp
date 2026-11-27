@@ -116,8 +116,9 @@ def test_google_can_fetch_everything_the_front_page_is_drawn_with(client):
 def test_the_front_page_is_described_as_the_civil_company():
     """What Google and a WhatsApp link preview show: Yalavarti Infra Projects, never the electrical contractor."""
     from app.core import static
-    head = static.HOME_TITLE + static.HOME_DESCRIPTION + static.HOME_HEAD
-    assert static.HOME_TITLE.startswith("Yalavarti Infra Projects")
+    title, head = static.home_head("https://yalavartiinfra.com", {})
+    head = title + head
+    assert title.startswith("Yalavarti Infra Projects")
     for word in ("Electrical", "33 kV", "PHE", "panels", "YERP"):
         assert word.lower() not in head.lower(), word
 
@@ -131,6 +132,39 @@ def test_the_link_preview_picture_is_a_full_address(client, monkeypatch, tmp_pat
     monkeypatch.setattr(static, "FRONTEND_DIST", str(tmp_path))
     html = client.get("/", headers={"x-forwarded-proto": "https"}).text
     assert "<title>Yalavarti Infra Projects | Homes, Townships &amp; Civil Infrastructure</title>" in html
-    assert '<meta property="og:image" content="https://testserver/next/site/img/cat3.jpg">' in html
+    assert '<meta property="og:image" content="https://testserver/next/site/img/sites/giddaluru-c2.jpg">' in html
     # No ERP wording anywhere a visitor or a search engine can see it.
     assert "ERP" not in html and "info@yalavartiinfra.com" in html
+
+
+def _built_front_page(monkeypatch, tmp_path):
+    from app.core import static
+    (tmp_path / "index.html").write_text('<html><head><title>Y ERP</title></head><body><noscript>x</noscript></body></html>', encoding="utf8")
+    monkeypatch.setattr(static, "FRONTEND_DIST", str(tmp_path))
+
+
+def test_the_page_head_takes_the_published_search_words_and_sets_the_look_before_it_draws(tenant, client, ours, monkeypatch, tmp_path):
+    _built_front_page(monkeypatch, tmp_path)
+    with database.SessionLocal() as s:
+        s.get(models.DBClient, ours).is_onboarded = True
+        s.commit()
+    from app.core import static
+    monkeypatch.setattr(static, "_seo", lambda: __import__("app.services.website_content", fromlist=["x"]).published(
+        database.SessionLocal(), ours)["seo"])
+    assert tenant.put("/api/website/sections/seo", json={"draft": {"title": "Yalavarti Infra | Civil builders, Hyderabad",
+                                                                  "description": "Homes & townships <built> right.", "image": ""}}).status_code == 200
+    assert "Civil builders" not in client.get("/").text                                     # not until it is published
+    assert tenant.post("/api/website/publish", json={}).status_code == 200
+    html = client.get("/").text
+    assert "<title>Yalavarti Infra | Civil builders, Hyderabad</title>" in html
+    assert 'content="Homes &amp; townships &lt;built&gt; right."' in html                    # escaped, never markup
+    assert "localStorage.getItem('yip-theme')" in html                                     # paper or blueprint, before the page draws
+
+
+def test_the_projects_page_is_served_and_in_the_sitemap(client, monkeypatch, tmp_path):
+    _built_front_page(monkeypatch, tmp_path)
+    page = client.get("/projects")
+    # The title after the prefix is whatever the company published (other tests publish their own).
+    assert page.status_code == 200 and "<title>Projects | " in page.text
+    assert "/projects</loc>" in client.get("/sitemap.xml").text
+    assert "Allow: /projects" in client.get("/robots.txt").text

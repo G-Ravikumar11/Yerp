@@ -129,21 +129,21 @@ export function PicturesPart({ draft, set }: { draft: Draft; set: SetDraft }) {
   const [project, setProject] = useState('')
   const caps = (draft('capabilities') as { title: string; img: string }[] | undefined) ?? []
   const story = (draft('timeline') as { y: string; t: string; img: string }[] | undefined) ?? []
-  const place: Place = where === 'hero' ? 'hero' : where === 'project' ? 'project' : where.startsWith('story:') ? 'story' : 'section'
+  const place: Place = where === 'hero' ? 'hero' : where === 'project' ? 'project' : where === 'sitePhoto' ? 'sheet' : where.startsWith('story:') ? 'story' : 'section'
   const upload = useUpload(place, place === 'project' ? Number(project) : 0)
   const remove = useAction((id: number) => removeImage(id), { invalidate: [websiteKeys.images] })
   const [removing, setRemoving] = useState<number | null>(null)
 
   const options = [
-    { value: 'hero', label: 'Opening banner: a new photograph' },
+    { value: 'hero', label: 'The opening photograph (replaces it)' },
     ...caps.map((c, i) => ({ value: `cap:${i}`, label: `What we build: ${c.title || 'item ' + (i + 1)}` })),
-    { value: 'sitePhoto', label: 'Photographs from our sites: a new one' },
+    { value: 'sitePhoto', label: 'Projects: a new drawing sheet' },
     ...story.map((m, i) => ({ value: `story:${i}`, label: `Our story: ${[m.y, m.t].filter(Boolean).join(' - ') || 'milestone ' + (i + 1)}` })),
     { value: 'project', label: 'A project' },
   ]
   const put = (path: string) => {
-    if (where === 'hero') set('slides', [...((draft('slides') as unknown[]) ?? []), { img: path, t: '', l: '' }])
-    else if (where === 'sitePhoto') set('sitePhotos', [...((draft('sitePhotos') as unknown[]) ?? []), { img: path, site: '', text: '' }])
+    if (where === 'hero') { const h = (draft('hero') ?? {}) as { photo?: Record<string, string> }; set('hero', { ...h, photo: { ...(h.photo ?? {}), img: path } }) }
+    else if (where === 'sitePhoto') set('sitePhotos', [...((draft('sitePhotos') as unknown[]) ?? []), { img: path, site: '', ref: '', block: '', stage: '', shown: '' }])
     else if (where.startsWith('cap:')) { const i = Number(where.slice(4)); set('capabilities', caps.map((c, k) => (k === i ? { ...c, img: path } : c))) }
     else if (where.startsWith('story:')) { const i = Number(where.slice(6)); set('timeline', story.map((m, k) => (k === i ? { ...m, img: path } : m))) }
   }
@@ -171,7 +171,7 @@ export function PicturesPart({ draft, set }: { draft: Draft; set: SetDraft }) {
               <li key={i.id} className="overflow-hidden rounded-lg border border-border bg-card">
                 <img src={pictureUrl(i.path, true)} alt={i.name} className="aspect-[4/3] w-full object-cover" loading="lazy" />
                 <div className="flex flex-wrap items-center gap-1.5 p-2 text-[12px]">
-                  <span className="mr-auto truncate text-muted-foreground">{SHAPES[i.place]?.label.split(' (')[0] ?? i.place}</span>
+                  <span className="mr-auto truncate text-muted-foreground">{SHAPES[i.place]?.label.split(' (')[0].replace(/^(The|A) /, '') ?? i.place}</span>
                   {i.published ? <Badge tone="success">On the website</Badge> : i.in_draft ? <Badge tone="warning">In the draft</Badge> : (
                     <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${i.name}`} onClick={() => setRemoving(i.id)}><Trash2 /></Button>
                   )}

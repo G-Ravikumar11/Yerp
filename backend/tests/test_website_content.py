@@ -52,8 +52,8 @@ def test_the_seed_has_every_section_and_the_site_as_it_was_built():
     seed = website_content.seed()
     assert list(seed) == list(website_content.SECTION_KEYS)
     assert seed["company"]["name"] == "Yalavarti Infra Projects"
-    assert seed["hero"]["title"] == "Building homes, townships and the infrastructure around them"
-    assert [c["id"] for c in seed["capabilities"]][:3] == ["house", "apartment", "township"]
+    assert seed["hero"]["title"] == "Built to the drawing," and seed["hero"]["photo"]["img"].endswith("giddaluru-c2.jpg")
+    assert [c["id"] for c in seed["capabilities"]][:3] == ["township", "apartment", "house"]
     assert [s["id"] for s in seed["layout"]] == list(website_content.PAGE_SECTIONS) and all(s["shown"] for s in seed["layout"])
     assert seed["projects"] == {}
 
@@ -66,13 +66,13 @@ def test_before_anything_is_saved_visitors_see_the_first_content(client, ours):
 def test_start_up_gives_every_set_up_company_its_sections_and_never_overwrites_one(ours):
     with database.SessionLocal() as s:
         s.get(models.DBClient, ours).is_onboarded = True
-        s.add(models.DBWebsiteSection(client_id=ours, key="lead", draft='"Ours"', published='"Ours"'))
+        s.add(models.DBWebsiteSection(client_id=ours, key="clients", draft='["Ours"]', published='["Ours"]'))
         s.commit()
         website_content.seed_all(s)
         website_content.seed_all(s)                                  # a second start-up adds nothing
     rows = _rows(ours)
     assert sorted(rows) == sorted(website_content.SECTION_KEYS)
-    assert rows["lead"].published == '"Ours"'                       # what was there stays
+    assert rows["clients"].published == '["Ours"]'                  # what was there stays
     assert json.loads(rows["hero"].draft) == json.loads(rows["hero"].published) == website_content.seed()["hero"]
 
 
@@ -80,7 +80,7 @@ def test_visitors_see_the_published_version_never_the_draft(tenant, client, ours
     sections = ok(tenant.get("/api/website/sections"))["sections"]
     assert [x["key"] for x in sections] == list(website_content.SECTION_KEYS)
     assert not any(x["unpublished_changes"] for x in sections)
-    hero = {"title": "Draft title", "sub": "Draft line"}
+    hero = dict(website_content.seed()["hero"], title="Draft title", sub="Draft line")
     ok(tenant.put("/api/website/sections/hero", json={"draft": hero}))
     assert client.get("/api/public/site").json()["content"]["hero"] == website_content.seed()["hero"]
     assert ok(tenant.get("/api/website/preview"))["content"]["hero"] == hero            # the preview shows the draft
@@ -92,36 +92,36 @@ def test_visitors_see_the_published_version_never_the_draft(tenant, client, ours
 
 
 def test_a_draft_can_be_thrown_away(tenant, ours):
-    ok(tenant.put("/api/website/sections/lead", json={"draft": "Not this"}))
-    ok(tenant.post("/api/website/sections/lead/discard"))
-    lead = next(x for x in ok(tenant.get("/api/website/sections"))["sections"] if x["key"] == "lead")
-    assert not lead["unpublished_changes"] and lead["draft"] == website_content.seed()["lead"]
+    ok(tenant.put("/api/website/sections/clients", json={"draft": ["Not this"]}))
+    ok(tenant.post("/api/website/sections/clients/discard"))
+    got = next(x for x in ok(tenant.get("/api/website/sections"))["sections"] if x["key"] == "clients")
+    assert not got["unpublished_changes"] and got["draft"] == website_content.seed()["clients"]
 
 
 def test_every_publishing_is_kept_and_an_earlier_one_can_be_put_back(tenant, client, ours):
     for line in ("First", "Second"):
-        ok(tenant.put("/api/website/sections/lead", json={"draft": line}))
+        ok(tenant.put("/api/website/sections/clients", json={"draft": [line]}))
         ok(tenant.post("/api/website/publish", json={}))
     history = ok(tenant.get("/api/website/versions"))["versions"]
     assert [v["number"] for v in history] == [3, 2, 1]
     back = ok(tenant.post("/api/website/versions/%d/restore" % history[1]["id"]))
     assert back["version"] == 4
-    assert client.get("/api/public/site").json()["content"]["lead"] == "First"
+    assert client.get("/api/public/site").json()["content"]["clients"] == ["First"]
     assert ok(tenant.get("/api/website/versions"))["versions"][0]["note"] == "Restored version 2"
 
 
 def test_the_website_as_it_was_before_the_first_publishing_can_be_put_back_projects_and_all(tenant, client, ours):
     j = ok(tenant.post("/api/jobs", json={"name": "Vision Anmaya", "customer_name": "Vision", "status": "in_progress"}))
-    ok(tenant.put("/api/website/sections/lead", json={"draft": "Changed"}))
+    ok(tenant.put("/api/website/sections/clients", json={"draft": ["Changed"]}))
     ok(tenant.put("/api/website/sections/projects", json={"draft": {str(j["id"]): {"show": True, "sector": "Residential", "location": "", "scope": ""}}}))
     ok(tenant.post("/api/website/publish", json={}))
     site = client.get("/api/public/site").json()
-    assert site["content"]["lead"] == "Changed" and [p["name"] for p in site["projects"]] == ["Vision Anmaya"]
+    assert site["content"]["clients"] == ["Changed"] and [p["name"] for p in site["projects"]] == ["Vision Anmaya"]
     first = ok(tenant.get("/api/website/versions"))["versions"][-1]
     assert first["number"] == 1 and first["published_by"] == "As built"
     ok(tenant.post("/api/website/versions/%d/restore" % first["id"]))
     site = client.get("/api/public/site").json()
-    assert site["content"]["lead"] == website_content.seed()["lead"]
+    assert site["content"]["clients"] == website_content.seed()["clients"]
     assert site["projects"] == []                                   # the project is off the website again
 
 
@@ -138,7 +138,7 @@ def test_sections_are_shown_hidden_and_reordered(tenant, client, ours):
 
 @pytest.mark.parametrize("key,draft,words", [
     ("company", dict(website_content.seed()["company"], group={"name": "x", "url": "javascript:alert(1)", "does": ""}), "web address"),
-    ("slides", [{"img": "https://elsewhere.example/a.jpg", "t": "a", "l": "b"}], "picture"),
+    ("sitePhotos", [{"img": "https://elsewhere.example/a.jpg", "site": "a", "ref": "", "block": "", "stage": "", "shown": ""}], "picture"),
     ("hero", {"title": 5, "sub": ""}, "text"),
     ("hero", {"title": "x" * 4000, "sub": ""}, "characters"),
     ("about", "not a list", "list"),
@@ -160,7 +160,7 @@ def test_a_picture_is_public_only_once_it_is_on_the_published_website(tenant, ou
     assert tenant.get(url).status_code == 200                  # whoever manages the website sees it (the preview)
     with TestClient(main.app) as visitor:
         assert visitor.get(url).status_code == 404             # nobody else, until it is published
-        ok(tenant.put("/api/website/sections/slides", json={"draft": [{"img": url, "t": "Ours", "l": "Our own photo"}]}))
+        ok(tenant.put("/api/website/sections/sitePhotos", json={"draft": [{"img": url, "site": "Ours", "ref": "S-01", "block": "", "stage": "", "shown": "Our own photo"}]}))
         assert tenant.delete("/api/website/images/%d" % up["id"]).status_code == 409     # used in the draft
         ok(tenant.post("/api/website/publish", json={}))
         assert visitor.get(url).status_code == 200
@@ -221,10 +221,10 @@ def test_manage_website_is_the_masters_and_given_person_by_person(account):
     with TestClient(main.app) as c:
         assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
         assert c.get("/api/website/sections").status_code == 403    # not even the MD, until it is given
-        assert c.put("/api/website/sections/lead", json={"draft": "x"}).status_code == 403
+        assert c.put("/api/website/sections/clients", json={"draft": ["x"]}).status_code == 403
         assert t.put("/api/employees/%d" % emp["id"], json={"extra_permissions": "website.manage"}).status_code == 200
         assert c.get("/api/website/sections").status_code == 200
-        assert c.put("/api/website/sections/lead", json={"draft": "From staff"}).status_code == 200
+        assert c.put("/api/website/sections/clients", json={"draft": ["From staff"]}).status_code == 200
         assert c.post("/api/website/publish", json={}).status_code == 200
 
 
@@ -291,3 +291,55 @@ def test_careers_need_manage_website(account, ours):
         assert c.post("/api/employee/auth/login", json={"email": email, "password": "Crew1234"}).status_code == 200
         assert c.get("/api/website/careers").status_code == 403
         assert c.post("/api/website/careers", json={"title": "x"}).status_code == 403
+
+
+# LOOK B: what a company saved before it, put into its shape; the "% done"; the edit bar; the overview.
+
+def test_content_saved_before_look_b_is_put_into_its_shape_keeping_what_the_company_said(ours):
+    v1 = json.load(open(website_content.V1_FILE, encoding="utf8"))
+    old_layout = [{"id": "hero", "shown": True}, {"id": "proof", "shown": True}, {"id": "safety", "shown": True},
+                  {"id": "credentials", "shown": True}, {"id": "careers", "shown": False}]
+    old_sites = [{"group": "APTIDCO sites", "where": "Andhra Pradesh", "names": ["Nuzividu"]}, {"group": "Hyderabad", "where": "Telangana", "names": ["Vision X"]}]
+    with database.SessionLocal() as s:
+        for key, value in (("hero", v1["hero"]), ("layout", old_layout), ("sites", old_sites),
+                           ("credentials", [{"label": "GSTIN", "value": "36ABCDE1234F1Z5"}, {"label": "Safety record", "value": "x"}])):
+            text = json.dumps(value)
+            s.add(models.DBWebsiteSection(client_id=ours, key=key, draft=text, published=text))
+        s.commit()
+        assert website_content.ensure_sections(s, ours)
+        s.commit()
+    rows = _rows(ours)
+    assert json.loads(rows["hero"].published) == website_content.seed()["hero"]                 # never changed: Look B's
+    layout = json.loads(rows["layout"].published)
+    assert [r["id"] for r in layout][:2] == ["hero", "quality"] and {r["id"] for r in layout} == set(website_content.PAGE_SECTIONS)
+    assert next(r for r in layout if r["id"] == "careers")["shown"] is False                    # hidden stays hidden
+    sites = json.loads(rows["sites"].published)
+    assert sites[0] == {"site": "Nuzividu", "client": "APTIDCO housing", "town": "Nuzividu", "state": "AP", "work": "", "status": "Ongoing"}
+    assert sites[1]["state"] == "TS"
+    assert json.loads(rows["credentials"].published) == [{"label": "GSTIN", "value": "36ABCDE1234F1Z5"}]
+
+
+def test_a_projects_percent_done_is_shown_only_when_the_company_chooses(tenant, client, ours):
+    j = ok(tenant.post("/api/jobs", json={"name": "Vision Arusha", "customer_name": "Vision", "status": "in_progress"}))
+    ok(tenant.put("/api/website/sections/projects", json={"draft": {str(j["id"]): {"show": True, "sector": "", "location": "", "scope": ""}}}))
+    ok(tenant.post("/api/website/publish", json={}))
+    assert client.get("/api/public/site").json()["projects"][0]["progress"] is None
+    options = dict(website_content.seed()["options"], showProgress=True)
+    ok(tenant.put("/api/website/sections/options", json={"draft": options}))
+    assert ok(tenant.get("/api/website/preview"))["content"]["options"]["showProgress"] is True
+    ok(tenant.post("/api/website/publish", json={}))
+    # No programme yet: still nothing to show, rather than a made-up 0%.
+    assert client.get("/api/public/site").json()["projects"][0]["progress"] is None
+
+
+def test_the_edit_bar_is_for_editors_only_and_a_visitor_is_told_no_quietly(tenant, client, ours):
+    ok(tenant.post("/api/website/publish", json={}))
+    me = ok(tenant.get("/api/website/editor"))
+    assert me["can_edit"] is True and me["last_published"]
+    with TestClient(main.app) as visitor:
+        assert ok(visitor.get("/api/website/editor")) == {"can_edit": False, "last_published": ""}
+
+
+def test_the_overview_counts_this_weeks_enquiries(tenant, client, ours):
+    ok(client.post("/api/public/enquiry", json={"name": "Ravi", "phone": "9800000000", "city": "Hyderabad"}))
+    assert ok(tenant.get("/api/website/sections"))["overview"]["enquiries_this_week"] >= 1

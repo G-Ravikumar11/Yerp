@@ -32,7 +32,7 @@ assert FINISHED in JOB_STATUSES and all(s in JOB_STATUSES for s in RUNNING)
 PHOTOS_PER_PROJECT = website_content.MAX_PROJECT_PHOTOS
 WEBSITE_FILES = "website"          # attached_type of a picture uploaded for the website itself, not for a project
 # The shape the panel crops a picture to, by where it goes: width and height in pixels.
-PLACES = {"hero": (1600, 900), "section": (1200, 900), "story": (1200, 800), "project": (1200, 900)}
+PLACES = {"hero": (1600, 1100), "section": (1200, 800), "sheet": (1600, 1000), "story": (1200, 800), "project": (1600, 1000)}
 
 
 def _company(db):
@@ -94,6 +94,10 @@ def _figures(db, c, content, cards, chosen, photo_url):
         jobs = _shown(db, c.id).order_by(*order).limit(60).all()
     shown = {j.id: _card(j, cards) for j in jobs}
     photos = _photos(db, c.id, [j.id for j in jobs], chosen)
+    # A project's "% done", from its programme - only when the company has chosen to show it (options.showProgress).
+    progress = {}
+    if ((content or {}).get("options") or {}).get("showProgress"):
+        progress = {j.id: website_content.programme_done(db, c.id, j) for j in jobs}
     return {
         "company_id": c.id,                  # the careers page's reference, already public on its links
         "numbers": {
@@ -106,6 +110,7 @@ def _figures(db, c, content, cards, chosen, photo_url):
             "location": shown[j.id]["location"], "scope": shown[j.id]["scope"],
             "status": "Completed" if j.status == FINISHED else "Ongoing", "year": (j.start_date or "")[:4],
             "photos": [photo_url % f for f in photos.get(j.id, [])],
+            "progress": progress.get(j.id),
         } for j in jobs],
         "content": content,
         # The openings on the Careers section: Recruitment's open, published jobs, live as soon as they are posted.
@@ -183,7 +188,20 @@ def website_sections(request: Request, db: Session = Depends(get_db)):
     client = _reader(request, db)
     if website_content.ensure_sections(db, client.id):
         db.commit()
-    return {"sections": website_content.sections(db, client.id), "latest": (website_content.versions(db, client.id, 1) or [None])[0]}
+    return {"sections": website_content.sections(db, client.id), "latest": (website_content.versions(db, client.id, 1) or [None])[0],
+            "overview": website_content.overview(db, client.id)}
+
+
+@router.get("/api/website/editor")
+def website_editor(request: Request, db: Session = Depends(get_read_db)):
+    """For the public page's edit bar: whether the person looking may edit the website, and when it was last published.
+    Anybody else is told no, and nothing more - answered quietly, so a visitor's browser logs no error for it."""
+    try:
+        client = _reader(request, db)
+    except HTTPException:
+        return {"can_edit": False, "last_published": ""}
+    latest = (website_content.versions(db, client.id, 1) or [None])[0]
+    return {"can_edit": session_can(request, db, "website.manage"), "last_published": (latest or {}).get("published_at", "")}
 
 
 class DraftIn(BaseModel):
@@ -290,7 +308,7 @@ def upload_website_image(request: Request, file: UploadFile = File(...), place: 
     project's own photos; anything else goes to the website's pictures."""
     client, name = _manager(request, db)
     if place not in PLACES:
-        raise HTTPException(400, "Choose where the picture goes: the banner, a section, the story or a project.")
+        raise HTTPException(400, "Choose where the picture goes: the opening, a tile, a drawing sheet, the story or a project.")
     if (file.content_type or "").lower() not in ("image/jpeg", "image/png", "image/webp"):
         raise HTTPException(400, "A photo: JPEG, PNG or WebP.")
     data = file.file.read()

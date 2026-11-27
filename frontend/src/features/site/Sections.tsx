@@ -1,288 +1,231 @@
-import { useEffect, useRef, useState } from 'react'
-import { typeFor } from './data/content'
-import { useContent } from './siteContent'
-import { goTo } from './Nav'
-import { asset, imgSrc, inr, reduceMotion } from './lib'
-import { Head } from './Head'
 import { appUrl } from '@/lib/paths'
-import { EnquiryForm } from './Live'
+import { typeFor } from './data/content'
+import { DTitle, waNumber } from './Parts'
+import { goTo } from './Nav'
+import { asset, imgSrc, inr } from './lib'
+import { useContent } from './siteContent'
 import type { Live, Opening } from './siteApi'
 
-const DURATION = 7000
 const YEAR = new Date().getFullYear()
 
-/** The opening photograph, changing every few seconds, with the kinds of work as its chapters. */
-export function Hero() {
-  const { SITE } = useContent()
-  // The slides can change once the published content arrives; the timer below reads the count from here.
-  const count = useRef(SITE.slides.length)
-  count.current = SITE.slides.length
-  const [cur, setCur] = useState(0)
-  const chapters = useRef<(HTMLButtonElement | null)[]>([])
-  const boxRef = useRef<HTMLDivElement>(null)
-  const state = useRef({ cur: 0, t0: 0, visible: true })
-
-  const go = (i: number) => {
-    const n = count.current
-    if (!n) return
-    const next = (i + n) % n
-    state.current.cur = next
-    state.current.t0 = performance.now()
-    setCur(next)
-    chapters.current.forEach((b, k) => b?.style.setProperty('--p', String(k < next ? 1 : 0)))
-  }
-
-  useEffect(() => {
-    const reduce = reduceMotion()
-    const io = new IntersectionObserver(([e]) => { state.current.visible = e.isIntersecting })
-    if (boxRef.current) io.observe(boxRef.current)
-    state.current.t0 = performance.now()
-    const progress = () => Number(chapters.current[state.current.cur]?.style.getPropertyValue('--p')) || 0
-    const onVisible = () => { if (!document.hidden) state.current.t0 = performance.now() - progress() * DURATION }
-    document.addEventListener('visibilitychange', onVisible)
-    let id = 0
-    const tick = (now: number) => {
-      id = requestAnimationFrame(tick)
-      if (reduce || !state.current.visible || document.hidden) { state.current.t0 = now - progress() * DURATION; return }
-      const p = Math.min(1, (now - state.current.t0) / DURATION)
-      chapters.current[state.current.cur]?.style.setProperty('--p', String(p))
-      if (p >= 1) go(state.current.cur + 1)
-    }
-    id = requestAnimationFrame(tick)
-    if (reduce) chapters.current[0]?.style.setProperty('--p', '1')
-    return () => { cancelAnimationFrame(id); io.disconnect(); document.removeEventListener('visibilitychange', onVisible) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  return (
-    <section className="hero" id="top" aria-label="Introduction">
-      <div className="hero__slides" id="slides" ref={boxRef}>
-        {SITE.slides.map((s, i) => (
-          <div key={s.t} className={`slide${i === cur ? ' on' : ''}`}><img src={imgSrc(s.img)} alt="" {...(i ? { loading: 'lazy' as const } : { fetchPriority: 'high' as const })} /></div>
-        ))}
-      </div>
-      <div className="hero__shade" aria-hidden="true" />
-      <div className="wrap hero__inner">
-        <h1 className="hero__title">{SITE.hero.title}</h1>
-        <p className="hero__sub">{SITE.hero.sub}</p>
-        <div className="hero__cta">
-          <a href="#quote" className="btn btn--primary" onClick={(e) => goTo('#quote') && e.preventDefault()}>Start a Project</a>
-          <a href="#projects" className="btn btn--ghost" onClick={(e) => goTo('#projects') && e.preventDefault()}>See Our Projects</a>
-        </div>
-      </div>
-      <div className="wrap hero__chapters" id="chapters" role="tablist" aria-label="What we build">
-        {SITE.slides.map((s, i) => (
-          <button key={s.t} ref={(el) => { chapters.current[i] = el }} className="chap" role="tab" aria-selected={i === cur} onClick={() => go(i)}><b>{s.t}</b><small>{s.l}</small></button>
-        ))}
-      </div>
-    </section>
-  )
+/** The figures the title block can show, in the brief's order of priority: sites running, towns, years, engineers and crew,
+ *  then states and kinds of work. Only figures we have; at most four. */
+export function figures(live: Live | null, site: ReturnType<typeof useContent>['SITE'], company: ReturnType<typeof useContent>['COMPANY']) {
+  const rows = site.sites.filter((r) => r.site.trim())
+  const listed = rows.filter((r) => /ongoing|running/i.test(r.status)).length
+  const recorded = live?.numbers.ongoing_sites ?? 0
+  const towns = new Set(rows.map((r) => r.town.trim().toLowerCase()).filter(Boolean)).size
+  const states = new Set(rows.map((r) => r.state.trim().toUpperCase()).filter(Boolean)).size
+  const kinds = site.capabilities.filter((c) => c.title.trim()).length
+  const out: { label: string; value: number; live?: boolean }[] = []
+  const running = Math.max(listed, recorded)
+  if (running) out.push({ label: 'Sites running now', value: running, live: recorded > 0 && recorded >= listed })
+  if (towns) out.push({ label: 'Towns', value: towns })
+  if (company.founded) out.push({ label: 'Years building', value: YEAR - company.founded })
+  if (company.staff) out.push({ label: 'Engineers & crew', value: company.staff })
+  if (states) out.push({ label: 'States', value: states })
+  if (kinds) out.push({ label: 'Kinds of work', value: kinds })
+  return out.slice(0, 4)
 }
 
-function Count({ to, prefix = '', suffix = '' }: { to: number; prefix?: string; suffix?: string }) {
-  const ref = useRef<HTMLElement>(null)
-  const [text, setText] = useState(prefix + inr(to) + suffix)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const io = new IntersectionObserver(([e]) => {
-      if (!e.isIntersecting) return
-      io.disconnect()
-      const t0 = performance.now()
-      const d = reduceMotion() ? 1 : 1600
-      const f = (now: number) => {
-        const p = Math.min(1, (now - t0) / d)
-        setText(prefix + inr(to * (1 - Math.pow(1 - p, 4))) + suffix)
-        if (p < 1) requestAnimationFrame(f)
-      }
-      requestAnimationFrame(f)
-    }, { threshold: 0.6 })
-    io.observe(el)
-    return () => io.disconnect()
-  }, [to, prefix, suffix])
-  return <dd ref={ref as React.RefObject<HTMLElement>}>{text}</dd>
-}
-
-/** The company at a glance: only figures we can stand behind - the confirmed ones from content.ts and the live ones from
- *  our own project records. A figure not yet known is left out rather than guessed. */
-export function Proof({ live }: { live: Live | null }) {
+/** The opening: kicker, headline, the two buttons, the site photograph framed with dimension lines and its callout, the
+ *  figures in a title block, and who we build for. */
+export function Hero({ live }: { live: Live | null }) {
   const { COMPANY, SITE } = useContent()
-  const n = live?.numbers
-  const stats: [string, number, string?][] = []
-  if (COMPANY.founded) stats.push(['Years building', YEAR - COMPANY.founded])
-  if (n?.projects_delivered) stats.push(['Projects delivered', n.projects_delivered])
-  // The sites we list on the page are all running (Hemanth, 19 Nov 2026), so the count never shows fewer than them.
-  const running = Math.max(n?.ongoing_sites ?? 0, SITE.sites.reduce((k, g) => k + g.names.length, 0))
-  if (running) stats.push(['Sites running now', running])
-  if (COMPANY.staff) stats.push(['Engineers & crew', COMPANY.staff, '+'])
-  if (n?.safe_man_hours) stats.push(['Safe man-hours', n.safe_man_hours])
+  const h = SITE.hero
+  const photo = h.photo
+  const figs = figures(live, SITE, COMPANY)
+  const clients = SITE.clients.map((c) => c.trim()).filter(Boolean)
   return (
-    <section className="proof" aria-label="Company at a glance">
-      <div className="wrap proof__grid">
-        <p className="proof__lead">{SITE.lead}</p>
-        {stats.length > 0 && (
-          <dl className="proof__stats">
-            {stats.slice(0, 4).map(([label, to, suffix]) => <div key={label}><dt>{label}</dt><Count to={to} suffix={suffix} /></div>)}
-          </dl>
+    <section className="hero" id="top" aria-label="Introduction"><div className="wrap">
+      <div className={`hero__grid${photo.img ? '' : ' hero__grid--solo'}`}>
+        <div>
+          {h.kicker && <p className="kicker">{h.kicker}</p>}
+          <h1>{h.title}{h.accent && <> <em>{h.accent}</em></>}</h1>
+          {h.sub && <p className="sub">{h.sub}</p>}
+          <div className="ctas">
+            <a className="btn btn--solid" href="#projects" onClick={(e) => goTo('#projects') && e.preventDefault()}>See our projects <span className="arrow" aria-hidden="true">→</span></a>
+            <a className="btn btn--line" href="#quote" onClick={(e) => goTo('#quote') && e.preventDefault()}>Request a quote</a>
+          </div>
+        </div>
+        {photo.img && (
+          <figure className="frame">
+            {photo.label && <div className="dim t" aria-hidden="true"><span>{photo.label}</span></div>}
+            {photo.side && <div className="dim l" aria-hidden="true"><span>{photo.side}</span></div>}
+            <img src={imgSrc(photo.img)} alt={[photo.label, photo.side, photo.callout].filter(Boolean).join(': ')} width="1200" height="825" fetchPriority="high" />
+            {photo.callout && <figcaption className="callout">{photo.calloutTitle && <b>{photo.calloutTitle}</b>}{photo.callout}</figcaption>}
+          </figure>
         )}
       </div>
-    </section>
-  )
-}
-
-/** Who we are, and the group company that does the building services. */
-export function About() {
-  const { COMPANY, SITE } = useContent()
-  return (
-    <section className="band about" id="about">
-      <div className="wrap">
-        <div className="sechead sechead--split">
-          <div><p className="eyebrow">{SITE.headings.about.eyebrow}</p><h2 className="h2">{SITE.headings.about.title}</h2></div>
-          <div className="about__text">{SITE.about.map((p) => <p key={p} className="lede">{p}</p>)}</div>
-        </div>
-        <div className="group" id="company-group">
-          <p className="eyebrow">The Yalavarti Group</p>
-          <p className="group__text">
-            For {COMPANY.group.does}, see our group company,{' '}
-            <a href={COMPANY.group.url} target="_blank" rel="noopener noreferrer">{COMPANY.group.name} ↗</a>
-          </p>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-/** What we build: a sticky photograph that follows whichever kind of work is in the middle of the screen. */
-export function Capabilities({ choose }: { choose: (type: string) => void }) {
-  const { SITE } = useContent()
-  const [active, setActive] = useState(0)
-  const items = useRef<(HTMLLIElement | null)[]>([])
-  useEffect(() => {
-    const io = new IntersectionObserver((es) => es.forEach((e) => e.isIntersecting && setActive(Number((e.target as HTMLElement).dataset.i))), { rootMargin: '-45% 0px -45% 0px' })
-    items.current.forEach((el) => el && io.observe(el))
-    return () => io.disconnect()
-  }, [SITE.capabilities.length])
-  return (
-    <section className="band" id="build">
-      <div className="wrap">
-        <Head h={SITE.headings.build} />
-        <div className="caps">
-          <div className="caps__media" aria-hidden="true">
-            <div className="caps__frame" id="capsframe">{SITE.capabilities.map((s, i) => <img key={s.id} src={imgSrc(s.img)} alt="" loading="lazy" className={i === active ? 'on' : undefined} />)}</div>
-          </div>
-          <ol className="caps__list" id="caps">
-            {SITE.capabilities.map((s, i) => (
-              <li key={s.id} ref={(el) => { items.current[i] = el }} data-i={i} className={`cap${i === active ? ' on' : ''}`}>
-                <div className="cap__head"><span className="cap__n">0{i + 1}</span><h3>{s.title}</h3><span className="cap__tag">{s.tag}</span></div>
-                <img className="cap__img" src={imgSrc(s.img)} alt="" loading="lazy" />
-                <div className="cap__body">
-                  <p>{s.intro}</p>
-                  <ul>{s.list.map((x) => <li key={x}>{x}</li>)}</ul>
-                  <a className="cap__add" href="#quote" onClick={(e) => { e.preventDefault(); choose(typeFor(s.id, SITE.plan.types)) }}>Enquire About This →</a>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-/** How a job runs, from the land to the keys. */
-export function HowWeBuild() {
-  const { SITE } = useContent()
-  return (
-    <section className="band band--light" id="process" aria-label="How we build">
-      <div className="wrap">
-        <Head h={SITE.headings.process} />
-        <ol className="steps">
-          {SITE.steps.map((s, i) => (
-            <li key={s.t} className="step"><span className="step__n num">0{i + 1}</span><h3>{s.t}</h3><p>{s.d}</p></li>
+      {(figs.length > 0 || h.note) && (
+        <dl className="tblock" aria-label="At a glance" style={{ ['--n' as string]: figs.length }}>
+          {figs.map((f) => (
+            <div key={f.label}>
+              <dt><small>{f.label}</small></dt>
+              <dd className="num">{inr(f.value)}</dd>
+              {f.live && <small className="live">Live from site records</small>}
+            </div>
           ))}
-        </ol>
-      </div>
-    </section>
+          {(h.noteTitle || h.note) && <div className="note">{h.noteTitle && <b>{h.noteTitle}</b>}{h.note}</div>}
+        </dl>
+      )}
+      {clients.length > 0 && <div className="clients"><small>Building for</small>{clients.map((c) => <span key={c}>{c}</span>)}</div>}
+    </div></section>
   )
 }
 
-/** Our openings, posted from Settings -> Website or from Recruitment. "Apply" opens the opening's own application form,
- *  which lands in Recruitment. With none open, a CV by email. */
-export function Careers({ companyId, openings }: { companyId?: number; openings: Opening[] }) {
+/** About: our general notes, with the group company in a "Ref." box. */
+export function About({ no }: { no: number }) {
   const { COMPANY, SITE } = useContent()
-  const h = SITE.headings.careers
+  const notes = SITE.about.map((p) => p.trim()).filter(Boolean)
+  const g = COMPANY.group
+  return (
+    <section className="sec" id="about" aria-labelledby="about-h"><div className="wrap">
+      <DTitle no={no} h={SITE.headings.about} id="about-h" />
+      <div className="notes">
+        <div>
+          <h3>General notes</h3>
+          <ol>{notes.map((p) => <li key={p}>{p}</li>)}</ol>
+        </div>
+        {g.name && (
+          <aside className="group" aria-label="The Yalavarti Group">
+            <b>Part of the Yalavarti Group</b>
+            <p>For {g.does || 'building services'}, see our group company, {g.name}.</p>
+            {g.url && <a href={g.url} target="_blank" rel="noopener noreferrer">{g.url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')} ↗</a>}
+          </aside>
+        )}
+      </div>
+    </div></section>
+  )
+}
+
+/** What we build: detail tiles, numbered 3.1, 3.2... The first is twice as wide; a kind of work marked as a line (civil
+ *  structures) is a line under the grid. "Enquire about this" opens the enquiry with that kind of work chosen. */
+export function Build({ no, choose }: { no: number; choose: (type: string) => void }) {
+  const { SITE } = useContent()
+  const all = SITE.capabilities.filter((c) => c.title.trim())
+  const tiles = all.filter((c) => !c.line)
+  const lines = all.filter((c) => c.line)
+  return (
+    <section className="sec" id="build" aria-labelledby="build-h"><div className="wrap">
+      <DTitle no={no} h={SITE.headings.build} id="build-h" />
+      <div className="tiles">
+        {tiles.map((c, i) => (
+          <article key={c.id || c.title} className={`tile${i === 0 && tiles.length > 2 ? ' tile--wide' : ''}`}>
+            <div className="ph">
+              {c.img ? <img src={imgSrc(c.img)} alt={c.title} loading="lazy" decoding="async" width="600" height="400" /> : <img src={asset('site/img/mark.png')} alt="" loading="lazy" style={{ objectFit: 'contain', padding: '20%' }} />}
+              <span className="tag">Detail {no}.{i + 1}</span>
+            </div>
+            <div className="body">
+              <h3>{c.title}</h3>
+              {c.intro && <p>{c.intro}</p>}
+              {c.list.length > 0 && <ul>{c.list.filter(Boolean).map((x) => <li key={x}>{x}</li>)}</ul>}
+              <a className="ask" href="#quote" onClick={(e) => { e.preventDefault(); choose(typeFor(c.id, SITE.plan.types)) }}>Enquire about this →</a>
+            </div>
+          </article>
+        ))}
+      </div>
+      {lines.map((c, i) => (
+        <p key={c.id || c.title} className="tiles__also">Also: <b>{c.title.toLowerCase()}</b>{c.intro ? `, ${c.intro.replace(/\.$/, '')}` : ''} (detail {no}.{tiles.length + i + 1}).</p>
+      ))}
+    </div></section>
+  )
+}
+
+/** How we build: the stages on a chainage line, the last marked in red. */
+export function Process({ no }: { no: number }) {
+  const { SITE } = useContent()
+  const steps = SITE.steps.filter((s) => s.t.trim())
+  return (
+    <section className="sec sec--tint" id="process" aria-labelledby="process-h"><div className="wrap">
+      <DTitle no={no} h={SITE.headings.process} id="process-h" />
+      <ol className="chain" style={{ ['--n' as string]: steps.length }}>
+        {steps.map((s, i) => <li key={s.t} className="stage"><span className="ch">Stage {i + 1}</span><h3>{s.t}</h3>{s.d && <p>{s.d}</p>}</li>)}
+      </ol>
+    </div></section>
+  )
+}
+
+/** Our story: the milestones on a chainage line with their years. Left off while there are none. */
+export function Story({ no }: { no: number }) {
+  const { SITE } = useContent()
+  const ms = SITE.timeline.filter((m) => m.t.trim() || m.y.trim())
+  if (!ms.length) return null
+  return (
+    <section className="sec" id="story" aria-labelledby="story-h"><div className="wrap">
+      <DTitle no={no} h={SITE.headings.story} id="story-h" />
+      <ol className="chain" style={{ ['--n' as string]: Math.min(ms.length, 6) }}>
+        {ms.map((m) => <li key={m.y + m.t} className="stage">{m.y && <span className="yr num">{m.y}</span>}<h3>{m.t}</h3>{m.d && <p>{m.d}</p>}</li>)}
+      </ol>
+    </div></section>
+  )
+}
+
+/** Careers: the openings register, each with its own Apply, and a row for a CV when nothing listed fits. */
+export function Careers({ no, companyId, openings }: { no: number; companyId?: number; openings: Opening[] }) {
+  const { COMPANY, SITE } = useContent()
   const cv = `mailto:${COMPANY.email}?subject=${encodeURIComponent('Job application')}`
   return (
-    <section className="careers" id="careers" aria-label="Careers">
-      <div className="wrap">
-        <div className="sechead sechead--split">
-          <div><p className="eyebrow">{h.eyebrow}</p><h2 className="h2">{h.title}</h2></div>
-          <p className="lede">{h.lede || (openings.length ? 'Engineers, supervisors and crew for our sites. Apply online - it takes a few minutes.' : 'No openings right now. Send us your CV and we will keep it for the next one.')}</p>
-        </div>
-        {openings.length > 0 && (
-          <ul className="jobs" aria-label="Openings">
-            {openings.map((o) => (
-              <li key={o.id} className="job">
-                <div className="job__text">
-                  <h3>{o.title}</h3>
-                  {(o.location || o.experience) && <p className="job__meta">{[o.location, o.experience && `${o.experience} experience`].filter(Boolean).join(' · ')}</p>}
-                  {o.description && <p className="job__desc">{o.description}</p>}
-                </div>
-                {o.apply_token
-                  ? <a className="btn btn--light" href={appUrl(`apply?token=${encodeURIComponent(o.apply_token)}`)} aria-label={`Apply for ${o.title}`}>Apply</a>
-                  : <a className="btn btn--outline-light" href={cv}>Send Your CV</a>}
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="careers__more">
-          {openings.length > 0 && companyId ? <a className="link-arrow" href={appUrl(`jobs?c=${companyId}`)}>Every opening, with the full details →</a> : null}
-          <a className={openings.length ? 'link-arrow' : 'btn btn--light'} href={cv}>{openings.length ? 'Or send us your CV →' : 'Send Your CV'}</a>
-        </div>
-      </div>
-    </section>
+    <section className="sec" id="careers" aria-labelledby="careers-h"><div className="wrap">
+      <DTitle no={no} h={SITE.headings.careers} id="careers-h" />
+      <ul className="jobs" aria-label="Openings" style={{ listStyle: 'none' }}>
+        {openings.map((o, i) => (
+          <li key={o.id} className="job">
+            <span className="ref">J-{String(i + 1).padStart(2, '0')}</span>
+            <div>
+              <h3>{o.title}</h3>
+              {(o.location || o.experience) && <p>{[o.location, o.experience && `${o.experience} experience`].filter(Boolean).join(' · ')}</p>}
+              {o.description && <p className="desc">{o.description}</p>}
+            </div>
+            {o.apply_token
+              ? <a className="btn btn--solid" href={appUrl(`apply?token=${encodeURIComponent(o.apply_token)}`)} aria-label={`Apply for ${o.title}`}>Apply</a>
+              : <a className="btn btn--line" href={cv}>Send your CV</a>}
+          </li>
+        ))}
+        <li className="job">
+          <span className="ref">J-{String(openings.length + 1).padStart(2, '0')}</span>
+          <div><h3>{openings.length ? 'Not listed?' : 'No openings right now'}</h3><p>Send us your CV and we will keep it for the next opening.</p></div>
+          <a className="btn btn--line" href={cv}>Send your CV</a>
+        </li>
+      </ul>
+      {openings.length > 0 && companyId ? <a className="morelink" href={appUrl(`jobs?c=${companyId}`)}>Every opening, with the full details <span className="arrow" aria-hidden="true">→</span></a> : null}
+    </div></section>
   )
 }
 
-export function Contact({ toast }: { toast: (m: string) => void }) {
-  const { COMPANY, SITE } = useContent()
-  const map = encodeURIComponent(COMPANY.address)
-  return (
-    <section className="band" id="contact">
-      <div className="wrap">
-        <p className="eyebrow">{SITE.headings.contact.eyebrow}</p>
-        <h2 className="contact__title">{SITE.headings.contact.title}</h2>
-        {SITE.headings.contact.lede && <p className="lede">{SITE.headings.contact.lede}</p>}
-        <div className="contact__grid">
-          <a href={`tel:${COMPANY.phone.tel}`} className="contact__item"><span className="eyebrow">Call</span><span className="num">{COMPANY.phone.show}</span></a>
-          <a href={`mailto:${COMPANY.email}`} className="contact__item"><span className="eyebrow">Email</span>{COMPANY.email}</a>
-          <a href={`https://www.google.com/maps?q=${map}`} target="_blank" rel="noopener noreferrer" className="contact__item"><span className="eyebrow">Office</span>{COMPANY.address}</a>
-        </div>
-        <div className="contact__enq" id="enquire">
-          <p className="eyebrow">Send an Enquiry</p>
-          <EnquiryForm toast={toast} />
-        </div>
-        <iframe className="contact__map" title={`Map: ${COMPANY.name} office`} loading="lazy" referrerPolicy="no-referrer-when-downgrade"
-          src={`https://www.google.com/maps?q=${map}&output=embed`} />
-      </div>
-    </section>
-  )
-}
+const SOCIAL: [keyof ReturnType<typeof useContent>['COMPANY']['social'], string][] = [['linkedin', 'LinkedIn'], ['facebook', 'Facebook'], ['instagram', 'Instagram'], ['youtube', 'YouTube']]
 
+/** The foot of the page: the drawing's title block, then the copyright and the one Staff login link. */
 export function Footer() {
   const { COMPANY, SITE } = useContent()
+  const map = `https://www.google.com/maps?q=${encodeURIComponent(COMPANY.address)}`
+  const social = SOCIAL.filter(([k]) => COMPANY.social?.[k]?.trim())
+  const cells: { key: string; label: string; body: React.ReactNode }[] = []
+  if (COMPANY.address) cells.push({ key: 'o', label: 'Office', body: <a className="v" href={map} target="_blank" rel="noopener noreferrer">{COMPANY.address}</a> })
+  if (COMPANY.phone.show) cells.push({ key: 'c', label: 'Call', body: <a className="v num" href={`tel:${COMPANY.phone.tel}`}>{COMPANY.phone.show}</a> })
+  if (COMPANY.email) cells.push({ key: 'e', label: 'Email', body: <a className="v" href={`mailto:${COMPANY.email}`}>{COMPANY.email}</a> })
+  if (SITE.footer.showGroupLink && COMPANY.group.name) cells.push({ key: 'g', label: 'Group company', body: <a className="v" href={COMPANY.group.url} target="_blank" rel="noopener noreferrer">{COMPANY.group.name} ↗</a> })
+  if (social.length) cells.push({ key: 's', label: 'Follow', body: <span className="social">{social.map(([k, label]) => <a key={k} className="v" href={COMPANY.social[k]} target="_blank" rel="noopener noreferrer">{label} ↗</a>)}</span> })
+  if (SITE.footer.sheet) cells.push({ key: 'sh', label: 'Sheet', body: <span className="v mono">{SITE.footer.sheet}</span> })
+  cells.push({ key: 'r', label: 'Rev.', body: <span className="v mono">{YEAR}</span> })
+  // Three cells to a row beside the company's box; the last row has no line under it.
+  const lastRowFrom = Math.floor((cells.length - 1) / 3) * 3
+  const words = COMPANY.name.split(' ')
   return (
-    <footer className="footer">
-      <div className="wrap footer__top">
-        <a href="#top" className="brand brand--lg" aria-label="Back to top" onClick={(e) => goTo('#top') && e.preventDefault()}><img src={asset('site/img/mark.png')} alt="" width="54" height="54" /><span translate="no">Yalavarti Infra</span></a>
-        <nav className="footer__links" aria-label="Footer">
-          {SITE.footer.showGroupLink && <a href={COMPANY.group.url} target="_blank" rel="noopener noreferrer">{COMPANY.group.name} ↗</a>}
-        </nav>
+    <footer><div className="wrap">
+      <div className="titleblock">
+        <div className="co" style={{ gridRow: `span ${Math.ceil(cells.length / 3)}` }}><img src={asset('site/img/mark.png')} alt="" width="44" height="44" /><b translate="no">{words[0]}<br />{words.slice(1).join(' ')}</b>{SITE.footer.tagline && <small>{SITE.footer.tagline}</small>}</div>
+        {cells.map((c, i) => <div key={c.key} className={i >= lastRowFrom ? 'bot' : undefined}><small>{c.label}</small>{c.body}</div>)}
       </div>
-      <div className="wrap footer__bottom">
-        <p>© {YEAR} {COMPANY.name}{SITE.footer.tagline ? ` · ${SITE.footer.tagline}` : ''}</p>
-        <a className="footer__staff" href={appUrl('login')}>Staff login</a>
-      </div>
-    </footer>
+      <div className="fine"><span>© {YEAR} {COMPANY.name}</span><a className="footer__staff" href={appUrl('login')}>Staff login</a></div>
+    </div></footer>
   )
+}
+
+/** WhatsApp us: phones only, and only once the number is set. */
+export function WhatsApp() {
+  const { COMPANY } = useContent()
+  const n = waNumber(COMPANY.whatsapp || '')
+  if (n.length < 10) return null
+  return <a className="wa" href={`https://wa.me/${n.length === 10 ? '91' + n : n}`} target="_blank" rel="noopener noreferrer" aria-label="WhatsApp us">WhatsApp us</a>
 }

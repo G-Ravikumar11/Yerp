@@ -10,6 +10,7 @@ import { HistoryPart, LayoutPart, PicturesPart, ProjectsPart } from './website/c
 import { PARTS, getAt, keysOf, setAt, type Part } from './website/parts'
 import { Preview } from './website/Preview'
 import { CareersPart } from './website/CareersPart'
+import { OverviewPart } from './website/OverviewPart'
 
 const PRIVATE = new Set(['projects'])
 
@@ -21,7 +22,7 @@ export default function WebsiteTab() {
   const qc = useQueryClient()
   const q = useWebsiteSections()
   const params = new URLSearchParams(window.location.search)
-  const [partId, setPartId] = useState(() => (PARTS.some((p) => p.id === params.get('part')) ? params.get('part')! : 'hero'))
+  const [partId, setPartId] = useState(() => (PARTS.some((p) => p.id === params.get('part')) ? params.get('part')! : 'overview'))
   const focus = Number(params.get('project')) || undefined
   // What has been typed and not yet saved as the draft, by section.
   const [edits, setEdits] = useState<Record<string, unknown>>({})
@@ -139,6 +140,7 @@ export default function WebsiteTab() {
             <h2 id="part-title" className="text-lg font-semibold">{part.label}</h2>
             {part.hint && <p className="text-sm text-muted-foreground">{part.hint}</p>}
           </div>
+          {part.custom === 'overview' && <OverviewPart draft={draft} overview={q.data?.overview} go={setPartId} />}
           {part.custom === 'layout' && <LayoutPart draft={draft} set={set} />}
           {part.custom === 'history' && <HistoryPart onRestored={() => { setEdits({}); setReload((n) => n + 1) }} />}
           {part.custom === 'pictures' && <PicturesPart draft={draft} set={set} />}
