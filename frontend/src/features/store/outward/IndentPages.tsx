@@ -12,7 +12,7 @@ import { EnquiryFromLines } from '../reports/RaiseEnquiry'
 import { dmy, num, outwardKeys, qs, today, useBoqItems, useIndent, useIndents, useWorkOrders, type Indent, type IndentLine } from './api'
 
 const TONE = { DRAFT: 'neutral', SUBMITTED: 'info', OPEN: 'warning', PARTIAL: 'warning', CLOSED: 'success', CANCELLED: 'danger' } as const
-const LABEL = { DRAFT: 'Draft', SUBMITTED: 'Awaiting approval', OPEN: 'Open', PARTIAL: 'Partly issued', CLOSED: 'Closed', CANCELLED: 'Cancelled' } as const
+const LABEL = { DRAFT: 'Draft', SUBMITTED: 'Waiting for approval', OPEN: 'Open', PARTIAL: 'Partly issued', CLOSED: 'Closed', CANCELLED: 'Cancelled' } as const
 export const IndentBadge = ({ status }: { status: Indent['status'] }) => <Badge tone={TONE[status]} dot>{LABEL[status]}</Badge>
 
 /** Indents: material asked for by site engineers, approved by the project manager and filled by issues. */
@@ -43,10 +43,10 @@ export function IndentListPage() {
         <Field label="Search" htmlFor="in-q" className="w-44"><Input id="in-q" value={f.q} onChange={(e) => set('q', e.target.value)} placeholder="Number, activity, person" /></Field>
         <div className="ml-auto flex gap-2">
           <Button variant="outline" asChild><a href={`/api/store/outward/indent/export${qs(f)}`}><FileSpreadsheet /> Excel</a></Button>
-          {can(storePerm('outward', 'create')) && <Button onClick={() => nav('/store/hub/outward/indent/new')}><Plus /> New indent</Button>}
+          {can(storePerm('outward', 'create')) && <Button onClick={() => nav('/store/hub/outward/indent/new')}><Plus /> New material request</Button>}
         </div>
       </div>
-      {list.isError ? <p role="alert" className="text-sm text-danger">Could not load the indents.</p> : <DataTable label="Indents" rows={list.data?.items ?? []} loading={list.isPending} columns={columns} rowKey={(d) => d.id} onRowClick={(d) => nav(`/store/hub/outward/indent/${d.id}`)} empty="No indents yet." />}
+      {list.isError ? <p role="alert" className="text-sm text-danger">Could not load the material requests.</p> : <DataTable label="Material requests" rows={list.data?.items ?? []} loading={list.isPending} columns={columns} rowKey={(d) => d.id} onRowClick={(d) => nav(`/store/hub/outward/indent/${d.id}`)} empty="No indents yet." />}
     </div>
   )
 }
@@ -83,8 +83,8 @@ export function IndentForm({ indent }: { indent?: Indent }) {
         <Field label="Needed by" htmlFor="ix-need"><Input id="ix-need" type="date" min={f.indent_date} value={f.required_by} onChange={(e) => set('required_by', e.target.value)} /></Field>
         <Field label="Project" htmlFor="ix-proj"><Select id="ix-proj" value={f.project_id || ''} placeholder="Choose a project" onChange={(e) => setF((x) => ({ ...x, project_id: Number(e.target.value) || 0, work_order_id: 0, boq_item_id: 0 }))} options={(projects.data ?? []).map((p) => ({ value: p.id, label: projectLabel(p) }))} /></Field>
         <Field label="Work order" htmlFor="ix-wo"><Select id="ix-wo" value={f.work_order_id || ''} placeholder="None" disabled={!f.project_id} onChange={(e) => set('work_order_id', Number(e.target.value) || 0)} options={(orders.data ?? []).map((w) => ({ value: w.id, label: w.number }))} /></Field>
-        <Field label="BOQ item" htmlFor="ix-boq" hint="Issues against this indent are charged to it."><Select id="ix-boq" value={f.boq_item_id || ''} placeholder="None" disabled={!f.project_id} onChange={(e) => set('boq_item_id', Number(e.target.value) || 0)} options={(boq.data ?? []).map((b) => ({ value: b.id, label: `${b.item_no} ${b.description}`.slice(0, 70) }))} /></Field>
-        <Field label="Activity" htmlFor="ix-act" hint="Needed if there is no work order or BOQ item." className="sm:col-span-2"><Input id="ix-act" value={f.activity} onChange={(e) => set('activity', e.target.value)} placeholder="Columns, block 2" maxLength={200} /></Field>
+        <Field label="BOQ work" htmlFor="ix-boq" hint="Material given for this request is counted against this work."><Select id="ix-boq" value={f.boq_item_id || ''} placeholder="None" disabled={!f.project_id} onChange={(e) => set('boq_item_id', Number(e.target.value) || 0)} options={(boq.data ?? []).map((b) => ({ value: b.id, label: `${b.item_no} ${b.description}`.slice(0, 70) }))} /></Field>
+        <Field label="Work" htmlFor="ix-act" hint="Write the work if there is no work order or BOQ work." className="sm:col-span-2"><Input id="ix-act" value={f.activity} onChange={(e) => set('activity', e.target.value)} placeholder="Columns, block 2" maxLength={200} /></Field>
         <Field label="Remarks" htmlFor="ix-rem"><Textarea id="ix-rem" rows={1} value={f.remarks} onChange={(e) => set('remarks', e.target.value)} /></Field>
       </div>
       <section aria-labelledby="ix-lines">
@@ -94,7 +94,7 @@ export function IndentForm({ indent }: { indent?: Indent }) {
             <div key={r.key} className="grid gap-3 rounded-lg border border-border p-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_minmax(0,1.2fr)_auto]">
               <ItemPicker value={r.item} onChange={(item) => upd(r.key, { item, qty: { qty: '', uom: item?.base_uom ?? '' } })} />
               <UomQtyInput itemId={r.item?.id ?? null} value={r.qty} onChange={(qty) => upd(r.key, { qty })} />
-              <Input aria-label="Purpose" placeholder="What it is for" value={r.purpose} onChange={(e) => upd(r.key, { purpose: e.target.value })} />
+              <Input aria-label="Used for" placeholder="What it is for" value={r.purpose} onChange={(e) => upd(r.key, { purpose: e.target.value })} />
               <Button type="button" variant="ghost" size="sm" aria-label="Remove line" disabled={rows.length === 1} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}><Trash2 /></Button>
             </div>
           ))}
@@ -103,7 +103,7 @@ export function IndentForm({ indent }: { indent?: Indent }) {
       </section>
       <div className="flex justify-end gap-2 border-t border-border pt-4">
         <Button type="button" variant="ghost" onClick={() => nav(indent ? `/store/hub/outward/indent/${indent.id}` : '/store/hub/outward/indent')}>Cancel</Button>
-        <Button type="submit" loading={save.isPending} disabled={!ready}>{indent ? 'Save changes' : 'Save as draft'}</Button>
+        <Button type="submit" loading={save.isPending} disabled={!ready}>{indent ? 'Save changes' : 'Save'}</Button>
       </div>
     </form>
   )
@@ -126,7 +126,7 @@ export function IndentPage() {
   const back = <Link to="/store/hub/outward/indent" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Indents</Link>
   const d = q.data
   if (q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
-  if (q.isError || !d) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this indent.</p></div>
+  if (q.isError || !d) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this material request.</p></div>
   const open = d.status === 'OPEN' || d.status === 'PARTIAL'
   // What the store cannot give from what it holds: the part of the indent to buy.
   const short = open ? (d.lines ?? []).filter((l) => Number(l.short ?? 0) > 0) : []
@@ -136,9 +136,9 @@ export function IndentPage() {
     { id: 'app', header: 'Approved', align: 'right', width: '8rem', cell: (l) => (l.approved_qty == null ? '-' : <span className={Number(l.approved_qty) < Number(l.qty) ? 'text-warning' : ''}>{num(l.approved_qty)} {l.base_uom}</span>) },
     { id: 'iss', header: 'Issued', align: 'right', width: '8rem', cell: (l) => `${num(l.fulfilled)} ${l.base_uom}` },
     { id: 'pen', header: 'Pending', align: 'right', width: '8rem', cell: (l) => (l.pending == null ? '-' : `${num(l.pending)} ${l.base_uom}`) },
-    ...(open ? [{ id: 'short', header: 'Short in store', align: 'right' as const, width: '9rem', cell: (l: IndentLine) => (Number(l.short ?? 0) > 0 ? <span className="font-medium text-danger">{num(l.short)} {l.base_uom}</span> : <span className="text-muted-foreground">-</span>) }] : []),
+    ...(open ? [{ id: 'short', header: 'Not enough in store', align: 'right' as const, width: '9rem', cell: (l: IndentLine) => (Number(l.short ?? 0) > 0 ? <span className="font-medium text-danger">{num(l.short)} {l.base_uom}</span> : <span className="text-muted-foreground">-</span>) }] : []),
     { id: 'buying', header: 'Being bought', width: '11rem', hideBelow: 'sm', cell: (l: IndentLine) => ((l.bought_on ?? []).length ? <div><div className="text-[13px]">on {(l.bought_on ?? []).join(' / ')}</div>{Number(l.on_order ?? 0) > 0 && <div className="text-xs text-muted-foreground">{num(l.on_order)} {l.base_uom} coming</div>}</div> : <span className="text-muted-foreground">-</span>) },
-    { id: 'why', header: 'Purpose', hideBelow: 'md', cell: (l) => <div>{l.purpose || '-'}{l.reason && <div className="text-xs text-warning">{l.substitute_for_line_id ? 'Substituted: ' : 'Cut back: '}{l.reason}</div>}</div> },
+    { id: 'why', header: 'Purpose', hideBelow: 'md', cell: (l) => <div>{l.purpose || '-'}{l.reason && <div className="text-xs text-warning">{l.substitute_for_line_id ? 'Substituted: ' : 'Reduced: '}{l.reason}</div>}</div> },
   ]
   const facts: [string, string][] = [['Store', `${d.store_code} - ${d.store_name}`], ['Raised', `${dmy(d.date)} by ${d.requested_by}`], ['Needed by', d.required_by ? dmy(d.required_by) : '-'], ['Project', d.project], ['Work order', d.work_order || '-'],
     ['BOQ item', d.boq_item || '-'], ['Activity', d.activity || '-'], ['Approved', d.approved_by ? `${d.approved_by} on ${dmy(d.approved_at)}${d.approver_remarks ? ' - ' + d.approver_remarks : ''}` : '-'], ['Remarks', d.remarks || '-']]
@@ -146,23 +146,30 @@ export function IndentPage() {
     <div>
       {back}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div><h2 className="font-mono text-lg font-semibold">{d.number}</h2><div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground"><IndentBadge status={d.status} /> Indent{d.short_closed && <Badge tone="warning">Closed short</Badge>}</div></div>
+        <div><h2 className="font-mono text-lg font-semibold">{d.number}</h2><div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground"><IndentBadge status={d.status} /> Material request{d.short_closed && <Badge tone="warning">Closed (rest not needed)</Badge>}</div></div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" asChild><a href={`/api/store/outward/indent/${d.id}/print`} target="_blank" rel="noreferrer"><Printer /> Print</a></Button>
-          {d.status === 'DRAFT' && can(storePerm('outward', 'create')) && (<><Button variant="outline" onClick={() => nav(`/store/hub/outward/indent/${d.id}/edit`)}><Pencil /> Edit</Button><Button variant="ghost" onClick={() => setDiscarding(true)}><Trash2 /> Delete draft</Button><Button loading={act.isPending} onClick={() => act.mutate('submit')}>Submit for approval</Button></>)}
+          {d.status === 'DRAFT' && can(storePerm('outward', 'create')) && (<><Button variant="outline" onClick={() => nav(`/store/hub/outward/indent/${d.id}/edit`)}><Pencil /> Edit</Button><Button variant="ghost" onClick={() => setDiscarding(true)}><Trash2 /> Delete draft</Button><Button loading={act.isPending} onClick={() => act.mutate('submit')}>Send for approval</Button></>)}
           {d.status === 'SUBMITTED' && can(storePerm('outward', 'approve')) && <Button onClick={() => setApproving(true)}>Review and approve</Button>}
           {open && can(storePerm('outward', 'create')) && <Button onClick={() => nav(`/store/hub/outward/issue/new?indent=${d.id}`)}><PackageOpen /> Issue against it</Button>}
           {short.length > 0 && can('purchase.manage') && <Button variant="outline" onClick={() => setBuying(true)}><ShoppingCart /> Buy the short items</Button>}
-          {open && can(storePerm('outward', 'approve')) && <Button variant="outline" onClick={() => setReason('close')}>Close short</Button>}
+          {open && can(storePerm('outward', 'approve')) && <Button variant="outline" onClick={() => setReason('close')}>Close (rest not needed)</Button>}
           {(d.status === 'DRAFT' || d.status === 'SUBMITTED' || d.status === 'OPEN') && can(storePerm('outward', 'create')) && <Button variant="ghost" onClick={() => setReason('cancel')}>Cancel</Button>}
         </div>
       </div>
       {d.status === 'CANCELLED' && <p role="status" className="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">Cancelled: {d.cancel_reason}.</p>}
       {d.short_closed && <p role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Closed short: {d.cancel_reason}.</p>}
       {short.length > 0 && <p role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">{d.store_code} cannot fill {short.length === 1 ? '1 line' : `${short.length} lines`} from what it holds{can('purchase.manage') ? ' - press Buy the short items to raise a purchase enquiry for the rest.' : '. Ask purchasing to buy the rest.'}</p>}
+      {(d.sheet_warnings ?? []).length > 0 && (
+        <div role="status" className="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">
+          <p className="font-medium">More than the project's approved Item sheet - check before approving</p>
+          <ul className="mt-1 list-disc pl-5">{(d.sheet_warnings ?? []).map((w, i) => <li key={i}>{w}</li>)}</ul>
+          <Link className="mt-1 inline-block font-medium underline" to={`/store/item-sheet?job=${d.project_id}`}>Open the project's Item sheet</Link>
+        </div>
+      )}
       {d.status === 'SUBMITTED' && <p role="status" className="mb-4 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">Waiting for the project manager. They can reduce the quantities when they approve.</p>}
       <dl className="mb-5 grid gap-x-6 gap-y-2 rounded-xl border border-border bg-card p-4 text-sm sm:grid-cols-2 lg:grid-cols-3">{facts.map(([k, v]) => <div key={k}><dt className="text-xs uppercase tracking-wide text-muted-foreground">{k}</dt><dd className="font-medium">{v}</dd></div>)}</dl>
-      <DataTable label="Indent lines" rows={d.lines ?? []} columns={columns} rowKey={(l) => l.id} />
+      <DataTable label="Materials asked for" rows={d.lines ?? []} columns={columns} rowKey={(l) => l.id} />
       {(d.issues ?? []).length > 0 && <p className="mt-3 text-sm text-muted-foreground">Issues: {(d.issues ?? []).map((i) => <Link key={i.id} className="mr-3 font-mono text-primary hover:underline" to={`/store/hub/outward/issue/${i.id}`}>{i.number} ({i.status.toLowerCase()})</Link>)}</p>}
       <section aria-labelledby="in-history" className="mt-6"><h3 id="in-history" className="mb-2 border-b pb-1 text-sm font-semibold">History</h3>
         <ul className="space-y-1 text-sm">{(d.history ?? []).map((h, i) => <li key={i}><span className="font-medium capitalize">{h.action}</span> by {h.by || 'the account holder'} on {dmy(h.at)}{h.note ? ` - ${h.note}` : ''}</li>)}</ul></section>
@@ -180,7 +187,7 @@ export function IndentPage() {
           <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setReason(null)}>Keep it</Button><Button type="submit" loading={act.isPending} disabled={why.trim().length < 3}>{reason === 'close' ? 'Close it' : 'Cancel it'}</Button></div>
         </form>
       </Modal>
-      <ConfirmDialog open={discarding} onOpenChange={setDiscarding} title="Delete this draft?" description="It has not been submitted." confirmLabel="Delete" tone="danger" onConfirm={() => { discard.mutate(); setDiscarding(false) }} />
+      <ConfirmDialog open={discarding} onOpenChange={setDiscarding} title="Delete this draft?" description="It has not been sent for approval." confirmLabel="Delete" tone="danger" onConfirm={() => { discard.mutate(); setDiscarding(false) }} />
     </div>
   )
 }

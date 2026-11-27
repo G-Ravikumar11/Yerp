@@ -187,6 +187,9 @@ def rate_flags(db, client_id, supplier, lines, exclude_po_id=None):
 def check_order(db, client_id, order, lines, reason=""):
     """Check an order's lines as it is saved. Over the budget without a reason is refused; with one, the order is marked
     over budget (and goes to the higher approver). Price alerts are kept on the order. Returns (budget rows, rate flags)."""
+    # The project's approved Item sheet: items not on it are refused; buying past it is flagged with the rates.
+    from app.services.item_sheet import check_order_lines
+    sheet_flags = check_order_lines(db, client_id, order, lines)
     rows = budget_check(db, client_id, order.job_id, lines, order.id)
     over = over_budget(rows)
     reason = (reason or "").strip()
@@ -196,7 +199,7 @@ def check_order(db, client_id, order, lines, reason=""):
                                      "%s by %s" % (r["label"], r["over_by"]) for r in over))
     order.over_budget = bool(over)
     order.budget_reason = reason if over else ""
-    flags = rate_flags(db, client_id, order.supplier_name, lines, order.id)
+    flags = rate_flags(db, client_id, order.supplier_name, lines, order.id) + sheet_flags
     order.rate_flags = json.dumps(flags) if flags else ""
     return rows, flags
 
@@ -210,5 +213,5 @@ def warnings_of(order):
         flags = json.loads(getattr(order, "rate_flags", "") or "[]")
     except ValueError:
         flags = []
-    out += ["Rate alert - %s: %s" % (f.get("description") or f.get("item_code"), f.get("why")) for f in flags]
+    out += ["%s - %s: %s" % ("Item sheet" if f.get("kind") == "sheet" else "Rate alert", f.get("description") or f.get("item_code"), f.get("why")) for f in flags]
     return out

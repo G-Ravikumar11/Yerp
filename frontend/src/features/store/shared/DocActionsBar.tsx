@@ -29,7 +29,7 @@ export interface DocActionsBarProps {
   disabled?: boolean
 }
 
-const LABEL: Record<DocAction, string> = { submit: 'Submit', approve: 'Approve', post: 'Post to stock', cancel: 'Cancel' }
+const LABEL: Record<DocAction, string> = { submit: 'Send for approval', approve: 'Approve', post: 'Save to stock', cancel: 'Cancel' }
 
 /** Submit / approve / post / cancel for a store document. Post and cancel ask first - both move stock. */
 export function DocActionsBar({ status, can, busy = null, onAction, disabled }: DocActionsBarProps) {
@@ -47,15 +47,15 @@ export function DocActionsBar({ status, can, busy = null, onAction, disabled }: 
           disabled={disabled || (!!busy && busy !== a)}
           onClick={() => (a === 'post' || a === 'cancel' ? setAsking(a) : void onAction(a))}
         >
-          {a === 'cancel' && status === 'POSTED' ? 'Cancel & reverse' : LABEL[a]}
+          {a === 'cancel' && status === 'POSTED' ? 'Cancel and undo stock' : LABEL[a]}
         </Button>
       ))}
       <ConfirmDialog
         open={asking === 'post'}
         onOpenChange={(o) => !o && setAsking(null)}
-        title="Post to stock?"
-        description="This adds to or takes from the stock held and cannot be edited afterwards. It can only be undone by cancelling it."
-        confirmLabel="Post"
+        title="Save to stock?"
+        description="The stock will change now. You cannot edit it after this. To undo it, cancel it."
+        confirmLabel="Save to stock"
         loading={busy === 'post'}
         onConfirm={async () => {
           await onAction('post')
@@ -65,12 +65,12 @@ export function DocActionsBar({ status, can, busy = null, onAction, disabled }: 
       <ConfirmDialog
         open={asking === 'cancel'}
         onOpenChange={(o) => !o && setAsking(null)}
-        title={status === 'POSTED' ? 'Cancel and reverse this document?' : 'Cancel this document?'}
-        description={status === 'POSTED' ? 'Every stock movement it made is reversed.' : undefined}
-        confirmLabel="Cancel document"
+        title={status === 'POSTED' ? 'Cancel it and undo the stock?' : 'Cancel it?'}
+        description={status === 'POSTED' ? 'The stock goes back to what it was before.' : undefined}
+        confirmLabel="Yes, cancel it"
         cancelLabel="Keep it"
         tone="danger"
-        reason={{ label: 'Why is it being cancelled?', required: true }}
+        reason={{ label: 'Why are you cancelling it?', required: true }}
         loading={busy === 'cancel'}
         onConfirm={async (reason) => {
           await onAction('cancel', reason)

@@ -3,8 +3,8 @@ import { storeGet, type CostHead, type DocStatus } from '@/api/store'
 
 export type OutwardKind = 'issue' | 'returns'
 export const KINDS: { key: OutwardKind; label: string; plural: string; blurb: string }[] = [
-  { key: 'issue', label: 'Issue', plural: 'Issues', blurb: 'Material leaving a store for a project, or handed to a subcontractor.' },
-  { key: 'returns', label: 'Return', plural: 'Returns', blurb: 'Issued material coming back to the store, or reported lost or damaged.' },
+  { key: 'issue', label: 'Material issue', plural: 'Material issued', blurb: 'Material leaving a store for a project, or handed to a subcontractor.' },
+  { key: 'returns', label: 'Material return', plural: 'Material returned', blurb: 'Issued material coming back to the store, or reported lost or damaged.' },
 ]
 export const kindOf = (key: string | undefined) => KINDS.find((k) => k.key === key)
 
@@ -177,7 +177,7 @@ export interface Indent {
   id: number; number: string; status: 'DRAFT' | 'SUBMITTED' | 'OPEN' | 'PARTIAL' | 'CLOSED' | 'CANCELLED'; store_id: number; store_code: string; store_name: string; date: string; required_by: string
   project_id: number; project: string; work_order_id: number | null; work_order: string; boq_item_id: number | null; boq_item: string; activity: string; remarks: string; requested_by: string
   approved_by: string; approved_at: string; approver_remarks: string; cancel_reason: string; short_closed: boolean; line_count: number; fulfilled_pct: number; overdue: boolean
-  lines?: IndentLine[]; history?: HistoryRow[]; issues?: { id: number; number: string; status: string }[]
+  lines?: IndentLine[]; history?: HistoryRow[]; sheet_warnings?: string[]; issues?: { id: number; number: string; status: string }[]
 }
 export interface IndentPending {
   indent: { id: number; number: string; status: string; store_id: number; project_id: number; work_order_id: number | null; boq_item_id: number | null; boq_item: string }

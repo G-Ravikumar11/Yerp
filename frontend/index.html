@@ -38,6 +38,21 @@
         Y ERP needs JavaScript to run. Please turn it on in your browser and reload this page.
       </p>
     </noscript>
+    <script>
+      // The screens need a reasonably recent browser engine (on a phone: Android System WebView, which Google Play updates).
+      // On one too old, say so instead of leaving a blank page.
+      (function () {
+        var ok = false;
+        try { ok = !!(window.CSS && CSS.supports && CSS.supports('color', 'color-mix(in srgb, red, blue)') && CSS.supports('width', '1svw') && window.CSS.registerProperty); } catch (e) {}
+        if (ok) return;
+        document.addEventListener('DOMContentLoaded', function () {
+          var d = document.createElement('div');
+          d.setAttribute('style', 'position:fixed;inset:0;z-index:99999;background:#0d0f14;color:#fff;font-family:system-ui,sans-serif;padding:2rem;text-align:center;display:flex;flex-direction:column;justify-content:center;gap:1rem');
+          d.innerHTML = '<h1 style="font-size:1.25rem;margin:0">Update needed</h1><p style="margin:0;opacity:.85">The web engine on this phone is too old to run Y ERP. Open Google Play, search for <b>Android System WebView</b> (and <b>Google Chrome</b>), tap Update, then open Y ERP again.</p>';
+          document.body.appendChild(d);
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

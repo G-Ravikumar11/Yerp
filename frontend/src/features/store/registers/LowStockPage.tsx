@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
+﻿import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ShoppingCart, TriangleAlert } from 'lucide-react'
 import { Badge, Button, Card } from '@/components/ui'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { cn } from '@/lib/utils'
 import { dmy } from '../reports/api'
-import { matching, useLowHistory, useLowStock, type LowHistoryRow, type LowRow, type LowStatus } from './api'
+import { matching, useLowHistory, useLowStock, type LowHistoryRow, type LowRow, type LowStage, type LowStatus } from './api'
 import { RaiseLowStock } from './RaiseLowStock'
 import { RegisterFilters, RegisterHeader } from './RegisterParts'
 
@@ -15,6 +15,11 @@ const STATUS: Record<LowStatus | 'RESOLVED', { label: string; tone: 'danger' | '
   INDENT_RAISED: { label: 'INDENT RAISED', tone: 'info' },
   ENQUIRY_RAISED: { label: 'ENQUIRY RAISED', tone: 'warning' },
   RESOLVED: { label: 'RESOLVED', tone: 'success' },
+}
+/** The alert's way to replenishment: raised, ordered, received, passed QC, posted - and back to low if still under its level. */
+const STAGE: Record<LowStage, 'danger' | 'info' | 'warning' | 'success' | 'neutral'> = {
+  'ALERT ACTIVE': 'danger', 'INDENT RAISED': 'info', 'ENQUIRY RAISED': 'warning', 'PO CREATED': 'info',
+  'GOODS RECEIVED': 'warning', 'QUALITY ACCEPTED': 'success', 'STOCK UPDATED': 'success', 'LOW STOCK': 'danger',
 }
 
 /** Store > Low Stock: what is low now - its available stock (not just what is on hand) at or under its reorder level - worst first, with how
@@ -45,10 +50,10 @@ export function LowStockList({ storeId: fixed }: { storeId?: number } = {}) {
       id: 'avail', header: 'Available', align: 'right', width: '8rem', sort: (r) => Number(r.available),
       cell: (r) => (
         <div><span className="font-semibold text-danger">{n(r.available)}</span> <span className="text-xs text-muted-foreground">{r.base_uom}</span>
-          {Number(r.on_hand) !== Number(r.available) && <div className="text-[11px] font-normal text-muted-foreground" title="On hand, before what is on hold, rejected, expired or reserved for approved indents">{n(r.on_hand)} on hand</div>}</div>
+          {Number(r.on_hand) !== Number(r.available) && <div className="text-[11px] font-normal text-muted-foreground" title="In the store now, before taking out what is held, rejected, expired or kept for approved requests">{n(r.on_hand)} on hand</div>}</div>
       ),
     },
-    { id: 'lvl', header: 'Reorder level', align: 'right', width: '7rem', hideBelow: 'md', sort: (r) => Number(r.reorder_level), cell: (r) => n(r.reorder_level) },
+    { id: 'lvl', header: 'Reorder level', align: 'right', width: '7rem', hideBelow: 'md', sort: (r) => Number(r.reorder_level), cell: (r) => <div>{n(r.reorder_level)}{Number(r.shortage) > 0 && <div className="text-[11px] text-danger">{n(r.shortage)} short</div>}</div> },
     {
       id: 'sug', header: 'Suggested reorder', align: 'right', width: '8rem', sort: (r) => Number(r.suggested_qty),
       cell: (r) => <div title={r.suggest_basis}>{n(r.suggested_qty)} <span className="text-xs text-muted-foreground">{r.base_uom}</span>{Number(r.on_order) > 0 && <div className="text-[11px] text-muted-foreground">{n(r.on_order)} already coming</div>}</div>,
@@ -59,9 +64,10 @@ export function LowStockList({ storeId: fixed }: { storeId?: number } = {}) {
       cell: (r) => (
         <div>
           <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>
+          {r.stage && r.stage !== STATUS[r.status].label && <Badge tone={STAGE[r.stage] ?? 'neutral'} className="ml-1" title="How far replenishment has got">{r.stage}</Badge>}
           {r.action && (
             <div className="mt-0.5 text-xs text-muted-foreground" title={r.action_by ? `Raised by ${r.action_by}` : undefined}>
-              {r.action === 'INDENT' ? 'Indent' : 'Enquiry'} {r.action_ref}{r.action_doc_status ? ` - ${r.action_doc_status.toLowerCase()}` : ''}{r.action_qty ? ` for ${n(r.action_qty)}` : ''}
+              {r.action === 'INDENT' ? 'Material request' : 'Enquiry'} {r.action_ref}{r.action_doc_status ? ` - ${r.action_doc_status.toLowerCase()}` : ''}{r.action_qty ? ` for ${n(r.action_qty)}` : ''}
               {!r.action_live && <span className="block text-warning">no longer open - still low</span>}
             </div>
           )}
@@ -75,7 +81,7 @@ export function LowStockList({ storeId: fixed }: { storeId?: number } = {}) {
     { id: 'raised', header: 'Alert raised', width: '8rem', cell: (r) => (r.alerted_at ? dmy(r.alerted_at) : '-') },
     { id: 'low', header: 'Available then', align: 'right', width: '8rem', cell: (r) => `${n(r.available)} / ${n(r.reorder_level)}` },
     { id: 'res', header: 'Resolved', width: '9rem', cell: (r) => <div><Badge tone="success">RESOLVED</Badge><div className="mt-0.5 text-xs text-muted-foreground">{r.resolved_at ? dmy(r.resolved_at) : ''}{r.resolved_qty ? ` at ${n(r.resolved_qty)}` : ''}</div></div> },
-    { id: 'act', header: 'Raised for it', cell: (r) => (r.action ? <span className="text-xs">{r.action === 'INDENT' ? 'Indent' : 'Enquiry'} {r.action_ref}{r.action_qty ? ` for ${n(r.action_qty)}` : ''}{r.action_by ? ` by ${r.action_by}` : ''}</span> : <span className="text-xs text-muted-foreground">Nothing raised</span>) },
+    { id: 'act', header: 'Raised for it', cell: (r) => (r.action ? <span className="text-xs">{r.action === 'INDENT' ? 'Material request' : 'Enquiry'} {r.action_ref}{r.action_qty ? ` for ${n(r.action_qty)}` : ''}{r.action_by ? ` by ${r.action_by}` : ''}</span> : <span className="text-xs text-muted-foreground">Nothing raised</span>) },
   ]
   return (
     <div>
@@ -98,7 +104,7 @@ export function LowStockList({ storeId: fixed }: { storeId?: number } = {}) {
             <div className="ml-auto flex items-center gap-3">
               <span className="text-sm text-muted-foreground" aria-live="polite">{picked.size} selected</span>
               {picked.size > 0 && <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>Clear</Button>}
-              <Button size="sm" disabled={!chosen.length} onClick={() => setRaising(true)}><ShoppingCart /> Raise Indent / Enquiry for All Selected</Button>
+              <Button size="sm" disabled={!chosen.length} onClick={() => setRaising(true)}><ShoppingCart /> Ask to buy all selected</Button>
             </div>
           )}
         </div>

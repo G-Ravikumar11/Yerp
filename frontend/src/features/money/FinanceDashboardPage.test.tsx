@@ -22,6 +22,8 @@ const project = {
   entries: [{ id: 9, number: 'RCP-1', direction: 'IN', party_name: 'L&T', doc_number: 'RA-2', doc_type: 'ra_bill', head: '', amount: 1500000, paid_on: '2026-11-01', mode: 'Bank transfer' }],
   payment_requests: [{ id: 2, number: 'PRQ-0002', doc_number: 'SB-1', party_name: 'ACC Ltd', head: '', amount: 59000, status: 'APPROVED', status_label: 'Approved - to pay', expired: false, requested_by_name: 'Asha', requested_at: '2026-11-10 10:00:00', approved_by_name: 'Raju', rejected_by_name: '', reject_reason: '' }],
   request_summary: { with_accounts: 0, with_md: 0, to_pay: 59000, open: 1 }, monthly: [{ month: '2026-11', received: 1500000, paid: 0 }],
+  ledger_check: [{ label: 'Still to pay', dashboard: 59000, ledger: 62000, difference: -3000, explained: [{ label: 'Journals and opening balances on suppliers and contractors are in the ledgers, not on the bills', amount: -3000 }], unexplained: 0 },
+    { label: 'Received', dashboard: 1500000, ledger: 1400000, difference: 100000, explained: [], unexplained: 100000 }],
   received: 1500000, paid: 0, advances: { contractors: 0, suppliers: 0, on_account_contractors: 0, staff: 0, other: 0 }, site_cash: [], journal_cost: 0, debit_notes: 0,
 }
 
@@ -69,6 +71,11 @@ describe('the finance dashboard for one project', () => {
     // Its payment requests, as Payment Approvals lists them, and the money by month.
     expect(within(screen.getByRole('table', { name: 'Payment requests' })).getByText('PRQ-0002')).toBeInTheDocument()
     expect(within(screen.getByRole('table', { name: 'Money by month' })).getByText('2026-11')).toBeInTheDocument()
+    // The same figures beside the ledgers: one explained, one not.
+    const check = within(screen.getByRole('table', { name: 'Ledger check' }))
+    expect(check.getByText('explained')).toBeInTheDocument()
+    expect(check.getByText(/in the ledgers, not on the bills/)).toBeInTheDocument()
+    expect(check.getByText(/unexplained/)).toBeInTheDocument()
     // Back to every project.
     await userEvent.selectOptions(pick, '')
     expect(await screen.findByText('Total Receivables')).toBeInTheDocument()

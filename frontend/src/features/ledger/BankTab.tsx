@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { FileText, Pencil, Plus } from 'lucide-react'
+import { Download, FileText, Pencil, Plus } from 'lucide-react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Button, Field, Input, Modal, NumField, Select, Stat, StatGrid } from '@/components/ui'
 import { createAccount, ledgerKeys, updateAccount, useAccounts, useBook, voucherUrl, type Account, type Book } from '@/api/ledger'
 import { useAction } from '@/lib/mutate'
 import { useSession } from '@/lib/session'
 import { formatDate, today } from '@/lib/format'
-import { compactINR, formatINR } from '@/lib/utils'
+import { compactINR, downloadCsv, formatINR } from '@/lib/utils'
 
 type Row = Book['rows'][number]
 
@@ -50,6 +50,14 @@ export function BankTab() {
   const chosen = picked || accounts.data?.[0]?.id || 0
   const book = useBook(chosen)
   const b = book.data
+  // The book of the account chosen, as a spreadsheet: the opening balance, every movement with its running balance, and the closing.
+  const downloadBook = () => {
+    if (!b) return
+    const name = accounts.data?.find((a) => a.id === chosen)?.name ?? 'account'
+    downloadCsv(`bank-book-${name.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}`, ['Date', 'No.', 'Party', 'Against', 'Mode', 'Reference', 'In', 'Out', 'Balance'],
+      [['', '', 'Opening balance', '', '', '', '', '', b.opening], ...b.rows.map((r) => [r.date, r.number, r.party, r.against, r.mode, r.reference, r.received || '', r.paid || '', r.balance]),
+        ['', '', 'Closing balance', '', '', '', b.received, b.paid, b.closing]])
+  }
 
   const columns: TableColumn<Row>[] = [
     { id: 'date', header: 'Date', cell: (r) => formatDate(r.date) },
@@ -68,6 +76,7 @@ export function BankTab() {
       <div className="mb-4 flex flex-wrap items-end gap-3">
         {!!accounts.data?.length && <div className="w-72"><Select aria-label="Account" value={chosen} onChange={(e) => setPicked(Number(e.target.value))} options={accounts.data.map((a) => ({ value: a.id, label: `${a.name} (${a.kind})` }))} /></div>}
         {pay && chosen > 0 && <Button variant="outline" size="sm" onClick={() => setEditing(accounts.data?.find((a) => a.id === chosen) ?? null)}><Pencil /> Edit account</Button>}
+        {chosen > 0 && <Button variant="outline" size="sm" disabled={!b} onClick={downloadBook}><Download /> Download statement</Button>}
         {pay && <Button variant="outline" size="sm" onClick={() => setAdding(true)}><Plus /> Bank account or cash box</Button>}
       </div>
       {accounts.data && accounts.data.length === 0 ? (

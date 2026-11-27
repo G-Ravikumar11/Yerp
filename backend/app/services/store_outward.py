@@ -30,6 +30,7 @@ from app.core.store_auth import LotOnHold
 from app.services.stock_ledger import hold_refusal
 from app.services.store_batches import batches_on_hand, find_lot, usable_qty
 from app.services.store_numbering import next_doc_number
+from app.services.store_pages import cached_lines
 
 from app.services.store_common import (  # noqa: F401  (the routers and documents call svc.dec, svc.day and the rest)
     _Q, _R, _V, dec, day, q3, r4, s2, s3, s4, text, v2,
@@ -326,7 +327,10 @@ def write_issue_lines(db, issue, lines):
 
 
 def issue_lines(db, issue):
-    return db.query(DBStoreIssueLine).filter(DBStoreIssueLine.issue_id == issue.id).order_by(DBStoreIssueLine.line_no, DBStoreIssueLine.id).all()
+    hit = cached_lines(db, DBStoreIssueLine, issue.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreIssueLine).filter(DBStoreIssueLine.issue_id == issue.id).order_by(*LINE_ORDER[DBStoreIssueLine]).all()
 
 
 def check_stock(db, store_id, lines, exclude_indent_id=None, on_hand=True):
@@ -512,7 +516,10 @@ def write_return_lines(db, ret, lines):
 
 
 def return_lines(db, ret):
-    return db.query(DBStoreIssueReturnLine).filter(DBStoreIssueReturnLine.return_id == ret.id).order_by(DBStoreIssueReturnLine.id).all()
+    hit = cached_lines(db, DBStoreIssueReturnLine, ret.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreIssueReturnLine).filter(DBStoreIssueReturnLine.return_id == ret.id).order_by(*LINE_ORDER[DBStoreIssueReturnLine]).all()
 
 
 def return_check_submit(db, actor, ret):
@@ -590,6 +597,9 @@ class Kind:
 def _return_moved_stock(db, ret):
     return any(Decimal(str(l.qty_returned)) > 0 for l in return_lines(db, ret))
 
+
+# The order each kind's lines are read in - by its reader and by a list page alike.
+LINE_ORDER = {DBStoreIssueLine: (DBStoreIssueLine.line_no, DBStoreIssueLine.id), DBStoreIssueReturnLine: (DBStoreIssueReturnLine.id,)}
 
 KINDS = {
     "issue": Kind("issue", ISSUE, "Issue", DBStoreIssue, DBStoreIssueLine, "issue_id", "issue_date", lambda db, d: len(issue_lines(db, d)), issue_post, issue_check_submit, issue_check_cancel),

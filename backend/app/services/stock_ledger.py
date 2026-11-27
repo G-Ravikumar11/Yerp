@@ -565,6 +565,55 @@ def convert_to_base(db, item_id, qty, uom_code) -> Decimal:
     raise InvalidMovementError("No conversion from %r to %r is set for item %s." % (uom_code, base, item_id))
 
 
+class BaseUnits:
+    """convert_to_base for many items at once: every item's base unit and conversions are read up front, in three queries,
+    instead of three for each line converted. The answers are convert_to_base's own - the same unit matching, the same
+    rounding, the same refusal for a unit with no conversion. An item not given up front is looked up as before."""
+
+    def __init__(self, db, item_ids):
+        self.db = db
+        ids = sorted({i for i in item_ids if i})
+        self.base, self.convs = {}, {}
+        for n in range(0, len(ids), 500):
+            chunk = ids[n:n + 500]
+            items = dict(db.query(models.DBItem.id, models.DBItem.units_of_measure).filter(models.DBItem.id.in_(chunk)).all())
+            settings = {}
+            for s in db.query(DBStoreItemSettings.item_id, DBStoreItemSettings.base_uom).filter(DBStoreItemSettings.item_id.in_(chunk)).order_by(DBStoreItemSettings.id).all():
+                settings.setdefault(s[0], s)                       # .first(), as convert_to_base reads it
+            for iid, uom in items.items():
+                s = settings.get(iid)
+                self.base[iid] = (s.base_uom if s else uom) or ""
+            for c in db.query(DBStoreUomConversion).filter(DBStoreUomConversion.item_id.in_(chunk)).order_by(DBStoreUomConversion.id).all():
+                self.convs.setdefault(c.item_id, []).append((c.from_uom.strip().lower(), c.to_base_factor))
+        self.known = set(ids)
+
+    def convert(self, item_id, qty, uom_code) -> Decimal:
+        if item_id not in self.known:
+            return convert_to_base(self.db, item_id, qty, uom_code)
+        qty = _dec(qty, "qty")
+        if item_id not in self.base:
+            raise InvalidMovementError("Item %s does not exist." % item_id)
+        base = self.base[item_id]
+        code = (uom_code or "").strip().lower()
+        if code == base.strip().lower():
+            return _q(qty, _QTY)
+        for frm, factor in self.convs.get(item_id, ()):
+            if frm == code:
+                return _q(qty * _dec(factor), _QTY)
+        raise InvalidMovementError("No conversion from %r to %r is set for item %s." % (uom_code, base, item_id))
+
+    def per_unit(self, item_id, uom):
+        """How many base units one `uom` is: 1 for the base unit (or no unit), None when there is no conversion - as
+        store_integration._per_unit answers it."""
+        if item_id not in self.base:
+            return None
+        code = (uom or "").strip().lower()
+        if not code or code == self.base[item_id].strip().lower():
+            return Decimal(1)
+        factor = next((f for frm, f in self.convs.get(item_id, ()) if frm == code), None)
+        return Decimal(str(factor)) if factor else None
+
+
 def assert_store_access(user, store_id):
     """403 unless `user` may work in the store. `user` is the signed-in DBEmployee or the account holder (DBClient),
     attached to a session. The account holder reaches every store of their company; staff reach the stores they are

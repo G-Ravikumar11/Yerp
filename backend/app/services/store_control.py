@@ -29,6 +29,7 @@ from app.models.store_control import (
 from app.schemas.store_contracts import CountVarianceLine, InTransitLine, ScrapLine
 from app.services import store_cycle, store_outward, store_reservations
 from app.core.store_auth import check_not_own
+from app.services.store_pages import cached_lines
 from app.services.stock_ledger import check_date, convert_to_base, entry_lots, freeze_store, get_balance, post_movement, reverse_document, unfreeze_store
 from app.services.store_numbering import next_doc_number
 
@@ -88,12 +89,24 @@ def avg_value(db, store_id, item_id, qty: Decimal) -> Decimal:
     return v2(qty * get_balance(db, store_id, item_id).avg_rate)
 
 
+def _on_hold(db, store_id, item_ids):
+    """{item id: quantity in this store's lots on a quality hold or rejected on an NCR} - what the ledger will not let out."""
+    from app.models.store_core import DBStoreBatch, DBStoreBatchBalance
+    out = {}
+    for item_id, qty in (db.query(DBStoreBatchBalance.item_id, DBStoreBatchBalance.qty).join(DBStoreBatch, DBStoreBatch.id == DBStoreBatchBalance.batch_id)
+                         .filter(DBStoreBatchBalance.store_id == store_id, DBStoreBatchBalance.item_id.in_(item_ids or [0]), DBStoreBatchBalance.qty > 0,
+                                 (DBStoreBatch.on_hold.is_(True)) | (DBStoreBatch.lot_status == "REJECTED")).all()):
+        out[item_id] = out.get(item_id, ZERO) + Decimal(str(qty))
+    return out
+
+
 def check_stock(db, store_id, wants, on_hand=True):
     """`wants` is [(item_id, qty)]: every item must be on hand in the store and not promised to an approved indent (lines of the same item add up)."""
     want = {}
     for item_id, qty in wants:
         want[item_id] = want.get(item_id, ZERO) + Decimal(str(qty))
     held = store_reservations.reserved_map(db, [store_id], list(want), None)
+    on_hold = _on_hold(db, store_id, list(want))
     for item_id, qty in want.items():
         have = get_balance(db, store_id, item_id).qty
         item = db.get(models.DBItem, item_id)
@@ -101,6 +114,12 @@ def check_stock(db, store_id, wants, on_hand=True):
             if on_hand:
                 raise HTTPException(409, "Only %s %s of %s on hand in this store; %s was asked for." % (s3(have), base_uom_of(db, item), item.item_name, s3(qty)))
             continue                                # at posting the ledger itself refuses what is not there
+        # Lots on a quality hold (or rejected on an NCR) are not moved or written off - the ledger refuses them at posting;
+        # said here, the document is stopped before it is sent round for approval.
+        stuck = on_hold.get(item_id, ZERO)
+        if stuck and qty > have - stuck:
+            raise HTTPException(409, "Only %s %s of %s can be moved or written off - %s is on a quality hold or rejected on an NCR; %s was asked for. "
+                                     "Close the NCR (or release the hold) first." % (s3(max(ZERO, have - stuck)), base_uom_of(db, item), item.item_name, s3(stuck), s3(qty)))
         promised = held.get((store_id, item_id), ZERO)
         if qty > have - promised:
             raise HTTPException(409, "Only %s %s of %s is free in this store - %s of the %s on hand is promised to approved indents; %s was asked for." % (
@@ -133,7 +152,10 @@ def write_transfer_lines(db, doc, lines):
 
 
 def transfer_lines(db, doc):
-    return db.query(DBStoreTransferLine).filter(DBStoreTransferLine.transfer_id == doc.id).order_by(DBStoreTransferLine.line_no, DBStoreTransferLine.id).all()
+    hit = cached_lines(db, DBStoreTransferLine, doc.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreTransferLine).filter(DBStoreTransferLine.transfer_id == doc.id).order_by(*LINE_ORDER[DBStoreTransferLine]).all()
 
 
 def is_inter_project(db, from_id, to_id) -> bool:
@@ -194,7 +216,10 @@ def transfer_cancel_hook(db, doc):
 # --- stock counts -------------------------------------------------------------------------------------------------------
 
 def count_lines(db, doc):
-    return db.query(DBStoreCountLine).filter(DBStoreCountLine.count_id == doc.id).order_by(DBStoreCountLine.id).all()
+    hit = cached_lines(db, DBStoreCountLine, doc.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreCountLine).filter(DBStoreCountLine.count_id == doc.id).order_by(*LINE_ORDER[DBStoreCountLine]).all()
 
 
 def count_variance(l) -> Decimal:
@@ -390,7 +415,10 @@ def write_scrap_lines(db, doc, lines):
 
 
 def scrap_lines(db, doc):
-    return db.query(DBStoreScrapLine).filter(DBStoreScrapLine.scrap_id == doc.id).order_by(DBStoreScrapLine.line_no, DBStoreScrapLine.id).all()
+    hit = cached_lines(db, DBStoreScrapLine, doc.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreScrapLine).filter(DBStoreScrapLine.scrap_id == doc.id).order_by(*LINE_ORDER[DBStoreScrapLine]).all()
 
 
 def scrap_value(db, doc) -> Decimal:
@@ -438,6 +466,10 @@ def _count_has_adjustments(db, doc):
 def _scrap_moved_stock(db, doc):
     return any(not l.writeoff_request_id for l in scrap_lines(db, doc))
 
+
+# The order each kind's lines are read in - by its reader and by a list page alike.
+LINE_ORDER = {DBStoreTransferLine: (DBStoreTransferLine.line_no, DBStoreTransferLine.id), DBStoreCountLine: (DBStoreCountLine.id,),
+              DBStoreScrapLine: (DBStoreScrapLine.line_no, DBStoreScrapLine.id)}
 
 KINDS = {
     "transfer": Kind("transfer", TRANSFER, "Transfer", DBStoreTransfer, DBStoreTransferLine, "transfer_id", "transfer_date", lambda db, d: len(transfer_lines(db, d)), transfer_post,

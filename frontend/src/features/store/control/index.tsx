@@ -17,10 +17,10 @@ function Tabs() {
   return (
     <nav aria-label="Control" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
       {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/control/${k.key}`} className={tab}>{k.plural}</NavLink>)}
-      <NavLink to="/store/hub/control/cycle" className={tab}>Cycle counting</NavLink>
-      <NavLink to="/store/hub/control/in-transit" className={tab}>In transit</NavLink>
+      <NavLink to="/store/hub/control/cycle" className={tab}>Count a few daily</NavLink>
+      <NavLink to="/store/hub/control/in-transit" className={tab}>On the way</NavLink>
       <NavLink to="/store/hub/control/variances" className={tab}>Count differences</NavLink>
-      <NavLink to="/store/hub/control/realisation" className={tab}>Scrap realised</NavLink>
+      <NavLink to="/store/hub/control/realisation" className={tab}>Scrap money</NavLink>
     </nav>
   )
 }

@@ -1,6 +1,6 @@
 import { api, clickText, fill, launch, open, setValue, signIn, sleep, toastsGone, waitForToast } from './lib.mjs'
 
-// The old store as a record, item duplicates and merging, shuttering and scaffolding hire, and the Bar Bending Schedule,
+// The old store removed (its records kept, closed to new entries), item duplicates and merging, shuttering and scaffolding hire, and the Bar Bending Schedule,
 // each through its screen and checked against what the server then holds.
 const { page, check, done } = await launch({ allow: [/409 POST \/api\/(items|material-vouchers)/] })
 await signIn(page)
@@ -11,13 +11,10 @@ const clear = () => toastsGone(page).catch(() => {})
 const dialog = () => text('[role=dialog]')
 const pick = (sel, re) => page.$eval(sel, (s, re) => [...s.options].find((o) => new RegExp(re).test(o.textContent))?.value, re).then((v) => setValue(page, sel, v))
 
-// the old store
-await open(page, '/store/old/material-vouchers')
-check('the voucher screen says it is read-only', /legacy store module\. Transactions are available in read-only mode/.test(await text('main')))
-check('it offers no new voucher', !/Save the voucher|New voucher/.test(await text('main')))
-for (const path of ['/store/old/stock', '/store/old/goods-receipt']) {
+// the old store: its screens are removed - their addresses are not found - and its records are kept, closed to new entries
+for (const path of ['/store/old/stock', '/store/old/goods-receipt', '/store/old/material-vouchers', '/store/old/material-costing', '/store/hub/reports/old-store']) {
   await open(page, path)
-  check(`${path} is read-only`, /read-only mode/.test(await text('main')) && !/Issue to site|Receive a delivery/.test(await text('main')))
+  check(`${path} is not found`, /Page not found/.test(await text('main')), path)
 }
 const job = (await api(page, 'GET', '/api/jobs')).data
 const projects = job.jobs ?? job

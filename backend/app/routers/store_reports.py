@@ -497,6 +497,41 @@ def norms_copy(body: CopyIn, request: Request, db: Session = Depends(get_db)):
                                                                                          result["skipped_existing"] + result["unchanged"] + result["not_chosen"])}
 
 
+class FromWorkIn(BaseModel):
+    project_id: int
+    mode: str = "add"
+
+
+@router.get("/norms/from-work/preview")
+def norms_from_work_preview(request: Request, project_id: int = 0, mode: str = "add", db: Session = Depends(get_read_db)):
+    """The norms this project would take from the work items its BOQ items are (Item Master). Writes nothing."""
+    actor = store_actor(request, db, "store.reports.create")
+    dest = _need_project(db, actor, project_id)
+    rows, lines = store_norms.from_work_preview(db, actor.client.id, dest.id, mode)
+    count = lambda *s: sum(1 for r in rows if r["status"] in s)
+    return jsonable({"project": {"id": dest.id, "label": _job_label(dest)}, "mode": mode, "rows": rows,
+                     "summary": {"total": len(rows), "insert": count("insert"), "update": count("update"), "unchanged": count("unchanged"),
+                                 "skip": count("skip"), "unit": count("unit"), "no_material": count("no_material"), **lines}})
+
+
+@router.post("/norms/from-work")
+def norms_from_work(body: FromWorkIn, request: Request, db: Session = Depends(get_db)):
+    """Set this project's norms from its work items' norms."""
+    actor = store_actor(request, db, "store.reports.create")
+    dest = _need_project(db, actor, body.project_id)
+    try:
+        result = store_norms.from_work_commit(db, actor.client.id, dest.id, body.mode, actor.name)
+        log_audit(db, actor.client.id, "store_norms_from_work_items", "project", dest.id, _job_label(dest),
+                  "%s: %d added, %d updated, %d unchanged, %d already set and kept" % ("replace matching" if body.mode == "replace" else "add missing only",
+                                                                                       result["inserted"], result["updated"], result["unchanged"], result["skipped_existing"]),
+                  request=request, **_who(actor))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {**result, "message": "From the work items' norms: %d added, %d updated." % (result["inserted"], result["updated"])}
+
+
 @router.get("/pick/boq-items")
 def pick_boq_items(project_id: int, request: Request, q: str = "", db: Session = Depends(get_read_db)):
     """A project's priced BOQ items (current revision), for setting norms against."""

@@ -73,6 +73,7 @@ export function matching<T>(rows: T[], q: string, fields: (r: T) => (string | nu
 /** One item that is low now, as the server worked it out: what is available (not just on hand), its level, how much to order, and the
  * store's alert with the indent or enquiry raised for it. The screen shows these and never works them out itself. */
 export type LowStatus = 'LOW_STOCK' | 'INDENT_RAISED' | 'ENQUIRY_RAISED'
+export type LowStage = 'ALERT ACTIVE' | 'INDENT RAISED' | 'ENQUIRY RAISED' | 'PO CREATED' | 'GOODS RECEIVED' | 'QUALITY ACCEPTED' | 'STOCK UPDATED' | 'LOW STOCK'
 export interface LowRow {
   key: string
   alert_id: number | null
@@ -102,6 +103,10 @@ export interface LowRow {
   last_checked_at: string
   times_raised: number
   status: LowStatus
+  /** How far the alert has got toward replenishment, as the server works it out (store_low_stock._stage). */
+  stage: LowStage
+  /** Reorder level less what is available: how far under the level it stands. */
+  shortage: string
   action: '' | 'INDENT' | 'ENQUIRY'
   action_ref: string
   action_doc_id: number | null

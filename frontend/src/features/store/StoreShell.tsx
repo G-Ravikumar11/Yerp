@@ -12,11 +12,11 @@ import { ScanButton } from './shared/Scanner'
 
 /** The six parts of the Store module, in menu order. */
 export const SLICES: { slice: StoreSlice; label: string; blurb: string }[] = [
-  { slice: 'masters', label: 'Masters', blurb: 'Stores, bins, who works where, item settings and unit conversions.' },
-  { slice: 'enquiry', label: 'Stock enquiry', blurb: 'What is held, where, and every movement behind it.' },
-  { slice: 'inward', label: 'Inward', blurb: 'Goods received against purchase orders, quality checks and returns to suppliers.' },
-  { slice: 'outward', label: 'Outward', blurb: 'Issues to site and to subcontractors, returnables and write-offs.' },
-  { slice: 'control', label: 'Control', blurb: 'Transfers, stock counts, adjustments and scrap.' },
+  { slice: 'masters', label: 'Settings', blurb: 'Stores, racks, who works in each store, and item units.' },
+  { slice: 'enquiry', label: 'Stock', blurb: 'What is in each store, and every movement of each item.' },
+  { slice: 'inward', label: 'Material In', blurb: 'Material received from suppliers, quality check, and returns to suppliers.' },
+  { slice: 'outward', label: 'Material Out', blurb: 'Material requests, giving material to site and contractors, returns, gate passes, tools.' },
+  { slice: 'control', label: 'Move & Count', blurb: 'Move stock between stores, count stock, damaged and scrap.' },
   { slice: 'reports', label: 'Reports', blurb: 'Stock, consumption and material cost reports.' },
 ]
 

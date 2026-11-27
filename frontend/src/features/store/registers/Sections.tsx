@@ -25,7 +25,7 @@ const Back = ({ to, label }: { to: string; label: string }) => (
 function EditGate({ back, label, loading, failed, status, title, children }: { back: string; label: string; loading: boolean; failed: boolean; status?: string; title: string; children: React.ReactNode }) {
   if (loading) return <div><Back to={back} label={label} /><Skeleton className="h-40 w-full" /></div>
   if (failed) return <div><Back to={back} label={label} /><p role="alert" className="text-sm text-danger">Could not load this document.</p></div>
-  if (status !== 'DRAFT') return <div><Back to={back} label={label} /><p className="text-sm text-muted-foreground">Only a draft can be edited. Cancel it and make a new one to correct it.</p></div>
+  if (status !== 'DRAFT') return <div><Back to={back} label={label} /><p className="text-sm text-muted-foreground">You can change it only before it is sent. To correct it now, cancel it and make a new one.</p></div>
   return <div><Back to={back} label={label} /><h2 className="mb-4 text-lg font-semibold">{title}</h2>{children}</div>
 }
 
@@ -46,7 +46,7 @@ export function IssueSection() {
   return (
     <Routes>
       <Route index element={<IssueRegisterPage />} />
-      <Route path="new" element={<Titled title="Material Issue"><Back to={ISSUES} label="Material issue" /><h2 className="mb-4 text-lg font-semibold">New issue</h2><IssueForm base={ISSUES} /></Titled>} />
+      <Route path="new" element={<Titled title="Material Issue"><Back to={ISSUES} label="Material issue" /><h2 className="mb-4 text-lg font-semibold">Issue material</h2><IssueForm base={ISSUES} /></Titled>} />
       <Route path=":id" element={<Titled title="Material Issue"><OutwardDoc kindKey="issue" base={ISSUES} /></Titled>} />
       <Route path=":id/edit" element={<Titled title="Material Issue"><IssueEdit /></Titled>} />
     </Routes>
@@ -58,7 +58,7 @@ export function ReceiveSection() {
   return (
     <Routes>
       <Route index element={<ReceiveRegisterPage />} />
-      <Route path="new" element={<Titled title="Material Receive"><Back to={RECEIPTS} label="Material receive" /><h2 className="mb-4 text-lg font-semibold">New goods receipt</h2><GrnForm base={RECEIPTS} /></Titled>} />
+      <Route path="new" element={<Titled title="Material Receive"><Back to={RECEIPTS} label="Material receive" /><h2 className="mb-4 text-lg font-semibold">Receive material</h2><GrnForm base={RECEIPTS} /></Titled>} />
       <Route path=":id" element={<Titled title="Material Receive"><InwardDoc kindKey="grn" base={RECEIPTS} /></Titled>} />
       <Route path=":id/edit" element={<Titled title="Material Receive"><ReceiveEdit /></Titled>} />
     </Routes>

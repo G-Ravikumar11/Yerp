@@ -90,16 +90,16 @@ export default function IssueForm({ doc, base = '/store/hub/outward/issue' }: { 
   const openIndents = (indents.data ?? []).filter((i) => !f.store_id || i.store_id === f.store_id)
   return (
     <form onSubmit={(e) => { e.preventDefault(); if (ready) save.mutate() }} className="grid gap-5">
-      {direct && <p role="status" className="rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">A direct issue is approved and posted to stock the moment you save it, with no indent. It is marked as direct on the document.</p>}
-      {needsIndent && <p role="status" className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">A site issue is made against an approved indent. Choose one below, or ask for the direct-issue right.</p>}
+      {direct && <p role="status" className="rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning">Direct issue: it goes out of stock as soon as you save. No material request is needed.</p>}
+      {needsIndent && <p role="status" className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">Choose an approved material request below.</p>}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="Store" htmlFor="i-store"><StorePicker id="i-store" value={f.store_id || null} disabled={!!doc} onChange={(id) => set('store_id', id ?? 0)} /></Field>
-        <Field label="Issue date" htmlFor="i-date"><Input id="i-date" type="date" max={today()} value={f.issue_date} onChange={(e) => set('issue_date', e.target.value)} /></Field>
-        <Field label="Issued for" htmlFor="i-type"><Select id="i-type" value={f.issue_type} onChange={(e) => setF((x) => ({ ...x, issue_type: e.target.value as 'SITE' | 'SUBCONTRACTOR', indent_id: 0 }))} options={[{ value: 'SITE', label: 'Site use' }, { value: 'SUBCONTRACTOR', label: 'A subcontractor' }]} /></Field>
+        <Field label="Date" htmlFor="i-date"><Input id="i-date" type="date" max={today()} value={f.issue_date} onChange={(e) => set('issue_date', e.target.value)} /></Field>
+        <Field label="Given for" htmlFor="i-type"><Select id="i-type" value={f.issue_type} onChange={(e) => setF((x) => ({ ...x, issue_type: e.target.value as 'SITE' | 'SUBCONTRACTOR', indent_id: 0 }))} options={[{ value: 'SITE', label: 'Site use' }, { value: 'SUBCONTRACTOR', label: 'A subcontractor' }]} /></Field>
         {!sub && (
-          <Field label="Indent" htmlFor="i-indent" hint="The approved request this fills.">
+          <Field label="Material request" htmlFor="i-indent" hint="The request you are giving material for.">
             <div className="flex gap-2">
-              <Select id="i-indent" value={f.indent_id || ''} placeholder={canDirect ? 'None (direct issue)' : 'Choose an approved indent'} disabled={!!doc} onChange={(e) => chooseIndent(Number(e.target.value) || 0)} options={openIndents.map((i) => ({ value: i.id, label: `${i.number} - ${i.activity || i.project}` }))} />
+              <Select id="i-indent" value={f.indent_id || ''} placeholder={canDirect ? 'None (direct issue)' : 'Choose an approved request'} disabled={!!doc} onChange={(e) => chooseIndent(Number(e.target.value) || 0)} options={openIndents.map((i) => ({ value: i.id, label: `${i.number} - ${i.activity || i.project}` }))} />
               {f.indent_id > 0 && !doc && <Button type="button" variant="outline" size="sm" onClick={fromIndent} disabled={!pending.data}>Fill</Button>}
             </div>
           </Field>
@@ -110,34 +110,34 @@ export default function IssueForm({ doc, base = '/store/hub/outward/issue' }: { 
         {sub && <Field label="Subcontractor" htmlFor="i-sub"><Select id="i-sub" value={f.subcontractor_id || ''} placeholder="Choose a subcontractor" onChange={(e) => setF((x) => ({ ...x, subcontractor_id: Number(e.target.value) || 0, subcontract_order_id: 0 }))} options={(subs.data ?? []).map((s) => ({ value: s.id, label: s.name }))} /></Field>}
         {sub && <Field label="Subcontract work order" htmlFor="i-sworder"><Select id="i-sworder" value={f.subcontract_order_id || ''} placeholder="Choose the order" disabled={!f.subcontractor_id} onChange={(e) => set('subcontract_order_id', Number(e.target.value) || 0)} options={(subOrders.data ?? []).map((o) => ({ value: o.id, label: `${o.number}${o.subject ? ' - ' + o.subject : ''}` }))} /></Field>}
         <Field label="Received by" htmlFor="i-rtype"><Select id="i-rtype" value={f.received_by_type} onChange={(e) => setF((x) => ({ ...x, received_by_type: e.target.value, received_by_employee_id: 0 }))} options={[{ value: 'PERSON', label: 'A person' }, { value: 'FOREMAN', label: 'A foreman' }, { value: 'GANG', label: 'A gang' }]} /></Field>
-        {f.received_by_type === 'PERSON' && <Field label="Employee" htmlFor="i-emp" hint="Or type a name below."><Select id="i-emp" value={f.received_by_employee_id || ''} placeholder="Not an employee" onChange={(e) => set('received_by_employee_id', Number(e.target.value) || 0)} options={(emps.data ?? []).map((e) => ({ value: e.id, label: e.name }))} /></Field>}
+        {f.received_by_type === 'PERSON' && <Field label="Employee" htmlFor="i-emp" hint="Or type the name below."><Select id="i-emp" value={f.received_by_employee_id || ''} placeholder="Not an employee" onChange={(e) => set('received_by_employee_id', Number(e.target.value) || 0)} options={(emps.data ?? []).map((e) => ({ value: e.id, label: e.name }))} /></Field>}
         {!(f.received_by_type === 'PERSON' && f.received_by_employee_id > 0) && <Field label={f.received_by_type === 'GANG' ? 'Gang name' : 'Name'} htmlFor="i-rname"><Input id="i-rname" value={f.received_by_name} onChange={(e) => set('received_by_name', e.target.value)} maxLength={80} /></Field>}
-        <Field label="Purpose" htmlFor="i-purpose"><Input id="i-purpose" value={f.purpose} onChange={(e) => set('purpose', e.target.value)} placeholder="Column casting, block 2" /></Field>
+        <Field label="Used for" htmlFor="i-purpose"><Input id="i-purpose" value={f.purpose} onChange={(e) => set('purpose', e.target.value)} placeholder="Column casting, block 2" /></Field>
         <Field label="Remarks" htmlFor="i-rem"><Textarea id="i-rem" rows={1} value={f.remarks} onChange={(e) => set('remarks', e.target.value)} /></Field>
       </div>
       <section aria-labelledby="i-lines">
         <h3 id="i-lines" className="mb-2 border-b pb-1 text-sm font-semibold">Material</h3>
-        {!sub && <p className="mb-3 text-xs text-muted-foreground">Each line is charged to a BOQ item of the project, or to a cost head when it is not BOQ work. It is valued at the store's average rate when it is posted.</p>}
+        {!sub && <p className="mb-3 text-xs text-muted-foreground">For each material, say which work it is for.</p>}
         <div className="grid gap-3">
           {rows.map((r) => (
             <div key={r.key} className="grid gap-3 rounded-lg border border-border p-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_minmax(0,1.4fr)_auto]">
               <div>
-                {r.indentLine ? <div><div className="text-sm font-medium">{r.item?.name}</div><div className="text-xs text-muted-foreground">from the indent</div></div> : <ItemPicker value={r.item} onChange={(item) => upd(r.key, { item, qty: { qty: '', uom: item?.base_uom ?? '' }, due: '' })} />}
+                {r.indentLine ? <div><div className="text-sm font-medium">{r.item?.name}</div><div className="text-xs text-muted-foreground">from the request</div></div> : <ItemPicker value={r.item} onChange={(item) => upd(r.key, { item, qty: { qty: '', uom: item?.base_uom ?? '' }, due: '' })} />}
               </div>
               <UomQtyInput itemId={r.item?.id ?? null} value={r.qty} onChange={(qty) => upd(r.key, { qty })} />
-              <Select aria-label="Charge to" value={r.target} placeholder={sub ? 'Charge to (optional)' : 'Charge to...'} onChange={(e) => upd(r.key, { target: e.target.value })}
+              <Select aria-label="For which work" value={r.target} placeholder={sub ? 'For which work (optional)' : 'For which work...'} onChange={(e) => upd(r.key, { target: e.target.value })}
                 options={[...(boq.data ?? []).map((b) => ({ value: `boq:${b.id}`, label: `BOQ ${b.item_no} ${b.description}`.slice(0, 70) })), ...(meta.data?.cost_heads ?? []).map((h) => ({ value: `head:${h}`, label: `Cost head: ${headLabel(h)}` }))]} />
               <Button type="button" variant="ghost" size="sm" aria-label="Remove line" disabled={rows.length === 1 || !!r.indentLine} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}><Trash2 /></Button>
               {r.item && f.store_id > 0 && <BatchPicker storeId={f.store_id} itemId={r.item.id} on={f.issue_date} value={r.batch} onChange={(batch) => upd(r.key, { batch })} reason={r.fefoReason} onReason={(fefoReason) => upd(r.key, { fefoReason })} />}
               {(sub || isReturnable(r.item)) && (
                 <div className="flex flex-wrap items-center gap-4 lg:col-span-4">
-                  {isReturnable(r.item) && <label className="flex items-center gap-2 text-sm">Expected back by <Input type="date" className="h-9 w-40" min={f.issue_date} value={r.due} onChange={(e) => upd(r.key, { due: e.target.value })} /></label>}
+                  {isReturnable(r.item) && <label className="flex items-center gap-2 text-sm">Must come back by <Input type="date" className="h-9 w-40" min={f.issue_date} value={r.due} onChange={(e) => upd(r.key, { due: e.target.value })} /></label>}
                   {sub && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={r.chargeable} onChange={(e) => upd(r.key, { chargeable: e.target.checked, handling: e.target.checked && !r.handling ? String(Number(settings.data?.subcon_handling_pct ?? 0)) : r.handling })} /> Recover from the subcontractor's bill (otherwise free of cost)</label>}
                   {sub && r.chargeable && (
                     <>
-                      <label className="flex items-center gap-2 text-sm">at <Select aria-label="Recovery rate basis" className="h-9" value={r.basis || settings.data?.default_recovery_basis || 'AVERAGE_COST'} onChange={(e) => upd(r.key, { basis: e.target.value })} options={[{ value: 'AVERAGE_COST', label: 'average cost' }, { value: 'CONTRACT_RATE', label: 'contract rate' }]} /></label>
-                      {(r.basis || settings.data?.default_recovery_basis) === 'CONTRACT_RATE' && <Input aria-label="Contract rate" inputMode="decimal" className="h-9 w-28 text-right" placeholder={`per ${r.item?.base_uom ?? 'unit'}`} value={r.rate} onChange={(e) => upd(r.key, { rate: e.target.value })} />}
-                      <label className="flex items-center gap-2 text-sm">plus handling <Input aria-label="Handling percentage" inputMode="decimal" className="h-9 w-20 text-right" value={r.handling} onChange={(e) => upd(r.key, { handling: e.target.value })} /> %</label>
+                      <label className="flex items-center gap-2 text-sm">at <Select aria-label="How to charge the contractor" className="h-9" value={r.basis || settings.data?.default_recovery_basis || 'AVERAGE_COST'} onChange={(e) => upd(r.key, { basis: e.target.value })} options={[{ value: 'AVERAGE_COST', label: 'average cost' }, { value: 'CONTRACT_RATE', label: 'contract rate' }]} /></label>
+                      {(r.basis || settings.data?.default_recovery_basis) === 'CONTRACT_RATE' && <Input aria-label="Rate in the contract" inputMode="decimal" className="h-9 w-28 text-right" placeholder={`per ${r.item?.base_uom ?? 'unit'}`} value={r.rate} onChange={(e) => upd(r.key, { rate: e.target.value })} />}
+                      <label className="flex items-center gap-2 text-sm">plus handling <Input aria-label="Extra % for handling" inputMode="decimal" className="h-9 w-20 text-right" value={r.handling} onChange={(e) => upd(r.key, { handling: e.target.value })} /> %</label>
                     </>
                   )}
                 </div>
@@ -150,7 +150,7 @@ export default function IssueForm({ doc, base = '/store/hub/outward/issue' }: { 
       </section>
       <div className="flex justify-end gap-2 border-t border-border pt-4">
         <Button type="button" variant="ghost" onClick={() => nav(doc ? `${base}/${doc.id}` : base)}>Cancel</Button>
-        <Button type="submit" loading={save.isPending} disabled={!ready}>{direct ? <><Zap /> Issue now</> : doc ? 'Save changes' : 'Save as draft'}</Button>
+        <Button type="submit" loading={save.isPending} disabled={!ready}>{direct ? <><Zap /> Issue now</> : doc ? 'Save changes' : 'Save'}</Button>
       </div>
     </form>
   )
@@ -174,7 +174,7 @@ function BatchPicker({ storeId, itemId, on, value, onChange, reason, onReason }:
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm lg:col-span-4">
       <label className="flex items-center gap-2">Batch
-        <Select aria-label="Batch" className="h-9 min-w-64" value={chosen?.batch_no ?? ''} placeholder="Not from a named batch" onChange={(e) => onChange(e.target.value)}
+        <Select aria-label="Batch" className="h-9 min-w-64" value={chosen?.batch_no ?? ''} placeholder="Any batch" onChange={(e) => onChange(e.target.value)}
           options={lots.map((b) => ({ value: b.batch_no, label: label(b), disabled: b.state === 'EXPIRED' || b.on_hold }))} />
       </label>
       {lots.some((b) => b.on_hold) && <Badge tone="warning" dot>{lots.filter((b) => b.on_hold).length} batch{lots.filter((b) => b.on_hold).length === 1 ? '' : 'es'} ON HOLD cannot be issued</Badge>}
@@ -184,7 +184,7 @@ function BatchPicker({ storeId, itemId, on, value, onChange, reason, onReason }:
         <div className="grid w-full gap-1.5 rounded-md border border-warning/40 p-2 text-warning">
           <span className="flex flex-wrap items-center gap-1.5"><AlertTriangle className="size-4" /> An earlier-expiry material lot is available: {earlier.batch_no}, expires {dmy(earlier.expiry_date)}. Please provide a reason for selecting this later-expiry lot.
             <Button type="button" size="sm" variant="outline" onClick={() => onChange(earlier.batch_no)}>Use {earlier.batch_no}</Button></span>
-          <Input aria-label="Reason for selecting this later-expiry lot" placeholder="Why this lot (required)" maxLength={300} value={reason} onChange={(e) => onReason(e.target.value)} />
+          <Input aria-label="Why this batch? An older batch is in the store." placeholder="Why this batch (must fill)" maxLength={300} value={reason} onChange={(e) => onReason(e.target.value)} />
         </div>
       )}
       {!earlier && first && chosen && chosen.batch_no !== first.batch_no && chosen.state !== 'EXPIRED' && (
@@ -193,7 +193,7 @@ function BatchPicker({ storeId, itemId, on, value, onChange, reason, onReason }:
           <Button type="button" size="sm" variant="outline" onClick={() => onChange(first.batch_no)}>Use {first.batch_no}</Button>
         </span>
       )}
-      {!first && <span className="text-danger">Every batch held has expired - none can be issued.</span>}
+      {!first && <span className="text-danger">All batches have expired. None can be given.</span>}
     </div>
   )
 }

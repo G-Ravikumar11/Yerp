@@ -58,7 +58,7 @@ def test_each_row_is_marked_new_update_duplicate_or_error_with_the_reason(tenant
         ["", "steel  TMT bar 12MM", "", "", "", "Kgs", "", "", "", ""],                                           # 6  same name as an existing item
         ["", "", "", "", "", "cum", "", "", "", ""],                                                              # 7  no name
         ["BAD-1", "Odd unit", "", "", "", "furlong", "", "", "", ""],                                             # 8  unknown unit
-        ["BAD-2", "Odd category", "", "Not set up", "", "cum", "", "", "", ""],                                   # 9
+        ["NEW-2", "New category", "", "Not set up", "", "cum", "", "", "", ""],                                   # 9  its category is added
         ["BAD-3", "Negative", "", "", "", "cum", "", -5, "", ""],                                                 # 10
         ["BAD-4", "Odd gst", "", "", "", "cum", "", "", "", 7],                                                   # 11
         ["HAS SPACE", "Spaced code", "", "", "", "cum", "", "", "", ""],                                          # 12
@@ -71,11 +71,11 @@ def test_each_row_is_marked_new_update_duplicate_or_error_with_the_reason(tenant
     assert got[6]["status"] == "Duplicate" and "OLD-1" in got[6]["reason"] and got[6]["action"] == "skip"
     assert "no name" in got[7]["reason"] and got[7]["status"] == "Error"
     assert "furlong" in got[8]["reason"] and "not a unit" in got[8]["reason"]
-    assert "not set up" in got[9]["reason"]
+    assert got[9]["status"] == "New" and "New category 'Not set up' will be added" in got[9]["reason"]
     assert "0 or more" in got[10]["reason"]
     assert "0, 5, 12, 18 or 28" in got[11]["reason"]
     assert "space" in got[12]["reason"]
-    assert body["summary"] == {"total": 11, "new": 2, "update": 1, "duplicate": 2, "error": 6}
+    assert body["summary"] == {"total": 11, "new": 3, "update": 1, "duplicate": 2, "error": 5}
     with main.SessionLocal() as db:
         assert db.query(models.DBItem).count() == 1, "a preview saves nothing"
 
@@ -218,3 +218,25 @@ def test_category_changes_are_for_those_who_manage_items_and_only_for_their_own_
     assert portal.delete("/api/item-categories/%d" % cement["id"]).status_code == 403
     assert portal.post("/api/item-categories/%d/merge" % cement["id"], json={"into_id": cement["id"]}).status_code == 403
     assert site_with  # the shared helper module stays imported for the suites that follow
+
+
+def test_categories_the_business_has_not_set_up_are_added_with_the_import(tenant):
+    """A migrated list brings its own categories: they are added on import, each once, instead of every row being refused."""
+    rows = [["CE0008", "Loose Cement", "Material", "Cement", "", "MT", "", "", "", ""],
+            ["EL0001", "Switch 6A", "Material", "Electrical Material", "Switches", "Nos", "", "", "", ""],
+            ["EL0002", "Switch 16A", "Material", "electrical material", "switches", "Nos", "", "", "", ""]]
+    body = preview(tenant, rows)
+    got = by_line(body)
+    assert body["summary"]["error"] == 0 and body["summary"]["new"] == 3
+    assert "New category" not in got[2]["reason"], "Cement is one of the starting categories"
+    assert "New category 'Electrical Material' will be added" in got[3]["reason"]
+    assert "New subcategory 'Switches' under Electrical Material will be added" in got[3]["reason"]
+    done = tenant.post("/api/items/import/commit", json=to_commit(body)).json()
+    assert done["created"] == 3, done
+    with main.SessionLocal() as db:
+        cats = db.query(models.DBItemCategory).filter(models.DBItemCategory.name.ilike("electrical material")).all()
+        assert len(cats) == 1, "added once, however many rows name it"
+        subs = db.query(models.DBItemCategory).filter(models.DBItemCategory.parent_id == cats[0].id).all()
+        assert [s.name for s in subs] == ["Switches"]
+        items = {i.item_code: i for i in db.query(models.DBItem).filter(models.DBItem.item_code.like("EL%")).all()}
+        assert items["EL0002"].item_category == "Electrical Material" and items["EL0002"].item_subcategory == "Switches"

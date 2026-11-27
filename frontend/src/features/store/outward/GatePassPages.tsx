@@ -59,12 +59,12 @@ export function GatePassForm() {
   return (
     <form onSubmit={(e) => { e.preventDefault(); if (issueId && f.destination.trim()) save.mutate() }} className="grid gap-5">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="Issue" htmlFor="gf-issue" hint="Only posted issues."><Select id="gf-issue" value={issueId || ''} placeholder="Choose an issue" onChange={(e) => { setIssueId(Number(e.target.value) || 0); setQty({}) }} options={(issues.data?.items ?? []).map((i) => ({ value: i.id, label: `${i.number} - ${i.received_by_name || i.holder_name || i.project}` }))} /></Field>
+        <Field label="Issue" htmlFor="gf-issue" hint="Only issues already saved to stock."><Select id="gf-issue" value={issueId || ''} placeholder="Choose an issue" onChange={(e) => { setIssueId(Number(e.target.value) || 0); setQty({}) }} options={(issues.data?.items ?? []).map((i) => ({ value: i.id, label: `${i.number} - ${i.received_by_name || i.holder_name || i.project}` }))} /></Field>
         <Field label="Date" htmlFor="gf-date"><Input id="gf-date" type="date" max={today()} value={f.gate_date} onChange={(e) => set('gate_date', e.target.value)} /></Field>
         <Field label="Going to" htmlFor="gf-dest"><Input id="gf-dest" value={f.destination} onChange={(e) => set('destination', e.target.value)} placeholder="Site, yard or party" maxLength={200} /></Field>
         <Field label="Vehicle no." htmlFor="gf-veh"><Input id="gf-veh" value={f.vehicle_no} onChange={(e) => set('vehicle_no', e.target.value)} /></Field>
         <Field label="Driver" htmlFor="gf-drv"><Input id="gf-drv" value={f.driver_name} onChange={(e) => set('driver_name', e.target.value)} /></Field>
-        <Field label="Due back" htmlFor="gf-due" hint="For returnable items; taken from the issue when left empty."><Input id="gf-due" type="date" min={f.gate_date} value={f.expected_return_date} onChange={(e) => set('expected_return_date', e.target.value)} /></Field>
+        <Field label="Due back" htmlFor="gf-due" hint="For items that must come back."><Input id="gf-due" type="date" min={f.gate_date} value={f.expected_return_date} onChange={(e) => set('expected_return_date', e.target.value)} /></Field>
         <Field label="Purpose" htmlFor="gf-purpose"><Input id="gf-purpose" value={f.purpose} onChange={(e) => set('purpose', e.target.value)} /></Field>
         <Field label="Remarks" htmlFor="gf-rem" className="sm:col-span-2"><Textarea id="gf-rem" rows={1} value={f.remarks} onChange={(e) => set('remarks', e.target.value)} /></Field>
       </div>

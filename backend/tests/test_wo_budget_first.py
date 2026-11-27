@@ -1,6 +1,7 @@
 """Budget first: on a project with a BOQ, a sub contractor work order is sent for approval only once every line is costed on
 the Budgeting tab. A line priced above its budget is sent only with a reason, which its approvers read and the Master signs
 - and which never reaches the contractor or the order's PDF."""
+from conftest import budget_all
 from test_boq import contractor_order, make_boq, saved
 from test_budgeting import put_line
 
@@ -9,6 +10,7 @@ def setup(tenant, rate=150):
     jid, boq = make_boq(tenant)
     lines = {l["group_code"]: l for l in saved(tenant, boq)["lines"] if l["kind"] == "item"}
     order, _, _ = contractor_order(tenant, lines, [(lines["EXC"], 100, rate)])
+    budget_all(tenant, jid, skip={lines["EXC"]["key"]})       # the rest of the project; each test sets EXC's own budget
     return jid, lines, order
 
 

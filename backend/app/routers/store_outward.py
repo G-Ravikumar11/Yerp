@@ -30,8 +30,10 @@ from app.models.store_outward import (
 )
 from app.models.store_extras import DBStoreIndentLineNote
 from app.services import store_outward as svc
+from app.services.store_pages import page as store_page
 from app.services.store_batches import batches_on_hand
 from app.services.stock_ledger import assert_store_access
+
 
 router = APIRouter(prefix="/api/store/outward", tags=["store-outward"])
 ZERO = Decimal("0")
@@ -584,6 +586,8 @@ def indent_dict(db, indent, detail=False):
                          "purpose": l.purpose or "", "reason": notes[l.id].reason or "" if l.id in notes else "", "substitute_for_line_id": notes[l.id].substitute_for_line_id if l.id in notes else None,
                          **_shortfall(l, done, spare, buying.get(l.id))}
                         for l in lines]
+        from app.services.item_sheet import indent_warnings
+        out["sheet_warnings"] = indent_warnings(db, indent, lines) if indent.status not in ("CANCELLED", "CLOSED") else []
         out["history"] = [{"action": h.action, "from": h.from_status, "to": h.to_status, "by": h.user_name, "at": h.at.isoformat(timespec="seconds") if h.at else "", "note": h.note or ""}
                           for h in db.query(DBStoreOutwardLog).filter(DBStoreOutwardLog.doc_type == INDENT, DBStoreOutwardLog.doc_id == indent.id).order_by(DBStoreOutwardLog.id).all()]
         out["issues"] = [{"id": i.id, "number": i.number, "status": i.status} for i in db.query(DBStoreIssue).filter(DBStoreIssue.indent_id == indent.id).order_by(DBStoreIssue.id).all()]
@@ -625,7 +629,11 @@ def _indent_values(db, actor, body):
     if needed is not None and needed < on:
         raise HTTPException(400, "The required-by date is before the indent date.")
     project, _wo = svc.check_indent_header(db, actor.client.id, body)
-    return store, on, needed, svc.build_indent_lines(db, actor.client.id, body.lines)
+    lines = svc.build_indent_lines(db, actor.client.id, body.lines)
+    # A project with an approved Item sheet is asked for only what is on it.
+    from app.services.item_sheet import check_indent
+    check_indent(db, actor.client.id, project.id, [l["item"] for l in lines])
+    return store, on, needed, lines
 
 
 @router.get("/indent")
@@ -734,6 +742,9 @@ def print_indent(indent_id: int, request: Request, db: Session = Depends(get_rea
 def submit_indent(indent_id: int, request: Request, db: Session = Depends(get_db)):
     actor = store_actor(request, db, "store.outward.create")
     indent = _indent_or_404(db, actor, indent_id)
+    # A draft written before the project's Item sheet was approved is held to it now.
+    from app.services.item_sheet import check_indent
+    check_indent(db, actor.client.id, indent.project_id, list(_items(db, [l.item_id for l in svc.indent_lines(db, indent)]).values()))
     svc.indent_submit(db, actor, indent)
     log_audit(db, actor.client.id, "store_indent_submitted", "store_doc", indent.id, indent.number, "", request=request, **_who(actor))
     db.commit()
@@ -989,7 +1000,8 @@ def list_documents(kind_key: str, request: Request, status: str = "", store_id: 
         query = query.filter(date_col <= svc.day(to_date, "To date", allow_future=True))
     total = query.count()
     rows = query.order_by(kind.header.id.desc()).offset(max(0, offset)).limit(max(1, min(limit, 500))).all()
-    return {"total": total, "items": [doc_dict(db, kind, r) for r in rows]}
+    with store_page(db, kind, rows, svc.LINE_ORDER[kind.line]):          # the page's lines and what it points at, read once
+        return {"total": total, "items": [doc_dict(db, kind, r) for r in rows]}
 
 
 @router.get("/{kind_key}/export")

@@ -167,7 +167,7 @@ export function ImportItemsModal({ open, onOpenChange, vocab }: { open: boolean;
                     </td>
                     <td className="px-2 py-2">
                       <Select aria-label={`Category, line ${r.line}`} value={r.values.item_category ?? ''} placeholder="None" onChange={(e) => { edit(r.line, 'item_category', e.target.value); edit(r.line, 'item_subcategory', '') }}
-                        options={[...(cats.data ?? []).map((c) => ({ value: c.name, label: c.name })), ...(r.values.item_category && !cats.data?.some((c) => c.name === r.values.item_category) ? [{ value: r.values.item_category, label: `${r.values.item_category} (not set up)` }] : [])]} />
+                        options={[...(cats.data ?? []).map((c) => ({ value: c.name, label: c.name })), ...(r.values.item_category && !cats.data?.some((c) => c.name === r.values.item_category) ? [{ value: r.values.item_category, label: `${r.values.item_category} (new - will be added)` }] : [])]} />
                     </td>
                     <td className="px-2 py-2">
                       <label className="flex items-center gap-2">

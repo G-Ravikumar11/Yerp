@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { groupFor, visibleNav, type NavGroup } from '@/lib/nav'
+import { groupFor, itemFor, visibleNav, type NavGroup } from '@/lib/nav'
 import { prefetchPage, preloadScreen, preloadScreens } from '@/lib/prefetch'
 import { useSession } from '@/lib/session'
 import { useInbox } from '@/api/approvals'
@@ -104,6 +104,8 @@ function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
   const active = groupFor(pathname) === group.id
   const open = !!openGroups[group.id]
   const Icon = group.icon
+  // A page the menu does not list (Store's Low Stock...) lights the group's More item instead.
+  const underMore = !!itemFor(group.items, pathname)?.hidden
 
   // Arriving on a page by URL opens the section it lives in.
   useEffect(() => {
@@ -153,7 +155,7 @@ function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
           >
             <div className="relative ml-[21px] mt-0.5 flex flex-col gap-0.5 border-l border-border pb-1 pl-3">
               {group.id === 'money' && <NewVoucherEntry />}
-              {group.items.map((item) => (
+              {group.items.filter((item) => !item.hidden).map((item) => (
                 <li key={item.path}>
                   <NavLink
                     to={item.path}
@@ -164,11 +166,11 @@ function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
                     className={({ isActive }) =>
                       cn(
                         'relative flex h-8 items-center rounded-md px-2.5 text-[13px] transition-colors duration-150',
-                        isActive ? 'font-medium text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                        isActive || (item.more && underMore) ? 'font-medium text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
                       )
                     }
                   >
-                    {({ isActive }) => (
+                    {({ isActive: own }) => { const isActive = own || (!!item.more && underMore); return (
                       <>
                         {isActive && (
                           <motion.span
@@ -179,7 +181,7 @@ function Group({ group, collapsed }: { group: NavGroup; collapsed: boolean }) {
                         )}
                         <span className="truncate">{item.label}</span>
                       </>
-                    )}
+                    ) }}
                   </NavLink>
                 </li>
               ))}

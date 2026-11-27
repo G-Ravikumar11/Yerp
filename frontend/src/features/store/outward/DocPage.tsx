@@ -24,7 +24,7 @@ export default function DocPage({ kindKey, base }: { kindKey?: OutwardKind; base
   const doc = q.data
   const run = useAction(({ action, reason }: { action: DocAction; reason?: string }) => storePost<Doc>('outward', `/${kind?.key}/${id}/${action}`, { reason: reason ?? '' }), {
     invalidate: [[...outwardKeys.all], ['store', 'enquiry'], ['store', 'lookup']],
-    success: (d, v) => ({ submit: 'Submitted', approve: 'Approved', post: 'Posted to stock', cancel: 'Cancelled' })[v.action] + (d.number ? ` - ${d.number}` : ''),
+    success: (d, v) => ({ submit: 'Submitted', approve: 'Approved', post: 'Saved to stock', cancel: 'Cancelled' })[v.action] + (d.number ? ` - ${d.number}` : ''),
   })
   const discard = useAction(() => storeDelete<{ message: string }>('outward', `/${kind?.key}/${id}`), { invalidate: [[...outwardKeys.all], ['store', 'enquiry']], onSuccess: () => nav(list) })
   if (!kind) return <p className="text-sm text-muted-foreground">There is no such document type.</p>
@@ -54,7 +54,7 @@ export default function DocPage({ kindKey, base }: { kindKey?: OutwardKind; base
     ['Store', `${doc.store_code} - ${doc.store_name}`],
     ['Date', dmy(doc.date)],
     ...(isIssue
-      ? ([['Type', doc.issue_type === 'SUBCONTRACTOR' ? 'Issued to a subcontractor' : 'Site use'], ['Project', doc.project || '-'], ['Work order', doc.work_order || '-'], ['Indent', doc.indent_number || (doc.direct ? 'Direct issue' : '-')],
+      ? ([['Type', doc.issue_type === 'SUBCONTRACTOR' ? 'Issued to a subcontractor' : 'Site use'], ['Project', doc.project || '-'], ['Work order', doc.work_order || '-'], ['Material request', doc.indent_number || (doc.direct ? 'Direct issue' : '-')],
           ...(doc.issue_type === 'SUBCONTRACTOR' ? ([['Subcontractor', doc.holder_name || '-'], ['Subcontract work order', doc.subcontract_order || '-']] as [string, string][]) : []),
           ['Received by', doc.received_by_name ? `${doc.received_by_name} (${(doc.received_by_type ?? '').toLowerCase()})` : doc.holder_name || '-'], ['Purpose', doc.purpose || '-']] as [string, string][])
       : ([['Against issue', doc.issue_number || '-'], ['Held by', doc.holder_name || '-']] as [string, string][])),
@@ -92,7 +92,7 @@ export default function DocPage({ kindKey, base }: { kindKey?: OutwardKind; base
         <div role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">
           <p className="font-semibold">Steel past the BBS + 2% allowance{doc.status === 'SUBMITTED' ? ' - waiting for the Master or the BBS engineer to approve' : ' - it will need the Master or the BBS engineer to approve'}</p>
           <ul className="mt-1 list-disc pl-5">{(doc.steel_over ?? []).map((w) => <li key={w}>{w}</li>)}</ul>
-          {doc.status === 'SUBMITTED' && <p className="mt-1 text-xs">They have been told, and it is in their Approvals list. It can be posted once approved.</p>}
+          {doc.status === 'SUBMITTED' && <p className="mt-1 text-xs">They have been told. It is in their Approvals list. After approval it can be saved to stock.</p>}
         </div>
       )}
       {(doc.free_issue?.rows ?? []).some((r) => !r.within) && ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(doc.status) && (

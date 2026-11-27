@@ -37,13 +37,7 @@ export const REDIRECTS: { from: string; to: string }[] = [
   { from: '/store/stock', to: '/store/hub/enquiry' },
   { from: '/store/material-vouchers', to: '/store/hub/outward/issue' },
   { from: '/store/material-costing', to: '/store/hub/reports/budget-use' },
-  // The old store's screens are gone. What they held is read in the Store Hub's Reports (Old store records, Used vs budget); a bookmark lands on the same thing there,
-  // and any other address under /store/old goes to the Store page. Every target is outside /store/old, so none can loop.
-  { from: '/store/old/stock', to: '/store/hub/reports/old-store' },
-  { from: '/store/old/goods-receipt', to: '/store/hub/reports/old-store/receipts' },
-  { from: '/store/old/material-vouchers', to: '/store/hub/reports/old-store/vouchers' },
-  { from: '/store/old/material-costing', to: '/store/hub/reports/budget-use' },
-  { from: '/store/old/*', to: '/store' },
+  // The old store (/store/old/*) is removed: nothing answers or redirects there, so its addresses get the 404 page.
   // The Store Desk is the Store page now, the one entry in the menu.
   { from: '/store/desk', to: '/store' },
 ]
@@ -57,6 +51,7 @@ export const SCREENS: Screen[] = [
   { path: '/projects/boq/rates', Component: page(() => import('@/features/boq/SiteRatesPage')) },
   { path: '/projects/boq/:id', Component: page(() => import('@/features/boq/BoqPage')) },
   { path: '/store/items', Component: page(() => import('@/features/items/ItemMasterPage')) },
+  { path: '/store/item-sheet', Component: page(() => import('@/features/itemsheet/ItemSheetPage')) },
   { path: '/store/rate-contracts', Component: page(() => import('@/features/items/RateContractsPage')) },
   { path: '/store/items/duplicates', Component: page(() => import('@/features/items/DuplicatesPage')) },
   { path: '/subcontractors/work-orders', Component: page(() => import('@/features/orders/OrdersPage')) },
@@ -119,6 +114,7 @@ export const SCREENS: Screen[] = [
   { path: '/projects/profit', Component: page(() => import('@/features/projects/ProjectProfitPage')) },
   { path: '/store/hub', Component: page(() => import('@/features/store/StorePage')) },
   { path: '/store', Component: page(() => import('@/features/store/registers/StoreDeskPage')) },
+  { path: '/store/more', Component: page(() => import('@/features/store/registers/StoreMorePage')) },
   { path: '/store/stock-register', Component: page(() => import('@/features/store/registers/StockRegisterPage')) },
   { path: '/store/issue/*', Component: page(() => import('@/features/store/registers/IssueSection')) },
   { path: '/store/receive/*', Component: page(() => import('@/features/store/registers/ReceiveSection')) },

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react'
 import { Button, Field, Input, Modal, NumField, Select } from '@/components/ui'
+import { budgetControlKeys } from '@/api/budgetControl'
 import { budgetKey, budgetMaterials, COST_KINDS, pct, resolveBudgetWastage, saveBudgetLine, type BudgetItem, type BudgetRow, type CostKind, type MaterialOption, type WastageAnswer } from '@/api/budgeting'
 import { useAction } from '@/lib/mutate'
 import { useDebounced } from '@/lib/hooks'
@@ -65,7 +66,7 @@ export function BudgetLineModal({ job, row, overhead, contingency, onClose }: { 
   const mismatches = items.map((it, n) => ({ it, a: answer(n) })).filter((x) => x.a?.has_wastage_mismatch)
 
   const save = useAction(() => saveBudgetLine(job, row.key, filled.map((i) => ({ kind: i.kind, description: i.description, uom: i.uom, coefficient: i.coefficient, rate: i.rate, item_code: i.item_code, wastage_percent: own(i) }))),
-    { invalidate: [budgetKey(job)], success: 'Line budget saved', onSuccess: onClose })
+    { invalidate: [budgetKey(job), ...budgetControlKeys], success: 'Line budget saved', onSuccess: onClose })
 
   const grid = 'md:grid-cols-[8rem_1fr_5rem_6rem_7rem_5.5rem_7rem_2rem]'
   return (

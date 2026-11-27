@@ -284,7 +284,43 @@ def _project_accounts(job_id, request, db, client):
         "advances": adv["summary"], "mobilisation": adv["mobilisation"], "on_account": adv["on_account"], "site_cash": adv["site_cash"],
         "journal_cost": money(journal_costs_by_job(db, client.id, [job_id]).get(job_id, 0.0)),
         "debit_notes": money(debit_notes_by_job(db, client.id, [job_id]).get(job_id, 0.0)),
+        "ledger_check": _ledger_check(db, client, job_id, to_receive, to_pay,
+                                      money(max(sum(e["amount"] for e in live if e["direction"] == "IN"), detail.get("received") or 0.0)),
+                                      money(max(sum(e["amount"] for e in live if e["direction"] == "OUT"), detail.get("paid") or 0.0)), live),
     }
+
+
+def _ledger_check(db, client, job_id, to_receive, to_pay, received, paid, live):
+    """The project's four money figures set beside what the party ledgers and the entries say for the same project, and what
+    explains each difference. A difference nothing here explains is left as 'unexplained' for somebody to look at."""
+    rows = [r for r in _ledger_rows(db, client.id) if r.get("job_id") == job_id and r.get("party")]
+    by_party = {}
+    for r in rows:
+        key = (r["party_type"], norm_name(r["party"]))
+        by_party[key] = by_party.get(key, 0.0) + (r["billed"] or 0) - (r["moved"] or 0)
+    ledger_receive = money(sum(v for (t, _), v in by_party.items() if t == "client" and v > 0))
+    ledger_pay = money(sum(v for (t, _), v in by_party.items() if t != "client" and v > 0))
+    adjust = lambda client_side: money(sum((r["billed"] or 0) - (r["moved"] or 0) for r in rows
+                                           if r["kind"] in ("Journal", "Opening balance") and (r["party_type"] == "client") == client_side))
+    invoices = money(sum(r["outstanding"] for r in to_receive if r.get("kind") == "Invoice"))
+    entries_in = money(sum(e["amount"] for e in live if e["direction"] == "IN"))
+    entries_out = money(sum(e["amount"] for e in live if e["direction"] == "OUT"))
+
+    def line(label, dashboard, ledger, explained):
+        explained = [{"label": t, "amount": money(a)} for t, a in explained if abs(a) >= 0.005]
+        diff = money(dashboard - ledger)
+        return {"label": label, "dashboard": money(dashboard), "ledger": money(ledger), "difference": diff, "explained": explained,
+                "unexplained": money(diff - sum(e["amount"] for e in explained))}
+    receive_total, pay_total = money(sum(r["outstanding"] for r in to_receive)), money(sum(r["outstanding"] for r in to_pay))
+    return [
+        line("Still to receive", receive_total, ledger_receive, [
+            ("Invoices from the invoice module are on Pay & Receive but not in the party ledgers", invoices),
+            ("Journals and opening balances on clients are in the ledgers, not on the bills", -adjust(True))]),
+        line("Still to pay", pay_total, ledger_pay, [
+            ("Journals and opening balances on suppliers and contractors are in the ledgers, not on the bills", -adjust(False))]),
+        line("Received", received, entries_in, [("Settled on the project's bills with no receipt entered behind it", max(0.0, received - entries_in))]),
+        line("Paid out", paid, entries_out, [("Settled on the project's bills with no payment entered behind it", max(0.0, paid - entries_out))]),
+    ]
 
 
 @router.get("/api/costs/by-project.xlsx")
@@ -1747,7 +1783,8 @@ def ledger_statement(request: Request, party_type: str, party: str,
         if con:
             master = {"name": con.company_name, "gstin": con.gst_number or "", "pan": con.pan or "",
                       "address": con.address or "", "phone": con.phone_number or ""}
-    return {"party": party, "party_type": party_type, "master": master,
+    # A party with no record of its own (a client, a member of staff, a supplier not yet on the master) has an empty one, not none.
+    return {"party": party, "party_type": party_type, "master": master or {},
             "our": our_party(db, client.id), "opening": opening,
             "rows": out, "closing": balance,
             "billed": money(sum(r["billed"] for r in out)),
@@ -1870,8 +1907,16 @@ def doc_outstanding(doc_type: str, doc_id: int, request: Request, db: Session = 
         from app.services.procurement import bill_ahead_of_goods
         found = bill_ahead_of_goods(db, doc)
         ahead = {"verdict": found[0], "note": found[1]} if found else None
+    hold = ""
+    if doc_type in ("sub_bill", "sub_advance", "retention_release"):
+        from app.services.payouts import contractor_payment_hold
+        try:
+            _doc, _worth, _direction, _ptype, _pname, _pid, _job = _doc_for(db, client.id, doc_type, doc_id)
+            hold = contractor_payment_hold(db, client.id, _pid, _pname) if _direction == "OUT" and _ptype == "contractor" else ""
+        except HTTPException:
+            hold = ""                  # a bill that cannot be paid for another reason says so when it is tried
     return {"number": doc.number, "worth": worth, "settled": got,
-            "outstanding": money(max(0.0, worth - got)), "ahead_of_goods": ahead,
+            "outstanding": money(max(0.0, worth - got)), "ahead_of_goods": ahead, "payee_hold": hold,
             "entries": [money_entry_dict(e) for e in db.query(models.DBMoneyEntry).filter(
                 models.DBMoneyEntry.client_id == client.id,
                 models.DBMoneyEntry.doc_type == doc_type,

@@ -335,11 +335,14 @@ def owner_places(tenant, wo_id, note="Approved"):
     return res.json()
 
 
-def budget_all(tenant, job_id, per_unit=10_000_000):
+def budget_all(tenant, job_id, per_unit=10_000_000, skip=()):
     """Budget every priced BOQ line of a project (labour at `per_unit`, far above any test's contractor rate), so a work
-    order on it can be sent: an order is sent only once its lines are budgeted."""
+    order on it can be sent: an order on a live BOQ project is sent only once the whole BOQ is budgeted. `skip` leaves
+    the named BOQ keys alone, for a test that budgets (or leaves unbudgeted) its own line itself."""
     rows = tenant.get("/api/jobs/%d/budget" % job_id).json().get("rows", [])
     for r in rows:
+        if r["key"] in skip:
+            continue
         res = tenant.put("/api/jobs/%d/budget/lines/%s" % (job_id, r["key"]), json={"items": [
             {"kind": "LABOUR", "description": "Labour", "uom": "unit", "coefficient": 1, "rate": per_unit}]})
         assert res.status_code == 200, res.text

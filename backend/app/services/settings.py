@@ -215,29 +215,30 @@ def _put_setting(db, client_id, key, value):
 
 @scheduled_job("morning_digest", digest_key)
 def job_morning_digest(db, now):
-    """Every morning, the dashboard's list as one message - only when there
-    is something on it, and not before seven."""
+    """Every morning from seven, the daily summary (services/daily_email.py): to the Master, the money position and
+    everything pending across the company; to each employee, their own pending work. Nobody gets one on a day with
+    nothing pending for them."""
+    from app.services import daily_email
     if now.hour < 7:
         return "too early"
-    sent = 0
+    sent = staff = 0
     for client in each_active_client(db):
         try:
-            from app.services.attention_buying import buying_items, money_lines
-            from app.services.accounts_watch import accounts_items
-            items = attention_items(db, client.id) + buying_items(db, client.id) + accounts_items(db, client, now.date())
-            position = money_lines(db, client)
+            items = daily_email.company_items(db, client, now.date())
+            money = daily_email.money_rows(db, client)
         except Exception as exc:
             logger.error("Digest for %s failed: %s", client.id, exc)
-            continue
-        if not items:
-            continue
-        # The money first - owed to us, owed by us, cash in the banks - then what needs looking at.
-        lines = position + ["- %s: %s" % (i["title"], i["detail"]) for i in items[:8]]
-        notify(db, client.id, "daily_digest",
-               "%d thing%s worth a look today" % (len(items), "" if len(items) == 1 else "s"),
-               "\n".join(lines), view="dashboard-view", severity="action")
-        sent += 1
-    return "%d digest(s)" % sent
+            items, money = None, None
+        if items:
+            subject, text, html = daily_email.compose(client.company_name, "Good morning", now.date(), items[:12], money)
+            notify(db, client.id, "daily_digest", subject.split(" - ", 1)[1] if " - " in subject else subject, text,
+                   view="dashboard-view", severity="action", html_body=html)
+            sent += 1
+        try:
+            staff += daily_email.staff_emails(db, client, now.date())
+        except Exception as exc:
+            logger.error("Staff summaries for %s failed: %s", client.id, exc)
+    return "%d digest(s), %d staff summaries" % (sent, staff)
 
 
 def backup_tables(db, client_id):

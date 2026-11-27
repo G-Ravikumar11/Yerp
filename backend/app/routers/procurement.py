@@ -139,7 +139,7 @@ def update_purchase_order(order_id: int, request: Request, body: dict = None,
     # The order's own lines, checked again against the budget and past prices as it now stands.
     from app.services.po_controls import check_order
     kept = db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == order.id).all()
-    check_order(db, client.id, order, [{"boq_key": l.boq_key, "qty": l.qty, "price": l.price, "item_code": l.item_code,
+    check_order(db, client.id, order, [{"boq_key": l.boq_key, "qty": l.qty, "price": l.price, "item_code": l.item_code, "uom": l.uom,
                                         "description": l.description} for l in kept], (body or {}).get("budget_reason"))
     # An approved order that a member of staff then changes is a different
     # order from the one that was approved, and goes back to be approved again.
@@ -929,7 +929,7 @@ def award_rfq(rfq_id: int, body: AwardIn, request: Request, db: Session = Depend
     for m in made:
         po = db.get(models.DBPurchaseOrder, m["id"])
         po.supplier_email = supplier_email(db, client.id, po)
-        check_order(db, client.id, po, [{"item_code": l.item_code, "price": l.price, "qty": l.qty, "description": l.description}
+        check_order(db, client.id, po, [{"item_code": l.item_code, "price": l.price, "qty": l.qty, "description": l.description, "uom": l.uom}
                                         for l in db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).all()])
     log_audit(db, client.id, "rfq_awarded", "rfq", r.id, r.number,
               "; ".join("%s %s" % (m["number"], m["supplier"]) for m in made)

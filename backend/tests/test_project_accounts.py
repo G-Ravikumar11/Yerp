@@ -65,3 +65,21 @@ def test_a_project_shows_its_payment_requests_and_the_months_money_moved(tenant)
     d = tenant.get("/api/money/project-accounts/%d" % mine).json()
     assert d["payment_requests"][0]["status"] == "PAID" and d["request_summary"]["open"] == 0
     assert len(d["monthly"]) == 1 and d["monthly"][0]["paid"] == 60000 and d["monthly"][0]["received"] == 0
+
+
+def test_the_projects_figures_are_set_beside_the_ledgers_with_what_explains_a_difference(tenant):
+    mine = job(tenant, "Alpha Towers")
+    b = bill(tenant, "SB-L1", mine, 40000)
+    assert tenant.post("/api/approvals/submit", json={"entity_type": "bill", "entity_id": b["id"]}).status_code == 200
+    # A journal credits the supplier 3,000 on this project: the ledger owes it, the bill does not.
+    jid = tenant.post("/api/journals", json={"narration": "Hire owed", "lines": [
+        {"kind": "head", "head": "Machinery hire", "debit": 3000, "job_id": mine},
+        {"kind": "party", "party_type": "supplier", "party_name": "ACC Ltd", "credit": 3000, "job_id": mine}]}).json()["id"]
+    assert tenant.post("/api/journals/%d/approve" % jid, json={}).status_code == 200
+    check = {c["label"]: c for c in tenant.get("/api/money/project-accounts/%d" % mine).json()["ledger_check"]}
+    pay = check["Still to pay"]
+    assert pay["dashboard"] == 40000 and pay["ledger"] == 43000 and pay["difference"] == -3000
+    assert pay["explained"][0]["amount"] == -3000 and pay["unexplained"] == 0
+    # With nothing else on the project, the other figures agree outright.
+    for label in ("Still to receive", "Received", "Paid out"):
+        assert check[label]["difference"] == 0 and check[label]["unexplained"] == 0

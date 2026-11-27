@@ -30,6 +30,8 @@ import { CostCentreModal } from './CostCentreModal'
 import { HeadForm, headFrom } from './HeadForm'
 import { linesFrom, ScheduleTab, toPayload } from './ScheduleTab'
 import { TermsTab } from './TermsTab'
+import { OrderBudgetPanel } from './OrderBudgetPanel'
+import { useOrderBudgetCheck } from '@/api/budgetControl'
 
 type Tab = OrderTab
 
@@ -152,6 +154,9 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
   // Once signed, the steps that follow get a tab of their own.
   const live = order.status === 'APPROVED' || order.status === 'EXECUTED' || order.status === 'CLOSED'
   const steps: OrderTab[] = live ? ['details', 'schedule', 'terms', 'approval', 'next'] : ['details', 'schedule', 'terms', 'approval']
+  // The HO QS budget against this order, while it is still being sent or signed - the server's own check, made again on sending.
+  const budgetCheck = useOrderBudgetCheck(order.id, order.status === 'DRAFT' || order.status === 'PROVISIONAL')
+  const blockedByBudget = !!budgetCheck.data && budgetCheck.data.applies && !budgetCheck.data.can_send
   const budgetWarnings = order.budget_warnings ?? []
   // Everything an approver signs past - the allocation, the client's BOQ - is overridden with one reason.
   const overrideWarnings = [...budgetWarnings, ...(order.boq_warnings ?? [])]
@@ -207,7 +212,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
               </Button>
             )}
             {has('SUBMIT') && editable && (
-              <Button loading={move.isPending && move.variables?.action === 'submit'} onClick={() => move.mutate({ action: 'submit' })}>
+              <Button loading={move.isPending && move.variables?.action === 'submit'} disabled={blockedByBudget} title={blockedByBudget ? 'The project is not fully budgeted - see the HO QS budget below.' : undefined} onClick={() => move.mutate({ action: 'submit' })}>
                 {label('SUBMIT')}
               </Button>
             )}
@@ -256,6 +261,7 @@ function OrderEditor({ order, reseed }: { order: Order; reseed: () => void }) {
         </div>
       )}
 
+      {budgetCheck.data && <OrderBudgetPanel check={budgetCheck.data} />}
       {overrideWarnings.length + masterOnly.length + (order.unconfirmed_budgets ?? []).length > 0 && (
         <div role="alert" className="mb-5 space-y-1 rounded-xl border border-warning/30 bg-warning-soft p-3.5 text-[13.5px] text-warning">
           {overrideWarnings.map((w) => (

@@ -10,7 +10,7 @@ import { qty } from '../enquiry/api'
 import { matching, useIssues, type IssueLine } from './api'
 import { RegisterFilters, RegisterHeader } from './RegisterParts'
 
-const STATUS: Record<string, string> = { DRAFT: 'Draft', SUBMITTED: 'Waiting approval', APPROVED: 'Approved - to post' }
+const STATUS: Record<string, string> = { DRAFT: 'Draft', SUBMITTED: 'Waiting for approval', APPROVED: 'Approved - save to stock' }
 
 /** Store > Issue: every posted issue, line by line. A new one is made on the issue form, which picks the batch and charges the project. */
 /** `storeId` given: it sits in the Store Desk, which chooses the store and has the heading. */
@@ -34,7 +34,7 @@ export function IssueList({ storeId: fixed }: { storeId?: number } = {}) {
   ]
   return (
     <div>
-      <RegisterHeader embedded={embedded} title="Material Issue" description="Materials issued to site and projects." actions={!embedded && can(storePerm('outward', 'create')) &&
+      <RegisterHeader embedded={embedded} title="Material Issue" description="Material given to site and contractors." actions={!embedded && can(storePerm('outward', 'create')) &&
         <Button asChild><Link to="/store/issue/new"><Plus /> New Issue</Link></Button>} />
       <Card className="p-4">
         <RegisterFilters q={q} onQ={setQ} storeId={storeId} onStore={embedded ? undefined : setStoreId} />

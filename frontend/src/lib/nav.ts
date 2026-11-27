@@ -28,18 +28,54 @@ export type StoreSection = { label: string; path: string; perm: string; hint: st
 export const STORE_SECTIONS: StoreSection[] = [
   { label: 'Enquiries & Comparison', path: '/store/enquiries', perm: 'purchase.manage', block: 'purchase', hint: 'Ask suppliers for quotes and compare them' },
   { label: 'Purchase Orders', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all', block: 'purchase', hint: 'Orders to suppliers and what has arrived' },
+  { label: 'Item Sheet', path: '/store/item-sheet', perm: 'store.outward.view|store.inward.view|store.admin', block: 'purchase', hint: "Materials for every BOQ line; order, receive and issue them" },
   { label: 'Rate Contracts', path: '/store/rate-contracts', perm: 'purchase.manage', block: 'purchase', hint: 'Rates agreed with suppliers for the year' },
   { label: 'Invoice Tracker', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all', block: 'purchase', hint: "Suppliers' bills checked against what came" },
-  // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are kept as records,
-  // reached from the Hub (routes.tsx sends their old addresses there).
+  // Every receipt, issue, transfer and count is in the Store Hub. The old store's screens are removed.
   { label: 'Full store (Hub)', path: '/store/hub', perm: STORE_ANY, block: 'more', hint: 'Transfers, counts, quality, returns, gate passes, reports' },
   { label: 'Item Master', path: '/store/items', perm: 'items.manage', block: 'more', hint: 'Every material with its unit, code and rate' },
   { label: 'E-way Bills', path: '/store/eway', perm: 'accounts.manage|stores.manage|stores.receive|bills.view_all|store.inward.view|store.outward.view', block: 'more', hint: 'Goods on the road and their validity' },
 ]
 const STORE_OPENS = [STORE_DESK_PERM, ...STORE_SECTIONS.map((s) => s.perm)].join('|')
 
+/**
+ * The store's work in the order it is done, in plain words, for people who read little English: the menu lists these
+ * as numbered steps (like Subcontractors), and the Store page shows them as big cards. `say` is the one line under it.
+ */
+export type StoreStep = { n: number; label: string; path: string; perm: string; say: string }
+export const STORE_STEPS: StoreStep[] = [
+  { n: 1, label: 'Items', path: '/store/items', perm: 'items.manage', say: 'Add every material you use: cement, sand, steel.' },
+  { n: 2, label: 'Item Sheet', path: '/store/item-sheet', perm: 'store.outward.view|store.inward.view|store.admin', say: 'List the materials each project needs.' },
+  { n: 3, label: 'Buy (Purchase Order)', path: '/store/purchase-orders', perm: 'purchase.manage|bills.view_all', say: 'Order material from the supplier.' },
+  { n: 4, label: 'Receive Material', path: '/store/receive', perm: 'store.inward.view|store.admin', say: 'Material came to the store? Enter it here.' },
+  { n: 5, label: 'Material Request', path: '/store/hub/outward/indent', perm: 'store.outward.view|store.admin', say: 'Site asks the store for material.' },
+  { n: 6, label: 'Issue Material', path: '/store/issue', perm: 'store.outward.view|store.admin', say: 'Give material to the site or contractor.' },
+  { n: 7, label: 'Return Material', path: '/store/hub/outward/returns', perm: 'store.outward.view|store.admin', say: 'Unused material came back to the store.' },
+  { n: 8, label: 'Stock', path: '/store/stock-register', perm: STORE_DESK_PERM + '|store.admin', say: 'See what is in the store now.' },
+]
+/** The rest of the store, after the steps: less often, still one click from the menu. */
+export const STORE_MORE: { label: string; path: string; perm: string; say: string }[] = [
+  { label: 'Low Stock', path: '/store/low-stock', perm: STORE_DESK_PERM + '|store.admin', say: 'Materials running out. Order these.' },
+  { label: 'Supplier Quotes', path: '/store/enquiries', perm: 'purchase.manage', say: 'Ask suppliers for rates and compare.' },
+  { label: 'Fixed Rates (Rate Contracts)', path: '/store/rate-contracts', perm: 'purchase.manage', say: 'Rates agreed with a supplier for the year.' },
+  { label: 'Move Stock (Transfer)', path: '/store/hub/control/transfer', perm: 'store.control.view|store.admin', say: 'Send stock from one store to another.' },
+  { label: 'Count Stock', path: '/store/hub/control/count', perm: 'store.control.view|store.admin', say: 'Count what is really in the store.' },
+  { label: 'Damaged / Scrap', path: '/store/hub/control/scrap', perm: 'store.control.view|store.admin', say: 'Write off wasted or scrap material.' },
+  { label: 'Gate Pass', path: '/store/hub/outward/gate-pass', perm: 'store.outward.view|store.admin', say: 'Paper for material leaving the gate.' },
+  { label: 'Tools', path: '/store/hub/outward/tools', perm: 'store.outward.view|store.admin', say: 'Who has which tool.' },
+  { label: 'Reports', path: '/store/hub/reports', perm: 'store.reports.view|store.admin', say: 'Stock, use and cost reports.' },
+  { label: 'Supplier Bill Check', path: '/store/invoice-tracker', perm: 'stores.receive|stores.manage|purchase.manage|bills.view_all', say: "Check suppliers' bills against what came." },
+  { label: 'E-way Bills', path: '/store/eway', perm: 'accounts.manage|stores.manage|stores.receive|bills.view_all|store.inward.view|store.outward.view', say: 'Goods on the road.' },
+  { label: 'Store Settings', path: '/store/hub/masters', perm: 'store.masters.view|store.admin', say: 'Stores, people in each store, item units.' },
+  { label: 'All Store Screens', path: '/store/hub', perm: STORE_ANY, say: 'Every store screen in one place.' },
+]
+
 /** notHeadOffice: left out for HO QS and HO Coordinator, whose front page is the HO portal. */
-type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean }
+/**
+ * hidden: not drawn in the menu (it would be too long to read), but still found by "Go to...", the phone's search and the
+ * path shown at the top. more: the menu item that stands for a group's hidden items, lit while one of them is open.
+ */
+export type NavItem = { label: string; path: string; perm?: string; notHeadOffice?: boolean; hidden?: boolean; more?: boolean }
 /** staffOnly: the screens of a member of staff's own work (timesheet, payslips), which the account holder has no use for. */
 /** perm: the right that puts the whole group in somebody's menu (a portal). Its items may ask for more on top. */
 export type NavGroup = { id: string; label: string; icon: LucideIcon; items: NavItem[]; staffOnly?: boolean; ownerOnly?: boolean; perm?: string }
@@ -136,7 +172,20 @@ const NAV: NavEntry[] = [
     ],
   },
   // One entry for the whole store: the day's work at the top, purchase and the rest of the store below (STORE_SECTIONS).
-  { kind: 'link', id: 'store', label: 'Store', icon: Package, path: '/store', perm: 'store.view', also: STORE_OPENS },
+  {
+    kind: 'group',
+    id: 'store',
+    perm: 'store.view',
+    label: 'Store',
+    icon: Package,
+    items: [
+      { label: 'Store Home', path: '/store', perm: STORE_OPENS },
+      ...STORE_STEPS.map((s) => ({ label: `${s.n}. ${s.label}`, path: s.path, perm: s.perm })),
+      // The menu stops at the steps: everything else is one click away on the More page, so the list stays short to read.
+      { label: 'More', path: '/store/more', perm: STORE_MORE.map((s) => s.perm).join('|'), more: true },
+      ...STORE_MORE.map((s) => ({ label: s.label, path: s.path, perm: s.perm, hidden: true })),
+    ],
+  },
   {
     kind: 'group',
     id: 'money',
@@ -184,9 +233,6 @@ const NAV: NavEntry[] = [
 
 export type Trail = { label: string; path?: string }[]
 
-/** The Store page's own lists, reached from it rather than from the menu. */
-const DESK_PAGES: [string, string][] = [['/store/issue', 'Material Issue'], ['/store/receive', 'Material Receive'], ['/store/stock-register', 'Stock Register'], ['/store/low-stock', 'Low Stock']]
-
 /** Home > Group > Page for whatever path is showing. */
 export function trailFor(pathname: string, staff = false): Trail {
   const home: Trail = [{ label: 'Home', path: '/' }]
@@ -198,16 +244,11 @@ export function trailFor(pathname: string, staff = false): Trail {
       if (hit) return [...home, { label: e.label }, { label: hit.label }]
     }
   }
-  const store: Trail = [...home, { label: 'Store', path: '/store' }]
-  const desk = DESK_PAGES.find(([p]) => pathname === p || pathname.startsWith(p + '/'))
-  if (desk) return [...store, ...(pathname === desk[0] ? [{ label: desk[1] }] : [{ label: desk[1], path: desk[0] }, { label: 'Details' }])]
-
-  const section = STORE_SECTIONS.find((s) => pathname === s.path) ?? STORE_SECTIONS.find((s) => pathname.startsWith(s.path + '/'))
-  if (section) return [...store, ...(pathname === section.path ? [{ label: section.label }] : [{ label: section.label, path: section.path }, { label: 'Details' }])]
   // A page inside a section: /subcontractors/work-orders/12 sits under Work Orders.
   for (const e of NAV) {
     if (e.kind !== 'group') continue
-    const parent = e.items.find((i) => pathname.startsWith(i.path + '/'))
+    // Store Home is no parent: an address under /store that no step names is not a store page.
+    const parent = e.items.filter((i) => i.path !== '/store' && pathname.startsWith(i.path + '/')).sort((a, b) => b.path.length - a.path.length)[0]
     if (parent) return [...home, { label: e.label }, { label: parent.label, path: parent.path }, { label: 'Details' }]
   }
   return [...home, { label: 'Not found' }]
@@ -225,6 +266,12 @@ export function visibleNav(can: (perm: string) => boolean, staff = false, headOf
     const items = e.items.filter((i) => (!i.perm || can(i.perm)) && !(headOffice && i.notHeadOffice))
     return items.length ? [{ ...e, items }] : []
   })
+}
+
+/** The menu item a page sits under: its own, else the longest one its address starts with. */
+export function itemFor(items: NavItem[], pathname: string): NavItem | undefined {
+  return items.find((i) => i.path === pathname)
+    ?? items.filter((i) => i.path !== '/store' && pathname.startsWith(i.path + '/')).sort((a, b) => b.path.length - a.path.length)[0]
 }
 
 export function groupFor(pathname: string): string | null {

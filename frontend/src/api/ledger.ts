@@ -180,7 +180,8 @@ export const adoptSuppliers = () => post<{ message?: string }>('/api/suppliers/a
 export interface Statement {
   party: string
   party_type: PartyType
-  master: { name?: string; gstin?: string; pan?: string; address?: string; phone?: string }
+  /** Empty for a party with no record of its own: a client, a member of staff, a supplier not on the master. */
+  master?: { name?: string; gstin?: string; pan?: string; address?: string; phone?: string } | null
   opening: number
   closing: number
   billed: number

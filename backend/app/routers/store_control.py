@@ -28,8 +28,10 @@ from app.documents.store.control_forms import FORMS
 from app.models.store_control import COUNT, SCRAP, DBStoreControlLog, DBStoreCount, DBStoreScrap, DBStoreTransfer
 from app.models.store_core import DBStore, DBStoreUserAssignment, DocStatus
 from app.services import store_control as svc
+from app.services.store_pages import page as store_page
 from app.services import store_outward
 from app.services.stock_ledger import assert_store_access
+
 
 router = APIRouter(prefix="/api/store/control", tags=["store-control"])
 ZERO = Decimal("0")
@@ -326,7 +328,8 @@ def list_documents(kind_key: str, request: Request, status: str = "", store_id: 
         query = query.filter(date_col <= svc.day(to_date, "To date", allow_future=True))
     total = query.count()
     rows = query.order_by(kind.header.id.desc()).offset(max(0, offset)).limit(max(1, min(limit, 500))).all()
-    return {"total": total, "items": [doc_dict(db, kind, r, actor) for r in rows]}
+    with store_page(db, kind, rows, svc.LINE_ORDER[kind.line]):          # the page's lines and what it points at, read once
+        return {"total": total, "items": [doc_dict(db, kind, r, actor) for r in rows]}
 
 
 @router.get("/{kind_key}/export")

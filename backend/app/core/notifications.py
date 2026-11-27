@@ -361,12 +361,12 @@ def _send_whatsapp_for(phone_id, token, number, text):
         return False
 
 
-def _deliver(client_id, from_email, emails, numbers, wa_phone_id, wa_token, subject, text):
+def _deliver(client_id, from_email, emails, numbers, wa_phone_id, wa_token, subject, text, html_body=None):
     """Runs off the request: the person who certified a bill is not kept
     waiting on a mail server."""
     for to in emails:
         try:
-            send_email_background(to, subject, text, from_email, client_id=client_id)
+            send_email_background(to, subject, text, from_email, html_body=html_body, client_id=client_id)
         except Exception as exc:
             logger.error("Notification email to %s failed: %s", to, exc)
     for n in numbers:
@@ -376,8 +376,8 @@ def _deliver(client_id, from_email, emails, numbers, wa_phone_id, wa_token, subj
 NOTIFY_SYNC = False          # tests set this to deliver inline instead of on a thread
 
 
-def notify(db, client_id, kind, title, body="", view="", ref_type="", ref_id=None, severity="info"):
-    """Announce something. Never allowed to break what raised it."""
+def notify(db, client_id, kind, title, body="", view="", ref_type="", ref_id=None, severity="info", html_body=None):
+    """Announce something. Never allowed to break what raised it. `html_body`: the email's formatted copy, if it has one."""
     try:
         n = models.DBAlert(client_id=client_id, kind=kind, title=title[:200], body=(body or "")[:2000],
                                   view=view or "", ref_type=ref_type or "", ref_id=ref_id, severity=severity)
@@ -406,7 +406,7 @@ def notify(db, client_id, kind, title, body="", view="", ref_type="", ref_id=Non
             client = db.query(models.DBClient).filter(models.DBClient.id == client_id).first()
             args = (client_id, (client.email if client else "") or "", emails, numbers,
                     cfg["wa_phone_id"], cfg["wa_token"],
-                    "%s - %s" % ((client.company_name if client else "") or "Y ERP", title), body or title)
+                    "%s - %s" % ((client.company_name if client else "") or "Y ERP", title), body or title, html_body)
             if NOTIFY_SYNC:
                 _deliver(*args)
             else:

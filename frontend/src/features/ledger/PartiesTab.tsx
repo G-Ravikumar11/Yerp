@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { Download, Pencil, Plus, Trash2 } from 'lucide-react'
 import { DataTable, type TableColumn } from '@/components/data/DataTable'
 import { Button, ConfirmDialog, Select, Stat, StatGrid } from '@/components/ui'
 import { deleteOpening, ledgerKeys, PARTY_LABEL, useOpenings, useParties, type Opening, type Party } from '@/api/ledger'
@@ -45,7 +45,7 @@ export function PartiesTab({ job = 0 }: { job?: number }) {
       },
     },
     { id: 'last', header: 'Last', hideBelow: 'xl', cell: (p) => p.last },
-    { id: 'act', header: '', align: 'right', cell: (p) => <Button size="sm" variant="outline" onClick={() => setStatement(p)}>Statement</Button> },
+    { id: 'act', header: '', align: 'right', cell: (p) => <div className="flex justify-end gap-1"><Button size="sm" variant="outline" onClick={() => setStatement(p)}>Statement</Button><Button size="icon-sm" variant="ghost" asChild><a href={`/api/ledger/statement.pdf?party_type=${encodeURIComponent(p.party_type)}&party=${encodeURIComponent(p.party)}`} target="_blank" rel="noreferrer" aria-label={`Download the statement of ${p.party} (PDF)`} title="Download the statement (PDF)"><Download /></a></Button></div> },
   ]
 
   return (

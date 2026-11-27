@@ -38,7 +38,7 @@ export default function DocListPage({ kind, label, plural }: { kind: OutwardKind
         <Field label="Status" htmlFor="ol-status" className="w-40">
           <Select id="ol-status" value={f.status} placeholder="Any" onChange={(e) => set('status', e.target.value)} options={(meta.data?.doc_statuses ?? []).map((s) => ({ value: s, label: s.charAt(0) + s.slice(1).toLowerCase() }))} />
         </Field>
-        <Field label="Search" htmlFor="ol-q" className="w-48"><Input id="ol-q" value={f.q} onChange={(e) => set('q', e.target.value)} placeholder="Number or holder" /></Field>
+        <Field label="Search" htmlFor="ol-q" className="w-48"><Input id="ol-q" value={f.q} onChange={(e) => set('q', e.target.value)} placeholder="Number or who has it" /></Field>
         <div className="ml-auto flex flex-wrap gap-2">
           <Button variant="outline" asChild><a href={`/api/store/outward/${kind}/export${qs({ status: f.status, store_id: f.store_id, q: f.q })}`}><FileSpreadsheet /> Excel</a></Button>
           {kind === 'issue' && can('store.outward.direct_issue') && <Button variant="outline" onClick={() => nav('/store/hub/outward/issue/new?direct=1')}><Zap /> Direct issue</Button>}

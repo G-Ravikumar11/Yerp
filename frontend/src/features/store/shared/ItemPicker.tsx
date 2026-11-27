@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Search, X } from 'lucide-react'
+import { Plus, Search, X } from 'lucide-react'
 import { Input } from '@/components/ui'
 import { scanCode, scanWhat, useItemSearch, useScanning, type StoreItemOption } from '@/api/store'
 import { ApiError } from '@/lib/api'
@@ -14,11 +14,13 @@ export interface ItemPickerProps {
   disabled?: boolean
   id?: string
   'aria-invalid'?: boolean
+  /** Offered at the foot of the list: add what was typed to the Item Master, where the person may (the Item sheet). */
+  onCreate?: (typed: string) => void
 }
 
 /** Type to find a stock item by code or name and pick it from the list - or scan its rack label or the maker's barcode with the
     camera. A handheld scanner types the code and presses Enter, which takes the item that has it. */
-export function ItemPicker({ value, onChange, placeholder = 'Search item code or name', disabled, id, ...rest }: ItemPickerProps) {
+export function ItemPicker({ value, onChange, placeholder = 'Search item code or name', disabled, id, onCreate, ...rest }: ItemPickerProps) {
   const [text, setText] = useState('')
   const [typed, setTyped] = useState('')
   const [open, setOpen] = useState(false)
@@ -117,6 +119,22 @@ export function ItemPicker({ value, onChange, placeholder = 'Search item code or
             </li>
           ))}
           {!q.isFetching && !(q.data ?? []).length && <li className="px-3 py-2 text-muted-foreground">No item found</li>}
+          {onCreate && (
+            <li role="option" aria-selected={false} className="border-t border-border">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left font-medium text-primary hover:bg-accent"
+                onClick={() => {
+                  onCreate(text.trim())
+                  setOpen(false)
+                  setText('')
+                }}
+              >
+                <Plus className="size-4 shrink-0" />
+                {text.trim() ? `Add "${text.trim()}" to the Item Master` : 'Add a new material to the Item Master'}
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </div>

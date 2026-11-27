@@ -20,14 +20,14 @@ const tab = ({ isActive }: { isActive: boolean }) =>
 function Tabs() {
   return (
     <nav aria-label="Outward" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
-      <NavLink to="/store/hub/outward/indent" className={tab}>Indents</NavLink>
+      <NavLink to="/store/hub/outward/indent" className={tab}>Material requests</NavLink>
       {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/outward/${k.key}`} className={tab}>{k.plural}</NavLink>)}
       <NavLink to="/store/hub/outward/gate-pass" className={tab}>Gate passes</NavLink>
-      <NavLink to="/store/hub/outward/returnables" className={tab}>Returnables out</NavLink>
-      <NavLink to="/store/hub/outward/tools" className={tab}>Tool register</NavLink>
-      <NavLink to="/store/hub/outward/writeoffs" className={tab}>Write-offs</NavLink>
-      <NavLink to="/store/hub/outward/recoveries" className={tab}>Recoveries</NavLink>
-      <NavLink to="/store/hub/outward/recovery" className={tab}>Subcontractor statement</NavLink>
+      <NavLink to="/store/hub/outward/returnables" className={tab}>Not returned yet</NavLink>
+      <NavLink to="/store/hub/outward/tools" className={tab}>Tools</NavLink>
+      <NavLink to="/store/hub/outward/writeoffs" className={tab}>Lost / damaged</NavLink>
+      <NavLink to="/store/hub/outward/recoveries" className={tab}>Charged to contractors</NavLink>
+      <NavLink to="/store/hub/outward/recovery" className={tab}>Contractor statement</NavLink>
       <NavLink to="/store/hub/outward/settings" className={tab}>Settings</NavLink>
     </nav>
   )
@@ -76,7 +76,7 @@ function IndentFormPage({ editing }: { editing: boolean }) {
   const q = useIndent(editing ? Number(id) : 0)
   const back = backTo(editing ? `/store/hub/outward/indent/${id}` : '/store/hub/outward/indent', editing ? 'Back to the indent' : 'Indents')
   if (editing && q.isPending) return <div>{back}<Skeleton className="h-40 w-full" /></div>
-  if (editing && (q.isError || !q.data)) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this indent.</p></div>
+  if (editing && (q.isError || !q.data)) return <div>{back}<p role="alert" className="text-sm text-danger">Could not load this material request.</p></div>
   if (editing && q.data && q.data.status !== 'DRAFT') return <div>{back}<p className="text-sm text-muted-foreground">Only a draft can be edited. Cancel it and raise a new one to correct it.</p></div>
   return <div>{back}<h2 className="mb-4 text-lg font-semibold">{editing ? `Edit ${q.data?.number}` : 'New indent'}</h2><IndentForm indent={editing ? q.data : undefined} /></div>
 }

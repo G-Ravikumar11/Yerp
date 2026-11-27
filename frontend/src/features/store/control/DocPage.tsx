@@ -22,7 +22,7 @@ export default function DocPage() {
   const refresh = [[...controlKeys.all], ['store', 'lookup']]
   const run = useAction(({ action, reason }: { action: DocAction; reason?: string }) => storePost<Doc>('control', `/${kind?.key}/${id}/${action}`, { reason: reason ?? '' }), {
     invalidate: refresh,
-    success: (d, v) => ({ submit: 'Submitted', approve: 'Approved', post: kind?.key === 'transfer' ? 'Dispatched - in transit' : 'Posted to stock', cancel: 'Cancelled' })[v.action] + (d.number ? ` - ${d.number}` : ''),
+    success: (d, v) => ({ submit: 'Submitted', approve: 'Approved', post: kind?.key === 'transfer' ? 'Dispatched - in transit' : 'Saved to stock', cancel: 'Cancelled' })[v.action] + (d.number ? ` - ${d.number}` : ''),
   })
   const receive = useAction(() => storePost<Doc>('control', `/transfer/${id}/receive`), { invalidate: refresh, success: 'Received into the store' })
   const start = useAction(() => storePost<Doc>('control', `/count/${id}/start`), { invalidate: refresh, success: 'Count started - the store is frozen' })

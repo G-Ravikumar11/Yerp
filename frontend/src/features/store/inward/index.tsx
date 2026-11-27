@@ -20,7 +20,7 @@ function InwardTabs() {
     <nav aria-label="Inward documents" className="mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-muted p-1">
       {KINDS.map((k) => <NavLink key={k.key} to={`/store/hub/inward/${k.key}`} className={tab}>{k.plural}</NavLink>)}
       <NavLink to="/store/hub/inward/rejected" className={tab}>Rejected goods</NavLink>
-      <NavLink to="/store/hub/inward/deliveries" className={tab}>Deliveries</NavLink>
+      <NavLink to="/store/hub/inward/deliveries" className={tab}>Still to come</NavLink>
     </nav>
   )
 }

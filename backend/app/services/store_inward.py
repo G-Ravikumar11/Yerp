@@ -14,6 +14,8 @@ from typing import List, Optional
 from fastapi import HTTPException
 from sqlalchemy import func
 
+from app.services.store_pages import cached_lines
+
 from app import models
 from app.models.store_core import (
     DBStore, DBStoreItemSettings, DBStoreStockBalance, DocStatus, InvalidMovementError, MovementType,
@@ -105,6 +107,38 @@ def po_item(db, po, po_line) -> Optional[models.DBItem]:
     return found
 
 
+def po_items(db, pairs) -> dict:
+    """po_item for many (order, line) pairs at once: {line id: item or None}, in three queries however many lines - the same
+    choice po_item makes (the linked item when it is this company's stock item, else the code as typed, else the code in any
+    case; where two items share a code, the earlier)."""
+    pairs = list(pairs)
+    linked_ids = {l.item_id for _p, l in pairs if getattr(l, "item_id", None)}
+    linked = {i.id: i for i in db.query(models.DBItem).filter(models.DBItem.id.in_(linked_ids))} if linked_ids else {}
+    clients = {p.client_id for p, _l in pairs}
+    codes = {(l.item_code or "").strip() for _p, l in pairs} - {""}
+    exact, loose = {}, {}
+    if codes:
+        for i in (db.query(models.DBItem).filter(models.DBItem.client_id.in_(clients), models.DBItem.kind == "RM", models.DBItem.item_code.in_(codes))
+                  .order_by(models.DBItem.id)):
+            exact.setdefault((i.client_id, i.item_code), i)
+        rest = {(p.client_id, (l.item_code or "").strip().lower()) for p, l in pairs
+                if (l.item_code or "").strip() and (p.client_id, (l.item_code or "").strip()) not in exact}
+        if rest:
+            for i in (db.query(models.DBItem).filter(models.DBItem.client_id.in_({c for c, _x in rest}), models.DBItem.kind == "RM",
+                                                     func.lower(func.trim(models.DBItem.item_code)).in_({x for _c, x in rest}))
+                      .order_by(models.DBItem.id)):
+                loose.setdefault((i.client_id, (i.item_code or "").strip().lower()), i)
+    out = {}
+    for p, l in pairs:
+        item = linked.get(l.item_id) if getattr(l, "item_id", None) else None
+        if item is not None and item.client_id == p.client_id and item.kind == "RM":
+            out[l.id] = item
+            continue
+        code = (l.item_code or "").strip()
+        out[l.id] = (exact.get((p.client_id, code)) or loose.get((p.client_id, code.lower()))) if code else None
+    return out
+
+
 def link_po_line_item(db, actor, po_line_id, item_id):
     """Say which stock item a purchase-order line is for, from the goods receipt screen, so it can be received. Refused once
     the line has been received as another item (that receipt would no longer match its order)."""
@@ -172,31 +206,66 @@ def get_po_receipt_summary(db, po_id) -> List[PoLineReceipt]:
     po = db.get(models.DBPurchaseOrder, po_id) if po_id else None
     if po is None:
         return []
-    lines = db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).order_by(models.DBPurchaseOrderLineItem.id).all()
-    posted = _sum_lines(db, (DocStatus.POSTED.value,), [l.id for l in lines])
-    grn_lines = (db.query(DBStoreGrnLine.id, DBStoreGrnLine.po_line_id).join(DBStoreGrn, DBStoreGrn.id == DBStoreGrnLine.grn_id)
-                 .filter(DBStoreGrnLine.po_line_id.in_([l.id for l in lines] or [0]), DBStoreGrn.status == DocStatus.POSTED.value).all())
-    returned = _returned_by_grn_line(db, [g for g, _p in grn_lines], (DocStatus.POSTED.value,))
-    back = {}
+    return po_receipt_summaries(db, [po])[0].get(po.id, [])
+
+
+def po_receipt_summaries(db, orders):
+    """get_po_receipt_summary for a whole list of orders in a fixed number of queries (not a dozen an order and two a line).
+    Returns ({po id: [PoLineReceipt]}, {po id: [its lines]}, {line id: stock item or None}, BaseUnits) - the lines, items and
+    units are what the lists built on it show next to each line, so they need not be read again."""
+    from app.services.stock_ledger import BaseUnits
+    orders = [o for o in orders if o is not None]
+    lines_by = {}
+    ids = [o.id for o in orders]
+    for n in range(0, len(ids), 500):
+        for l in (db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id.in_(ids[n:n + 500]))
+                  .order_by(models.DBPurchaseOrderLineItem.id)):
+            lines_by.setdefault(l.order_id, []).append(l)
+    pairs = [(o, l) for o in orders for l in lines_by.get(o.id, [])]
+    line_ids = [l.id for _o, l in pairs]
+    posted, back, grn_lines = {}, {}, []
+    for n in range(0, len(line_ids), 500):
+        chunk = line_ids[n:n + 500]
+        posted.update(_sum_lines(db, (DocStatus.POSTED.value,), chunk))
+        grn_lines += (db.query(DBStoreGrnLine.id, DBStoreGrnLine.po_line_id).join(DBStoreGrn, DBStoreGrn.id == DBStoreGrnLine.grn_id)
+                      .filter(DBStoreGrnLine.po_line_id.in_(chunk), DBStoreGrn.status == DocStatus.POSTED.value).all())
+    returned = {}
+    gl_ids = [g for g, _p in grn_lines]
+    for n in range(0, len(gl_ids), 500):
+        returned.update(_returned_by_grn_line(db, gl_ids[n:n + 500], (DocStatus.POSTED.value,)))
     for gl, pl in grn_lines:
         back[pl] = back.get(pl, ZERO) + returned.get(gl, ZERO)
-    items = {l.id: po_item(db, po, l) for l in lines}
-    # What the old store received on this order, before the company moved into the Hub, is received here too.
-    old = old_received_in_base(db, {l.id: (l, items[l.id]) for l in lines})
-    out = []
-    for l in lines:
+    items = po_items(db, pairs)
+    units = BaseUnits(db, {i.id for i in items.values() if i is not None})
+    # What the old store received on these orders, before the company moved into the Hub, is received here too.
+    old = old_received_in_base(db, {l.id: (l, items[l.id]) for _o, l in pairs})
+    out = {}
+    for o, l in pairs:
         item = items[l.id]
-        ordered = _ordered_base(db, l, item) if item else Decimal(str(l.qty or 0))
+        ordered = _ordered_in(units, l, item) if item else Decimal(str(l.qty or 0))
         rec, acc, rej = posted.get(l.id, (ZERO, ZERO, ZERO))
         rec, acc = rec + old.get(l.id, ZERO), acc - back.get(l.id, ZERO) + old.get(l.id, ZERO)
-        out.append(PoLineReceipt(po_line_id=l.id, item_id=item.id if item else None, ordered_qty=q3(ordered), received_qty=q3(rec),
-                                 accepted_qty=q3(acc), rejected_qty=q3(rej), pending_qty=q3(max(ZERO, ordered - acc))))
-    return out
+        out.setdefault(o.id, []).append(PoLineReceipt(po_line_id=l.id, item_id=item.id if item else None, ordered_qty=q3(ordered), received_qty=q3(rec),
+                                                      accepted_qty=q3(acc), rejected_qty=q3(rej), pending_qty=q3(max(ZERO, ordered - acc))))
+    return out, lines_by, items, units
 
 
-def _category_of(db, item_id):
-    s = db.query(DBStoreItemSettings.category, DBStoreItemSettings.is_batch_tracked).filter(DBStoreItemSettings.item_id == item_id).first()
-    return {"category": s[0] if s else None, "batch_tracked": bool(s[1]) if s else False}
+def _ordered_in(units, po_line, item) -> Decimal:
+    """_ordered_base from a BaseUnits already read: what the line ordered in the item's base unit, zero when its unit cannot be converted."""
+    try:
+        return units.convert(item.id, Decimal(str(po_line.qty or 0)), po_line.uom or units.base.get(item.id, "").strip())
+    except InvalidMovementError:
+        return ZERO
+
+
+def item_categories(db, item_ids):
+    """Each item's store category and whether it is batch-tracked, for many items in one query."""
+    item_ids = set(item_ids)
+    found = {}
+    for r in (db.query(DBStoreItemSettings.item_id, DBStoreItemSettings.category, DBStoreItemSettings.is_batch_tracked)
+              .filter(DBStoreItemSettings.item_id.in_(item_ids or {0})).order_by(DBStoreItemSettings.id)):
+        found.setdefault(r[0], r)
+    return {i: {"category": found[i][1] if i in found else None, "batch_tracked": bool(found[i][2]) if i in found else False} for i in item_ids}
 
 
 def open_purchase_orders(db, client_id, q=""):
@@ -208,13 +277,15 @@ def open_purchase_orders(db, client_id, q=""):
         like = "%" + term.replace("%", "").replace("_", "") + "%"
         query = query.filter(models.DBPurchaseOrder.number.ilike(like) | models.DBPurchaseOrder.supplier_name.ilike(like))
     out = []
-    for po in query.order_by(models.DBPurchaseOrder.id.desc()).limit(50).all():
-        summary = {s.po_line_id: s for s in get_po_receipt_summary(db, po.id)}
-        lines = db.query(models.DBPurchaseOrderLineItem).filter(models.DBPurchaseOrderLineItem.order_id == po.id).order_by(models.DBPurchaseOrderLineItem.id).all()
+    orders = query.order_by(models.DBPurchaseOrder.id.desc()).limit(50).all()
+    summaries, lines_by, items, units = po_receipt_summaries(db, orders)       # the 50 orders in a few queries, not a dozen each
+    cats = item_categories(db, {i.id for i in items.values() if i is not None})
+    for po in orders:
+        summary = {s.po_line_id: s for s in summaries.get(po.id, [])}
         rows = []
-        for l in lines:
+        for l in lines_by.get(po.id, []):
             sm = summary.get(l.id)
-            item = po_item(db, po, l)
+            item = items.get(l.id)
             if sm is None or sm.pending_qty <= 0:
                 continue
             if item is None:                    # no stock item yet: shown so the person receiving can say which it is
@@ -223,8 +294,8 @@ def open_purchase_orders(db, client_id, q=""):
                              "pending": s3(sm.pending_qty), "category": None, "batch_tracked": False})
                 continue
             rows.append({"po_line_id": l.id, "item_id": item.id, "item_code": item.item_code, "item_name": item.item_name, "description": l.description or "",
-                         "po_uom": l.uom or "", "po_qty": s3(l.qty), "price": s4(l.price), "base_uom": base_uom_of(db, item), "ordered": s3(sm.ordered_qty),
-                         "accepted": s3(sm.accepted_qty), "pending": s3(sm.pending_qty), "needs_item": False, **_category_of(db, item.id)})
+                         "po_uom": l.uom or "", "po_qty": s3(l.qty), "price": s4(l.price), "base_uom": units.base.get(item.id, "").strip(), "ordered": s3(sm.ordered_qty),
+                         "accepted": s3(sm.accepted_qty), "pending": s3(sm.pending_qty), "needs_item": False, **cats[item.id]})
         if rows:
             out.append({"id": po.id, "number": po.number, "supplier_name": po.supplier_name or "", "project_id": po.job_id, "issue_date": po.issue_date or "", "lines": rows})
     return out
@@ -403,7 +474,10 @@ def landed_rate(line, share) -> Decimal:
 
 
 def grn_lines(db, grn):
-    return db.query(DBStoreGrnLine).filter(DBStoreGrnLine.grn_id == grn.id).order_by(DBStoreGrnLine.line_no, DBStoreGrnLine.id).all()
+    hit = cached_lines(db, DBStoreGrnLine, grn.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreGrnLine).filter(DBStoreGrnLine.grn_id == grn.id).order_by(*LINE_ORDER[DBStoreGrnLine]).all()
 
 
 def grn_check_submit(db, actor, grn):
@@ -644,7 +718,10 @@ def write_return_lines(db, ret, lines):
 
 
 def return_lines(db, ret):
-    return db.query(DBStorePurchaseReturnLine).filter(DBStorePurchaseReturnLine.return_id == ret.id).order_by(DBStorePurchaseReturnLine.id).all()
+    hit = cached_lines(db, DBStorePurchaseReturnLine, ret.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStorePurchaseReturnLine).filter(DBStorePurchaseReturnLine.return_id == ret.id).order_by(*LINE_ORDER[DBStorePurchaseReturnLine]).all()
 
 
 def return_check_submit(db, actor, ret):
@@ -720,7 +797,10 @@ def write_supply_lines(db, doc, lines):
 
 
 def supply_lines(db, doc):
-    return db.query(DBStoreClientSupplyLine).filter(DBStoreClientSupplyLine.supply_id == doc.id).order_by(DBStoreClientSupplyLine.id).all()
+    hit = cached_lines(db, DBStoreClientSupplyLine, doc.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreClientSupplyLine).filter(DBStoreClientSupplyLine.supply_id == doc.id).order_by(*LINE_ORDER[DBStoreClientSupplyLine]).all()
 
 
 def supply_post(db, actor, doc):
@@ -757,7 +837,10 @@ def write_opening_lines(db, doc, lines):
 
 
 def opening_lines(db, doc):
-    return db.query(DBStoreOpeningLine).filter(DBStoreOpeningLine.opening_id == doc.id).order_by(DBStoreOpeningLine.id).all()
+    hit = cached_lines(db, DBStoreOpeningLine, doc.id)          # a list page has read them already
+    if hit is not None:
+        return hit
+    return db.query(DBStoreOpeningLine).filter(DBStoreOpeningLine.opening_id == doc.id).order_by(*LINE_ORDER[DBStoreOpeningLine]).all()
 
 
 def opening_post(db, actor, doc):
@@ -832,6 +915,10 @@ class Kind:
         self.key, self.ref, self.label, self.header, self.line, self.fk, self.date_attr = key, ref, label, header, line, fk, date_attr
         self.count_lines, self.post, self.check_submit, self.check_cancel = count_lines, post, check_submit, check_cancel
 
+
+# The order each kind's lines are read in - by its reader and by a list page alike.
+LINE_ORDER = {DBStoreGrnLine: (DBStoreGrnLine.line_no, DBStoreGrnLine.id), DBStorePurchaseReturnLine: (DBStorePurchaseReturnLine.id,),
+              DBStoreClientSupplyLine: (DBStoreClientSupplyLine.id,), DBStoreOpeningLine: (DBStoreOpeningLine.id,)}
 
 KINDS = {
     "grn": Kind("grn", GRN, "Goods receipt", DBStoreGrn, DBStoreGrnLine, "grn_id", "grn_date", lambda db, d: len(grn_lines(db, d)), grn_post, grn_check_submit, lambda db, d: grn_check_cancel(db, d)),
